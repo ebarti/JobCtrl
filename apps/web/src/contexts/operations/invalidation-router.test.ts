@@ -127,6 +127,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  CompensationFactsUpdated: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+  ],
   JobScored: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),

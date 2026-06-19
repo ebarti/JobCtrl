@@ -51,11 +51,14 @@ PROJECTION_TABLES: tuple[str, ...] = (
 
 SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "score_breakdown_json", "TEXT"),
+    ("job_list_projections", "compensation_summary_json", "TEXT"),
     ("job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_list_projections", "score_version", "INTEGER"),
     ("job_list_projections", "scored_at", "TEXT"),
     ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
+    ("job_detail_projections", "compensation_summary_json", "TEXT"),
+    ("job_detail_projections", "compensation_audit_json", "TEXT"),
     ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_detail_projections", "score_version", "INTEGER"),
     ("job_detail_projections", "scored_at", "TEXT"),
@@ -87,6 +90,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             description            TEXT NOT NULL DEFAULT '',
             full_description       TEXT NOT NULL DEFAULT '',
             fit_score              INTEGER,
+            compensation_summary_json TEXT,
             score_breakdown_json   TEXT,
             score_keywords_json    TEXT NOT NULL DEFAULT '[]',
             score_reasoning        TEXT NOT NULL DEFAULT '',
@@ -139,6 +143,8 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             tenant_id              TEXT NOT NULL DEFAULT 'local',
             job_id                 TEXT NOT NULL,
             description_preview    TEXT NOT NULL DEFAULT '',
+            compensation_summary_json TEXT,
+            compensation_audit_json TEXT,
             score_breakdown_json   TEXT,
             score_keywords_json    TEXT NOT NULL DEFAULT '[]',
             score_reasoning        TEXT NOT NULL DEFAULT '',
@@ -341,8 +347,9 @@ class SqliteProjectionStore:
             INSERT INTO job_list_projections (
                 tenant_id, job_id, title, employer, source, strategy, location,
                 salary, application_url, discovered_at, description,
-                full_description, fit_score, score_breakdown_json,
-                score_keywords_json, score_reasoning, score_version, scored_at,
+                full_description, fit_score, compensation_summary_json,
+                score_breakdown_json, score_keywords_json,
+                score_reasoning, score_version, scored_at,
                 current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
@@ -350,7 +357,7 @@ class SqliteProjectionStore:
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -364,6 +371,7 @@ class SqliteProjectionStore:
                 description           = excluded.description,
                 full_description      = excluded.full_description,
                 fit_score             = excluded.fit_score,
+                compensation_summary_json = excluded.compensation_summary_json,
                 score_breakdown_json  = excluded.score_breakdown_json,
                 score_keywords_json   = excluded.score_keywords_json,
                 score_reasoning       = excluded.score_reasoning,
@@ -398,6 +406,7 @@ class SqliteProjectionStore:
                 projection.description,
                 projection.full_description,
                 projection.fit_score,
+                projection.compensation_summary_json,
                 projection.score_breakdown_json,
                 projection.score_keywords_json,
                 projection.score_reasoning,
@@ -478,13 +487,16 @@ class SqliteProjectionStore:
         self._conn.execute(
             """
             INSERT INTO job_detail_projections (
-                tenant_id, job_id, description_preview, score_breakdown_json,
-                score_keywords_json, score_reasoning, score_version, scored_at,
+                tenant_id, job_id, description_preview, compensation_summary_json,
+                compensation_audit_json, score_breakdown_json, score_keywords_json,
+                score_reasoning, score_version, scored_at,
                 stages_json, employer_analysis_json, requirement_fit_report_json,
                 last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 description_preview    = excluded.description_preview,
+                compensation_summary_json = excluded.compensation_summary_json,
+                compensation_audit_json = excluded.compensation_audit_json,
                 score_breakdown_json   = excluded.score_breakdown_json,
                 score_keywords_json    = excluded.score_keywords_json,
                 score_reasoning        = excluded.score_reasoning,
@@ -499,6 +511,8 @@ class SqliteProjectionStore:
                 str(projection.tenant_id),
                 projection.job_id,
                 projection.description_preview,
+                projection.compensation_summary_json,
+                projection.compensation_audit_json,
                 projection.score_breakdown_json,
                 projection.score_keywords_json,
                 projection.score_reasoning,

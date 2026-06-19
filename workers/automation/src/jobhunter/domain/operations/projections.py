@@ -75,6 +75,7 @@ class JobListProjection:
     description: str = ""
     full_description: str = ""
     fit_score: int | None = None
+    compensation_summary_json: str | None = None
     score_breakdown_json: str | None = None
     score_keywords_json: str = "[]"
     score_reasoning: str = ""
@@ -136,6 +137,8 @@ class JobDetailProjection:
     tenant_id: TenantId
     job_id: str
     description_preview: str = ""
+    compensation_summary_json: str | None = None
+    compensation_audit_json: str | None = None
     score_breakdown_json: str | None = None
     score_keywords_json: str = "[]"
     score_reasoning: str = ""

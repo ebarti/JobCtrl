@@ -56,6 +56,7 @@ export const sampleJob: JobSummary = {
   strategy: "ats:lever",
   location: "Remote (US)",
   salary: "$220k-$260k",
+  compensationSummary: null,
   discoveredAt: "2026-05-01T12:00:00Z",
   applicationUrl: "https://example.com/apply/1",
   fitScore: 8,
@@ -513,6 +514,7 @@ export function makeJobDetail(
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
     employerAnalysis: overrides.employerAnalysis ?? null,
     requirementFitReport: overrides.requirementFitReport ?? null,
+    compensationAudit: overrides.compensationAudit ?? null,
   };
 }
 

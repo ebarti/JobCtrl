@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Iterator
 
 import pytest
 
+from jobhunter.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
 from jobhunter.database import close_connection, init_db
+from jobhunter.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
 from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
 from jobhunter.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobhunter.infrastructure.projections.projection_builder import (
@@ -126,6 +129,93 @@ def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connec
     ).fetchone()
     assert row is not None
     assert row[0] == "Keyrock"
+
+
+def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) -> None:
+    job_url = "https://example.com/compensation"
+    _seed_job(conn, job_url)
+    conn.execute("UPDATE jobs SET salary = ? WHERE url = ?", ("EUR 70000-90000/year", job_url))
+    SqlitePostedCompensationRepository(conn).save_fact(
+        parse_posted_compensation(
+            "EUR 70000-90000/year",
+            job_url=job_url,
+            parsed_at="2026-06-19T10:00:00Z",
+        )
+    )
+    SqliteMarketCompensationRepository(conn).estimate_and_save_job(
+        job_url=job_url,
+        title="Senior Software Developer",
+        company="ExampleCo",
+        location="Madrid, Spain",
+        observations=(
+            ReportedCompensationObservation(
+                source_id="levels_fyi",
+                company_name="ExampleCo",
+                role_title="Senior Software Developer",
+                level_label="Senior",
+                company_tier="tier_2_ambitious",
+                location="Remote Europe",
+                minimum_amount=118_000,
+                maximum_amount=142_000,
+                release_year=2026,
+                sample_count=4,
+                attribution="Levels.fyi reported compensation data",
+            ),
+            ReportedCompensationObservation(
+                source_id="glassdoor",
+                company_name="ExampleCo",
+                role_title="Senior Software Developer",
+                level_label="Senior",
+                company_tier="tier_2_ambitious",
+                location="Madrid, Spain",
+                minimum_amount=112_000,
+                maximum_amount=136_000,
+                release_year=2026,
+                sample_count=3,
+                attribution="Glassdoor reported compensation data",
+            ),
+        ),
+        estimated_at="2026-06-19T10:01:00Z",
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        """
+        SELECT salary, compensation_summary_json
+        FROM job_list_projections
+        WHERE job_id = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert row is not None
+    assert row["salary"] == "EUR 70000-90000/year"
+    summary = json.loads(row["compensation_summary_json"])
+    assert summary["posted"]["recordStatus"] == "recorded"
+    assert summary["posted"]["displayRange"] == "EUR 70000-90000/year"
+    assert summary["market"]["recordStatus"] == "recorded"
+    assert summary["market"]["sourceKind"] == "reported_company_role_market"
+    assert summary["market"]["displayRange"] == "EUR 112000-142000/year"
+
+    detail = conn.execute(
+        """
+        SELECT compensation_audit_json
+        FROM job_detail_projections
+        WHERE job_id = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert detail is not None
+    audit = json.loads(detail["compensation_audit_json"])
+    assert audit["posted"]["fact"]["sourceText"] == "EUR 70000-90000/year"
+    assert {
+        source["sourceId"] for source in audit["market"]["estimate"]["sources"]
+    } == {"levels_fyi", "glassdoor"}
+    assert audit["market"]["estimate"]["companyName"] == "ExampleCo"
+    assert audit["market"]["estimate"]["matchScope"] == "exact_company_role"
+    assert "Glassdoor" in json.dumps(audit)
+    assert "/Users/" not in json.dumps(audit)
 
 
 def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection) -> None:

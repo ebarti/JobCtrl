@@ -1,4 +1,5 @@
 import type {
+  CompensationFactsUpdated,
   ContentDuplicateCandidateDetected,
   EnrichmentFailed,
   JobActiveStateChanged,
@@ -79,4 +80,11 @@ export const contentDuplicateCandidateDetectedHandler = (
   invalidate(jobsKeys.detail(event.tenantId, event.payload.candidateJobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const compensationFactsUpdatedHandler = (
+  event: CompensationFactsUpdated,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];

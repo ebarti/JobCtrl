@@ -56,7 +56,7 @@
 - [ ] **QA-03**: Backend tests prove parser confidence and market confidence degrade when source quality, sample count, freshness, company match, role match, level match, location compatibility, or component compatibility is weak.
 - [ ] **QA-04**: API and projection tests prove compensation audit data comes from canonical rows and remains parity-safe across Python and TypeScript projection refreshers.
 - [ ] **QA-05**: Frontend tests prove Jobs list and Jobs drawer render posted, estimated, unavailable, insufficient-evidence, warning-only floor comparison, and source-conflict states.
-- [ ] **QA-06**: QA uses synthetic or public aggregate data only and does not run auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
+- [ ] **QA-06**: QA uses synthetic jobs and synthetic/manual reported compensation observations only and does not run auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
 
 ## Future Requirements
 
@@ -88,7 +88,7 @@
 | Automatic salary ranking/filtering/blockers | The user chose warning-only floor behavior for v1.3. |
 | Employer-side compensation screening | JobHunter is applicant-side local triage, not an employer-side selection system. |
 | Deep equity/RSU/bonus/OTE modeling | v1.3 stores total compensation ranges when reported rows provide them, but detailed component modeling remains future work. |
-| Real external scraping in QA | QA must use synthetic/public aggregate fixtures and must not hit real salary pages or private account data. |
+| Real external scraping in QA | QA must use synthetic/manual reported compensation fixtures and must not hit real salary pages or private account data. |
 | Frontend-only salary estimation | Every displayed compensation claim needs persisted provenance and an owning backend source of truth. |
 
 ## Traceability

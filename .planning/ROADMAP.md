@@ -22,7 +22,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 - [x] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
 - [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
 - [ ] **Phase 21: Jobs Triage UX & Warning-Only Floor** - Users can scan and inspect compensation evidence in Jobs triage without salary data becoming an automatic gate.
-- [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/public data and no prohibited actions.
+- [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/manual reported compensation data and no prohibited actions.
 
 ## Phase Details
 
@@ -87,7 +87,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 **UI hint**: yes
 
 ### Phase 22: Product-Path QA & Safety Release
-**Goal**: Users can rely on v1.3 compensation behavior because the full path is verified with synthetic/public data and the feature does not trigger prohibited actions.
+**Goal**: Users can rely on v1.3 compensation behavior because the full path is verified with synthetic/manual reported compensation data and the feature does not trigger prohibited actions.
 **Depends on**: Phase 21
 **Requirements**: QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
 **Success Criteria** (what must be TRUE):
@@ -95,7 +95,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   2. Product-path QA shows salary estimates do not change fit score, apply readiness, apply-review handoff, ranking, filtering, or auto-apply behavior in v1.3.
   3. Backend, API, projection, and frontend tests prove parser confidence, market confidence, and canonical compensation data behave correctly across weak source quality and parity refresh paths.
   4. Frontend checks prove the Jobs list and Jobs drawer render posted, estimated, unavailable, insufficient-evidence, warning-only floor comparison, and source-conflict states.
-  5. QA evidence confirms synthetic or public aggregate data only, with no auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
+  5. QA evidence confirms synthetic/manual reported compensation data only, with no auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
 **Plans**: TBD
 **UI hint**: yes
 

@@ -21,13 +21,13 @@ Users and API consumers receive compensation summaries and audit details from ca
 
 ## User Value
 
-The Jobs list and detail API should stop forcing consumers to call one-off compensation endpoints or parse the legacy raw salary string. A job response should carry a compact compensation summary and an inspectable audit object sourced from canonical posted-fact and Europe public-market estimate rows.
+The Jobs list and detail API should stop forcing consumers to call one-off compensation endpoints or parse the legacy raw salary string. A job response should carry a compact compensation summary and an inspectable audit object sourced from canonical posted-fact and reported company-role estimate rows.
 
 ## Product Invariants
 
 1. `JobSummary.salary` remains the raw discovery string for compatibility.
 2. Structured compensation data is additive and preferred over raw salary where available.
-3. Posted compensation facts and public market estimates remain separate in contracts and projection JSON.
+3. Posted compensation facts and reported company-role estimates remain separate in contracts and projection JSON.
 4. The read model never parses salary text at API read time or in React.
 5. Compensation facts are warning/audit data only in v1.3; no ranking, filtering, apply readiness, hard blocker, or auto-apply behavior changes.
 6. Event payloads contain only job id, changed section, state, and timestamps. They must not include profile salary preferences, source excerpts, raw benchmark pages, credentials, local paths, or private provider payloads.
@@ -35,7 +35,7 @@ The Jobs list and detail API should stop forcing consumers to call one-off compe
 ## Existing Inputs
 
 - Posted facts live in `job_posted_compensation_facts` from Phase 18.
-- Europe public market estimates live in `job_market_compensation_estimates` from Phase 19.
+- Reported company-role market estimates live in `job_market_compensation_estimates` from Phase 19.
 - `jobs.salary` remains the raw fallback.
 - Job list/detail responses are served from `job_list_projections` and `job_detail_projections`.
 - Python and TypeScript projection builders both materialize projection tables.

@@ -306,6 +306,159 @@ function insertOperationalMetric(
   db.close();
 }
 
+function insertCompensationRows(dbPath: string): void {
+  const db = new Database(dbPath);
+  const jobUrl = "https://example.com/jobs/event-driven";
+  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("EUR 70000-90000/year", jobUrl);
+  db.exec(`
+    CREATE TABLE job_posted_compensation_facts (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
+      source_text TEXT,
+      legacy_raw_salary TEXT,
+      parse_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'unknown',
+      component TEXT NOT NULL DEFAULT 'unknown',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      annualized_minimum_amount INTEGER,
+      annualized_maximum_amount INTEGER,
+      annualization_assumption TEXT,
+      confidence TEXT NOT NULL DEFAULT 'none',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      parser_version TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      parsed_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_url)
+    );
+    CREATE TABLE job_market_compensation_estimates (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      estimate_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'year',
+      component TEXT NOT NULL DEFAULT 'base_salary',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      confidence_band TEXT NOT NULL DEFAULT 'none',
+      confidence_score REAL NOT NULL DEFAULT 0,
+      source_count INTEGER NOT NULL DEFAULT 0,
+      sample_count INTEGER,
+      aggregate_bucket TEXT,
+      geography_scope TEXT,
+      occupation_code TEXT,
+      occupation_label TEXT,
+      seniority_label TEXT,
+      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
+      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
+      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
+      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
+      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      estimator_version TEXT NOT NULL,
+      estimated_at TEXT NOT NULL,
+      company_name TEXT,
+      normalized_company TEXT,
+      role_title TEXT,
+      normalized_role TEXT,
+      company_tier TEXT NOT NULL DEFAULT 'unknown',
+      match_scope TEXT NOT NULL DEFAULT 'none',
+      PRIMARY KEY (tenant_id, job_url)
+    );
+  `);
+  db.prepare(
+    `INSERT INTO job_posted_compensation_facts (
+      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      parse_state, currency, period, component, minimum_amount, maximum_amount,
+      annualized_minimum_amount, annualized_maximum_amount,
+      annualization_assumption, confidence, warnings_json, parser_version,
+      source_hash, parsed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "jobs.salary",
+    "EUR 70000-90000/year",
+    "EUR 70000-90000/year",
+    "parsed_range",
+    "EUR",
+    "year",
+    "base_salary",
+    70000,
+    90000,
+    70000,
+    90000,
+    "Source text states annual compensation.",
+    "high",
+    JSON.stringify(["broad_range"]),
+    "posted-compensation-v1",
+    "hash-posted",
+    "2026-06-19T10:00:00Z",
+  );
+  db.prepare(
+    `INSERT INTO job_market_compensation_estimates (
+      tenant_id, job_url, estimate_state, currency, period, component,
+      minimum_amount, maximum_amount, confidence_band, confidence_score,
+      source_count, sample_count, aggregate_bucket, geography_scope,
+      occupation_code, occupation_label, seniority_label, source_snapshot_json,
+      factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+      source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
+      company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "estimated_range",
+    "EUR",
+    "year",
+    "total_compensation",
+    112000,
+    142000,
+    "medium",
+    0.82,
+    2,
+    7,
+    "reported company-role compensation",
+    "Europe",
+    "acme ai",
+    "platform engineer",
+    "senior",
+    JSON.stringify([
+      {
+        source_id: "levels_fyi",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        sample_count: 4,
+      },
+      {
+        source_id: "glassdoor",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        sample_count: 3,
+      },
+    ]),
+    JSON.stringify([
+      { name: "company", score: 1, band: "high" },
+      { name: "role", score: 1, band: "high" },
+    ]),
+    "[]",
+    "[]",
+    "[]",
+    JSON.stringify(["reported_compensation_sample", "location_mismatch"]),
+    "company-role-reported-compensation-v1",
+    "2026-06-19T10:01:00Z",
+    "Acme AI",
+    "acme ai",
+    "Senior Platform Engineer",
+    "platform engineer",
+    "tier_2_ambitious",
+    "exact_company_role",
+  );
+  db.close();
+}
+
 describe("apply_run_projections without legacy apply_runs table", () => {
   it("dashboard summary surfaces the projection row when apply_runs is absent", async () => {
     const { dbPath, cleanup } = withTempDb();
@@ -353,6 +506,88 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(item.appliedAt).toBe("2026-05-04T13:05:00+00:00");
       } finally {
         await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("projects canonical compensation summary and detail audit JSON", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const listProjection = db
+          .prepare(
+            `SELECT salary, compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { salary: string; compensation_summary_json: string }
+          | undefined;
+        expect(listProjection?.salary).toBe("EUR 70000-90000/year");
+        const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
+        expect(summary).toMatchObject({
+          projectionVersion: 1,
+          warningCount: 3,
+          posted: {
+            recordStatus: "recorded",
+            parseState: "parsed_range",
+            displayRange: "EUR 70000-90000/year",
+            warningCount: 1,
+          },
+          market: {
+            sourceKind: "reported_company_role_market",
+            recordStatus: "recorded",
+            estimateState: "estimated_range",
+            displayRange: "EUR 112000-142000/year",
+            sourceCount: 2,
+            warningCount: 2,
+          },
+        });
+
+        const detailProjection = db
+          .prepare(
+            `SELECT compensation_audit_json
+               FROM job_detail_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_audit_json: string }
+          | undefined;
+        const audit = JSON.parse(detailProjection?.compensation_audit_json ?? "{}");
+        expect(audit.posted.fact.sourceText).toBe("EUR 70000-90000/year");
+        expect(audit.market.estimate.sources).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceId: "levels_fyi",
+              displayName: "Levels.fyi",
+            }),
+            expect.objectContaining({
+              sourceId: "glassdoor",
+              displayName: "Glassdoor",
+            }),
+          ]),
+        );
+        expect(audit.market.estimate.companyName).toBe("Acme AI");
+        expect(audit.market.estimate.matchScope).toBe("exact_company_role");
+        expect(JSON.stringify(audit)).not.toContain("/Users/");
+      } finally {
+        db.close();
       }
     } finally {
       cleanup();

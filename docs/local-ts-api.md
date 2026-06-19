@@ -243,11 +243,14 @@ ranges. For an existing job without a canonical row, the response is
 `recordStatus: "not_recorded"` plus the current legacy raw `jobs.salary`
 fallback. Unknown jobs return `404`.
 
-Phase 18 does not add compensation summary or audit fields to `/v1/jobs` or
-`/v1/jobs/:key`, and it does not change fit score, sorting, filtering, apply
-readiness, apply-review handoff, or apply mutation behavior. Phase 20 owns job
-list/detail read-model propagation and SSE invalidation; Phase 21 owns the Jobs
-triage presentation.
+The projection-backed `/v1/jobs` and `/v1/jobs/:key` responses now include
+`compensationSummary`, sourced from `job_list_projections` /
+`job_detail_projections` JSON rather than API read-time salary parsing. The
+detail response also includes top-level `compensationAudit`, which keeps
+`posted` and `market` inspection payloads separate. The legacy raw
+`JobSummary.salary` string remains present for compatibility. Compensation
+summary/audit data does not change fit score, sorting, filtering, apply
+readiness, apply-review handoff, or apply mutation behavior.
 
 `GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
 inspection contract for canonical company-role reported compensation estimate
@@ -276,11 +279,19 @@ reported compensation observations, estimates matching existing jobs, and
 refreshes projections without running discovery, scoring, tailoring, cover, or
 apply automation. `--url <job-url>` narrows the refresh to one existing job.
 
-Phase 19 still does not add compensation summary or audit fields to `/v1/jobs`
-or `/v1/jobs/:key`, and it does not change fit score, sorting, filtering,
-apply readiness, apply-review handoff, or apply mutation behavior. Phase 20
-owns projection propagation and SSE invalidation; Phase 21 owns the Jobs
-triage presentation.
+Market estimates also project into the same job list/detail compensation
+summary and detail audit fields, separate from posted facts. This projection
+does not change fit score, sorting, filtering, apply readiness, apply-review
+handoff, or apply mutation behavior. Phase 21 owns the Jobs triage
+presentation.
+
+When Python compensation repositories save posted facts or market estimates,
+they append `CompensationFactsUpdated` to `job_events`. The SSE payload contains
+only safe state markers: job id, changed section (`posted` or `market`), posted
+record/parse state, market record/estimate state, and timestamp. It does not
+contain source text, market source snapshots, profile compensation preferences,
+credentials, local paths, or provider payloads. The frontend Operations
+invalidation router uses the event to refresh job list/detail queries.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal

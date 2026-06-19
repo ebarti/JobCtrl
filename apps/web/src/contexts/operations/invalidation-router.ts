@@ -31,6 +31,7 @@ import {
 } from "../discovery/handlers.js";
 import {
   contentDuplicateCandidateDetectedHandler,
+  compensationFactsUpdatedHandler,
   enrichmentFailedHandler,
   jobActiveStateChangedHandler,
   jobEnrichedHandler,
@@ -167,6 +168,7 @@ export const handlers: HandlerMap = {
   StageCanceled: stageCanceledHandler,
   ProfileUpdated: profileUpdatedHandler,
   ProfileImported: profileImportedHandler,
+  CompensationFactsUpdated: compensationFactsUpdatedHandler,
 };
 
 export interface InvalidationRouter {

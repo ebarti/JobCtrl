@@ -37,7 +37,7 @@ Not allowed in event payloads, fixtures, logs, or docs:
 - credentials or provider tokens
 - local filesystem paths
 - private account/provider payloads
-- Glassdoor or Levels.fyi salary observations
+- Live Glassdoor or Levels.fyi scraping/fetching
 - U.S. salary-source data
 
 ## Realtime Pattern
@@ -50,5 +50,5 @@ Not allowed in event payloads, fixtures, logs, or docs:
 ## Test Pattern
 
 - Add focused unit/parity tests beside touched surfaces.
-- Use synthetic jobs and synthetic public aggregate fixtures only.
+- Use synthetic jobs and synthetic/manual reported compensation observation fixtures only.
 - Keep browser/product-path QA for Phase 21 and Phase 22 unless Phase 20 touches visible UI.

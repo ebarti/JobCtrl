@@ -69,7 +69,8 @@ function seedSchema(dbPath: string): void {
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
       title TEXT,
-      site TEXT
+      site TEXT,
+      salary TEXT DEFAULT ''
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,7 +173,7 @@ function seedSchema(dbPath: string): void {
 function seedRows(dbPath: string): void {
   const db = new Database(dbPath);
   const jobUrl = fixture.job.url;
-  db.prepare("INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)").run(
+  db.prepare("INSERT INTO jobs (url, title, site, salary) VALUES (?, ?, ?, '')").run(
     jobUrl,
     fixture.job.title,
     fixture.job.site,

@@ -23,6 +23,8 @@
 import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
+import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
+import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const;
@@ -41,6 +43,7 @@ const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "ContentDuplicateCandidateDetected",
   "DiscoveryFeedbackRecorded",
 ]);
+const COMPENSATION_PROJECTION_VERSION = 1;
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -331,6 +334,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       description            TEXT NOT NULL DEFAULT '',
       full_description       TEXT NOT NULL DEFAULT '',
       fit_score              INTEGER,
+      compensation_summary_json TEXT,
       score_breakdown_json   TEXT,
       score_keywords_json    TEXT NOT NULL DEFAULT '[]',
       score_reasoning        TEXT NOT NULL DEFAULT '',
@@ -372,6 +376,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       tenant_id              TEXT NOT NULL DEFAULT 'local',
       job_id                 TEXT NOT NULL,
       description_preview    TEXT NOT NULL DEFAULT '',
+      compensation_summary_json TEXT,
+      compensation_audit_json TEXT,
       score_breakdown_json   TEXT,
       score_keywords_json    TEXT NOT NULL DEFAULT '[]',
       score_reasoning        TEXT NOT NULL DEFAULT '',
@@ -494,6 +500,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "compensation_summary_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'") ||
     schemaChanged;
@@ -507,6 +514,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "compensation_summary_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "compensation_audit_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'") ||
     schemaChanged;
@@ -1608,6 +1617,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const scoreReasoning = score.reasoning || stringField(job.score_reasoning);
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
+  const compensationProjection = buildCompensationProjection(db, jobUrl);
 
   const hasCanonicalMaterials = materials.hasCanonicalHistory;
   const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
@@ -1637,13 +1647,14 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO job_list_projections (
      tenant_id, job_id, title, employer, source, strategy, location,
      salary, application_url, discovered_at, description, full_description,
-       fit_score, score_breakdown_json, score_keywords_json, score_reasoning,
+       fit_score, compensation_summary_json,
+       score_breakdown_json, score_keywords_json, score_reasoning,
        score_version, scored_at, score_criteria_json, score_trace_json,
        score_correction_json, current_stage, current_substage, current_state,
        current_error_code, current_error_message, current_next_action,
        has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
        artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -1656,6 +1667,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        description           = excluded.description,
        full_description      = excluded.full_description,
        fit_score             = excluded.fit_score,
+       compensation_summary_json = excluded.compensation_summary_json,
        score_breakdown_json  = excluded.score_breakdown_json,
        score_keywords_json   = excluded.score_keywords_json,
        score_reasoning       = excluded.score_reasoning,
@@ -1692,6 +1704,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     description,
     fullDescription,
     fitScore,
+    compensationProjection.summaryJson,
     scoreBreakdownJson,
     scoreKeywordsJson,
     scoreReasoning,
@@ -1718,14 +1731,17 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   db.prepare(
     `INSERT INTO job_detail_projections (
-       tenant_id, job_id, description_preview, score_breakdown_json,
-       score_keywords_json, score_reasoning, score_version, scored_at,
+       tenant_id, job_id, description_preview, compensation_summary_json,
+       compensation_audit_json, score_breakdown_json, score_keywords_json,
+       score_reasoning, score_version, scored_at,
        score_criteria_json, score_trace_json, score_correction_json,
        stages_json, employer_analysis_json, requirement_fit_report_json,
        last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        description_preview    = excluded.description_preview,
+       compensation_summary_json = excluded.compensation_summary_json,
+       compensation_audit_json = excluded.compensation_audit_json,
        score_breakdown_json   = excluded.score_breakdown_json,
        score_keywords_json    = excluded.score_keywords_json,
        score_reasoning        = excluded.score_reasoning,
@@ -1742,6 +1758,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     tenantId,
     jobUrl,
     previewText(fullDescription || description, 6000),
+    compensationProjection.summaryJson,
+    compensationProjection.auditJson,
     scoreBreakdownJson,
     scoreKeywordsJson,
     scoreReasoning,
@@ -1786,6 +1804,148 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       voiceByArtifact.get(a.artifactId) ?? null,
     );
   }
+}
+
+type PostedCompensationProjectionResponse = NonNullable<ReturnType<typeof getPostedCompensationFact>>;
+type MarketCompensationProjectionResponse = NonNullable<ReturnType<typeof getMarketCompensationEstimate>>;
+
+interface CompensationRangeSummary {
+  currency: string | null;
+  period: string;
+  component: string;
+  minimumAmount: number | null;
+  maximumAmount: number | null;
+  annualizedMinimumAmount?: number | null;
+  annualizedMaximumAmount?: number | null;
+  displayRange: string | null;
+}
+
+interface CompensationProjectionPair {
+  summaryJson: string;
+  auditJson: string;
+}
+
+function buildCompensationProjection(db: SqliteDatabase, jobUrl: string): CompensationProjectionPair {
+  const posted =
+    getPostedCompensationFact(db, jobUrl) ??
+    ({
+      ok: true,
+      recordStatus: "not_recorded",
+      jobKey: jobUrl,
+      legacyRawSalary: null,
+    } as const);
+  const market =
+    getMarketCompensationEstimate(db, jobUrl) ??
+    ({
+      ok: true,
+      recordStatus: "not_requested",
+      jobKey: jobUrl,
+    } as const);
+  const summary = buildCompensationSummary(posted, market);
+  return {
+    summaryJson: JSON.stringify(summary),
+    auditJson: JSON.stringify({
+      projectionVersion: COMPENSATION_PROJECTION_VERSION,
+      posted,
+      market,
+    }),
+  };
+}
+
+function buildCompensationSummary(
+  posted: PostedCompensationProjectionResponse,
+  market: MarketCompensationProjectionResponse,
+): Record<string, unknown> {
+  const postedWarnings = posted.recordStatus === "recorded" ? posted.fact.warnings.length : 0;
+  const marketWarnings = market.recordStatus === "recorded" ? market.estimate.warnings.length : 0;
+  const postedRange = posted.recordStatus === "recorded" ? postedRangeSummary(posted.fact) : null;
+  const marketRange = market.recordStatus === "recorded" ? marketRangeSummary(market.estimate) : null;
+  return {
+    projectionVersion: COMPENSATION_PROJECTION_VERSION,
+    legacyRawSalary:
+      posted.recordStatus === "recorded" ? posted.fact.legacyRawSalary : posted.legacyRawSalary,
+    warningCount: postedWarnings + marketWarnings,
+    posted: {
+      sourceKind: "posted",
+      recordStatus: posted.recordStatus,
+      parseState: posted.recordStatus === "recorded" ? posted.fact.parseState : null,
+      confidence: posted.recordStatus === "recorded" ? posted.fact.confidence : "none",
+      warningCount: postedWarnings,
+      range: postedRange,
+      displayRange: postedRange?.displayRange ?? null,
+    },
+    market: {
+      sourceKind: "reported_company_role_market",
+      recordStatus: market.recordStatus,
+      estimateState: market.recordStatus === "recorded" ? market.estimate.estimateState : "not_requested",
+      confidenceBand: market.recordStatus === "recorded" ? market.estimate.confidenceBand : "none",
+      sourceCount: market.recordStatus === "recorded" ? market.estimate.sourceCount : 0,
+      warningCount: marketWarnings,
+      range: marketRange,
+      displayRange: marketRange?.displayRange ?? null,
+    },
+  };
+}
+
+function postedRangeSummary(
+  fact: Extract<PostedCompensationProjectionResponse, { recordStatus: "recorded" }>["fact"],
+): CompensationRangeSummary | null {
+  if (fact.parseState !== "parsed_range") {
+    return null;
+  }
+  return {
+    currency: fact.currency,
+    period: fact.period,
+    component: fact.component,
+    minimumAmount: fact.minimumAmount,
+    maximumAmount: fact.maximumAmount,
+    annualizedMinimumAmount: fact.annualizedMinimumAmount,
+    annualizedMaximumAmount: fact.annualizedMaximumAmount,
+    displayRange: formatCompensationRange(fact.currency, fact.minimumAmount, fact.maximumAmount, fact.period),
+  };
+}
+
+function marketRangeSummary(
+  estimate: Extract<MarketCompensationProjectionResponse, { recordStatus: "recorded" }>["estimate"],
+): CompensationRangeSummary | null {
+  if (estimate.estimateState !== "estimated_range") {
+    return null;
+  }
+  return {
+    currency: estimate.currency,
+    period: estimate.period,
+    component: estimate.component,
+    minimumAmount: estimate.minimumAmount,
+    maximumAmount: estimate.maximumAmount,
+    displayRange: formatCompensationRange(
+      estimate.currency,
+      estimate.minimumAmount,
+      estimate.maximumAmount,
+      estimate.period,
+    ),
+  };
+}
+
+function formatCompensationRange(
+  currency: string | null,
+  minimumAmount: number | null,
+  maximumAmount: number | null,
+  period: string,
+): string | null {
+  if (minimumAmount === null && maximumAmount === null) {
+    return null;
+  }
+  const prefix = currency ? `${currency} ` : "";
+  const suffix = period ? `/${period}` : "";
+  if (minimumAmount !== null && maximumAmount !== null) {
+    return minimumAmount === maximumAmount
+      ? `${prefix}${minimumAmount}${suffix}`
+      : `${prefix}${minimumAmount}-${maximumAmount}${suffix}`;
+  }
+  if (minimumAmount !== null) {
+    return `${prefix}${minimumAmount}+${suffix}`;
+  }
+  return `${prefix}up to ${maximumAmount}${suffix}`;
 }
 
 interface ArtifactRow {

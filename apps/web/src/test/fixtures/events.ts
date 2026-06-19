@@ -5,6 +5,7 @@ import {
   createApplyRunEventRecorded,
   createApplyRunStarted,
   createCanonicalJobIdentityResolved,
+  createCompensationFactsUpdated,
   createContentDuplicateCandidateDetected,
   createCoverLetterGenerated,
   createDiscoveryFeedbackRecorded,
@@ -226,6 +227,15 @@ export const eventByType = {
     ],
     confidence: 1.0,
     detectedAt: NOW,
+  }),
+  CompensationFactsUpdated: createCompensationFactsUpdated(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    changedSections: ["posted", "market"],
+    postedRecordStatus: "recorded",
+    postedParseState: "parsed_range",
+    marketRecordStatus: "recorded",
+    marketEstimateState: "estimated_range",
+    updatedAt: NOW,
   }),
   JobScored: createJobScored(LOCAL_TENANT, {
     jobId: JOB_ID,
