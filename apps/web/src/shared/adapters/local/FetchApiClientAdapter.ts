@@ -41,6 +41,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   discoverySourcePreview(sourceId: string) {
     return this.client.discoverySourcePreview(sourceId);
   }
+  compensationSources() {
+    return this.client.compensationSources();
+  }
   discoveryLocatorCandidates() {
     return this.client.discoveryLocatorCandidates();
   }

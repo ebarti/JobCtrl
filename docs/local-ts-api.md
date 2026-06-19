@@ -208,6 +208,25 @@ type and policy metadata are visible as columns instead of compact badges:
   Discovery page and are consumed by future discovery title matching; declined
   suggestions remain recorded but inactive.
 
+`GET /v1/compensation/sources` returns the read-only compensation source policy
+registry used by the Settings compensation-source panel. The response contains
+safe policy metadata only: source id, display name, source type, access mode,
+availability, license status, terms/source URLs, freshness policy, attribution
+requirement, supported field names, disabled reason, configured flag, Europe
+coverage notes, and safe operator notes. It does not return credentials, raw
+provider payloads, private-account state, local paths, scraped salary data, or
+salary observations.
+
+Phase 17 keeps the endpoint deterministic and network-free. It does not fetch,
+scrape, cache, import, or display Glassdoor or Levels.fyi compensation data.
+Europe-first public baselines such as Eurostat SES, ESCO, and Spain INE are
+visible as available public sources. Levels.fyi remains unavailable unless
+`JOBHUNTER_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
+`enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
+Glassdoor remains unavailable unless `JOBHUNTER_GLASSDOOR_ACCESS_MODE` is
+`partner_api` or `written_permission`. The endpoint exposes whether those gates
+are configured; it does not describe, request, or return secrets.
+
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
 workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
