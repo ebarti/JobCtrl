@@ -454,6 +454,9 @@ describe("market compensation estimates API", () => {
       ],
       warnings: ["aggregate_baseline", "unknown_warning"],
       unsupportedReasons: ["unsupported_source", "unknown_reason"],
+      aggregateBucket: "US private page",
+      geographyScope: "/Users/private United States",
+      factors: [{ name: "occupation", score: 0.9, band: "high", reason: "Glassdoor private /Users/local credential" }],
     });
     try {
       const response = await app.inject({
@@ -480,7 +483,13 @@ describe("market compensation estimates API", () => {
       expect(serialized).not.toContain("soc");
       expect(serialized).not.toContain("rawproviderpayload");
       expect(serialized).not.toContain("/users/");
+      expect(serialized).not.toContain("/users/local");
+      expect(serialized).not.toContain("credential");
       expect(serialized).not.toContain("credential secret");
+      expect(body.estimate.geographyScope).toBeNull();
+      expect(body.estimate.factors[0]?.reason).toBe(
+        "Market estimate factor recorded by the deterministic Europe public estimator.",
+      );
     } finally {
       await app.close();
       cleanup();

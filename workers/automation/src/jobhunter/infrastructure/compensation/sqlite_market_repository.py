@@ -16,6 +16,11 @@ from jobhunter.domain.compensation import (
     sanitize_market_source_snapshot,
 )
 
+SAFE_GEOGRAPHY_SCOPES = frozenset({"remote_europe", "spain", "eu_wide", "non_eu_europe", "unknown"})
+SAFE_FACTOR_NAMES = frozenset({"agreement", "component", "freshness", "geography", "occupation", "sample", "seniority"})
+SAFE_CONFIDENCE_BANDS = frozenset({"none", "low", "medium", "high"})
+DEFAULT_FACTOR_REASON = "Market estimate factor recorded by the deterministic Europe public estimator."
+
 
 class SqliteMarketCompensationRepository:
     """SQLite-backed repository for canonical market compensation estimates."""
@@ -176,7 +181,7 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
             _nullable_str(_row_value(row, "aggregate_bucket")),
             _json_list(_row_value(row, "source_snapshot_json")),
         ),
-        geography_scope=_nullable_str(_row_value(row, "geography_scope")),
+        geography_scope=_safe_geography_scope(_nullable_str(_row_value(row, "geography_scope"))),
         occupation_code=_nullable_str(_row_value(row, "occupation_code")),
         occupation_label=_nullable_str(_row_value(row, "occupation_label")),
         seniority_label=_nullable_str(_row_value(row, "seniority_label")),
@@ -185,7 +190,11 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
             for item in _json_list(_row_value(row, "source_snapshot_json"))
             if (source := _source_from_dict(item)) is not None
         ),
-        factors=tuple(_factor_from_dict(item) for item in _json_list(_row_value(row, "factor_reasons_json"))),
+        factors=tuple(
+            factor
+            for item in _json_list(_row_value(row, "factor_reasons_json"))
+            if (factor := _factor_from_dict(item)) is not None
+        ),
         insufficient_reasons=tuple(str(item) for item in _json_list(_row_value(row, "insufficient_reasons_json"))),
         unsupported_reasons=tuple(str(item) for item in _json_list(_row_value(row, "unsupported_reasons_json"))),
         source_unavailable_reasons=tuple(
@@ -255,13 +264,23 @@ def _factor_to_dict(factor: MarketConfidenceFactor) -> dict[str, Any]:
     }
 
 
-def _factor_from_dict(value: Any) -> MarketConfidenceFactor:
+def _safe_geography_scope(value: str | None) -> str | None:
+    return value if value in SAFE_GEOGRAPHY_SCOPES else None
+
+
+def _factor_from_dict(value: Any) -> MarketConfidenceFactor | None:
     data = value if isinstance(value, dict) else {}
+    name = str(data.get("name") or "")
+    if name not in SAFE_FACTOR_NAMES:
+        return None
+    band = str(data.get("band") or "none")
+    if band not in SAFE_CONFIDENCE_BANDS:
+        band = "none"
     return MarketConfidenceFactor(
-        name=str(data.get("name") or "occupation"),  # type: ignore[arg-type]
+        name=name,  # type: ignore[arg-type]
         score=float(data.get("score") or 0),
-        band=str(data.get("band") or "none"),  # type: ignore[arg-type]
-        reason=str(data.get("reason") or ""),
+        band=band,  # type: ignore[arg-type]
+        reason=DEFAULT_FACTOR_REASON,
     )
 
 

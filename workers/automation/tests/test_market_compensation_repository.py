@@ -233,7 +233,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             1,
             900,
             "US private page",
-            "remote_europe",
+            "/Users/private United States",
             "2512.1",
             "Software developer",
             "aggregate",
@@ -241,7 +241,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             '"source_type":"public_wage_baseline","release_year":2024,"snapshot_version":"us-private-version",'
             '"geography_scope":"EU","aggregate_bucket":"US private page","attribution":"US public aggregate",'
             '"sample_count":900}]',
-            "[]",
+            '[{"name":"occupation","score":0.9,"band":"high","reason":"Glassdoor private /Users/local credential"}]',
             "[]",
             "[]",
             "[]",
@@ -257,9 +257,13 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
 
     assert loaded is not None
     assert loaded.aggregate_bucket == "Eurostat SES occupation/country aggregate"
+    assert loaded.geography_scope is None
+    assert loaded.factors[0].reason == "Market estimate factor recorded by the deterministic Europe public estimator."
     assert loaded.sources[0].display_name == "Eurostat Structure of Earnings Survey"
     assert loaded.sources[0].snapshot_version == "synthetic-public-fixture"
     assert "glassdoor" not in serialized
     assert "private" not in serialized
     assert "us public" not in serialized
     assert "us-private" not in serialized
+    assert "/users/" not in serialized
+    assert "credential" not in serialized

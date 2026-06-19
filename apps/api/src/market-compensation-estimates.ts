@@ -136,6 +136,7 @@ const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "sample",
   "seniority",
 ]);
+const DEFAULT_FACTOR_REASON = "Market estimate factor recorded by the deterministic Europe public estimator.";
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
@@ -262,7 +263,7 @@ function parseFactors(value: string): MarketCompensationFactor[] {
         name: name as MarketCompensationFactorName,
         score: numberValue(entry.score),
         band: confidenceBand(entry.band),
-        reason: stringValue(entry.reason),
+        reason: DEFAULT_FACTOR_REASON,
       };
     })
     .filter((entry): entry is MarketCompensationFactor => entry !== null);
