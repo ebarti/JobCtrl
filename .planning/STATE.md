@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Salary Range Estimator
 status: active
-last_updated: "2026-06-19T13:54:08Z"
+last_updated: "2026-06-19T14:40:00Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
-  percent: 17
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
+  percent: 33
 ---
 
 # Project State
@@ -20,15 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 18 - Posted Compensation Facts is ready to plan.
+**Current focus:** Phase 19 - Europe Public Market Estimates is ready to plan.
 
 ## Current Position
 
-Phase: 18 of 22 (2 of 6 in v1.3)
+Phase: 19 of 22 (3 of 6 in v1.3)
 Plan: TBD
-Status: Phase 17 complete; Phase 18 ready to plan
-Last activity: 2026-06-19 - Phase 17 delivered source registry and access policy inspection.
-Progress: [##--------] 17%
+Status: Phase 18 complete; Phase 19 ready to plan
+Last activity: 2026-06-19 - Phase 18 delivered canonical posted-compensation facts and read-only inspection API.
+Progress: [###-------] 33%
 
 ## Active Milestone Summary
 
@@ -45,23 +45,24 @@ Scoped source strategy:
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
 | 17 | Source Registry & Access Policy | Complete | SRC-01, SRC-04, SRC-05, SRC-06 |
-| 18 | Posted Compensation Facts | Not started | COMP-01..COMP-05 |
+| 18 | Posted Compensation Facts | Complete | COMP-01..COMP-05 |
 | 19 | Europe Public Market Estimates | Not started | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
 | 20 | Canonical Read Model & Realtime API | Not started | EST-05, API-01..API-05 |
 | 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
 | 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
 
-Next command: `/gsd-plan-phase 18`.
+Next command: `/gsd-plan-phase 19`.
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
+- Total plans completed: 4
 - Average duration: n/a
 - Total execution time: 0 hours
 
 **By phase:**
 - Phase 17: 2/2 plans complete.
+- Phase 18: 2/2 plans complete.
 
 ## Accumulated Context
 
@@ -72,10 +73,11 @@ Next command: `/gsd-plan-phase 18`.
 - Levels.fyi and Glassdoor remain disabled unless permitted access exists; no unauthorized scraping, fetching, caching, or display.
 - Profile-floor comparison is warning-only and must not affect ranking, filtering, apply readiness, blockers, or auto-apply behavior.
 - Phase 17 exposes compensation source policy through a deterministic metadata-only API and Settings panel; no provider network path was added.
+- Phase 18 persists posted compensation facts in `job_posted_compensation_facts`, keeps `jobs.salary` as raw fallback, and exposes a read-only inspection API without changing job list/detail compensation summaries, ranking, filtering, scoring, apply readiness, or apply dispatch.
 
 ### Pending Todos
 
-- Phase 18 must parse posted compensation facts without treating raw legacy salary strings as normalized source of truth.
+- Phase 19 must define Europe public baseline data shape, confidence thresholds, source freshness, geography assumptions, and insufficient-evidence states without adding licensed or non-European salary sources.
 
 ### Blockers/Concerns
 
@@ -94,6 +96,6 @@ Next command: `/gsd-plan-phase 18`.
 ## Session Continuity
 
 Last session: 2026-06-19
-Stopped at: Phase 17 complete and ready for stacked PR
-Latest phase completed: Phase 17 - Source Registry & Access Policy
+Stopped at: Phase 18 complete and ready for stacked PR
+Latest phase completed: Phase 18 - Posted Compensation Facts
 Resume file: None
