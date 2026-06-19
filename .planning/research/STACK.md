@@ -3,7 +3,7 @@
 **Project:** JobHunter v1.3 Salary Range Estimator  
 **Researched:** 2026-06-19  
 **Scope:** Posted salary extraction, market compensation sources, statistical confidence, source provenance, and Jobs triage surfacing.  
-**Overall confidence:** HIGH for repo integration approach and public/government source constraints; MEDIUM for licensed commercial data availability until the user chooses a provider/account.
+**Overall confidence:** HIGH for repo integration approach and public/government source constraints; MEDIUM for licensed commercial data availability until the user chooses a provider/account. Post-research scoping selected Europe-only public baselines for v1.3.
 
 ## Recommendation
 
@@ -15,7 +15,7 @@ The practical stack is:
 | --- | --- | --- |
 | Posted salary extraction | Deterministic Python parser in the Discovery/Enrichment domain, backed by canonical salary-fact rows | `JobMetadata.salary` is currently a raw string and scoring has only a private `_salary_max` heuristic. v1.3 needs inspectable parse facts with source text, period, currency, warnings, and confidence. |
 | Market salary estimation | New Python compensation/market estimator use case, fed by pluggable source adapters | The Python worker already owns external I/O, source provenance, scoring, and local persistence. Keep source calls out of React and out of the TS read model. |
-| Public baseline data | BLS OEWS/O*NET as default public benchmark baseline; optional OFLC/H-1B disclosure import for company/location-specific U.S. tech signal | These are official/public sources with clear access paths and freshness metadata. They are weaker than Levels.fyi for tech leveling, but suitable as legally safe default evidence. |
+| Public baseline data | Eurostat Structure of Earnings Survey plus ESCO occupation mapping as the Europe-wide public baseline; Spain INE Wage Structure Survey as the Spain-specific corroborator | These are official/public European sources with clear access paths and freshness metadata. They are aggregated and survey-based, so they need confidence caveats and should not be framed as company-specific market truth. |
 | Licensed commercial data | Optional Levels.fyi adapter behind an explicit user-provided access configuration | Levels.fyi advertises API/MCP/CLI and data-stream access, but API/data-stream access is gated behind commercial access. Treat it as optional, not table stakes. |
 | Glassdoor | Do not scrape. Use only if the user has explicit API-partner access or written permission | Glassdoor Terms prohibit automated agents/scraping/data mining without express written permission. Public developer docs indicate additional APIs are partner-only. |
 | Statistics | Pure Python aggregation and confidence scoring; use existing `pandas` only for bulk file imports | v1.3 needs medians/percentiles/source agreement, not a heavy statistics stack. Avoid `numpy`/`scipy` unless later requirements need inferential stats. |
@@ -28,8 +28,8 @@ Use a tiered estimator. The UI should show the best available salary evidence an
 
 1. **Posted compensation first.** If the posting contains a usable employer-provided range, show it as the highest-provenance fact. Parse from both the existing `jobs.salary` field and compensation windows in `description` / `full_description`.
 2. **Licensed tech-market benchmark second.** If configured, query Levels.fyi for role/company/location/level data and store only allowed derived results plus provider provenance, according to the user's license.
-3. **Public occupation/location baseline third.** Map job title/seniority to SOC/O*NET, then use BLS OEWS/O*NET wage data as fallback or corroboration.
-4. **OFLC/H-1B disclosure as a niche corroborator.** Use for U.S. employer/location/title evidence when imported locally, but label it as visa/LCA-biased and not a general market range.
+3. **Public Europe occupation/location baseline third.** Map job title/seniority to ESCO/ISCO where possible, then use Eurostat Structure of Earnings Survey datasets as fallback or corroboration.
+4. **Spain INE corroborator for Spain jobs.** Use Spain INE Wage Structure Survey data for Spanish market baselines and label it as official statistical data, not employer-offer evidence.
 5. **No opaque ranking/filtering.** Salary evidence can compare against the profile floor and produce warnings, but v1.3 should not auto-block, hide, or downrank jobs from market estimates.
 
 ## Salary Data Sources Considered
@@ -39,9 +39,10 @@ Use a tiered estimator. The UI should show the best available salary evidence an
 | Posted job salary text | Existing discovery/enrichment fields and full posting text | Raw board salary strings are inconsistent; descriptions can contain unrelated numbers, OTE, hourly rates, contract rates, equity, or benefits. | Fresh at discovery/enrichment time; refresh when posting snapshot changes. | **Use by default.** Store parse source text, source field, normalized range, period, currency, parse warnings, and confidence. |
 | Levels.fyi | Official paid data/API/MCP/CLI/data-stream access or approved embeds | API/data-stream access is commercial. Public page advertises request access, paid benchmark plans, data stream, API/MCP access, and restrictions on transferred data. Do not scrape or redistribute raw data unless license permits. | Levels.fyi markets data as real-time/live, daily-refreshing for paid data, with recent trailing-data products. | **Optional licensed adapter.** Best fit for tech roles, company/level granularity, and total compensation breakdowns. Gate behind config and requirements decision. |
 | Glassdoor | Partner API or express written permission only | Glassdoor Terms prohibit automated agents used to scrape/strip/mine data without express written permission. Jobs API docs say additional APIs are not public and are available to API partners. Public salary pages may show useful numbers, but scraping is not acceptable for this milestone. | Current visible pages can be fresh, but usable automated access is uncertain without a partner agreement. | **Do not integrate in v1.3 unless the user already has licensed access.** Record as a requirements decision, not an implementation default. |
-| BLS OEWS | Official BLS tables/downloads; BLS Public Data API for series where appropriate | OEWS is occupation/location aggregate data, not company or seniority specific. API series IDs can be awkward; tables/downloads may be easier for local cache. | Current OEWS documentation is May 2025, last modified May 15, 2026. Annual estimates for about 830 occupations across national, state, metro, and nonmetro areas. | **Use as default public baseline.** Good for floor/market sanity and public provenance. |
-| O*NET Web Services / O*NET OnLine | Registered developer REST API; O*NET OnLine displays wage/employment data sourced from BLS OEWS | Requires registration for API credentials. O*NET is best for occupation matching/crosswalk and readable occupation labels; wage data ultimately traces to BLS. | O*NET Web Services uses current O*NET database releases; O*NET OnLine wage data references BLS 2025 OEWS updated June 17, 2026. | **Use for title-to-SOC/O*NET mapping.** Use BLS as canonical wage source when possible. |
-| DOL OFLC/H-1B disclosure | Official quarterly/fiscal-year XLSX disclosure files imported locally | Biased toward visa-sponsored roles, certified/offered wage records, and employer-submitted fields. Files are large XLSX; not a simple live API. | OFLC released FY2026 Q2 disclosure data on May 15, 2026, covering Oct 1, 2025 through Mar 31, 2026. | **Optional local import/corroborator.** Useful for company/location/title evidence, but never sole market estimate. |
+| Eurostat Structure of Earnings Survey (SES) | Eurostat public datasets/API; annual/monthly/hourly earnings datasets such as `earn_ses_annual`, `earn_ses_monthly`, `earn_ses_hourly` | Aggregate survey data by occupation/activity/geography/demographics. Not company-specific, not live, and some detailed microdata requires research access/safe-centre rules. | SES is 4-yearly at microdata level; public datasets expose harmonized earnings measures with publication/update timestamps. | **Use as default Europe-wide public baseline.** Label as occupation/location aggregate and degrade confidence for broad mappings. |
+| ESCO | European Commission ESCO web-service API or local API | Occupation taxonomy/mapping only; it does not itself provide salary amounts. Requires careful mapping from noisy job titles to ESCO/ISCO concepts. | ESCO API page lists current version ESCO v1.2.1, last update 2025-12-10. | **Use for Europe occupation mapping.** Pair with Eurostat/INE wage data. |
+| Spain INE Wage Structure Survey | INE public tables/downloads/API where available | Spain-specific official statistics; not company-specific and may use broad occupation/activity groupings. | INE published final 2024 Wage Structure Survey data on 2026-05-28. | **Use as Spain-specific public baseline/corroborator.** Best fit for the user's Europe-only scope when jobs are Spain-local or Spain-remote. |
+| BLS/O*NET/OFLC | U.S. public sources | Strong public U.S. wage data, but outside the selected v1.3 geography. | Current, but not relevant to Europe-only v1.3. | **Out of scope for v1.3.** Keep as future milestone option only. |
 | Salary.com DaaS / CompAnalyst APIs | Commercial APIs | Commercial model; likely requires customer relationship. More employer/HR-oriented than local job seeker MVP. | Vendor-managed. | **Defer.** Consider only if user wants commercial provider support beyond Levels.fyi. |
 | Scraper marketplaces / unofficial APIs | Apify, Bright Data, Piloterr, OpenWeb Ninja, similar | Legal/licensing ambiguity, provenance dilution, possible ToS conflict with source sites, and more infra than needed. | Vendor-dependent. | **Do not add for v1.3.** They undermine the audit-first trust model unless separately licensed and approved. |
 
@@ -56,10 +57,10 @@ Recommended new worker-side modules:
 | `domain/compensation/value_objects.py` | `MoneyAmount`, `SalaryPeriod`, `SalaryRangeFact`, `MarketSalaryEstimate`, `SalarySource`, `SalaryConfidence`, parse warning enums. |
 | `domain/compensation/services.py` | Deterministic parser, range normalization, annualization, source-agreement scoring, confidence formula. |
 | `domain/ports/compensation.py` | `SalaryBenchmarkSourcePort` and `OccupationMatcherPort` interfaces. |
-| `infrastructure/compensation/bls_oews.py` | Local BLS/OEWS table loader/cache and/or API client. |
-| `infrastructure/compensation/onet.py` | O*NET occupation search/crosswalk adapter if API credentials are configured. |
+| `infrastructure/compensation/eurostat_ses.py` | Local Eurostat SES table/API loader and cache for Europe-wide wage baselines. |
+| `infrastructure/compensation/esco.py` | ESCO occupation search/crosswalk adapter or local taxonomy loader for European occupation matching. |
+| `infrastructure/compensation/ine_spain.py` | Spain INE Wage Structure Survey table/API loader for Spain-specific public wage baselines. |
 | `infrastructure/compensation/levels_fyi.py` | Optional licensed adapter; disabled unless configured. |
-| `infrastructure/compensation/oflc.py` | Optional local XLSX disclosure importer using existing `pandas`. |
 
 Keep the estimator deterministic where possible. Use LLMs only if a later phase explicitly needs ambiguous seniority/role classification beyond existing title and employer-analysis signals.
 
@@ -67,8 +68,8 @@ Keep the estimator deterministic where possible. Use LLMs only if a later phase 
 
 | Existing dependency | Use |
 | --- | --- |
-| `httpx` | BLS/O*NET/Levels API calls with timeouts, retries, and source metadata. |
-| `pandas` | Bulk XLSX/CSV import for BLS/OEWS or OFLC files if table downloads are chosen. |
+| `httpx` | Eurostat/ESCO/INE/Levels API calls with timeouts, retries, and source metadata. |
+| `pandas` | Bulk XLSX/CSV import for Eurostat or INE files if table downloads are chosen. |
 | `pydantic` | DTO validation for external source payload adapters if useful. |
 | SQLite | Canonical compensation facts, source observations, cache metadata, and projection columns. |
 | TanStack Query/Table | Jobs list refresh and triage surfacing through existing Operations hooks. |
@@ -112,9 +113,9 @@ Recommended first-pass factors:
 | Factor | Raises confidence | Lowers confidence |
 | --- | --- | --- |
 | Posted salary extraction | Explicit salary field, two-sided range, currency/period present, exact source text | Description-only match, many unrelated numbers, OTE/equity ambiguity, missing period, one-sided range |
-| Role match | O*NET/SOC or Levels role matches title and inferred seniority | Generic title, mixed management/IC signal, no seniority match |
+| Role match | ESCO/ISCO or licensed Levels role matches title and inferred seniority | Generic title, mixed management/IC signal, no seniority match |
 | Location match | Same metro/country/remote market | State/national fallback, remote geography unclear |
-| Company match | Same company in licensed source or OFLC | Industry/occupation-only baseline |
+| Company match | Same company in licensed source | Industry/occupation-only baseline |
 | Source freshness | Posted snapshot current; provider data has captured/updated date | Old imported file, unknown provider timestamp |
 | Source agreement | Posted and market ranges overlap; multiple sources agree | Wide divergence or only one weak source |
 | Sample count | Source exposes sample count/count bucket and it clears threshold | Missing count, tiny count, or source cannot support sample claim |
@@ -144,7 +145,7 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 | A new hosted backend or external database | JobHunter is local-first; SQLite/projections are enough for v1.3. |
 | A new ranking/filter gate from market salary | The milestone explicitly says uncertain compensation should stay audit-first, not opaque gating. |
 | Full currency conversion service | Useful later, but v1.3 can normalize only when currency/period is explicit and label unknowns honestly. |
-| Equity/bonus/TC modeling as required MVP | Posted salary and BLS are base/wage oriented; Levels.fyi total compensation can be optional source metadata if licensed. |
+| Equity/bonus/TC modeling as required MVP | Posted salary and Eurostat/INE public baselines are base/wage oriented; Levels.fyi total compensation can be optional source metadata if licensed and Europe coverage is confirmed. |
 | Broad AI extraction for all salary parsing | Deterministic parse plus warnings is more auditable. Use LLM only for explicit future ambiguous cases. |
 | A frontend-only estimator | Salary facts need canonical provenance and must be visible through the API/read model. |
 | New charting library | Jobs triage needs compact labels, ranges, source trail, and warning states; tables/cards/tags are enough. |
@@ -155,10 +156,10 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 | --- | --- |
 | Does the user have or want to buy Levels.fyi data/API access? | Determines whether v1.3 can support company/level-aware tech compensation beyond public baselines. |
 | Is Glassdoor explicitly licensed/partner-accessible for this project? | Without written permission or partner API access, Glassdoor should be excluded. |
-| What geography is in scope for public baselines? | BLS/O*NET/OFLC are U.S.-centric. Europe/Spain roles need a separate public source decision, or should be labeled unsupported/low-confidence. |
-| Is the estimate base salary only or total compensation? | Posted salary and BLS are base/wage oriented; Levels.fyi can include total compensation. Mixing them without labels will mislead users. |
+| What Europe geography granularity is in scope for public baselines? | Eurostat/INE data can be country/region/occupation/activity aggregates. Requirements should define how Spain-local, Europe-remote, EU-wide, and non-EU-Europe jobs map to estimates or unsupported states. |
+| Is the estimate base salary only or total compensation? | Posted salary and Eurostat/INE public baselines are base/wage oriented; Levels.fyi can include total compensation when licensed. Mixing them without labels will mislead users. |
 | How should remote jobs map to location? | Remote U.S., Europe remote, global remote, and company HQ produce different ranges. This needs explicit assumptions. |
-| What minimum sample/source count is required to show a market range? | Prevents false precision for sparse licensed or OFLC data. |
+| What minimum sample/source count is required to show a market range? | Prevents false precision for sparse licensed data or broad public aggregate data. |
 | Should profile floor comparison use minimum acceptable salary, expectation, or range overlap? | Profile has `salary_expectation`, `salary_range_min`, and `salary_range_max`; UI wording depends on which is authoritative. |
 
 ## Implementation Ordering
@@ -166,7 +167,7 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 1. Add compensation domain value objects and deterministic posted salary parser with fixtures.
 2. Persist `job_salary_facts` and project posted salary audit into list/detail read models.
 3. Replace scoring's ad hoc `_salary_max` path with canonical posted salary facts for profile-floor eligibility warnings/blockers.
-4. Add public baseline adapter: O*NET/SOC mapping plus BLS OEWS cache.
+4. Add public Europe baseline adapters: ESCO/ISCO mapping plus Eurostat SES cache, with Spain INE as a Spain-specific source.
 5. Add optional provider registry and disabled-by-default Levels.fyi adapter shape.
 6. Surface `SalaryAudit` in Jobs overview and audit triage with source trail and unknown states.
 
@@ -185,3 +186,8 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 - DOL OFLC disclosure/performance data: https://www.dol.gov/agencies/eta/foreign-labor/performance
 - FLAG prevailing wages: https://flag.dol.gov/programs/prevailingwages
 - Salary.com API overview: https://developers.salary.com/apis/welcome
+- Eurostat Structure of Earnings Survey microdata overview: https://ec.europa.eu/eurostat/web/microdata/collections-research/structure-of-earnings-survey
+- Eurostat API introduction: https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-introduction
+- Eurostat Structure of earnings survey annual earnings dataset: https://ec.europa.eu/eurostat/databrowser/view/earn_ses_annual/default/table
+- ESCO API overview: https://esco.ec.europa.eu/en/about-esco/escopedia/escopedia/esco-api
+- Spain INE Wage Structure Survey latest data: https://www.ine.es/dyngs/INEbase/en/operacion.htm?c=Estadistica_C&cid=1254736177025&idp=1254735976596

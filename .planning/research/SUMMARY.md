@@ -9,7 +9,7 @@
 
 JobHunter v1.3 should make compensation evidence inspectable in the same trust-first style as the existing job and materials audit surfaces. Experts build this kind of feature by separating employer-posted facts from benchmark estimates, preserving source provenance, modeling uncertainty explicitly, and refusing to turn weak compensation data into hidden ranking or apply gates.
 
-The recommended approach is to build an Enrichment-owned compensation assessment path on the existing local-first stack: deterministic posted salary extraction, canonical SQLite compensation/provenance rows, projection-backed Operations read models, typed contracts, and Jobs list/drawer components that render salary facts as audit evidence. The source strategy should be tiered: posted salary first, optional licensed Levels.fyi-style tech benchmarks second, public BLS/O*NET baselines third, optional OFLC corroboration for U.S. employer/location evidence, and no Glassdoor scraping.
+The recommended approach is to build an Enrichment-owned compensation assessment path on the existing local-first stack: deterministic posted salary extraction, canonical SQLite compensation/provenance rows, projection-backed Operations read models, typed contracts, and Jobs list/drawer components that render salary facts as audit evidence. After requirements scoping, v1.3 is Europe-only: the source strategy should be tiered as posted salary first, Eurostat Structure of Earnings Survey plus ESCO occupation mapping as the public European baseline, Spain INE Wage Structure Survey as the Spain-specific baseline, optional licensed Levels.fyi-style tech benchmarks only when access and European coverage are confirmed, and no Glassdoor scraping.
 
 The main risks are source legality, false precision, lossy normalization, and projection drift between Python and TypeScript. Mitigate them with a salary-source registry, disabled-by-default external adapters, first-class insufficient-evidence states, separate parse and market confidence, canonical rows before UI rendering, projection parity tests, and QA fixtures that prove market estimates do not silently alter fit score, apply readiness, or queue eligibility.
 
@@ -29,8 +29,8 @@ Use the current JobHunter architecture. Do not introduce a new service, scraper 
 
 **Recommended source/integration strategy:**
 - Posted job salary text is the primary source and should always preserve raw/source text.
-- BLS OEWS plus O*NET title/SOC mapping is the safest public default baseline.
-- OFLC/H-1B disclosure can be an optional U.S. corroborator, labeled as visa/LCA-biased.
+- Eurostat Structure of Earnings Survey datasets are the default Europe-wide public baseline, with ESCO used for occupation classification/mapping and clear caveats for aggregation and survey lag.
+- Spain INE Wage Structure Survey is the default Spain-specific corroborator when the job market is Spain.
 - Levels.fyi is optional and licensed only. Build a disabled adapter seam unless the user has approved API/MCP/CLI/data access.
 - Glassdoor must not be scraped. Use only with explicit partner/API access or written permission.
 - Unofficial scraper marketplaces should be excluded from v1.3.
@@ -117,9 +117,9 @@ Based on research, suggested phase structure:
 **Addresses:** Jobs list triage, drawer audit source of truth, below/near/above floor display, legacy raw salary compatibility.
 **Avoids:** Projection drift, UI-only audit claims, and hidden compensation gates.
 
-### Phase 4: Public Baseline And Optional Licensed Adapter Seams
+### Phase 4: Europe Public Baseline And Optional Licensed Adapter Seams
 **Rationale:** Market estimates require provider constraints, source matching, and insufficient-evidence states before UI can make them useful.
-**Delivers:** Market source port, BLS/O*NET baseline path or cache strategy, optional OFLC import seam, disabled Levels.fyi adapter shape, explicit Glassdoor blocked/unavailable handling, source evidence rows, and estimator confidence scoring.
+**Delivers:** Market source port, Eurostat SES baseline path or cache strategy, ESCO occupation mapping, Spain INE wage-source adapter/import seam, disabled Levels.fyi adapter shape, explicit Glassdoor blocked/unavailable handling, source evidence rows, and estimator confidence scoring.
 **Addresses:** Market salary estimation, source trail, source count/sample count, freshness, agreement/conflict, "why not estimated" states.
 **Avoids:** Unlicensed Glassdoor/Levels usage, false precision, geography/seniority mismatch, and slow/brittle Discover failures.
 
@@ -146,7 +146,7 @@ Based on research, suggested phase structure:
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 4:** External integration details. Confirm current BLS/OEWS table/API strategy, O*NET access credentials, Levels.fyi license/access mode, OFLC import scope, and whether Glassdoor is explicitly licensed.
+- **Phase 4:** External integration details. Confirm current Eurostat API/dataset strategy, ESCO API/local taxonomy strategy, Spain INE data access/table strategy, Levels.fyi license/access mode and Europe coverage, and whether Glassdoor is explicitly licensed.
 - **Phase 4:** Statistical thresholds. Define minimum source/sample counts, freshness decay windows, agreement/dispersion bands, remote-location assumptions, and confidence bucket boundaries.
 - **Phase 6:** Correction and refresh policy. Decide whether user corrections become canonical facts, annotations, or deferred backlog.
 
@@ -161,7 +161,7 @@ Phases with standard patterns (skip research-phase):
 - Every displayed salary range must identify whether it is employer-posted, parsed from posting text, benchmark-derived, public baseline, licensed commercial, manual, or unavailable.
 - Glassdoor is out of default scope unless explicit partner/API access or written permission exists. Requirements should state "do not scrape Glassdoor."
 - Levels.fyi support should be a disabled optional adapter unless a license/API/MCP/CLI/data-stream arrangement is confirmed. Do not store or redistribute raw data beyond license permissions.
-- Public baselines should be labeled as occupation/location aggregates, not company-specific market truth.
+- Public European baselines should be labeled as occupation/location aggregates, not company-specific market truth. Spain-specific INE rows should be labeled as national statistical data, not employer offer data.
 - The MVP should support `not_found`, `unparseable`, `ambiguous`, `posted_range`, `not_requested`, `unsupported`, `insufficient_evidence`, and `estimated_range` states.
 - Profile-floor comparison must name whether it used posted salary or market estimate. Default blockers may use posted salary only; market estimates are advisory warnings.
 - Currency, period, base/total/OTE/equity/bonus/hourly/monthly/gross/net assumptions must be preserved and rendered as warnings when ambiguous.
@@ -184,9 +184,9 @@ Phases with standard patterns (skip research-phase):
 
 ### Gaps to Address
 
-- Levels.fyi access: confirm whether the user has or wants paid/API/MCP/CLI/data-stream access and what retention/redistribution is allowed.
+- Levels.fyi access: confirm whether the user has or wants paid/API/MCP/CLI/data-stream access, whether it covers the relevant European markets, and what retention/redistribution is allowed.
 - Glassdoor access: confirm whether explicit partner/API access or written permission exists; otherwise exclude it from implementation.
-- Geography: define whether v1.3 targets U.S.-only public baselines or must support Spain/Europe roles with separate public sources or low-confidence unsupported states.
+- Geography: v1.3 targets Europe-only public baselines. U.S. BLS/O*NET/OFLC support is out of scope unless a later milestone reopens it.
 - Compensation scope: decide whether estimates are base salary only, total compensation, OTE, or component-separated display.
 - Remote mapping: define how remote U.S., Europe remote, global remote, and company-HQ markets should affect estimates.
 - Profile floor: decide which profile field is canonical for "floor" and whether comparisons use annualized base pay only.
@@ -202,7 +202,8 @@ Phases with standard patterns (skip research-phase):
 - `.planning/research/ARCHITECTURE.md` — bounded-context ownership, domain model, persistence/projection/read-model flow, ports, pipeline integration, and build order.
 - `.planning/research/PITFALLS.md` — critical/moderate/minor pitfalls, source constraints, privacy/security risks, preventive requirements, and QA recommendations.
 - JobHunter architecture docs cited by researchers: `docs/architecture.md`, `docs/frontend-target.md`, `docs/job-pipeline-architecture.md`, `docs/local-ts-api.md`, `docs/local-reliability-qa.md`.
-- Official source constraints cited by researchers: Glassdoor Terms of Use, Levels.fyi Terms/API/data offering, BLS OEWS, O*NET Web Services, DOL OFLC disclosure data, ECB FX reference rates, OECD/World Bank PPP references, and European Commission pay-transparency explainer.
+- Official source constraints cited by researchers: Glassdoor Terms of Use, Levels.fyi Terms/API/data offering, Eurostat Structure of Earnings Survey and API documentation, ESCO API documentation, Spain INE Wage Structure Survey, ECB FX reference rates, OECD/World Bank PPP references, and European Commission pay-transparency explainer.
+- Europe-only scope addendum: Eurostat SES is conducted across EU/candidate/EFTA countries and provides comparable earnings data; ESCO provides web-service and local APIs for European occupation classification; Spain INE published final 2024 Wage Structure Survey data on 2026-05-28; Eurostat APIs provide JSON-stat/SDMX access for public datasets.
 
 ### Secondary (MEDIUM confidence)
 - Glassdoor salary behavior/help/blog sources — useful for user-facing salary UX patterns, but not an implementation license.
