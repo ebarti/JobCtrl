@@ -419,10 +419,8 @@ events and append-only apply review/outcome records. It is a user-facing audit
 timeline, not a debug log: raw event payloads, debug messages, local paths, raw
 outcome notes, and email body text stay out of the response.
 Posted-compensation facts are persisted in `job_posted_compensation_facts`
-before inspection. Phase 18 exposes them through a narrow read-only API only;
-the projection-backed Jobs list/detail compensation summary and SSE invalidation
-are deferred to the Phase 20 read-model contract so Python and TypeScript
-projection builders can be updated in parity.
+before inspection. They are exposed through both the narrow read-only
+inspection API and projection-backed job list/detail compensation summaries.
 Company-role reported compensation estimates are persisted in
 `job_market_compensation_estimates` before inspection. Phase 19 estimates are
 deterministic local facts derived from imported or manually supplied reported
@@ -432,6 +430,10 @@ trimodal company tier, confidence factors, safe source snapshots, warnings, and
 reasons. They do not store raw benchmark pages, provider payloads, credentials,
 local paths, private account state, user compensation preferences, or U.S.
 salary baselines.
+Compensation writes emit `CompensationFactsUpdated` rows into `job_events`.
+Those payloads carry only job id, changed section, state markers, and timestamp;
+the Operations/SSE invalidation path refreshes job list/detail queries from the
+projection tables.
 
 ## Runtime Boundaries
 
@@ -808,6 +810,13 @@ existing posted salary text, imports reported observations, writes estimates for
 existing jobs, and refreshes projections without running the job pipeline. It
 does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
 or apply dispatch behavior in Phase 19.
+Operations projections materialize compensation read data from those canonical
+tables into `job_list_projections.compensation_summary_json`,
+`job_detail_projections.compensation_summary_json`, and
+`job_detail_projections.compensation_audit_json`. Both Python and TypeScript
+projection builders own the same JSON shape. The list/detail API deserializes
+those projection columns only; it does not parse raw salary text on read.
+`JobSummary.salary` remains the compatibility raw string.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

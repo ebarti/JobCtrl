@@ -19,10 +19,10 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 
 - [x] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
 - [x] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
-- [x] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
-- [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
+- [x] **Phase 19: Company-Role Reported Market Estimates** - Users can see company-role reported estimates or explicit insufficient-evidence states with confidence factors.
+- [x] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
 - [ ] **Phase 21: Jobs Triage UX & Warning-Only Floor** - Users can scan and inspect compensation evidence in Jobs triage without salary data becoming an automatic gate.
-- [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/public data and no prohibited actions.
+- [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/manual reported compensation data and no prohibited actions.
 
 ## Phase Details
 
@@ -32,9 +32,9 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 **Requirements**: SRC-01, SRC-04, SRC-05, SRC-06
 **Success Criteria** (what must be TRUE):
   1. User can inspect each configured compensation source's access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason.
-  2. User can see Levels.fyi and Glassdoor only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
-  3. User is protected from unauthorized Glassdoor and Levels.fyi use because the product does not fetch, scrape, cache, or display either source without permitted access.
-  4. User can distinguish unavailable licensed-source seams from Europe public baseline sources in compensation source evidence.
+  2. User can see Levels.fyi and Glassdoor automated access as disabled or unavailable unless explicit permitted access is configured.
+  3. User is protected from unauthorized Glassdoor and Levels.fyi use because the product does not fetch, scrape, cache, or display raw provider data without permitted access.
+  4. User can distinguish unavailable automated provider seams from posted salary text and manual reported-compensation import sources in compensation source evidence.
 **Plans**: 17-01 Backend Source Registry; 17-02 Settings Source Policy UI
 
 ### Phase 18: Posted Compensation Facts
@@ -71,7 +71,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   3. Python and TypeScript projection builders produce matching compensation summary/detail JSON for the same canonical fixture.
   4. User can see compensation facts update through the existing Operations/SSE invalidation path while existing raw `JobSummary.salary` compatibility remains intact.
   5. User compensation preferences, local source payloads, credentials, raw benchmark pages, local paths, and unsafe source details are excluded from events, fixtures, logs, and API responses beyond safe comparison facts and allowed excerpts.
-**Plans**: TBD
+**Plans**: 20-01 Compensation Projection Parity; 20-02 Additive API Contract And Realtime Invalidation
 
 ### Phase 21: Jobs Triage UX & Warning-Only Floor
 **Goal**: Users can scan and inspect compensation evidence in Jobs list and drawer triage without salary facts silently changing ranking, filtering, apply readiness, or blockers.
@@ -87,7 +87,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 **UI hint**: yes
 
 ### Phase 22: Product-Path QA & Safety Release
-**Goal**: Users can rely on v1.3 compensation behavior because the full path is verified with synthetic/public data and the feature does not trigger prohibited actions.
+**Goal**: Users can rely on v1.3 compensation behavior because the full path is verified with synthetic/manual reported compensation data and the feature does not trigger prohibited actions.
 **Depends on**: Phase 21
 **Requirements**: QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
 **Success Criteria** (what must be TRUE):
@@ -95,7 +95,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   2. Product-path QA shows salary estimates do not change fit score, apply readiness, apply-review handoff, ranking, filtering, or auto-apply behavior in v1.3.
   3. Backend, API, projection, and frontend tests prove parser confidence, market confidence, and canonical compensation data behave correctly across weak source quality and parity refresh paths.
   4. Frontend checks prove the Jobs list and Jobs drawer render posted, estimated, unavailable, insufficient-evidence, warning-only floor comparison, and source-conflict states.
-  5. QA evidence confirms synthetic or public aggregate data only, with no auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
+  5. QA evidence confirms synthetic/manual reported compensation data only, with no auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
 **Plans**: TBD
 **UI hint**: yes
 
@@ -109,7 +109,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 | 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
 | 18. Posted Compensation Facts | 2/2 | Complete | 2026-06-19 |
 | 19. Europe Public Market Estimates | 2/2 | Complete | 2026-06-19 |
-| 20. Canonical Read Model & Realtime API | 0/TBD | Not started | - |
+| 20. Canonical Read Model & Realtime API | 2/2 | Complete | 2026-06-19 |
 | 21. Jobs Triage UX & Warning-Only Floor | 0/TBD | Not started | - |
 | 22. Product-Path QA & Safety Release | 0/TBD | Not started | - |
 
@@ -141,4 +141,4 @@ Artifacts:
 - Duplicate mappings: 0
 
 ---
-*Last updated: 2026-06-19 after Phase 19 verification*
+*Last updated: 2026-06-19 after Phase 20 verification*

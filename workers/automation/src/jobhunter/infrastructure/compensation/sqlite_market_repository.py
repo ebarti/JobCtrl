@@ -116,6 +116,7 @@ class SqliteMarketCompensationRepository:
             ),
         )
         self._conn.commit()
+        self._record_updated_event(estimate)
 
     def get_estimate(self, tenant_id: str, job_url: str) -> MarketCompensationEstimate | None:
         row = self._conn.execute(
@@ -210,6 +211,31 @@ class SqliteMarketCompensationRepository:
         return _nullable_int(_row_value(row, "annualized_minimum_amount")), _nullable_int(
             _row_value(row, "annualized_maximum_amount")
         )
+
+    def _record_updated_event(self, estimate: MarketCompensationEstimate) -> None:
+        try:
+            from jobhunter.state import record_job_event
+
+            record_job_event(
+                self._conn,
+                estimate.job_url,
+                "enrich",
+                "CompensationFactsUpdated",
+                message="Market compensation estimate updated",
+                occurred_at=estimate.estimated_at,
+                payload={
+                    "jobId": estimate.job_url,
+                    "changedSections": ["market"],
+                    "postedRecordStatus": None,
+                    "postedParseState": None,
+                    "marketRecordStatus": "recorded",
+                    "marketEstimateState": estimate.estimate_state,
+                    "updatedAt": estimate.estimated_at,
+                },
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            return
 
 
 def load_reported_compensation_observations(path: Path | str) -> tuple[ReportedCompensationObservation, ...]:

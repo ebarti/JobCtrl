@@ -48,6 +48,7 @@ import {
 } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
 import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
+import { createCompensationFactsUpdated } from "../src/events/compensation.js";
 
 describe("DomainEvent base", () => {
   it("createDomainEvent sets envelope fields", () => {
@@ -514,6 +515,24 @@ describe("Profile events", () => {
   });
 });
 
+describe("Compensation events", () => {
+  it("CompensationFactsUpdated carries safe state markers only", () => {
+    const event = createCompensationFactsUpdated(LOCAL_TENANT, {
+      jobId: "j1",
+      changedSections: ["posted", "market"],
+      postedRecordStatus: "recorded",
+      postedParseState: "parsed_range",
+      marketRecordStatus: "recorded",
+      marketEstimateState: "estimated_range",
+      updatedAt: "2026-06-19T10:00:00Z",
+    });
+    expect(event.eventType).toBe("CompensationFactsUpdated");
+    expect(event.payload.changedSections).toEqual(["posted", "market"]);
+    expect(JSON.stringify(event.payload)).not.toContain("salaryExpectation");
+    expect(JSON.stringify(event.payload)).not.toContain("sourceText");
+  });
+});
+
 describe("All events carry tenantId", () => {
   const factories = [
     () =>
@@ -598,6 +617,16 @@ describe("All events carry tenantId", () => {
         verifiedAt: "t",
       }),
     () =>
+      createCompensationFactsUpdated(LOCAL_TENANT, {
+        jobId: "j1",
+        changedSections: ["posted"],
+        postedRecordStatus: "recorded",
+        postedParseState: "parsed_range",
+        marketRecordStatus: null,
+        marketEstimateState: null,
+        updatedAt: "t",
+      }),
+    () =>
       createJobScored(LOCAL_TENANT, {
         jobId: "j1",
         fitScore: 5,
@@ -674,7 +703,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(53);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(56);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -955,6 +984,15 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         source: "x",
         importedSections: [],
         importedAt: "t",
+      }).eventType,
+      createCompensationFactsUpdated(LOCAL_TENANT, {
+        jobId: "j",
+        changedSections: ["market"],
+        postedRecordStatus: null,
+        postedParseState: null,
+        marketRecordStatus: "recorded",
+        marketEstimateState: "insufficient_evidence",
+        updatedAt: "t",
       }).eventType,
     ]);
     for (const eventType of fromFactories) {

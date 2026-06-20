@@ -128,7 +128,11 @@ const SOURCE_DEFAULTS: Record<
     attribution: "Manual reported compensation import",
   },
 };
-const SAFE_AGGREGATE_BUCKETS = new Set(Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket));
+const SAFE_AGGREGATE_BUCKETS = new Set([
+  ...Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket),
+  "reported company adjacent-role compensation",
+  "trimodal tier role fallback",
+]);
 const SAFE_GEOGRAPHY_SCOPES = new Set(["Europe", "reported"]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "agreement",

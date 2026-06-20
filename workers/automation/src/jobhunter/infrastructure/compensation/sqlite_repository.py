@@ -69,6 +69,7 @@ class SqlitePostedCompensationRepository:
             ),
         )
         self._conn.commit()
+        self._record_updated_event(fact)
 
     def get_fact(self, tenant_id: str, job_url: str) -> PostedCompensationFact | None:
         row = self._conn.execute(
@@ -108,6 +109,31 @@ class SqlitePostedCompensationRepository:
             )
         self._conn.commit()
         return len(rows)
+
+    def _record_updated_event(self, fact: PostedCompensationFact) -> None:
+        try:
+            from jobhunter.state import record_job_event
+
+            record_job_event(
+                self._conn,
+                fact.job_url,
+                "enrich",
+                "CompensationFactsUpdated",
+                message="Posted compensation fact updated",
+                occurred_at=fact.parsed_at,
+                payload={
+                    "jobId": fact.job_url,
+                    "changedSections": ["posted"],
+                    "postedRecordStatus": "recorded",
+                    "postedParseState": fact.parse_state,
+                    "marketRecordStatus": None,
+                    "marketEstimateState": None,
+                    "updatedAt": fact.parsed_at,
+                },
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            return
 
 
 def _row_to_fact(row: sqlite3.Row | tuple[Any, ...]) -> PostedCompensationFact:

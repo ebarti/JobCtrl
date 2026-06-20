@@ -41,7 +41,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
@@ -87,6 +87,81 @@ log = logging.getLogger(__name__)
 
 
 PROJECTION_NAME = "operations_projections"
+COMPENSATION_PROJECTION_VERSION = 1
+POSTED_COMPENSATION_WARNING_MESSAGES = {
+    "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
+    "bonus_component": "The source text mentions bonus compensation.",
+    "broad_range": "The posted range is broad enough to reduce precision.",
+    "commission_component": "The source text mentions commission compensation.",
+    "equity_component": "The source text mentions equity or stock compensation.",
+    "hourly_period": "The source text uses an hourly compensation period.",
+    "missing_currency": "The parser could not identify an explicit currency.",
+    "missing_period": "The parser could not identify an explicit compensation period.",
+    "monthly_period": "The source text uses a monthly compensation period.",
+    "no_amount_found": "No compensation amount could be safely extracted.",
+    "one_sided_range": "The posted range is one-sided.",
+    "ote_component": "The source text mentions on-target earnings.",
+    "source_text_truncated": "The stored source text was truncated to the bounded salary excerpt limit.",
+}
+MARKET_COMPENSATION_WARNING_MESSAGES = {
+    "company_role_fallback": "The estimate fell back from exact company-role evidence to adjacent company or tier evidence.",
+    "location_mismatch": "Reported compensation locations did not strongly match the job location.",
+    "low_sample_count": "Reported compensation sample support is low.",
+    "reported_compensation_sample": "The estimate uses reported compensation rows for the job company and role.",
+    "source_conflict_with_posted_salary": "Reported compensation diverges materially from the posted salary.",
+    "stale_source_snapshot": "A source snapshot is stale under the freshness policy.",
+    "trimodal_tier_inferred": "The company tier was inferred from reported compensation amounts.",
+}
+MARKET_COMPENSATION_REASON_MESSAGES = {
+    "low_sample_count": "Reported compensation sample support is below the configured confidence threshold.",
+    "missing_company": "The job has no company name to match reported compensation.",
+    "missing_reported_observation": "No reported compensation row matched this job's company and role.",
+    "missing_role": "The job has no title/role text to match reported compensation.",
+    "source_dispersion_too_high": "Reported compensation rows diverged too much to emit a precise range.",
+    "stale_source_snapshot": "A required reported compensation source snapshot is stale under the freshness policy.",
+    "unsupported_component": "The compensation component is outside the supported reported compensation model.",
+    "unsupported_source": "Unsupported source evidence was rejected.",
+    "weak_company_match": "Company match support was too weak for a range.",
+    "weak_level_match": "Level/seniority support was too weak for a range.",
+    "weak_location_match": "Location support was too weak for a range.",
+    "weak_role_match": "Role match support was too weak for a range.",
+}
+MARKET_SOURCE_DEFAULTS = {
+    "levels_fyi": {
+        "displayName": "Levels.fyi",
+        "sourceType": "reported_compensation",
+        "snapshotVersion": "reported-compensation-import-v1",
+        "geographyScope": "reported",
+        "aggregateBucket": "reported company-role compensation",
+        "attribution": "Levels.fyi reported compensation data",
+    },
+    "glassdoor": {
+        "displayName": "Glassdoor",
+        "sourceType": "reported_compensation",
+        "snapshotVersion": "reported-compensation-import-v1",
+        "geographyScope": "reported",
+        "aggregateBucket": "reported company-role compensation",
+        "attribution": "Glassdoor reported compensation data",
+    },
+    "manual_reported_compensation": {
+        "displayName": "Manual reported compensation import",
+        "sourceType": "reported_compensation",
+        "snapshotVersion": "reported-compensation-import-v1",
+        "geographyScope": "reported",
+        "aggregateBucket": "reported company-role compensation",
+        "attribution": "Manual reported compensation import",
+    },
+}
+MARKET_SAFE_AGGREGATE_BUCKETS = {
+    "reported company-role compensation",
+    "reported company adjacent-role compensation",
+    "trimodal tier role fallback",
+}
+MARKET_SAFE_GEOGRAPHY_SCOPES = {"Europe", "reported"}
+MARKET_SAFE_FACTOR_NAMES = {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
+MARKET_CONFIDENCE_BANDS = {"high", "medium", "low", "none"}
+MARKET_RECORDED_STATES = {"unsupported", "source_unavailable", "insufficient_evidence", "estimated_range"}
+MARKET_DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
 
 STAGE_ORDER: tuple[str, ...] = (
     "discover",
@@ -468,6 +543,10 @@ class ProjectionBuilder:
         full_description = enrichment.get("full_description") or _row_str(
             job_row, "full_description"
         )
+        compensation_summary, compensation_audit = self._build_compensation_projection(
+            job_url,
+            _row_nullable_str(job_row, "salary"),
+        )
 
         last_updated_at = _utc_now()
 
@@ -485,6 +564,7 @@ class ProjectionBuilder:
             description=description,
             full_description=full_description,
             fit_score=fit_score,
+            compensation_summary_json=compensation_summary,
             score_breakdown_json=score_breakdown_json,
             score_keywords_json=score_keywords_json,
             score_reasoning=score_reasoning,
@@ -514,6 +594,8 @@ class ProjectionBuilder:
             description_preview=_preview_text(
                 full_description or description, 6000
             ),
+            compensation_summary_json=compensation_summary,
+            compensation_audit_json=compensation_audit,
             score_breakdown_json=score_breakdown_json,
             score_keywords_json=score_keywords_json,
             score_reasoning=score_reasoning,
@@ -550,6 +632,151 @@ class ProjectionBuilder:
         self._store.replace_artifacts_for_job(
             str(self._tenant_id), job_url, artifact_projs
         )
+
+    def _build_compensation_projection(
+        self,
+        job_url: str,
+        legacy_raw_salary: str | None,
+    ) -> tuple[str, str]:
+        posted = self._load_posted_compensation(job_url, legacy_raw_salary)
+        market = self._load_market_compensation(job_url)
+        posted_warning_count = (
+            len(posted["fact"]["warnings"])
+            if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
+            else 0
+        )
+        market_warning_count = (
+            len(market["estimate"]["warnings"])
+            if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+            else 0
+        )
+        posted_range = (
+            _posted_range_summary(posted["fact"])
+            if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
+            else None
+        )
+        market_range = (
+            _market_range_summary(market["estimate"])
+            if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+            else None
+        )
+        summary = {
+            "projectionVersion": COMPENSATION_PROJECTION_VERSION,
+            "legacyRawSalary": (
+                posted["fact"]["legacyRawSalary"]
+                if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
+                else posted.get("legacyRawSalary")
+            ),
+            "warningCount": posted_warning_count + market_warning_count,
+            "posted": {
+                "sourceKind": "posted",
+                "recordStatus": posted["recordStatus"],
+                "parseState": (
+                    posted["fact"]["parseState"]
+                    if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
+                    else None
+                ),
+                "confidence": (
+                    posted["fact"]["confidence"]
+                    if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
+                    else "none"
+                ),
+                "warningCount": posted_warning_count,
+                "range": posted_range,
+                "displayRange": posted_range.get("displayRange") if posted_range else None,
+            },
+            "market": {
+                "sourceKind": "reported_company_role_market",
+                "recordStatus": market["recordStatus"],
+                "estimateState": (
+                    market["estimate"]["estimateState"]
+                    if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+                    else "not_requested"
+                ),
+                "confidenceBand": (
+                    market["estimate"]["confidenceBand"]
+                    if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+                    else "none"
+                ),
+                "sourceCount": (
+                    market["estimate"]["sourceCount"]
+                    if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+                    else 0
+                ),
+                "warningCount": market_warning_count,
+                "range": market_range,
+                "displayRange": market_range.get("displayRange") if market_range else None,
+            },
+        }
+        audit = {
+            "projectionVersion": COMPENSATION_PROJECTION_VERSION,
+            "posted": posted,
+            "market": market,
+        }
+        return json.dumps(summary), json.dumps(audit)
+
+    def _load_posted_compensation(
+        self,
+        job_url: str,
+        legacy_raw_salary: str | None,
+    ) -> dict[str, Any]:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT tenant_id, job_url, source_field, source_text,
+                       legacy_raw_salary, parse_state, currency, period,
+                       component, minimum_amount, maximum_amount,
+                       annualized_minimum_amount, annualized_maximum_amount,
+                       annualization_assumption, confidence, warnings_json,
+                       parser_version, source_hash, parsed_at
+                FROM job_posted_compensation_facts
+                WHERE tenant_id = ? AND job_url = ?
+                """,
+                (str(self._tenant_id), job_url),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        if row is None:
+            return {
+                "ok": True,
+                "recordStatus": "not_recorded",
+                "jobKey": job_url,
+                "legacyRawSalary": _nullable_text(legacy_raw_salary),
+            }
+        fact = _posted_fact_from_row(row)
+        return {"ok": True, "recordStatus": "recorded", "fact": fact}
+
+    def _load_market_compensation(self, job_url: str) -> dict[str, Any]:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT tenant_id, job_url, estimate_state, currency, period,
+                       component, minimum_amount, maximum_amount,
+                       confidence_band, confidence_score, source_count,
+                       sample_count, aggregate_bucket, geography_scope,
+                       occupation_code, occupation_label, seniority_label,
+                       source_snapshot_json, factor_reasons_json,
+                       insufficient_reasons_json, unsupported_reasons_json,
+                       source_unavailable_reasons_json, warnings_json,
+                       estimator_version, estimated_at, company_name,
+                       normalized_company, role_title, normalized_role,
+                       company_tier, match_scope
+                FROM job_market_compensation_estimates
+                WHERE tenant_id = ? AND job_url = ?
+                """,
+                (str(self._tenant_id), job_url),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        if row is None:
+            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
+        if not _row_str(row, "estimator_version").startswith("company-role-reported-compensation-"):
+            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
+        estimate_state = _row_str(row, "estimate_state")
+        if estimate_state not in MARKET_RECORDED_STATES:
+            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
+        estimate = _market_estimate_from_row(row)
+        return {"ok": True, "recordStatus": "recorded", "estimate": estimate}
 
     # ------------------------------------------------------------- joiners
 
@@ -1404,6 +1631,308 @@ def _row_nullable_int(row: object, key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _posted_fact_from_row(row: object) -> dict[str, Any]:
+    warnings = _warnings(_row_str(row, "warnings_json"), POSTED_COMPENSATION_WARNING_MESSAGES)
+    base: dict[str, Any] = {
+        "tenantId": _row_str(row, "tenant_id"),
+        "jobKey": _row_str(row, "job_url"),
+        "sourceField": _row_str(row, "source_field"),
+        "legacyRawSalary": _nullable_text(_row_get(row, "legacy_raw_salary")),
+        "parserVersion": _row_str(row, "parser_version"),
+        "sourceHash": _row_str(row, "source_hash"),
+        "parsedAt": _row_str(row, "parsed_at"),
+        "warnings": warnings,
+    }
+    parse_state = _row_str(row, "parse_state")
+    if parse_state == "missing":
+        return {
+            **base,
+            "parseState": "missing",
+            "sourceText": None,
+            "confidence": "none",
+        }
+    if parse_state == "unparseable":
+        return {
+            **base,
+            "parseState": "unparseable",
+            "sourceText": _row_str(row, "source_text"),
+            "confidence": "low",
+        }
+    if parse_state == "ambiguous":
+        confidence = "medium" if _row_str(row, "confidence") == "medium" else "low"
+        return {
+            **base,
+            "parseState": "ambiguous",
+            "sourceText": _row_str(row, "source_text"),
+            "confidence": confidence,
+        }
+    confidence = _row_str(row, "confidence")
+    return {
+        **base,
+        "parseState": "parsed_range",
+        "sourceText": _row_str(row, "source_text"),
+        "currency": _nullable_text(_row_get(row, "currency")),
+        "period": _row_str(row, "period"),
+        "component": _row_str(row, "component"),
+        "minimumAmount": _nullable_int(_row_get(row, "minimum_amount")),
+        "maximumAmount": _nullable_int(_row_get(row, "maximum_amount")),
+        "annualizedMinimumAmount": _nullable_int(_row_get(row, "annualized_minimum_amount")),
+        "annualizedMaximumAmount": _nullable_int(_row_get(row, "annualized_maximum_amount")),
+        "annualizationAssumption": _nullable_text(_row_get(row, "annualization_assumption")),
+        "confidence": confidence if confidence in {"high", "medium"} else "low",
+    }
+
+
+def _market_estimate_from_row(row: object) -> dict[str, Any]:
+    sources = _market_sources(_row_str(row, "source_snapshot_json"))
+    estimate_state = _row_str(row, "estimate_state")
+    confidence_band = _confidence_band(_row_get(row, "confidence_band"))
+    base: dict[str, Any] = {
+        "tenantId": _row_str(row, "tenant_id"),
+        "jobKey": _row_str(row, "job_url"),
+        "estimateState": estimate_state,
+        "confidenceBand": confidence_band,
+        "confidenceScore": _number(_row_get(row, "confidence_score")),
+        "sourceCount": int(_number(_row_get(row, "source_count"))),
+        "sampleCount": _nullable_int(_row_get(row, "sample_count")),
+        "aggregateBucket": _safe_market_aggregate_bucket(_row_get(row, "aggregate_bucket"), sources),
+        "geographyScope": _safe_market_geography_scope(_row_get(row, "geography_scope")),
+        "occupationCode": _nullable_text(_row_get(row, "occupation_code")),
+        "occupationLabel": _nullable_text(_row_get(row, "occupation_label")),
+        "seniorityLabel": _nullable_text(_row_get(row, "seniority_label")),
+        "companyName": _nullable_text(_row_get(row, "company_name")),
+        "normalizedCompany": _nullable_text(_row_get(row, "normalized_company")),
+        "roleTitle": _nullable_text(_row_get(row, "role_title")),
+        "normalizedRole": _nullable_text(_row_get(row, "normalized_role")),
+        "companyTier": _company_tier(_row_get(row, "company_tier")),
+        "matchScope": _market_match_scope(_row_get(row, "match_scope")),
+        "sources": sources,
+        "factors": _market_factors(_row_str(row, "factor_reasons_json")),
+        "warnings": _warnings(_row_str(row, "warnings_json"), MARKET_COMPENSATION_WARNING_MESSAGES),
+        "estimatorVersion": _row_str(row, "estimator_version"),
+        "estimatedAt": _row_str(row, "estimated_at"),
+    }
+    if estimate_state == "unsupported":
+        return {
+            **base,
+            "estimateState": "unsupported",
+            "unsupportedReasons": _reasons(
+                _row_str(row, "unsupported_reasons_json"),
+                MARKET_COMPENSATION_REASON_MESSAGES,
+            ),
+        }
+    if estimate_state == "source_unavailable":
+        return {
+            **base,
+            "estimateState": "source_unavailable",
+            "sourceUnavailableReasons": _reasons(
+                _row_str(row, "source_unavailable_reasons_json"),
+                MARKET_COMPENSATION_REASON_MESSAGES,
+            ),
+        }
+    if estimate_state == "insufficient_evidence":
+        return {
+            **base,
+            "estimateState": "insufficient_evidence",
+            "insufficientReasons": _reasons(
+                _row_str(row, "insufficient_reasons_json"),
+                MARKET_COMPENSATION_REASON_MESSAGES,
+            ),
+        }
+    return {
+        **base,
+        "estimateState": "estimated_range",
+        "currency": _nullable_text(_row_get(row, "currency")) or "EUR",
+        "period": _row_str(row, "period"),
+        "component": _row_str(row, "component"),
+        "minimumAmount": _nullable_int(_row_get(row, "minimum_amount")) or 0,
+        "maximumAmount": _nullable_int(_row_get(row, "maximum_amount")) or 0,
+    }
+
+
+def _posted_range_summary(fact: dict[str, Any]) -> dict[str, Any] | None:
+    if fact.get("parseState") != "parsed_range":
+        return None
+    return {
+        "currency": fact.get("currency"),
+        "period": fact.get("period"),
+        "component": fact.get("component"),
+        "minimumAmount": fact.get("minimumAmount"),
+        "maximumAmount": fact.get("maximumAmount"),
+        "annualizedMinimumAmount": fact.get("annualizedMinimumAmount"),
+        "annualizedMaximumAmount": fact.get("annualizedMaximumAmount"),
+        "displayRange": _format_compensation_range(
+            fact.get("currency"),
+            fact.get("minimumAmount"),
+            fact.get("maximumAmount"),
+            fact.get("period"),
+        ),
+    }
+
+
+def _market_range_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
+    if estimate.get("estimateState") != "estimated_range":
+        return None
+    return {
+        "currency": estimate.get("currency"),
+        "period": estimate.get("period"),
+        "component": estimate.get("component"),
+        "minimumAmount": estimate.get("minimumAmount"),
+        "maximumAmount": estimate.get("maximumAmount"),
+        "displayRange": _format_compensation_range(
+            estimate.get("currency"),
+            estimate.get("minimumAmount"),
+            estimate.get("maximumAmount"),
+            estimate.get("period"),
+        ),
+    }
+
+
+def _format_compensation_range(
+    currency: object,
+    minimum_amount: object,
+    maximum_amount: object,
+    period: object,
+) -> str | None:
+    minimum = _nullable_int(minimum_amount)
+    maximum = _nullable_int(maximum_amount)
+    if minimum is None and maximum is None:
+        return None
+    prefix = f"{currency} " if currency else ""
+    suffix = f"/{period}" if period else ""
+    if minimum is not None and maximum is not None:
+        return f"{prefix}{minimum}{suffix}" if minimum == maximum else f"{prefix}{minimum}-{maximum}{suffix}"
+    if minimum is not None:
+        return f"{prefix}{minimum}+{suffix}"
+    return f"{prefix}up to {maximum}{suffix}"
+
+
+def _warnings(value: str, messages: dict[str, str]) -> list[dict[str, str]]:
+    return [{"code": code, "message": messages[code]} for code in _json_strings(value) if code in messages]
+
+
+def _reasons(value: str, messages: dict[str, str]) -> list[dict[str, str]]:
+    return [{"code": code, "message": messages[code]} for code in _json_strings(value) if code in messages]
+
+
+def _market_factors(value: str) -> list[dict[str, Any]]:
+    factors: list[dict[str, Any]] = []
+    for item in _json_records(value):
+        name = str(item.get("name") or "")
+        if name not in MARKET_SAFE_FACTOR_NAMES:
+            continue
+        factors.append(
+            {
+                "name": name,
+                "score": _number(item.get("score")),
+                "band": _confidence_band(item.get("band")),
+                "reason": MARKET_DEFAULT_FACTOR_REASON,
+            }
+        )
+    return factors
+
+
+def _market_sources(value: str) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    for item in _json_records(value):
+        source_id = str(item.get("source_id") or "")
+        source_type = str(item.get("source_type") or "")
+        defaults = MARKET_SOURCE_DEFAULTS.get(source_id)
+        if defaults is None or source_type != defaults["sourceType"]:
+            continue
+        sources.append(
+            {
+                "sourceId": source_id,
+                "displayName": defaults["displayName"],
+                "sourceType": defaults["sourceType"],
+                "releaseYear": _nullable_int(item.get("release_year")),
+                "snapshotVersion": defaults["snapshotVersion"],
+                "geographyScope": defaults["geographyScope"],
+                "aggregateBucket": defaults["aggregateBucket"],
+                "attribution": defaults["attribution"],
+                "sampleCount": _nullable_int(item.get("sample_count")),
+            }
+        )
+    return sources
+
+
+def _safe_market_aggregate_bucket(value: object, sources: list[dict[str, Any]]) -> str | None:
+    text = _nullable_text(value)
+    if text in MARKET_SAFE_AGGREGATE_BUCKETS:
+        return text
+    buckets = list(dict.fromkeys(str(source["aggregateBucket"]) for source in sources))
+    return ", ".join(buckets) if buckets else None
+
+
+def _safe_market_geography_scope(value: object) -> str | None:
+    text = _nullable_text(value)
+    return text if text in MARKET_SAFE_GEOGRAPHY_SCOPES else None
+
+
+def _company_tier(value: object) -> str:
+    text = _nullable_text(value)
+    if text in {"tier_1_local", "tier_2_ambitious", "tier_3_top_of_market"}:
+        return text
+    return "unknown"
+
+
+def _market_match_scope(value: object) -> str:
+    text = _nullable_text(value)
+    if text in {"exact_company_role", "company_adjacent_role", "tier_role_fallback"}:
+        return text
+    return "none"
+
+
+def _json_strings(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
+
+
+def _json_records(value: str) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _nullable_text(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _nullable_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _number(value: object) -> float:
+    if value is None or value == "":
+        return 0.0
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _confidence_band(value: object) -> str:
+    text = str(value or "none")
+    return text if text in MARKET_CONFIDENCE_BANDS else "none"
 
 
 def _with_synthetic_pdf_artifacts(

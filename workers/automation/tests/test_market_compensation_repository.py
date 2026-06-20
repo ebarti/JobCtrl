@@ -255,6 +255,27 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
     assert "credential" not in serialized
     assert "secret" not in serialized
 
+    event = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+        WHERE job_url = ? AND event_type = 'CompensationFactsUpdated'
+        ORDER BY event_id DESC LIMIT 1
+        """,
+        (job_url,),
+    ).fetchone()
+    payload = json.loads(event["payload_json"])
+    assert payload == {
+        "jobId": job_url,
+        "changedSections": ["market"],
+        "postedRecordStatus": None,
+        "postedParseState": None,
+        "marketRecordStatus": "recorded",
+        "marketEstimateState": "estimated_range",
+        "updatedAt": "2026-06-19T10:00:00Z",
+    }
+    assert "sources" not in payload
+    assert "eurostat" not in json.dumps(payload).lower()
+
 
 def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/stale-source-json")

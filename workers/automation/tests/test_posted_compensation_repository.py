@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -60,6 +61,27 @@ def test_upsert_and_read_round_trip(conn: sqlite3.Connection) -> None:
     assert loaded.annualized_minimum_amount == 80_000
     assert loaded.confidence == "high"
     assert loaded.warnings == ()
+
+    event = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+        WHERE job_url = ? AND event_type = 'CompensationFactsUpdated'
+        ORDER BY event_id DESC LIMIT 1
+        """,
+        (job_url,),
+    ).fetchone()
+    payload = json.loads(event["payload_json"])
+    assert payload == {
+        "jobId": job_url,
+        "changedSections": ["posted"],
+        "postedRecordStatus": "recorded",
+        "postedParseState": "parsed_range",
+        "marketRecordStatus": None,
+        "marketEstimateState": None,
+        "updatedAt": "2026-06-19T10:00:00Z",
+    }
+    assert "sourceText" not in payload
+    assert "€80,000" not in json.dumps(payload)
 
 
 def test_backfill_is_idempotent_and_preserves_legacy_salary(conn: sqlite3.Connection) -> None:

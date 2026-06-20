@@ -1246,6 +1246,52 @@ export interface ScoreStaleness {
   pendingExplicitRescore: boolean;
 }
 
+export interface JobCompensationRangeSummary {
+  currency: string | null;
+  period: string;
+  component: string;
+  minimumAmount: number | null;
+  maximumAmount: number | null;
+  annualizedMinimumAmount?: number | null;
+  annualizedMaximumAmount?: number | null;
+  displayRange: string | null;
+}
+
+export interface JobPostedCompensationSummary {
+  sourceKind: "posted";
+  recordStatus: "recorded" | "not_recorded";
+  parseState: PostedCompensationParseState | null;
+  confidence: PostedCompensationConfidence;
+  warningCount: number;
+  range: JobCompensationRangeSummary | null;
+  displayRange: string | null;
+}
+
+export interface JobMarketCompensationSummary {
+  sourceKind: "reported_company_role_market";
+  recordStatus: "recorded" | "not_requested";
+  estimateState: MarketCompensationEstimateState;
+  confidenceBand: MarketCompensationConfidenceBand;
+  sourceCount: number;
+  warningCount: number;
+  range: JobCompensationRangeSummary | null;
+  displayRange: string | null;
+}
+
+export interface JobCompensationSummary {
+  projectionVersion: number;
+  legacyRawSalary: string | null;
+  warningCount: number;
+  posted: JobPostedCompensationSummary;
+  market: JobMarketCompensationSummary;
+}
+
+export interface JobCompensationAudit {
+  projectionVersion: number;
+  posted: PostedCompensationFactResponse;
+  market: MarketCompensationEstimateResponse;
+}
+
 export interface JobSummary {
   jobKey: string;
   url: string;
@@ -1258,6 +1304,7 @@ export interface JobSummary {
   strategy: string;
   location: string;
   salary: string;
+  compensationSummary: JobCompensationSummary | null;
   discoveredAt: string | null;
   applicationUrl: string | null;
   fitScore: number | null;
@@ -1580,6 +1627,10 @@ export interface JobDetail {
   // Requirement-led fit audit served from projection rows, or null when this
   // job has not been scored with requirement-level assessments yet.
   requirementFitReport: RequirementFitReport | null;
+  // Projection-backed compensation facts from canonical posted-fact and
+  // reported company-role estimate rows. Null only when the projection row is
+  // absent or contains invalid JSON.
+  compensationAudit: JobCompensationAudit | null;
 }
 
 export interface ArtifactDetail {

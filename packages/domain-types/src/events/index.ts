@@ -203,6 +203,13 @@ export {
   createTailoringPolicyUpdated,
 } from "./profile.js";
 
+export {
+  type CompensationChangedSection,
+  type CompensationFactsUpdated,
+  type CompensationFactsUpdatedPayload,
+  createCompensationFactsUpdated,
+} from "./compensation.js";
+
 import type {
   JobDeleted,
   JobDiscovered,
@@ -266,6 +273,7 @@ import type {
   StageStarted,
 } from "./orchestration.js";
 import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
+import type { CompensationFactsUpdated } from "./compensation.js";
 
 export type DomainEventUnion =
   | JobDiscovered
@@ -322,7 +330,8 @@ export type DomainEventUnion =
   | StageCanceled
   | ProfileUpdated
   | ProfileImported
-  | TailoringPolicyUpdated;
+  | TailoringPolicyUpdated
+  | CompensationFactsUpdated;
 
 export type DomainEventType = DomainEventUnion["eventType"];
 
@@ -382,6 +391,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ProfileUpdated",
   "ProfileImported",
   "TailoringPolicyUpdated",
+  "CompensationFactsUpdated",
 ] as const satisfies readonly DomainEventType[];
 
 type EnumeratedDomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];

@@ -30,6 +30,8 @@ import type {
   DashboardSettings,
   DashboardSummary,
   EmployerAnalysis,
+  JobCompensationAudit,
+  JobCompensationSummary,
   JobDeletedFilter,
   JobAuditEntry,
   JobDetail,
@@ -110,6 +112,7 @@ interface JobListProjectionRow extends Record<string, unknown> {
   strategy: string;
   location: string;
   salary: string;
+  compensation_summary_json: string | null;
   application_url: string | null;
   discovered_at: string | null;
   description: string;
@@ -149,6 +152,8 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   tenant_id: string;
   job_id: string;
   description_preview: string;
+  compensation_summary_json: string | null;
+  compensation_audit_json: string | null;
   score_breakdown_json: string | null;
   score_keywords_json: string;
   score_reasoning: string;
@@ -642,6 +647,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
     requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
 }
 
@@ -692,6 +698,24 @@ function parseRequirementFitReport(value: string | null): RequirementFitReport |
   if (!value) return null;
   try {
     return JSON.parse(value) as RequirementFitReport;
+  } catch {
+    return null;
+  }
+}
+
+function parseCompensationSummary(value: string | null): JobCompensationSummary | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as JobCompensationSummary;
+  } catch {
+    return null;
+  }
+}
+
+function parseCompensationAudit(value: string | null): JobCompensationAudit | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as JobCompensationAudit;
   } catch {
     return null;
   }
@@ -1854,6 +1878,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     strategy: row.strategy ?? "",
     location: normalizeJobLocation(row.location),
     salary: row.salary ?? "",
+    compensationSummary: parseCompensationSummary(row.compensation_summary_json),
     discoveredAt: row.discovered_at,
     applicationUrl: row.application_url,
     fitScore: row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score),

@@ -1482,8 +1482,22 @@ describe("local TypeScript API", () => {
       jobKey: "https://example.com/jobs/ready",
       fitScore: 9,
       salary: "€55,000/year",
+      compensationSummary: {
+        legacyRawSalary: "€55,000/year",
+        warningCount: 0,
+        posted: {
+          recordStatus: "recorded",
+          parseState: "parsed_range",
+          displayRange: "EUR 55000/year",
+          warningCount: 0,
+        },
+        market: {
+          recordStatus: "not_requested",
+          estimateState: "not_requested",
+          displayRange: null,
+        },
+      },
     });
-    expect(items[0]).not.toHaveProperty("compensationSummary");
     expect(items[0]).not.toHaveProperty("compensationAudit");
 
     const filtered = await app.inject({
@@ -1502,9 +1516,27 @@ describe("local TypeScript API", () => {
       jobKey: "https://example.com/jobs/ready",
       salary: "€55,000/year",
       fitScore: 9,
+      compensationSummary: {
+        posted: { recordStatus: "recorded", parseState: "parsed_range" },
+        market: { recordStatus: "not_requested", estimateState: "not_requested" },
+      },
     });
-    expect(detailBody.job).not.toHaveProperty("compensationSummary");
     expect(detailBody.job).not.toHaveProperty("compensationAudit");
+    expect(detailBody.compensationAudit).toMatchObject({
+      posted: {
+        recordStatus: "recorded",
+        fact: {
+          parseState: "parsed_range",
+          sourceText: "€55,000/year",
+          annualizedMinimumAmount: 55000,
+          annualizedMaximumAmount: 55000,
+        },
+      },
+      market: {
+        recordStatus: "not_requested",
+        jobKey: "https://example.com/jobs/ready",
+      },
+    });
     expect(detailBody.applyAudit).toMatchObject({
       state: "preparing",
       label: "materials preparing",
@@ -1559,8 +1591,24 @@ describe("local TypeScript API", () => {
       jobKey: "https://example.com/jobs/ready",
       fitScore: 9,
       salary: "€55,000/year",
+      compensationSummary: {
+        legacyRawSalary: "€55,000/year",
+        warningCount: 1,
+        posted: {
+          recordStatus: "not_recorded",
+          parseState: null,
+          displayRange: null,
+        },
+        market: {
+          sourceKind: "reported_company_role_market",
+          recordStatus: "recorded",
+          estimateState: "estimated_range",
+          displayRange: "EUR 112000-142000/year",
+          sourceCount: 2,
+          warningCount: 1,
+        },
+      },
     });
-    expect(items[0]).not.toHaveProperty("compensationSummary");
     expect(items[0]).not.toHaveProperty("compensationAudit");
     expect(items[0]).not.toHaveProperty("marketCompensationEstimate");
 
@@ -1580,10 +1628,34 @@ describe("local TypeScript API", () => {
       jobKey: "https://example.com/jobs/ready",
       salary: "€55,000/year",
       fitScore: 9,
+      compensationSummary: {
+        posted: { recordStatus: "not_recorded", parseState: null },
+        market: {
+          sourceKind: "reported_company_role_market",
+          recordStatus: "recorded",
+          estimateState: "estimated_range",
+          displayRange: "EUR 112000-142000/year",
+        },
+      },
     });
-    expect(detailBody.job).not.toHaveProperty("compensationSummary");
     expect(detailBody.job).not.toHaveProperty("compensationAudit");
     expect(detailBody.job).not.toHaveProperty("marketCompensationEstimate");
+    expect(detailBody.compensationAudit).toMatchObject({
+      posted: {
+        recordStatus: "not_recorded",
+        legacyRawSalary: "€55,000/year",
+      },
+      market: {
+        recordStatus: "recorded",
+        estimate: {
+          estimateState: "estimated_range",
+          minimumAmount: 112000,
+          maximumAmount: 142000,
+          companyName: "Example",
+          matchScope: "exact_company_role",
+        },
+      },
+    });
     expect(detailBody.applyAudit).toMatchObject({
       state: "preparing",
       label: "materials preparing",
@@ -6109,10 +6181,24 @@ function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string)
         geography_scope: "Europe",
         aggregate_bucket: "reported company-role compensation",
         attribution: "Levels.fyi reported compensation data",
-        sample_count: 7,
+        sample_count: 4,
+      },
+      {
+        source_id: "glassdoor",
+        display_name: "Glassdoor",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        snapshot_version: "reported-compensation-import-v1",
+        geography_scope: "Europe",
+        aggregate_bucket: "reported company-role compensation",
+        attribution: "Glassdoor reported compensation data",
+        sample_count: 3,
       },
     ]),
-    JSON.stringify([{ name: "company", score: 1, band: "high", reason: "Company matched." }]),
+    JSON.stringify([
+      { name: "company", score: 1, band: "high", reason: "Company matched." },
+      { name: "role", score: 1, band: "high", reason: "Role matched." },
+    ]),
     "[]",
     "[]",
     "[]",

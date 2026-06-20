@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Salary Range Estimator
 status: active
-last_updated: "2026-06-19T16:03:26Z"
+last_updated: "2026-06-19T16:39:32Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
-  percent: 50
+  completed_phases: 4
+  total_plans: 8
+  completed_plans: 8
+  percent: 67
 ---
 
 # Project State
@@ -20,15 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 20 - Canonical Read Model & Realtime API is ready to plan.
+**Current focus:** Phase 21 - Jobs Triage UX & Warning-Only Floor is ready to plan.
 
 ## Current Position
 
-Phase: 20 of 22 (4 of 6 in v1.3)
+Phase: 21 of 22 (5 of 6 in v1.3)
 Plan: TBD
-Status: Phase 19 complete; Phase 20 ready to plan
-Last activity: 2026-06-19 - Phase 19 delivered deterministic company-role reported market estimates, the temporary compensation-refresh trigger, and a read-only inspection API.
-Progress: [#####-----] 50%
+Status: Phase 20 complete; Phase 21 ready to plan
+Last activity: 2026-06-19 - Phase 20 verified canonical compensation projections, additive read-model/API fields, and safe realtime invalidation.
+Progress: [#######---] 67%
 
 ## Active Milestone Summary
 
@@ -47,16 +47,16 @@ Scoped source strategy:
 | 17 | Source Registry & Access Policy | Complete | SRC-01, SRC-04, SRC-05, SRC-06 |
 | 18 | Posted Compensation Facts | Complete | COMP-01..COMP-05 |
 | 19 | Company-Role Reported Market Estimates | Complete | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
-| 20 | Canonical Read Model & Realtime API | Not started | EST-05, API-01..API-05 |
+| 20 | Canonical Read Model & Realtime API | Complete | EST-05, API-01..API-05 |
 | 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
 | 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
 
-Next command: `/gsd-plan-phase 20`.
+Next command: `/gsd-plan-phase 21`.
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
+- Total plans completed: 8
 - Average duration: n/a
 - Total execution time: 0 hours
 
@@ -64,6 +64,7 @@ Next command: `/gsd-plan-phase 20`.
 - Phase 17: 2/2 plans complete.
 - Phase 18: 2/2 plans complete.
 - Phase 19: 2/2 plans complete.
+- Phase 20: 2/2 plans complete.
 
 ## Accumulated Context
 
@@ -76,15 +77,16 @@ Next command: `/gsd-plan-phase 20`.
 - Phase 17 exposes compensation source policy through a deterministic metadata-only API and Settings panel; no provider network path was added.
 - Phase 18 persists posted compensation facts in `job_posted_compensation_facts`, keeps `jobs.salary` as raw fallback, and exposes a read-only inspection API without changing job list/detail compensation summaries, ranking, filtering, scoring, apply readiness, or apply dispatch.
 - Phase 19 persists deterministic company-role reported compensation estimates in `job_market_compensation_estimates`, canonicalizes safe source metadata on stale reads, supports the temporary `jobhunter compensation-refresh` import trigger, and exposes a read-only inspection API without changing Jobs UI, ranking, filtering, scoring, apply readiness, or apply dispatch.
+- Phase 20 projects compensation summary/audit JSON from canonical posted-fact and market-estimate rows, exposes additive job list/detail API fields, and emits safe `CompensationFactsUpdated` events that invalidate Operations job list/detail reads without including source text, private preferences, local paths, credentials, or unsafe source payloads.
 
 ### Pending Todos
 
-- Phase 20 must project posted facts and market estimates into canonical job list/detail read models with Python/TypeScript parity and safe SSE invalidation payloads.
+- Plan and execute Phase 21 Jobs triage UX with salary evidence kept warning-only.
 
 ### Blockers/Concerns
 
-- Phase 20 planning must keep posted facts and market estimates separate in every read-model/API contract while preserving raw `JobSummary.salary` compatibility.
-- Main risks to keep visible: projection drift, source legality, false precision, lossy normalization, stale-row sanitization, and sensitive data leakage.
+- Phase 21 must render compensation evidence without salary data changing ranking, filtering, scoring, apply readiness, blockers, or apply dispatch.
+- Main risks to keep visible: UI false precision, audit trail loss, source legality, mobile layout crowding, stale projection display, and sensitive data leakage.
 
 ## Deferred Items
 
@@ -98,6 +100,6 @@ Next command: `/gsd-plan-phase 20`.
 ## Session Continuity
 
 Last session: 2026-06-19
-Stopped at: Phase 19 complete and ready for stacked PR
-Latest phase completed: Phase 19 - Europe Public Market Estimates
+Stopped at: Phase 20 complete and ready for stacked PR
+Latest phase completed: Phase 20 - Canonical Read Model & Realtime API
 Resume file: None
