@@ -374,6 +374,12 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/Derived from existing scoring evidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence groups/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
+    expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
+    expect(screen.getByText("reported company-role market")).toBeInTheDocument();
+    expect(screen.getByText(/market confidence medium/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 sources/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
     const detailButton = screen.getByRole("button", {

@@ -20,7 +20,13 @@ import {
   populatedEmployerAnalysis,
   populatedRequirementFitReport,
 } from "../../test/fixtures/materials-inspector.js";
-import { makeApplyAudit, makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
+import {
+  makeApplyAudit,
+  makeJobDetail,
+  sampleCompensationAudit,
+  sampleJob,
+  sampleSecondaryJob,
+} from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 function RoutedJobDetailDrawer({ jobId }: { readonly jobId: string }) {
@@ -179,6 +185,44 @@ describe("<JobDetailDrawer>", () => {
     expect(screen.queryByText(/JobHunter API request failed: 404/i)).not.toBeInTheDocument();
   });
 
+  it("renders compensation audit range, statistical confidence, and reported sources", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        return HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleSecondaryJob,
+              jobKey: String(params["jobKey"]),
+            },
+            {
+              compensationAudit: {
+                ...sampleCompensationAudit,
+              },
+            },
+          ),
+        );
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/compensation");
+
+    const compensation = await screen.findByRole("region", { name: "Compensation evidence" });
+    expect(within(compensation).getByText("Compensation")).toBeInTheDocument();
+    expect(within(compensation).getAllByText("EUR 112000-142000/year").length).toBeGreaterThan(0);
+    expect(within(compensation).getAllByText("EUR 70000-90000/year").length).toBeGreaterThan(0);
+    expect(within(compensation).getAllByText(/market confidence medium/i).length).toBeGreaterThan(0);
+    expect(within(compensation).getByText("82%")).toBeInTheDocument();
+    expect(within(compensation).getAllByText(/2 sources/i).length).toBeGreaterThan(0);
+    expect(within(compensation).getAllByText(/7 samples/i).length).toBeGreaterThan(0);
+    expect(within(compensation).getByText("Posted Salary")).toBeInTheDocument();
+    expect(within(compensation).getByText("Reported Company-Role Market")).toBeInTheDocument();
+    expect(within(compensation).getByText("Levels.fyi")).toBeInTheDocument();
+    expect(within(compensation).getByText("Glassdoor")).toBeInTheDocument();
+    expect(within(compensation).getByText("exact company role")).toBeInTheDocument();
+    expect(within(compensation).getByText("Confidence factors")).toBeInTheDocument();
+    expect(within(compensation).getByText("Reported rows match Globex directly.")).toBeInTheDocument();
+  });
+
   it("shows employer requirements beside canonical requirement fit evidence", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
@@ -294,7 +338,8 @@ describe("<JobDetailDrawer>", () => {
     const sections = Array.from(drawer.querySelectorAll("section.section"));
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Audit history");
-    expect(sections[1]).toHaveTextContent("Description");
+    expect(sections[1]).toHaveTextContent("Compensation");
+    expect(sections[2]).toHaveTextContent("Description");
 
     await user.click(auditSummary);
     expect(auditDisclosure).toHaveAttribute("open");

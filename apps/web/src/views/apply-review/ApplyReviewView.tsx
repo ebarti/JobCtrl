@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
+import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactGroundingRiskPanel, ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
@@ -722,6 +723,10 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       <div className="apply-review-status-note">
         <b>{status.summary}</b>
         {reviewState ? <span>Current decision: {reviewState}.</span> : null}
+        <CompensationSummaryStrip
+          summary={item.compensationSummary}
+          label="Compensation"
+        />
         <ApplyAuditFacts item={item} />
       </div>
 

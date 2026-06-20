@@ -698,10 +698,20 @@ class ProjectionBuilder:
                     if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
                     else "none"
                 ),
+                "confidenceScore": (
+                    market["estimate"]["confidenceScore"]
+                    if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+                    else None
+                ),
                 "sourceCount": (
                     market["estimate"]["sourceCount"]
                     if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
                     else 0
+                ),
+                "sampleCount": (
+                    market["estimate"]["sampleCount"]
+                    if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+                    else None
                 ),
                 "warningCount": market_warning_count,
                 "range": market_range,

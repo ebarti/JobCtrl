@@ -4,6 +4,10 @@ import { STAGE_STATES } from "@jobhunter/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
+import {
+  CompensationSummaryCell,
+  compensationSearchText,
+} from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
@@ -234,6 +238,20 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => row.location || "-",
       render: (row) => <span>{row.location || "-"}</span>,
+    },
+    {
+      id: "compensation",
+      label: "Compensation",
+      className: "compensation-column",
+      headerClassName: "compensation-column",
+      getFilterValue: (row) => compensationSearchText(row.compensationSummary, row.salary),
+      getFilterSearchValue: (row) => compensationSearchText(row.compensationSummary, row.salary),
+      render: (row) => (
+        <CompensationSummaryCell
+          summary={row.compensationSummary}
+          fallbackSalary={row.salary}
+        />
+      ),
     },
     {
       id: "current_stage",

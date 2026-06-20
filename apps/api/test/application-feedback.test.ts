@@ -54,6 +54,22 @@ describe("application feedback API", () => {
       title: "Principal Platform Engineer",
       currentStage: "apply",
       currentState: "pending",
+      compensationSummary: {
+        posted: {
+          recordStatus: "recorded",
+          displayRange: "EUR 70000-90000/year",
+          confidence: "high",
+        },
+        market: {
+          recordStatus: "recorded",
+          estimateState: "estimated_range",
+          displayRange: "EUR 112000-142000/year",
+          confidenceBand: "medium",
+          confidenceScore: 0.82,
+          sourceCount: 2,
+          sampleCount: 7,
+        },
+      },
       fitScore: 9,
       scoreBreakdown: {
         technicalFit: 9,
@@ -1013,6 +1029,62 @@ function seedDatabase(dbPath: string): void {
       position INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (tenant_id, job_url, score_version, requirement_id)
     );
+    CREATE TABLE job_posted_compensation_facts (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
+      source_text TEXT,
+      legacy_raw_salary TEXT,
+      parse_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'unknown',
+      component TEXT NOT NULL DEFAULT 'unknown',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      annualized_minimum_amount INTEGER,
+      annualized_maximum_amount INTEGER,
+      annualization_assumption TEXT,
+      confidence TEXT NOT NULL DEFAULT 'none',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      parser_version TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      parsed_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_url)
+    );
+    CREATE TABLE job_market_compensation_estimates (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      estimate_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'year',
+      component TEXT NOT NULL DEFAULT 'base_salary',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      confidence_band TEXT NOT NULL DEFAULT 'none',
+      confidence_score REAL NOT NULL DEFAULT 0,
+      source_count INTEGER NOT NULL DEFAULT 0,
+      sample_count INTEGER,
+      aggregate_bucket TEXT,
+      geography_scope TEXT,
+      occupation_code TEXT,
+      occupation_label TEXT,
+      seniority_label TEXT,
+      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
+      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
+      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
+      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
+      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      estimator_version TEXT NOT NULL,
+      estimated_at TEXT NOT NULL,
+      company_name TEXT,
+      normalized_company TEXT,
+      role_title TEXT,
+      normalized_role TEXT,
+      company_tier TEXT NOT NULL DEFAULT 'unknown',
+      match_scope TEXT NOT NULL DEFAULT 'none',
+      PRIMARY KEY (tenant_id, job_url)
+    );
   `);
 
   insertJob(db, {
@@ -1062,7 +1134,120 @@ function seedDatabase(dbPath: string): void {
     "2026-05-31T09:01:00.000Z",
   );
   insertBulletProvenance(db);
+  insertCompensationRows(db, READY_JOB);
   db.close();
+}
+
+function insertCompensationRows(db: Database.Database, jobUrl: string): void {
+  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("EUR 70000-90000/year", jobUrl);
+  db.prepare(
+    `INSERT INTO job_posted_compensation_facts (
+       tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+       parse_state, currency, period, component, minimum_amount, maximum_amount,
+       annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
+       confidence, warnings_json, parser_version, source_hash, parsed_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "jobs.salary",
+    "EUR 70000-90000/year",
+    "EUR 70000-90000/year",
+    "parsed_range",
+    "EUR",
+    "year",
+    "base_salary",
+    70000,
+    90000,
+    70000,
+    90000,
+    null,
+    "high",
+    "[]",
+    "posted-compensation-parser-v1",
+    "posted-hash",
+    NOW,
+  );
+  db.prepare(
+    `INSERT INTO job_market_compensation_estimates (
+       tenant_id, job_url, estimate_state, currency, period, component,
+       minimum_amount, maximum_amount, confidence_band, confidence_score,
+       source_count, sample_count, aggregate_bucket, geography_scope,
+       occupation_code, occupation_label, seniority_label, source_snapshot_json,
+       factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+       source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
+       company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "estimated_range",
+    "EUR",
+    "year",
+    "base_salary",
+    112000,
+    142000,
+    "medium",
+    0.82,
+    2,
+    7,
+    "company_role",
+    "europe",
+    "2512",
+    "Software developers",
+    "principal",
+    JSON.stringify([
+      {
+        source_id: "levels_fyi",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        sample_count: 4,
+        aggregate_bucket: "company_role",
+        geography_scope: "europe",
+        attribution: "local permitted export",
+      },
+      {
+        source_id: "glassdoor",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        sample_count: 3,
+        aggregate_bucket: "company_role",
+        geography_scope: "europe",
+        attribution: "local permitted export",
+      },
+    ]),
+    JSON.stringify([
+      {
+        name: "company",
+        score: 0.96,
+        band: "high",
+        reason: "Reported rows match ExampleCo directly.",
+      },
+      {
+        name: "sample",
+        score: 0.64,
+        band: "medium",
+        reason: "Seven reported rows support the estimate.",
+      },
+    ]),
+    "[]",
+    "[]",
+    "[]",
+    JSON.stringify([
+      {
+        code: "reported_compensation_sample",
+        message: "Reported compensation support is moderate, not exhaustive.",
+      },
+    ]),
+    "company-role-reported-compensation-v1",
+    NOW,
+    "ExampleCo",
+    "exampleco",
+    "Principal Platform Engineer",
+    "principal platform engineer",
+    "tier_2_ambitious",
+    "exact_company_role",
+  );
 }
 
 function insertJob(

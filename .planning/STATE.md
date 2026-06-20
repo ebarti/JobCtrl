@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Salary Range Estimator
 status: active
-last_updated: "2026-06-19T16:39:32Z"
-last_activity: 2026-06-19
+last_updated: "2026-06-20T08:46:30Z"
+last_activity: 2026-06-20
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 8
+  total_plans: 9
   completed_plans: 8
   percent: 67
 ---
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 21 - Jobs Triage UX & Warning-Only Floor is ready to plan.
+**Current focus:** Phase 21 - Jobs Triage Compensation Rendering is in progress.
 
 ## Current Position
 
 Phase: 21 of 22 (5 of 6 in v1.3)
-Plan: TBD
-Status: Phase 20 complete; Phase 21 ready to plan
-Last activity: 2026-06-19 - Phase 20 verified canonical compensation projections, additive read-model/API fields, and safe realtime invalidation.
+Plan: 21-01 Compensation Rendering In Jobs And Apply Review
+Status: Phase 21 rendering slice verified; profile-floor comparison remains pending
+Last activity: 2026-06-20 - Phase 21 rendering branch verified compensation range/confidence rendering in Jobs table, expanded Jobs detail, and Apply Review with focused tests and browser QA.
 Progress: [#######---] 67%
 
 ## Active Milestone Summary
@@ -48,7 +48,7 @@ Scoped source strategy:
 | 18 | Posted Compensation Facts | Complete | COMP-01..COMP-05 |
 | 19 | Company-Role Reported Market Estimates | Complete | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
 | 20 | Canonical Read Model & Realtime API | Complete | EST-05, API-01..API-05 |
-| 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
+| 21 | Jobs Triage UX & Warning-Only Floor | Active | UI-01..UI-06 |
 | 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
 
 Next command: `/gsd-plan-phase 21`.
@@ -65,6 +65,7 @@ Next command: `/gsd-plan-phase 21`.
 - Phase 18: 2/2 plans complete.
 - Phase 19: 2/2 plans complete.
 - Phase 20: 2/2 plans complete.
+- Phase 21: 0/1 plans complete.
 
 ## Accumulated Context
 
@@ -81,7 +82,8 @@ Next command: `/gsd-plan-phase 21`.
 
 ### Pending Todos
 
-- Plan and execute Phase 21 Jobs triage UX with salary evidence kept warning-only.
+- Open the Phase 21 rendering PR on top of Phase 20.
+- Plan or execute the remaining profile-floor warning comparison requirements (UI-03/UI-04) after the persisted floor source is defined.
 
 ### Blockers/Concerns
 

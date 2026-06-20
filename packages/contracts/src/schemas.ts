@@ -343,6 +343,7 @@ export interface ApplyReviewQueueItem {
   title: string;
   company: string;
   source: string;
+  compensationSummary: JobCompensationSummary | null;
   fitScore: number | null;
   scoreBreakdown: ScoreBreakdown | null;
   scoreKeywords: string[];
@@ -1272,7 +1273,9 @@ export interface JobMarketCompensationSummary {
   recordStatus: "recorded" | "not_requested";
   estimateState: MarketCompensationEstimateState;
   confidenceBand: MarketCompensationConfidenceBand;
+  confidenceScore: number | null;
   sourceCount: number;
+  sampleCount: number | null;
   warningCount: number;
   range: JobCompensationRangeSummary | null;
   displayRange: string | null;
