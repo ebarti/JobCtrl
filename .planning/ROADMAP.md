@@ -18,7 +18,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 - Decimal phases (17.1, 17.2): Urgent insertions only, if needed later.
 
 - [x] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
-- [ ] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
+- [x] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
 - [ ] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
 - [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
 - [ ] **Phase 21: Jobs Triage UX & Warning-Only Floor** - Users can scan and inspect compensation evidence in Jobs triage without salary data becoming an automatic gate.
@@ -47,7 +47,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   3. User can see normalized currency, period, component type, minimum, maximum, and annualized values only when annualization assumptions are explicit.
   4. User can see parse confidence and warnings for hourly pay, monthly pay, OTE, bonus, commission, equity, broad ranges, one-sided ranges, missing currency, and missing period.
   5. User can still see the legacy raw salary string when no structured compensation fact exists, without treating that raw string as the normalized source of truth.
-**Plans**: TBD
+**Plans**: 18-01 Parser And Persistence; 18-02 Read API And Inspection Contract
 
 ### Phase 19: Europe Public Market Estimates
 **Goal**: Users can see Europe-only public market estimates when evidence is strong enough, or explicit explanations when support is weak or unavailable.
@@ -107,7 +107,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
-| 18. Posted Compensation Facts | 0/TBD | Not started | - |
+| 18. Posted Compensation Facts | 2/2 | Complete | 2026-06-19 |
 | 19. Europe Public Market Estimates | 0/TBD | Not started | - |
 | 20. Canonical Read Model & Realtime API | 0/TBD | Not started | - |
 | 21. Jobs Triage UX & Warning-Only Floor | 0/TBD | Not started | - |
@@ -141,4 +141,4 @@ Artifacts:
 - Duplicate mappings: 0
 
 ---
-*Last updated: 2026-06-19 after Phase 17 verification*
+*Last updated: 2026-06-19 after Phase 18 verification*

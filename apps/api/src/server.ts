@@ -72,6 +72,7 @@ import {
 } from "./application-feedback.js";
 import { listCompensationSources } from "./compensation-source-policy.js";
 import { databaseExists, openDatabase } from "./db.js";
+import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
   decideQuarantineEntry,
   dismissManualCapture,
@@ -488,6 +489,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/jobs", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
+  );
+
+  app.get<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/compensation/posted",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) => {
+        const response = getPostedCompensationFact(db, decodeRouteParam(request.params.jobKey));
+        if (!response) {
+          void reply.code(404);
+          return { ok: false, error: "job_not_found" };
+        }
+        return response;
+      }),
   );
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>

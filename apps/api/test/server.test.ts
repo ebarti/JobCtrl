@@ -1455,6 +1455,83 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps the compensation boundary from changing fit score, filters, readiness, or apply dispatch", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb
+      .prepare("UPDATE jobs SET salary = ? WHERE url = ?")
+      .run("€55,000/year", "https://example.com/jobs/ready");
+    insertPostedCompensationFact(seedDb, "https://example.com/jobs/ready");
+    seedDb.close();
+
+    const dispatch = vi.fn(async () => ({ status: "queued", runId: "run-compensation-boundary" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const readyKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=fit_score&dir=desc&pageSize=3",
+    });
+    expect(list.statusCode, list.body).toBe(200);
+    const items = list.json().items as Array<Record<string, unknown>>;
+    expect(items.map((job) => job.jobKey)).toEqual([
+      "https://example.com/jobs/ready",
+      "https://example.com/jobs/failed-score",
+      "https://example.com/jobs/blocked-tailor",
+    ]);
+    expect(items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      fitScore: 9,
+      salary: "€55,000/year",
+    });
+    expect(items[0]).not.toHaveProperty("compensationSummary");
+    expect(items[0]).not.toHaveProperty("compensationAudit");
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?minFitScore=9&sort=fit_score&dir=desc",
+    });
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+      "https://example.com/jobs/ready",
+    ]);
+
+    const detail = await app.inject({ method: "GET", url: `/v1/jobs/${readyKey}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    const detailBody = detail.json();
+    expect(detailBody.job).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      salary: "€55,000/year",
+      fitScore: 9,
+    });
+    expect(detailBody.job).not.toHaveProperty("compensationSummary");
+    expect(detailBody.job).not.toHaveProperty("compensationAudit");
+    expect(detailBody.applyAudit).toMatchObject({
+      state: "preparing",
+      label: "materials preparing",
+      reviewEvidenceAvailable: true,
+    });
+
+    const apply = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/actions/apply`,
+      payload: {},
+    });
+    expect(apply.statusCode, apply.body).toBe(202);
+    expect(apply.json()).toMatchObject({
+      ok: true,
+      action: "apply",
+      status: "queued",
+      jobKey: "https://example.com/jobs/ready",
+      command: { dryRun: true },
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
   it("reconciles stale retryable stage projections from latest failure events", async () => {
     const seedDb = new Database(options.dbPath);
     seedDb
@@ -5820,6 +5897,61 @@ function insertJob(
     job.scoredAt === undefined ? "2026-04-29T10:02:00+00:00" : job.scoredAt,
     job.tailoredPath ?? null,
     job.tailoredPath ? "2026-04-29T10:03:00+00:00" : null,
+  );
+}
+
+function insertPostedCompensationFact(db: Database.Database, jobUrl: string): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_posted_compensation_facts (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
+      source_text TEXT,
+      legacy_raw_salary TEXT,
+      parse_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'unknown',
+      component TEXT NOT NULL DEFAULT 'unknown',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      annualized_minimum_amount INTEGER,
+      annualized_maximum_amount INTEGER,
+      annualization_assumption TEXT,
+      confidence TEXT NOT NULL DEFAULT 'none',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      parser_version TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      parsed_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_url)
+    );
+  `);
+  db.prepare(
+    `INSERT INTO job_posted_compensation_facts (
+      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      parse_state, currency, period, component, minimum_amount, maximum_amount,
+      annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
+      confidence, warnings_json, parser_version, source_hash, parsed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "jobs.salary",
+    "€55,000/year",
+    "€55,000/year",
+    "parsed_range",
+    "EUR",
+    "year",
+    "base_salary",
+    55_000,
+    55_000,
+    55_000,
+    55_000,
+    "Source text states annual compensation.",
+    "high",
+    "[]",
+    "posted-compensation-v1",
+    "b".repeat(64),
+    "2026-06-19T10:00:00Z",
   );
 }
 

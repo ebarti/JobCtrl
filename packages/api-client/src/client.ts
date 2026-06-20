@@ -52,6 +52,7 @@ import type {
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
   PaginatedResponse,
+  PostedCompensationFactResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
@@ -177,6 +178,10 @@ export class JobHunterApiClient {
 
   compensationSources(): Promise<CompensationSourceRegistryResponse> {
     return this.get("/v1/compensation/sources");
+  }
+
+  postedCompensationFact(jobKey: string): Promise<PostedCompensationFactResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/posted`);
   }
 
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {

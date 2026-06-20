@@ -7,11 +7,11 @@
 
 ### Compensation Facts
 
-- [ ] **COMP-01**: User can see whether a job has no posted salary, an unparseable salary, an ambiguous salary, or a parsed posted range.
-- [ ] **COMP-02**: User can inspect the exact posting field or text excerpt that produced each parsed posted salary fact.
-- [ ] **COMP-03**: User can see normalized salary range fields for parsed posted compensation, including currency, period, component type, minimum, maximum, and annualized values only when annualization assumptions are explicit.
-- [ ] **COMP-04**: User can see parse confidence and parse warnings for ambiguous compensation text such as hourly pay, monthly pay, OTE, bonus, commission, equity, broad ranges, one-sided ranges, missing currency, or missing period.
-- [ ] **COMP-05**: User can still see the legacy raw salary string when no structured compensation fact exists, without treating that raw string as the normalized source of truth.
+- [x] **COMP-01**: User can see whether a job has no posted salary, an unparseable salary, an ambiguous salary, or a parsed posted range.
+- [x] **COMP-02**: User can inspect the exact posting field or text excerpt that produced each parsed posted salary fact.
+- [x] **COMP-03**: User can see normalized salary range fields for parsed posted compensation, including currency, period, component type, minimum, maximum, and annualized values only when annualization assumptions are explicit.
+- [x] **COMP-04**: User can see parse confidence and parse warnings for ambiguous compensation text such as hourly pay, monthly pay, OTE, bonus, commission, equity, broad ranges, one-sided ranges, missing currency, or missing period.
+- [x] **COMP-05**: User can still see the legacy raw salary string when no structured compensation fact exists, without treating that raw string as the normalized source of truth.
 
 ### Europe Salary Sources
 
@@ -97,11 +97,11 @@ Which phases cover which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COMP-01 | Phase 18 | Pending |
-| COMP-02 | Phase 18 | Pending |
-| COMP-03 | Phase 18 | Pending |
-| COMP-04 | Phase 18 | Pending |
-| COMP-05 | Phase 18 | Pending |
+| COMP-01 | Phase 18 | Complete |
+| COMP-02 | Phase 18 | Complete |
+| COMP-03 | Phase 18 | Complete |
+| COMP-04 | Phase 18 | Complete |
+| COMP-05 | Phase 18 | Complete |
 | SRC-01 | Phase 17 | Complete |
 | SRC-02 | Phase 19 | Pending |
 | SRC-03 | Phase 19 | Pending |
@@ -141,4 +141,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after Phase 17 verification*
+*Last updated: 2026-06-19 after Phase 18 verification*

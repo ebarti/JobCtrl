@@ -98,16 +98,22 @@ describe("seeded local QA workflow", () => {
 
     const artifacts = await app.inject({ method: "GET", url: "/v1/artifacts?pageSize=20&sort=created_at&dir=desc" });
     expect(artifacts.statusCode, artifacts.body).toBe(200);
-    expect(artifacts.json().pagination.total).toBe(5);
+    expect(artifacts.json().pagination.total).toBe(8);
     const gitlabArtifacts = artifacts
       .json()
       .items.filter((artifact: { jobKey: string }) => artifact.jobKey === "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director");
-    expect(gitlabArtifacts.map((artifact: { type: string }) => artifact.type).sort()).toEqual([
-      "cover_letter_pdf",
-      "cover_letter_txt",
-      "tailored_resume_pdf",
-      "tailored_resume_txt",
-    ]);
+    expect(gitlabArtifacts).toHaveLength(7);
+    expect(gitlabArtifacts.map((artifact: { type: string }) => artifact.type).sort()).toEqual(
+      expect.arrayContaining([
+        "cover_letter",
+        "cover_letter_pdf",
+        "cover_letter_txt",
+        "resume_pdf",
+        "tailored_resume",
+        "tailored_resume_pdf",
+        "tailored_resume_txt",
+      ]),
+    );
     expect(new Set(gitlabArtifacts.map((artifact: { company: string }) => artifact.company))).toEqual(new Set(["GitLab"]));
 
     const activeArtifact = gitlabArtifacts.find((artifact: { type: string }) => artifact.type === "tailored_resume_txt") as {

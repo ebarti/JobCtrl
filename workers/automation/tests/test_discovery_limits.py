@@ -8,6 +8,7 @@ import pytest
 
 from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import jobspy, smartextract, workday
+from jobhunter.infrastructure.compensation import SqlitePostedCompensationRepository
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -841,6 +842,43 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             "SourceLocationCandidatePromoted",
             "CanonicalJobIdentityResolved",
         }.issubset(events)
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_persists_posted_compensation_fact_from_bounded_salary_text(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        frame = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/posted-comp",
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                    "min_amount": 80_000,
+                    "max_amount": 95_000,
+                    "currency": "EUR",
+                    "interval": "year",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+
+        fact = SqlitePostedCompensationRepository(conn).get_fact(
+            "local",
+            "https://www.linkedin.com/jobs/view/posted-comp",
+        )
+        assert fact is not None
+        assert fact.parse_state == "parsed_range"
+        assert fact.source_text == "EUR80,000-EUR95,000/year"
+        assert fact.legacy_raw_salary == "EUR80,000-EUR95,000/year"
+        assert fact.currency == "EUR"
+        assert fact.minimum_amount == 80_000
+        assert fact.maximum_amount == 95_000
     finally:
         close_connection(db_path)
 

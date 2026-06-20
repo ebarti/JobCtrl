@@ -296,6 +296,7 @@ def store_jobspy_results(
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
             )
+            _upsert_posted_compensation_fact(conn, job_url=duplicate_url, parsed_at=now)
             resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
             existing += 1
             continue
@@ -339,6 +340,7 @@ def store_jobspy_results(
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
             )
+            _upsert_posted_compensation_fact(conn, job_url=stored_duplicate_url, parsed_at=now)
             resurface_deleted_job(conn, stored_duplicate_url, resurfaced_at=now)
             existing += 1
             continue
@@ -364,6 +366,7 @@ def store_jobspy_results(
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
             )
+            _upsert_posted_compensation_fact(conn, job_url=url, parsed_at=now)
             _learn_posting_source(
                 conn,
                 job_url=url,
@@ -405,7 +408,17 @@ def _jobspy_posting_from_row(
         source_id=source_id,
         source_native_id=source_native_id,
         canonical_url=url,
-    )
+        )
+
+
+def _upsert_posted_compensation_fact(conn: sqlite3.Connection, *, job_url: str, parsed_at: str) -> None:
+    from jobhunter.infrastructure.compensation import SqlitePostedCompensationRepository
+
+    row = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()
+    if row is None:
+        return
+    salary = row["salary"] if isinstance(row, sqlite3.Row) else row[0]
+    SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(job_url, salary, parsed_at=parsed_at)
 
 
 def _jobspy_source_native_id(row, url: str) -> str:
