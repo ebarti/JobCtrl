@@ -280,10 +280,13 @@ refreshes projections without running discovery, scoring, tailoring, cover, or
 apply automation. `--url <job-url>` narrows the refresh to one existing job.
 
 Market estimates also project into the same job list/detail compensation
-summary and detail audit fields, separate from posted facts. This projection
-does not change fit score, sorting, filtering, apply readiness, apply-review
-handoff, or apply mutation behavior. Phase 21 owns the Jobs triage
-presentation.
+summary and detail audit fields, separate from posted facts. The compact
+summary carries range, market confidence band/score, source count, sample count,
+and warning count for list surfaces; detail audit carries the source trail,
+confidence factors, warnings, and reasons. The web Jobs table, expanded job
+drawer, and Apply Review render these persisted fields without parsing salary
+text in React. This projection and rendering do not change fit score, sorting,
+filtering, apply readiness, apply-review handoff, or apply mutation behavior.
 
 When Python compensation repositories save posted facts or market estimates,
 they append `CompensationFactsUpdated` to `job_events`. The SSE payload contains
@@ -314,8 +317,9 @@ verification-code MCP server:
 
 - `GET /v1/apply/review-queue` returns active apply-stage jobs that are ready
   or close enough for human review, plus materials readiness, latest apply-run
-  context, blockers, latest review state, and `applyAudit`, the canonical
-  readiness/blocker/eligibility DTO used by Apply Review.
+  context, blockers, latest review state, `compensationSummary` from the job
+  list projection, and `applyAudit`, the canonical readiness/blocker/eligibility
+  DTO used by Apply Review.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

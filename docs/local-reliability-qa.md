@@ -69,6 +69,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Posted compensation parsing loses explicit states, over-captures source text, annualizes without assumptions, mutates `jobs.salary`, writes facts from API GET reads, leaks private data, or changes fit score, sorting, filtering, apply readiness, or apply dispatch behavior | `workers/automation/tests/test_posted_compensation_parser.py`; `workers/automation/tests/test_posted_compensation_repository.py`; `workers/automation/tests/test_discovery_identity.py`; `workers/automation/tests/test_discovery_limits.py`; `apps/api/test/posted-compensation-facts.test.ts`; `apps/api/test/server.test.ts` (`compensation boundary`) |
 | Reported company-role compensation estimates produce precise ranges from weak evidence, estimate by location/title without company evidence, lose Levels.fyi/Glassdoor/manual source attribution, expose unsafe provider payloads, write rows from API GET reads, skip the temporary `compensation-refresh` trigger path, or change fit score, sorting, filtering, apply readiness, or apply dispatch behavior | `workers/automation/tests/test_market_compensation_estimator.py`; `workers/automation/tests/test_market_compensation_repository.py`; `workers/automation/tests/test_compensation_refresh_cli.py`; `apps/api/test/market-compensation-estimates.test.ts`; `apps/api/test/server.test.ts` (`market compensation boundary`) |
 | Compensation read-model propagation diverges between Python and TypeScript projection builders, drops raw `JobSummary.salary` compatibility, merges posted facts with market estimates, leaks unsafe compensation data through SSE, or stops invalidating job list/detail after compensation writes | `workers/automation/tests/test_projection_builder.py`; `workers/automation/tests/test_posted_compensation_repository.py`; `workers/automation/tests/test_market_compensation_repository.py`; `apps/api/test/projections.test.ts`; `apps/api/test/server.test.ts` (`compensation boundary`, `market compensation boundary`); `apps/web/src/contexts/operations/every-event-has-handler.test.ts`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
+| Compensation rendering disappears from Jobs table, expanded Jobs detail, or Apply Review; hides missing/not-requested states; drops statistical confidence, source count, sample count, or warning count; merges posted salary and reported market evidence; or turns compensation into readiness/filter/sort behavior | `apps/api/test/application-feedback.test.ts`; `apps/web/src/views/jobs/JobsTable.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/jobs` and `/apply-review` |
 | Source quality stops feeding discovery budgets or dashboard health | `workers/automation/tests/test_discovery_scheduler_pr4.py`; `workers/automation/tests/test_source_quality_projection_pr4.py`; `apps/web/src/views/dashboard/SourceHealthCard.test.tsx`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
 | Discovery product controls stop recording source/quarantine/manual-capture feedback safely, mislabel locator candidates, preview quarantine residue as source leads, or hide low-score role-match suggestions and approval state | `apps/api/test/discovery-controls.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/discovery/components/DiscoveryProductControls.test.tsx`; `workers/automation/tests/test_title_filter.py` |
 | Apply review queue or outcome tracking starts apply automation, derives readiness differently from job detail, loses local-only outcome notes, hides pending outcome suggestions or in-flight apply stop controls, exposes raw Gmail body text, or stops invalidating job/outcome views after decisions | `apps/api/test/apply-audit.test.ts`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/server.test.ts`; `workers/automation/tests/test_gmail_feedback.py`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; `apps/web/src/contexts/apply/components/ApplicationOutcomes.test.tsx`; `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.test.ts`; `apps/web/src/contexts/operations/hooks/useApplyReviewOutcomeQueries.test.ts` |
@@ -233,6 +234,10 @@ fit as the explanation of the numeric score and legacy jobs without
 `requirementFitReport` show "not assessed" plus a current-policy re-score action;
 the drawer must not derive requirement matches from old broad matched/missing
 signal text.
+When touching compensation rendering, verify the Jobs table shows a compensation
+column with range and statistical confidence, and the drawer Compensation
+section separates posted salary from reported company-role market evidence,
+source trail, source/sample counts, warnings, and confidence factors.
 Do not run apply submission, mailbox scanning,
 material regeneration, destructive profile/database actions, or worker-backed
 jobs for this smoke.
@@ -246,7 +251,10 @@ only after a completed dry run, records `approve_submit`, dry-run approval,
 defer, decline, and reset decisions without starting apply/browser automation,
 and refreshes the queue after each decision. Open a job detail drawer and
 verify its `applyAudit` readiness/blocker facts agree with the selected Apply
-Review job. For resume-audit changes, verify the tailored PDF preview is the
+Review job. Verify the selected review also shows compensation range and
+statistical confidence from `compensationSummary` without changing readiness,
+queue inclusion, or approval controls. For resume-audit changes, verify the
+tailored PDF preview is the
 only visual resume surface, exposes transparent selectable line targets,
 removes the separate rendered HTML resume approximation, and keeps the PDF
 pixels visually identical to the approved artifact. Selecting a PDF line must

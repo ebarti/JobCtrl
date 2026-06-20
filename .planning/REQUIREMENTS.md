@@ -28,26 +28,26 @@
 - [x] **EST-02**: User can see company-role market estimates only when the estimator has enough reported-observation support for company, role, level, location compatibility, compensation component, freshness, sample count, source agreement, and trimodal company tier.
 - [x] **EST-03**: User can see statistical confidence for every market estimate, including confidence band, score or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
 - [x] **EST-04**: User can see an explicit insufficient-evidence explanation instead of a market range when company match, role match, source coverage, sample count, level match, location compatibility, or component compatibility is too weak.
-- [ ] **EST-05**: User can distinguish posted salary facts from benchmark-derived market estimates in every API and UI surface.
+- [x] **EST-05**: User can distinguish posted salary facts from benchmark-derived market estimates in every API and UI surface.
 - [x] **EST-06**: User can see trimodal compensation-tier context, including when a tier is supplied by the observation rows or inferred from reported compensation.
 - [x] **EST-07**: User can see source conflict, low-sample, stale-source, location-mismatch, or fallback warnings when reported compensation and posted salary ranges diverge or when support is too weak for precise triage.
 
 ### Read Model And API
 
-- [ ] **API-01**: User-facing job list and job detail responses include compensation summary and compensation audit data from canonical persisted rows, not React or API read-time parsing.
-- [ ] **API-02**: User can trust compensation projections because Python and TypeScript projection builders produce matching compensation summary/detail JSON for the same canonical fixture.
-- [ ] **API-03**: User can see compensation facts update through the existing Operations/SSE invalidation path when a compensation assessment changes.
-- [ ] **API-04**: User can rely on existing raw `JobSummary.salary` compatibility while new consumers prefer the structured compensation audit contract.
-- [ ] **API-05**: User compensation preferences, local source payloads, credentials, raw benchmark pages, and local paths are not exposed in events, fixtures, logs, or API responses beyond safe comparison facts and allowed excerpts.
+- [x] **API-01**: User-facing job list and job detail responses include compensation summary and compensation audit data from canonical persisted rows, not React or API read-time parsing.
+- [x] **API-02**: User can trust compensation projections because Python and TypeScript projection builders produce matching compensation summary/detail JSON for the same canonical fixture.
+- [x] **API-03**: User can see compensation facts update through the existing Operations/SSE invalidation path when a compensation assessment changes.
+- [x] **API-04**: User can rely on existing raw `JobSummary.salary` compatibility while new consumers prefer the structured compensation audit contract.
+- [x] **API-05**: User compensation preferences, local source payloads, credentials, raw benchmark pages, and local paths are not exposed in events, fixtures, logs, or API responses beyond safe comparison facts and allowed excerpts.
 
 ### Jobs Triage UX
 
-- [ ] **UI-01**: User can scan posted salary, market estimate state, statistical confidence, and warning count from the Jobs list without opening the drawer.
-- [ ] **UI-02**: User can inspect a dedicated compensation audit section in the Jobs drawer showing posted range, market estimate, source trail, confidence factors, assumptions, warnings, and unavailable-source reasons.
+- [x] **UI-01**: User can scan posted salary, market estimate state, statistical confidence, and warning count from the Jobs list without opening the drawer.
+- [x] **UI-02**: User can inspect a dedicated compensation audit section in the Jobs drawer showing posted range, market estimate, source trail, confidence factors, assumptions, warnings, and unavailable-source reasons.
 - [ ] **UI-03**: User can see profile-floor comparison as a warning-only audit concern, never as a hidden ranking, filtering, apply-readiness, or blocker decision in v1.3.
 - [ ] **UI-04**: User can tell whether profile-floor comparison used a posted salary, a market estimate, both, or neither.
-- [ ] **UI-05**: User can see missing salary and unsupported market-estimate states explicitly rather than seeing a blank salary cell or silent omission.
-- [ ] **UI-06**: User can review compensation source labels, freshness, confidence, and warnings on mobile and desktop without text overlap or layout crowding.
+- [x] **UI-05**: User can see missing salary and unsupported market-estimate states explicitly rather than seeing a blank salary cell or silent omission.
+- [x] **UI-06**: User can review compensation source labels, freshness, confidence, and warnings on mobile and desktop without text overlap or layout crowding.
 
 ### QA And Safety
 
@@ -112,20 +112,20 @@ Which phases cover which requirements.
 | EST-02 | Phase 19 | Complete |
 | EST-03 | Phase 19 | Complete |
 | EST-04 | Phase 19 | Complete |
-| EST-05 | Phase 20 | Pending |
+| EST-05 | Phase 20/21 | Complete |
 | EST-06 | Phase 19 | Complete |
 | EST-07 | Phase 19 | Complete |
-| API-01 | Phase 20 | Pending |
-| API-02 | Phase 20 | Pending |
-| API-03 | Phase 20 | Pending |
-| API-04 | Phase 20 | Pending |
-| API-05 | Phase 20 | Pending |
-| UI-01 | Phase 21 | Pending |
-| UI-02 | Phase 21 | Pending |
+| API-01 | Phase 20 | Complete |
+| API-02 | Phase 20 | Complete |
+| API-03 | Phase 20 | Complete |
+| API-04 | Phase 20 | Complete |
+| API-05 | Phase 20 | Complete |
+| UI-01 | Phase 21 | Complete |
+| UI-02 | Phase 21 | Complete |
 | UI-03 | Phase 21 | Pending |
 | UI-04 | Phase 21 | Pending |
-| UI-05 | Phase 21 | Pending |
-| UI-06 | Phase 21 | Pending |
+| UI-05 | Phase 21 | Complete |
+| UI-06 | Phase 21 | Complete |
 | QA-01 | Phase 22 | Pending |
 | QA-02 | Phase 22 | Pending |
 | QA-03 | Phase 22 | Pending |
@@ -141,4 +141,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after Phase 19 verification*
+*Last updated: 2026-06-20 during Phase 21 compensation rendering*

@@ -15,6 +15,7 @@ import type {
   ApplyReviewProfileSourceField,
   ApplyReviewQueueItem,
   ApplyReviewQueueResponse,
+  JobCompensationSummary,
   JobApplicationOutcomeListResponse,
   ManualApplicationOutcomeRequest,
   OutcomeSuggestion,
@@ -62,6 +63,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   title: string;
   employer: string;
   source: string;
+  compensation_summary_json: string | null;
   application_url: string | null;
   fit_score: number | null;
   description: string;
@@ -274,7 +276,8 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     )
     ${employerAnalysisCte}
-    SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source, jlp.application_url,
+    SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source,
+           jlp.compensation_summary_json, jlp.application_url,
            jlp.fit_score, jlp.description, jlp.full_description,
            jlp.score_breakdown_json, jlp.score_keywords_json,
            jlp.score_reasoning, jlp.score_version, jlp.scored_at,
@@ -695,6 +698,7 @@ function reviewQueueItemFromRow(
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
+    compensationSummary: parseQueueCompensationSummary(row.compensation_summary_json),
     fitScore: nullableNumber(row.fit_score),
     scoreBreakdown,
     scoreKeywords,
@@ -859,6 +863,17 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   }
   try {
     return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function parseQueueCompensationSummary(value: string | null): JobCompensationSummary | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as JobCompensationSummary;
   } catch {
     return null;
   }

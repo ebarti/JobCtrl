@@ -3,6 +3,7 @@ import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
@@ -100,6 +101,11 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             <JobOverview detail={detail} />
             <div className="job-detail-drawer-content">
               <JobAuditTriage detail={detail} />
+              <CompensationAuditSection
+                summary={detail.job.compensationSummary}
+                audit={detail.compensationAudit}
+                fallbackSalary={detail.job.salary}
+              />
               <section className="section job-detail-description">
                 <h3>Description</h3>
                 <JobDescription text={detail.job.descriptionPreview} />

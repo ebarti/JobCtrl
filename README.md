@@ -29,6 +29,8 @@ JobHunter can:
 - generate cover letters;
 - convert generated text artifacts to PDFs;
 - show stage state, failures, retries, artifacts, and apply runs in a local UI;
+- show posted and reported company-role compensation ranges with statistical
+  confidence in Jobs triage and Apply Review;
 - optionally drive local browser-based application submission.
 
 Auto-apply is powerful and should be treated as an explicit submission tool. Use
@@ -438,6 +440,13 @@ The Vite dev server proxies `/v1/*` to the local API by default. Set
 The Jobs tab can filter by stage, state, and fit-score range. Its source column
 shows the posting owner and the discovery source separately when available, so
 broad-board results can be distinguished from canonical employer or ATS sources.
+Its compensation column shows the best available persisted range, whether it
+comes from posted salary text or reported company-role market data, plus
+statistical confidence, source/sample support, and warnings. The expanded job
+drawer keeps posted salary and reported market evidence separate with source
+trail and confidence factors. Compensation display is warning-only: it does not
+change fit score, sorting, filtering, apply readiness, Apply Review handoff, or
+apply mutation behavior.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
 Debug activity, expose resizable column handles in the headers so long local
 data can be inspected without changing code or global density settings.

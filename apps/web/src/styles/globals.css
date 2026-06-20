@@ -2146,7 +2146,12 @@ textarea:focus-visible {
 }
 
 .jobs-data-grid-table {
-  min-width: 1320px;
+  min-width: 1500px;
+}
+
+.jobs-data-grid-table .compensation-column {
+  width: 210px;
+  min-width: 190px;
 }
 
 .artifacts-data-grid-table {
@@ -2697,6 +2702,34 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.compensation-cell {
+  display: grid;
+  min-width: 0;
+  max-width: 240px;
+  gap: 3px;
+  white-space: normal;
+}
+
+.compensation-cell b,
+.compensation-cell span:not(.tag) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-cell b {
+  font-size: 12px;
+}
+
+.compensation-cell span:not(.tag) {
+  color: var(--muted-foreground);
+}
+
+.compensation-cell .tag,
+.compensation-strip .tag {
+  width: fit-content;
+  white-space: normal;
+}
+
 .score-stale-tag {
   border-color: color-mix(in oklch, var(--destructive) 40%, var(--border));
   background: color-mix(in oklch, var(--destructive) 12%, var(--card));
@@ -2924,6 +2957,26 @@ textarea:focus-visible {
 }
 
 .job-overview-readiness-label {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.compensation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+.compensation-strip b {
+  color: var(--foreground);
+}
+
+.compensation-strip-label {
   color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -3687,6 +3740,113 @@ textarea:focus-visible {
 .section h3 {
   margin: 0 0 10px;
   font-size: 13px;
+}
+
+.compensation-audit-section {
+  display: grid;
+  gap: 12px;
+}
+
+.compensation-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compensation-panel {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.compensation-panel header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+}
+
+.compensation-panel header b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.compensation-detail-grid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.compensation-detail-grid dt,
+.compensation-warning-list h4,
+.compensation-source-trail h4,
+.compensation-factor-list h4 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.compensation-detail-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-warning-list,
+.compensation-source-trail,
+.compensation-factor-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.compensation-warning-list ul,
+.compensation-source-trail ul,
+.compensation-factor-list ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.compensation-source-trail li,
+.compensation-factor-list li {
+  min-width: 0;
+}
+
+.compensation-source-trail li {
+  display: grid;
+  gap: 2px;
+}
+
+.compensation-source-trail span,
+.compensation-factor-list p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.compensation-factor-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+}
+
+.compensation-factor-list p {
+  grid-column: 1 / -1;
 }
 
 .job-audit-disclosure > summary {
@@ -4574,6 +4734,8 @@ textarea:focus-visible {
   .apply-review-shell,
   .apply-review-selected-head,
   .apply-review-workspace,
+  .compensation-panels,
+  .compensation-detail-grid,
   .import-panel,
   .credential-row,
   .credential-row-form {

@@ -83,7 +83,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   3. User can see profile-floor comparison as a warning-only audit concern and can tell whether it used posted salary, market estimate, both, or neither.
   4. User can see missing salary and unsupported or insufficient-evidence market-estimate states explicitly instead of blank salary cells or silent omissions.
   5. User can review compensation source labels, freshness, confidence, and warnings on mobile and desktop without text overlap or layout crowding.
-**Plans**: TBD
+**Plans**: 21-01 Compensation Rendering In Jobs And Apply Review
 **UI hint**: yes
 
 ### Phase 22: Product-Path QA & Safety Release

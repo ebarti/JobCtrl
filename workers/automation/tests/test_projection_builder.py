@@ -197,6 +197,9 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert summary["market"]["recordStatus"] == "recorded"
     assert summary["market"]["sourceKind"] == "reported_company_role_market"
     assert summary["market"]["displayRange"] == "EUR 112000-142000/year"
+    assert summary["market"]["confidenceScore"] == 0.78
+    assert summary["market"]["sourceCount"] == 2
+    assert summary["market"]["sampleCount"] == 7
 
     detail = conn.execute(
         """

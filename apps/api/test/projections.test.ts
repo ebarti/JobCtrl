@@ -555,7 +555,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             recordStatus: "recorded",
             estimateState: "estimated_range",
             displayRange: "EUR 112000-142000/year",
+            confidenceScore: 0.82,
             sourceCount: 2,
+            sampleCount: 7,
             warningCount: 2,
           },
         });
