@@ -1,195 +1,97 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Apply Review Audit UX - Drawer + Resume Pins
-status: Awaiting next milestone
-stopped_at: v1.2 complete
-last_updated: "2026-06-13T08:37:07.825Z"
-last_activity: 2026-06-13 — Milestone v1.2 completed and archived
+milestone: v1.3
+milestone_name: Salary Range Estimator
+status: planning
+last_updated: "2026-06-19T09:39:10Z"
+last_activity: 2026-06-19
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 6
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-13)
+See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 is archived; awaiting the next milestone definition.
+**Current focus:** Phase 17 - Source Registry & Access Policy is ready to plan.
 
 ## Current Position
 
-Phase: Milestone v1.2 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-13 — Milestone v1.2 completed and archived
+Phase: 17 of 22 (1 of 6 in v1.3)
+Plan: TBD
+Status: Ready to plan
+Last activity: 2026-06-19 - v1.3 roadmap created with 6 phases and 35/35 requirements mapped.
+Progress: [----------] 0%
 
 ## Active Milestone Summary
 
-No active milestone is currently defined. Start the next cycle with `/gsd-new-milestone`.
+Milestone v1.3 makes compensation facts inspectable in Jobs triage by combining posted salary extraction with Europe-only public market salary baselines. The milestone keeps salary evidence audit-first and warning-only: confidence, source gaps, unknowns, and profile-floor comparisons must be visible, but v1.3 must not silently rank, filter, block, or apply based on salary facts or market estimates.
 
-## Archived v1.2 Milestone Summary
+Scoped source strategy:
 
-Milestone v1.2 implements Sketch 002 Option 1: Drawer + Resume Pins. The milestone updates two existing surfaces:
-
-| Surface | Owns |
-|---------|------|
-| Jobs row-click drawer (`JobDetailDrawer`) | Why ranked, readiness, hard blockers, eligibility concerns, and handoff to Apply Review |
-| Apply Review rendered resume/material surface | Source-to-artifact changes, grounding, claim risk, readiness agreement, and reviewer inspection before approval |
-
-Cross-surface invariant: readiness and eligibility/blocker facts must come from one shared API/read contract so the product cannot show contradictory facts for the same job.
-
-The leftover v1.1 cleanup is folded into v1.2 as a small early housekeeping slice. It covers stale verification command normalization, dependency/config audits, optional obsolete `lucide-react` cleanup only if import proof allows it, and narrow docs/config updates for final shadcn token, Tabler icon, font, and QA expectations.
-
-Explicitly not in scope:
-
-- Option 2 Evidence Ledger and Option 3 Gate Timeline.
-- Blind-auto-apply safety positioning in UI; README/docs positioning stays deferred.
-- Auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, or worker-backed jobs unless explicitly requested later.
-- Broad route redesign, scoring/tailoring policy redesign, worker automation expansion, marketing dashboard treatment, or landing-page work.
-- Hiding/suppressing missing audit data as a substitute for fixing the source of truth.
+- Public v1.3 baselines: Eurostat Structure of Earnings Survey, ESCO occupation mapping, and Spain INE Wage Structure Survey.
+- Levels.fyi and Glassdoor: disabled/unavailable seams only unless explicit permitted access exists.
+- Profile-floor comparison: warning-only in v1.3.
 
 ## Roadmap
 
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
-| 12 | Folded Cleanup + Verification Baseline | Complete | CLEAN-01..CLEAN-04 |
-| 13 | Shared Apply Audit Contract | Complete | AUDIT-01..AUDIT-06 |
-| 14 | Jobs Drawer Audit Triage | Complete | DRAWER-01..DRAWER-06 |
-| 15 | Apply Review Resume Pins | Complete | REVIEW-01..REVIEW-08 |
-| 16 | Product-Path QA + Documentation | Complete | QA-01..QA-06 |
+| 17 | Source Registry & Access Policy | Not started | SRC-01, SRC-04, SRC-05, SRC-06 |
+| 18 | Posted Compensation Facts | Not started | COMP-01..COMP-05 |
+| 19 | Europe Public Market Estimates | Not started | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
+| 20 | Canonical Read Model & Realtime API | Not started | EST-05, API-01..API-05 |
+| 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
+| 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
 
-Next command: `/gsd-new-milestone`.
+Next command: `/gsd-plan-phase 17`.
 
-## Research Summary
+## Performance Metrics
 
-Research completed on 2026-06-11 in `.planning/research/`.
+**Velocity:**
+- Total plans completed: 0
+- Average duration: n/a
+- Total execution time: 0 hours
 
-Key findings:
-
-- Use the existing React/Vite/Tailwind/TanStack/shadcn stack; no new runtime dependency is recommended for the MVP.
-- A shared apply audit contract must precede UI work.
-- Resume pins should be derived from canonical artifact audit data, starting with `bulletProvenance` and `annotatedChanges`.
-- Jobs drawer and Apply Review have separate responsibilities; ranking belongs in Jobs, generated-material proof belongs in Apply Review.
-- QA must use synthetic/seeded data and must not trigger apply submission or worker-backed automation.
-
-## Completed Phase Evidence
-
-### Phase 12 - Folded Cleanup + Verification Baseline
-
-- Removed unused `lucide-react` dependency after source import audit proved zero `apps/web/src` imports.
-- Updated current-state codebase maps to describe Tailwind 4 CSS-first styling through `globals.css`, `tokens.css`, and `components.json`.
-- Updated `docs/frontend-target.md` icon guidance to use `@tabler/icons-react` and reject new `lucide-react` imports.
-- Verified with dependency/import audits, stale Tailwind config scans, strict legacy token scan, `corepack pnpm web:check`, `corepack pnpm web:build`, and `git diff --check`.
-
-### Phase 13 - Shared Apply Audit Contract
-
-- Added the shared `ApplyAudit` contract to `@jobhunter/contracts` and exposed it on both `ApplyReviewQueueItem` and `JobDetail`.
-- Added API/read-model derivation through `apps/api/src/apply-audit.ts`, sourced from application target, material availability, current stage state/error, latest apply run, score eligibility, and review evidence availability.
-- Updated Apply Review to consume `item.applyAudit` for queue tags, status counts, selected header status, summary copy, and compact missing/blocker/eligibility/source facts.
-- Verified with `corepack pnpm api:check`, targeted API tests, `corepack pnpm web:check`, targeted web tests, `corepack pnpm web:build`, `git diff --check`, and in-app browser QA on `/apply-review`.
-
-### Phase 14 - Jobs Drawer Audit Triage
-
-- Added a top-of-drawer audit triage section to `JobDetailDrawer` that answers why a job ranked where it did and whether it is ready for apply review.
-- Rendered rank evidence from existing score read-model fields and readiness/blocker/eligibility facts from the shared `applyAudit` contract only.
-- Added a non-mutating `/apply-review` handoff for generated-material proof instead of duplicating the full resume audit surface in the Jobs drawer.
-- Extended Jobs drawer regression tests and local QA docs for the new audit smoke path.
-- Verified with `corepack pnpm web:check`, targeted Jobs drawer tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA from `/jobs` row activation.
-
-### Phase 15 - Apply Review Resume Pins
-
-- Added `ResumeAuditPins` as a context-owned material audit component backed by artifact detail read models.
-- Reworked Apply Review's Application Materials pane so the rendered resume appears first, with claim pins beside it on wider containers and below it on narrow containers.
-- Pin detail exposes source text, tailored text, transform, controls, evidence IDs, requirement IDs, matched signals, rationale, and grounding/risk/lifecycle facts.
-- Preserved the full tailoring inspector below the resume-centered pin surface.
-- Updated Apply Review tests and local QA docs for populated provenance and no-provenance states.
-- Verified with `corepack pnpm web:check`, targeted Apply Review tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA on `/apply-review`.
-
-### Phase 16 - Product-Path QA + Documentation
-
-- Ran API and web verification commands for the changed surfaces.
-- Re-verified the Jobs drawer product path from `/jobs` row activation.
-- Re-verified the Apply Review product path from `/apply-review`.
-- Confirmed docs/checklists cover Jobs drawer audit triage and Apply Review resume pins.
-- Recorded final milestone acceptance evidence.
-- Follow-up correction: detached `pnpm dev:start` now reports observed API/web/Temporal bindings, including the actual Vite web URL when the requested port is occupied and Vite binds a higher port.
-- Follow-up correction: Jobs fit-score badges now use the numeric score as the color source of truth: 10 maps to visible green, 5 maps to neutral gray, and 0 maps to visible red, with intermediate scores moving toward the nearest endpoint.
-- Follow-up correction: Apply Review ready/ok badges and success facts now render in the success-green family instead of info/blue or weak neutral styling.
-- Follow-up correction: Apply Review no longer collapses to an empty provenance state when rendered resume text exists; the Application Materials pane now shows a line-by-line rendered-resume audit fallback and lays the audit inspector beside the PDF on wide screens.
-- Follow-up correction: Apply Review now keeps the audit rail and rendered-resume text selection synchronized so selecting a no-provenance audit row highlights the exact rendered text line, with the faithful PDF retained below for visual verification.
-- Follow-up correction: Apply Review rendered-resume fallback now uses a PDF-style page treatment with hidden debug labels, preserved blank lines, section/bullet styling, and selectable rendered text so the audit surface visually matches the generated resume instead of a line-debug table.
-- Follow-up correction: Apply Review now uses a separate tailored-resume text artifact id for source attribution, claim pins, and the tailoring inspector while keeping the resume PDF artifact id for faithful visual rendering, so PDF shell metadata no longer causes false missing-source states.
-- Follow-up correction: Apply Review audit rows now come from the rendered resume lines when rendered text exists, attach matching bullet/change provenance per line, keep audit metadata gaps separate from actual claim-risk findings, show source-backed/grounded status for backed lines, and scroll the right audit rail to the selected rendered line.
-- Follow-up correction: Apply Review now distinguishes canonical bullet provenance from coarse annotated-change fallback lineage; fallback rows show a source pointer and `source span` precision with the broader source span collapsed, instead of displaying a list of original bullets as if it were exact per-bullet lineage.
-- Follow-up correction: Apply Review right-rail audit cards now preview the source pointer for each rendered line, and the selected-line detail removes the duplicate tailored artifact text column because the selected tailored line is already highlighted in the rendered resume surface.
-- Follow-up correction: Apply Review right-rail audit cards now show inline source evidence from the recorded source span; selected cards expand the full span in place so reviewers do not need to look below the row to verify lineage.
-- Follow-up correction: Apply Review no longer renders a scrollable right-side audit-row list plus a separate lower detail box; it now renders one selected-line inspector driven by the highlighted resume line, with source evidence, source pointer, lineage precision, source id, transform, controls, requirement/evidence ids, matched keywords, rationale, and risk metadata in one box.
-- Follow-up correction: Apply Review selected-line audit now keeps only line-specific evidence in the dynamic inspector: unmatched rendered bullets inherit the nearest recorded source span in their resume section, source evidence and pointer appear directly in the selected-line box, artifact-level grounding/risk gates render once outside that box, and the older annotated resume changes ledger no longer duplicates the mapper.
-- Follow-up correction: Apply Review artifact-level grounding/risk now renders as a full-width Application Materials summary above the rendered resume audit surface, not inside the right-side line-by-line audit rail.
-- Follow-up correction: Apply Review artifact-level grounding/risk summary now uses inline gate chips and collapsed finding groups with counts/previews so the panel remains visible without pushing the resume far down the materials pane.
-- Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
-- Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
-- Follow-up correction: Jobs row-click overlay now opens as an almost full-screen audit workspace with a wide two-column detail grid so ranking, readiness, diagnostics, artifacts, outcomes, scoring, description, and audit history have usable room.
-- Follow-up correction: tailoring and cover lifecycle state now stays aligned with approved current-generation artifacts: rejected refreshes no longer hide accepted materials, orphaned stages recover from approved artifacts, re-tailor defaults preserve existing artifacts until replacement approval, new resume generations reset cover readiness to pending, and target-job-only technologies are explicitly context rather than candidate evidence in the generator prompt.
-- Follow-up correction: legacy profile bullets now act as deterministic achievement evidence when explicit `achievement_evidence` rows are absent, and the API read model backfills profile evidence IDs for accepted artifacts that have source-span annotations or bullet provenance but predate the newer evidence-id metadata. Live selected-artifact QA on `d44576c4042e4565a7babb856bef5660` showed populated `requiredIds` / `seniorityIds` and no `profile evidence mapping` quality error.
-- Live material-generation QA: after targeted repairs and reruns, all 49 score-qualified non-blocked jobs have complete approved current materials (`tailored_resume`, `resume_pdf`, `cover_letter`, `cover_letter_pdf`); the remaining 4 score-qualified incomplete jobs are blocked by score eligibility compensation blockers.
-- Live audit-metadata QA correction: the earlier landscape audit proved material presence, not evidence-mapping completeness. After the legacy evidence mapping fix, 9 review-queue artifacts still report incomplete audit metadata because they have no change annotations and no bullet provenance; those require forced re-tailor with the patched worker rather than read-model masking.
-- Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, destructive profile/database action, or application submission. Worker-backed material regeneration was run only for the requested score-qualified landscape repair.
-- Live Apply Review QA: selecting rendered resume line 17 on `localhost:5173/apply-review` showed `source span`, 5 source evidence lines, 0 missing-source markers in the selected inspector, 1 artifact-level risk panel outside the selected inspector, and 0 legacy `Annotated resume changes` / `Tailoring rationale` duplicate sections.
-- Live Apply Review placement QA: the artifact-level grounding/risk region rendered before `Rendered resume audit`, outside both `Rendered resume audit` and `Line-by-line resume audit`, and occupied 97% of the Application Materials pane width on a 2763px desktop viewport.
-- Live Apply Review density QA: on a 2226px desktop viewport, the artifact-level grounding/risk panel measured 89.5px tall, remained above the rendered resume, had 4 inline metrics, 3 collapsed finding groups, and left only a 14px gap before the resume audit.
-
-## Prior Milestone Verification
-
-Milestone v1.0 was verified on 2026-06-09. All five phases plus cross-phase integration returned PASS. The durable summary is `.planning/MILESTONE-ACCEPTANCE.md`.
-
-Milestone v1.1 completed Phases 6-10 and landed semantic tokens, shared primitives, layout chrome, Tabler target, status semantics, and route visual QA via PRs #151-#155. The planned Phase 11 cleanup did not start and is now folded into v1.2 Phase 12.
+**By phase:** none yet.
 
 ## Accumulated Context
 
-### Current Decisions
+### Decisions
 
-- Choose Sketch 002 Option 1: Drawer + Resume Pins for implementation.
-- Define "job overlay" as the Jobs row-click drawer (`JobDetailDrawer`), not an Apply Review queue panel.
-- Keep Apply Review centered on the rendered resume/material, with row/claim pins for evidence inspection.
-- Share readiness and eligibility facts across Jobs drawer and Apply Review from one contract/source of truth.
-- Fold the leftover v1.1 cleanup into v1.2 as housekeeping, not as the core product outcome.
-- Defer blind-auto-apply safety positioning to README/docs rather than the v1.2 UI scope.
+- v1.3 starts at Phase 17 because v1.2 ended at Phase 16.
+- v1.3 uses Europe-only public baselines: Eurostat SES, ESCO, and Spain INE.
+- Levels.fyi and Glassdoor remain disabled unless permitted access exists; no unauthorized scraping, fetching, caching, or display.
+- Profile-floor comparison is warning-only and must not affect ranking, filtering, apply readiness, blockers, or auto-apply behavior.
 
-### Constraints And Concerns
+### Pending Todos
 
-- Auditability risk: the UI must not hide missing or embarrassing audit data; missing sources must be fixed at the owning layer.
-- Scope risk: ranking explanation belongs in the Jobs row-click drawer, while generated-material proof belongs in Apply Review.
-- Pin risk: PDF coordinates may be brittle; start from generated text/provenance anchors and validate visual placement during Phase 15.
-- QA risk: browser proof must use synthetic/seeded data and must not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs.
-- Cleanup risk: folded v1.1 cleanup should close stale dependency/config/docs items without re-opening broad visual-system migration.
+None yet.
+
+### Blockers/Concerns
+
+- Phase 19 planning must define public-data import/API strategy, statistical thresholds, remote-Europe assumptions, freshness windows, and confidence buckets.
+- Main risks to keep visible: source legality, false precision, lossy normalization, projection drift, and sensitive data leakage.
 
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Audit UX | Option 2 Evidence Ledger | Future milestone | 2026-06-11 |
-| Audit UX | Option 3 Gate Timeline | Future milestone | 2026-06-11 |
-| Audit UX | Deep PDF coordinate annotation beyond stable provenance/text anchors | Future milestone unless Phase 15 proves required | 2026-06-11 |
-| Product positioning | README/docs copy explaining why JobHunter is safer than blind auto-apply tools | Future docs update | 2026-06-11 |
-| Visual system | User-editable theme customization | Future milestone | 2026-06-09 |
-| Visual system | Dedicated visual regression service such as Chromatic/Loki/Percy | Future milestone | 2026-06-09 |
-| Motion | Motion and microinteraction system | Future milestone | 2026-06-09 |
+| Licensed sources | Levels.fyi and Glassdoor enabled integrations | Future milestone unless permitted access is confirmed | 2026-06-19 |
+| Geography | Non-European public baselines | Out of active product direction; JobHunter is Europe-first | 2026-06-19 |
+| Product behavior | Salary-based ranking, filtering, hard blockers, and negotiation anchors | Future milestone | 2026-06-19 |
+| Corrections | User correction and refresh loop for salary facts | Future milestone unless v1.3 planning reopens it | 2026-06-19 |
 
 ## Session Continuity
 
-Last session: 2026-06-11
-Stopped at: v1.2 complete
-Latest phase completed: Phase 16 - Product-Path QA + Documentation
+Last session: 2026-06-19
+Stopped at: v1.3 roadmap created
+Latest phase completed: Phase 16 - Product-Path QA + Documentation (v1.2)
 Resume file: None
-
-## Operator Next Steps
-
-- Start the next milestone with /gsd-new-milestone
