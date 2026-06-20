@@ -1973,6 +1973,83 @@ export interface SettingsResponse {
   };
 }
 
+export const COMPENSATION_SOURCE_TYPES = [
+  "posted_salary",
+  "public_wage_baseline",
+  "occupation_taxonomy",
+  "licensed_market_benchmark",
+] as const;
+export type CompensationSourceType = (typeof COMPENSATION_SOURCE_TYPES)[number];
+
+export const COMPENSATION_SOURCE_ACCESS_MODES = [
+  "local_posting_text",
+  "public_dataset",
+  "public_taxonomy",
+  "licensed_api",
+  "licensed_data_feed",
+  "enterprise_mcp",
+  "partner_api",
+  "written_permission",
+  "unavailable_until_permitted",
+] as const;
+export type CompensationSourceAccessMode = (typeof COMPENSATION_SOURCE_ACCESS_MODES)[number];
+
+export const COMPENSATION_SOURCE_AVAILABILITY = ["available", "unavailable"] as const;
+export type CompensationSourceAvailability = (typeof COMPENSATION_SOURCE_AVAILABILITY)[number];
+
+export const COMPENSATION_SOURCE_LICENSE_STATUSES = [
+  "not_required",
+  "requires_license",
+  "requires_permission",
+  "permitted",
+] as const;
+export type CompensationSourceLicenseStatus =
+  (typeof COMPENSATION_SOURCE_LICENSE_STATUSES)[number];
+
+export const COMPENSATION_SUPPORTED_FIELDS = [
+  "posted_range",
+  "base_salary",
+  "gross_annual_salary",
+  "gross_monthly_salary",
+  "wage_percentiles",
+  "occupation_mapping",
+  "market_range",
+  "total_compensation",
+  "sample_count",
+  "freshness",
+  "attribution",
+] as const;
+export type CompensationSupportedField = (typeof COMPENSATION_SUPPORTED_FIELDS)[number];
+
+export interface CompensationSourceCoverage {
+  geography: string;
+  regions: string[];
+  notes: string;
+}
+
+export interface CompensationSourcePolicySummary {
+  sourceId: string;
+  displayName: string;
+  sourceType: CompensationSourceType;
+  accessMode: CompensationSourceAccessMode;
+  availability: CompensationSourceAvailability;
+  licenseStatus: CompensationSourceLicenseStatus;
+  termsUrl: string | null;
+  sourceUrl: string | null;
+  freshnessPolicy: string;
+  attributionRequirement: string;
+  supportedFields: CompensationSupportedField[];
+  disabledReason: string | null;
+  configured: boolean;
+  coverage: CompensationSourceCoverage;
+  notes: string[];
+}
+
+export interface CompensationSourceRegistryResponse {
+  ok: true;
+  sources: CompensationSourcePolicySummary[];
+}
+
 export const DiscoverySettingsUpdateRequestSchema = z
   .object({
     boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])).min(1).optional(),

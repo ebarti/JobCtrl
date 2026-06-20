@@ -21,6 +21,7 @@ export {
 } from "./components/RescoreCurrentPolicyButton.js";
 export { ScoreStalenessBadge, type ScoreStalenessBadgeProps } from "./components/ScoreStalenessBadge.js";
 export { ScoreReasoning } from "./components/ScoreReasoning.js";
+export { CompensationSourcePolicyPanel } from "./components/CompensationSourcePolicyPanel.js";
 export { scoreTier } from "./lib/score-tier.js";
 
 export { jobScoredHandler, scoreCorrectedHandler, scoreRescoreRequestedHandler } from "./handlers.js";

@@ -70,6 +70,7 @@ import {
   recordApplyReviewDecision,
   recordManualApplicationOutcome,
 } from "./application-feedback.js";
+import { listCompensationSources } from "./compensation-source-policy.js";
 import { databaseExists, openDatabase } from "./db.js";
 import {
   decideQuarantineEntry,
@@ -261,6 +262,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/discovery/settings", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
   );
+
+  app.get("/v1/compensation/sources", async () => listCompensationSources());
 
   app.patch("/v1/discovery/settings", async (request, reply) => {
     const body = parseBody(reply, DiscoverySettingsUpdateRequestSchema, request.body ?? {});

@@ -21,6 +21,7 @@ import type {
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
+  CompensationSourceRegistryResponse,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -121,6 +122,7 @@ export interface ApiClientPort {
     body: SourceStatePatch,
   ): Promise<SourceRegistryMutationResponse>;
   discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse>;
+  compensationSources(): Promise<CompensationSourceRegistryResponse>;
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse>;
   promoteSourceLocatorCandidate(
     candidateId: string,

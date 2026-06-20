@@ -55,6 +55,75 @@ const sampleDiscoverySource = {
   qualityTrend: "flat",
 };
 
+const sampleCompensationSourcePolicy = {
+  ok: true,
+  sources: [
+    {
+      sourceId: "eurostat_structure_of_earnings",
+      displayName: "Eurostat Structure of Earnings Survey",
+      sourceType: "public_wage_baseline",
+      accessMode: "public_dataset",
+      availability: "available",
+      licenseStatus: "not_required",
+      termsUrl: "https://ec.europa.eu/eurostat/about-us/policies/copyright",
+      sourceUrl: "https://ec.europa.eu/eurostat/web/microdata/structure-of-earnings-survey",
+      freshnessPolicy: "Use the latest published Eurostat SES release available to the importer.",
+      attributionRequirement: "Attribute Eurostat as the public statistical source.",
+      supportedFields: ["base_salary", "wage_percentiles", "sample_count", "freshness", "attribution"],
+      disabledReason: null,
+      configured: true,
+      coverage: {
+        geography: "europe",
+        regions: ["EU", "EEA"],
+        notes: "Europe-first public wage baseline.",
+      },
+      notes: ["Public statistical baseline; not employer-specific compensation intelligence."],
+    },
+    {
+      sourceId: "levels_fyi",
+      displayName: "Levels.fyi",
+      sourceType: "licensed_market_benchmark",
+      accessMode: "unavailable_until_permitted",
+      availability: "unavailable",
+      licenseStatus: "requires_license",
+      termsUrl: "https://www.levels.fyi/offerings/data/",
+      sourceUrl: "https://www.levels.fyi/",
+      freshnessPolicy: "Unavailable until permitted access and Europe coverage are explicitly configured.",
+      attributionRequirement: "Do not display imported Levels.fyi compensation data.",
+      supportedFields: [],
+      disabledReason: "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
+      configured: false,
+      coverage: {
+        geography: "licensed_provider_configured",
+        regions: [],
+        notes: "Europe coverage is not configured.",
+      },
+      notes: ["Policy seam only; no Levels.fyi fetch, scrape, cache, credential, or salary import path is registered here."],
+    },
+    {
+      sourceId: "glassdoor",
+      displayName: "Glassdoor",
+      sourceType: "licensed_market_benchmark",
+      accessMode: "unavailable_until_permitted",
+      availability: "unavailable",
+      licenseStatus: "requires_permission",
+      termsUrl: "https://www.glassdoor.com/about/terms/",
+      sourceUrl: "https://www.glassdoor.com/",
+      freshnessPolicy: "Unavailable until partner API or written permission is configured.",
+      attributionRequirement: "Do not display imported Glassdoor compensation data.",
+      supportedFields: [],
+      disabledReason: "Requires Glassdoor partner API access or written permission.",
+      configured: false,
+      coverage: {
+        geography: "licensed_provider_configured",
+        regions: [],
+        notes: "Coverage is not configured.",
+      },
+      notes: ["Policy seam only; no Glassdoor fetch, scrape, cache, credential, or salary import path is registered here."],
+    },
+  ],
+};
+
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
@@ -72,6 +141,7 @@ export const handlers = [
     HttpResponse.json({ ok: true, sources: [sampleDiscoverySource] }),
   ),
   http.get("*/v1/discovery/settings", () => HttpResponse.json(sampleDiscoverySettingsResponse)),
+  http.get("*/v1/compensation/sources", () => HttpResponse.json(sampleCompensationSourcePolicy)),
   http.patch("*/v1/discovery/settings", async ({ request }) => {
     const body = (await request.json()) as Partial<typeof sampleDiscoverySettingsResponse.settings>;
     return HttpResponse.json({

@@ -15,12 +15,12 @@
 
 ### Europe Salary Sources
 
-- [ ] **SRC-01**: User can see a salary-source registry entry for every configured compensation source, including access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason when unavailable.
+- [x] **SRC-01**: User can see a salary-source registry entry for every configured compensation source, including access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason when unavailable.
 - [ ] **SRC-02**: User can use Europe-only public baseline sources for v1.3: Eurostat Structure of Earnings Survey for Europe-wide wage baselines, ESCO for occupation mapping, and Spain INE Wage Structure Survey for Spain-specific wage baselines.
 - [ ] **SRC-03**: User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
-- [ ] **SRC-04**: User can see Levels.fyi and Glassdoor represented only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
-- [ ] **SRC-05**: User is protected from unauthorized Glassdoor scraping because the product does not fetch, scrape, cache, or display Glassdoor-derived salary data without explicit partner/API access or written permission.
-- [ ] **SRC-06**: User is protected from unlicensed Levels.fyi use because the product does not fetch, scrape, cache, or display Levels.fyi-derived salary data without an explicitly configured permitted access mode and Europe coverage.
+- [x] **SRC-04**: User can see Levels.fyi and Glassdoor represented only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
+- [x] **SRC-05**: User is protected from unauthorized Glassdoor scraping because the product does not fetch, scrape, cache, or display Glassdoor-derived salary data without explicit partner/API access or written permission.
+- [x] **SRC-06**: User is protected from unlicensed Levels.fyi use because the product does not fetch, scrape, cache, or display Levels.fyi-derived salary data without an explicitly configured permitted access mode and Europe coverage.
 
 ### Market Estimates And Statistical Confidence
 
@@ -102,12 +102,12 @@ Which phases cover which requirements.
 | COMP-03 | Phase 18 | Pending |
 | COMP-04 | Phase 18 | Pending |
 | COMP-05 | Phase 18 | Pending |
-| SRC-01 | Phase 17 | Pending |
+| SRC-01 | Phase 17 | Complete |
 | SRC-02 | Phase 19 | Pending |
 | SRC-03 | Phase 19 | Pending |
-| SRC-04 | Phase 17 | Pending |
-| SRC-05 | Phase 17 | Pending |
-| SRC-06 | Phase 17 | Pending |
+| SRC-04 | Phase 17 | Complete |
+| SRC-05 | Phase 17 | Complete |
+| SRC-06 | Phase 17 | Complete |
 | EST-01 | Phase 19 | Pending |
 | EST-02 | Phase 19 | Pending |
 | EST-03 | Phase 19 | Pending |
@@ -141,4 +141,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after v1.3 roadmap creation*
+*Last updated: 2026-06-19 after Phase 17 verification*
