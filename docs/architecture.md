@@ -423,6 +423,15 @@ before inspection. Phase 18 exposes them through a narrow read-only API only;
 the projection-backed Jobs list/detail compensation summary and SSE invalidation
 are deferred to the Phase 20 read-model contract so Python and TypeScript
 projection builders can be updated in parity.
+Company-role reported compensation estimates are persisted in
+`job_market_compensation_estimates` before inspection. Phase 19 estimates are
+deterministic local facts derived from imported or manually supplied reported
+compensation observations for Levels.fyi, Glassdoor, or manual sources. These
+rows store explicit estimate states, normalized company and role, match scope,
+trimodal company tier, confidence factors, safe source snapshots, warnings, and
+reasons. They do not store raw benchmark pages, provider payloads, credentials,
+local paths, private account state, user compensation preferences, or U.S.
+salary baselines.
 
 ## Runtime Boundaries
 
@@ -788,6 +797,17 @@ source text such as `jobs.salary`, records explicit parse states and warnings,
 and keeps `jobs.salary` unchanged as a compatibility/raw fallback. It does not
 store full descriptions, provider raw payloads, credentials, local paths, or
 licensed-source salary data.
+Market compensation estimates live in the canonical
+`job_market_compensation_estimates` table. The estimator consumes deterministic
+local reported compensation observations keyed by company and role, records
+explicit non-range states for unsupported, unavailable, and
+insufficient-evidence cases, and emits range fields only when company, role,
+level, freshness, sample, source-agreement, and trimodal-tier confidence factors
+pass threshold. The temporary `jobhunter compensation-refresh` command reparses
+existing posted salary text, imports reported observations, writes estimates for
+existing jobs, and refreshes projections without running the job pipeline. It
+does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
+or apply dispatch behavior in Phase 19.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

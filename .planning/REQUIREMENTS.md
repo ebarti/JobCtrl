@@ -13,24 +13,24 @@
 - [x] **COMP-04**: User can see parse confidence and parse warnings for ambiguous compensation text such as hourly pay, monthly pay, OTE, bonus, commission, equity, broad ranges, one-sided ranges, missing currency, or missing period.
 - [x] **COMP-05**: User can still see the legacy raw salary string when no structured compensation fact exists, without treating that raw string as the normalized source of truth.
 
-### Europe Salary Sources
+### Reported Compensation Sources
 
 - [x] **SRC-01**: User can see a salary-source registry entry for every configured compensation source, including access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason when unavailable.
-- [ ] **SRC-02**: User can use Europe-only public baseline sources for v1.3: Eurostat Structure of Earnings Survey for Europe-wide wage baselines, ESCO for occupation mapping, and Spain INE Wage Structure Survey for Spain-specific wage baselines.
-- [ ] **SRC-03**: User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
-- [x] **SRC-04**: User can see Levels.fyi and Glassdoor represented only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
+- [x] **SRC-02**: User can use reported compensation observations from Levels.fyi, Glassdoor, and manual local imports as company-role benchmark evidence when the rows are supplied through a permitted local import path.
+- [x] **SRC-03**: User can see when an estimate is an exact company-role match, an adjacent-role company fallback, or a trimodal tier-role fallback.
+- [x] **SRC-04**: User can see Levels.fyi and Glassdoor represented as reported-compensation sources, with automated provider access still gated by explicit permitted access configuration.
 - [x] **SRC-05**: User is protected from unauthorized Glassdoor scraping because the product does not fetch, scrape, cache, or display Glassdoor-derived salary data without explicit partner/API access or written permission.
 - [x] **SRC-06**: User is protected from unlicensed Levels.fyi use because the product does not fetch, scrape, cache, or display Levels.fyi-derived salary data without an explicitly configured permitted access mode and Europe coverage.
 
-### Market Estimates And Statistical Confidence
+### Company-Role Estimates And Statistical Confidence
 
-- [ ] **EST-01**: User can see a market estimate state for each job: not requested, unsupported, insufficient evidence, estimated range, or source unavailable.
-- [ ] **EST-02**: User can see Europe-only market estimates only when the estimator has enough source support for role, occupation, geography, seniority, compensation component, and freshness.
-- [ ] **EST-03**: User can see statistical confidence for every market estimate, including confidence band, score or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
-- [ ] **EST-04**: User can see an explicit insufficient-evidence explanation instead of a market range when source coverage, sample count, geography match, seniority match, or component compatibility is too weak.
+- [x] **EST-01**: User can see a market estimate state for each job: not requested, unsupported, insufficient evidence, estimated range, or source unavailable.
+- [x] **EST-02**: User can see company-role market estimates only when the estimator has enough reported-observation support for company, role, level, location compatibility, compensation component, freshness, sample count, source agreement, and trimodal company tier.
+- [x] **EST-03**: User can see statistical confidence for every market estimate, including confidence band, score or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
+- [x] **EST-04**: User can see an explicit insufficient-evidence explanation instead of a market range when company match, role match, source coverage, sample count, level match, location compatibility, or component compatibility is too weak.
 - [ ] **EST-05**: User can distinguish posted salary facts from benchmark-derived market estimates in every API and UI surface.
-- [ ] **EST-06**: User can see assumptions for remote-Europe, Spain-local, EU-wide, non-EU-Europe, and unknown-location mappings rather than having the system silently pick a market.
-- [ ] **EST-07**: User can see source conflict or broad aggregate warnings when public baselines and posted salary ranges diverge or when a range is too wide for precise triage.
+- [x] **EST-06**: User can see trimodal compensation-tier context, including when a tier is supplied by the observation rows or inferred from reported compensation.
+- [x] **EST-07**: User can see source conflict, low-sample, stale-source, location-mismatch, or fallback warnings when reported compensation and posted salary ranges diverge or when support is too weak for precise triage.
 
 ### Read Model And API
 
@@ -51,9 +51,9 @@
 
 ### QA And Safety
 
-- [ ] **QA-01**: User-facing compensation behavior is covered by synthetic fixtures for below-floor posted salary, above-floor posted salary, missing posted salary, unparseable salary, broad posted range, OTE/equity ambiguity, Europe public baseline, Spain INE baseline, unsupported geography, stale source, source conflict, low-confidence estimate, and insufficient evidence.
+- [ ] **QA-01**: User-facing compensation behavior is covered by synthetic fixtures for below-floor posted salary, above-floor posted salary, missing posted salary, unparseable salary, broad posted range, OTE/equity ambiguity, exact company-role reported compensation, adjacent-role company fallback, trimodal tier fallback, stale source, source conflict, low-confidence estimate, and insufficient evidence.
 - [ ] **QA-02**: Product-path QA proves salary estimates do not change fit score, apply readiness, apply-review handoff, ranking, filtering, or auto-apply behavior in v1.3.
-- [ ] **QA-03**: Backend tests prove parser confidence and market confidence degrade when source quality, sample count, freshness, role match, seniority match, geography match, or component compatibility is weak.
+- [ ] **QA-03**: Backend tests prove parser confidence and market confidence degrade when source quality, sample count, freshness, company match, role match, level match, location compatibility, or component compatibility is weak.
 - [ ] **QA-04**: API and projection tests prove compensation audit data comes from canonical rows and remains parity-safe across Python and TypeScript projection refreshers.
 - [ ] **QA-05**: Frontend tests prove Jobs list and Jobs drawer render posted, estimated, unavailable, insufficient-evidence, warning-only floor comparison, and source-conflict states.
 - [ ] **QA-06**: QA uses synthetic or public aggregate data only and does not run auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, real external scraping, or worker-backed apply jobs.
@@ -82,12 +82,12 @@
 
 | Feature | Reason |
 |---------|--------|
-| Glassdoor scraping | Glassdoor terms require express permission for automated scraping/mining; v1.3 only supports disabled/licensed seams. |
-| Unlicensed Levels.fyi scraping | Levels.fyi data/API access must be permitted and licensed before use; v1.3 only supports disabled/licensed seams. |
+| Glassdoor scraping | Glassdoor terms require express permission for automated scraping/mining; v1.3 supports local import of permitted reported rows, not unauthorized scraping. |
+| Unlicensed Levels.fyi scraping | Levels.fyi data/API access must be permitted and licensed before use; v1.3 supports local import of permitted reported rows, not unauthorized scraping. |
 | Non-European public baselines | JobHunter is Europe-first; non-European salary baselines are not part of the active product direction. |
 | Automatic salary ranking/filtering/blockers | The user chose warning-only floor behavior for v1.3. |
 | Employer-side compensation screening | JobHunter is applicant-side local triage, not an employer-side selection system. |
-| Deep equity/RSU/bonus/OTE modeling | Public Europe baselines are wage/salary aggregates; total compensation modeling needs licensed structured data. |
+| Deep equity/RSU/bonus/OTE modeling | v1.3 stores total compensation ranges when reported rows provide them, but detailed component modeling remains future work. |
 | Real external scraping in QA | QA must use synthetic/public aggregate fixtures and must not hit real salary pages or private account data. |
 | Frontend-only salary estimation | Every displayed compensation claim needs persisted provenance and an owning backend source of truth. |
 
@@ -103,18 +103,18 @@ Which phases cover which requirements.
 | COMP-04 | Phase 18 | Complete |
 | COMP-05 | Phase 18 | Complete |
 | SRC-01 | Phase 17 | Complete |
-| SRC-02 | Phase 19 | Pending |
-| SRC-03 | Phase 19 | Pending |
+| SRC-02 | Phase 19 | Complete |
+| SRC-03 | Phase 19 | Complete |
 | SRC-04 | Phase 17 | Complete |
 | SRC-05 | Phase 17 | Complete |
 | SRC-06 | Phase 17 | Complete |
-| EST-01 | Phase 19 | Pending |
-| EST-02 | Phase 19 | Pending |
-| EST-03 | Phase 19 | Pending |
-| EST-04 | Phase 19 | Pending |
+| EST-01 | Phase 19 | Complete |
+| EST-02 | Phase 19 | Complete |
+| EST-03 | Phase 19 | Complete |
+| EST-04 | Phase 19 | Complete |
 | EST-05 | Phase 20 | Pending |
-| EST-06 | Phase 19 | Pending |
-| EST-07 | Phase 19 | Pending |
+| EST-06 | Phase 19 | Complete |
+| EST-07 | Phase 19 | Complete |
 | API-01 | Phase 20 | Pending |
 | API-02 | Phase 20 | Pending |
 | API-03 | Phase 20 | Pending |
@@ -141,4 +141,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after Phase 18 verification*
+*Last updated: 2026-06-19 after Phase 19 verification*

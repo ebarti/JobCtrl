@@ -72,6 +72,7 @@ import {
 } from "./application-feedback.js";
 import { listCompensationSources } from "./compensation-source-policy.js";
 import { databaseExists, openDatabase } from "./db.js";
+import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
   decideQuarantineEntry,
@@ -496,6 +497,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
         const response = getPostedCompensationFact(db, decodeRouteParam(request.params.jobKey));
+        if (!response) {
+          void reply.code(404);
+          return { ok: false, error: "job_not_found" };
+        }
+        return response;
+      }),
+  );
+
+  app.get<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/compensation/market",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) => {
+        const response = getMarketCompensationEstimate(db, decodeRouteParam(request.params.jobKey));
         if (!response) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };

@@ -200,6 +200,19 @@ uv --project workers/automation run jobhunter run --stream
 `jobhunter enrich` remains available as a diagnostic queue-drain command, but
 normal discovery runs own detail enrichment.
 
+Refresh compensation facts for existing jobs without rerunning discovery,
+scoring, tailoring, cover-letter generation, or apply automation:
+
+```bash
+uv --project workers/automation run jobhunter compensation-refresh \
+  --observations-json /path/to/reported-compensation.json
+```
+
+The command reparses current `jobs.salary` values into posted-compensation
+facts, imports local reported compensation rows from Levels.fyi, Glassdoor, or
+manual sources, estimates matching company-role ranges, and refreshes local
+projections. Use `--url <job-url>` or `--limit N` to narrow the refresh.
+
 Useful options:
 
 - `--dry-run`: preview a stage without executing it.

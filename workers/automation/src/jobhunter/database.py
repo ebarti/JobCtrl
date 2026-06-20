@@ -143,6 +143,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
     ensure_posted_compensation_tables(conn)
+    ensure_market_compensation_tables(conn)
     ensure_state_tables(conn)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
@@ -364,6 +365,100 @@ def ensure_posted_compensation_tables(conn: sqlite3.Connection | None = None) ->
     )
     conn.commit()
     return []
+
+
+def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create canonical company-role reported compensation estimate storage."""
+    if conn is None:
+        conn = get_connection()
+
+    existing_table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job_market_compensation_estimates'"
+    ).fetchone()
+    if existing_table is not None and "total_compensation" not in str(existing_table["sql"]):
+        conn.execute("DROP TABLE IF EXISTS job_market_compensation_estimates_public_legacy")
+        conn.execute(
+            "ALTER TABLE job_market_compensation_estimates "
+            "RENAME TO job_market_compensation_estimates_public_legacy"
+        )
+        conn.commit()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
+            tenant_id                         TEXT NOT NULL DEFAULT 'local',
+            job_url                           TEXT NOT NULL,
+            estimate_state                    TEXT NOT NULL CHECK (
+                estimate_state IN ('unsupported', 'source_unavailable', 'insufficient_evidence', 'estimated_range')
+            ),
+            currency                          TEXT,
+            period                            TEXT NOT NULL DEFAULT 'year' CHECK (period IN ('year', 'month')),
+            component                         TEXT NOT NULL DEFAULT 'total_compensation' CHECK (
+                component IN ('base_salary', 'total_compensation')
+            ),
+            minimum_amount                    INTEGER,
+            maximum_amount                    INTEGER,
+            confidence_band                   TEXT NOT NULL DEFAULT 'none' CHECK (
+                confidence_band IN ('none', 'low', 'medium', 'high')
+            ),
+            confidence_score                  REAL NOT NULL DEFAULT 0,
+            source_count                      INTEGER NOT NULL DEFAULT 0,
+            sample_count                      INTEGER,
+            aggregate_bucket                  TEXT,
+            geography_scope                   TEXT,
+            occupation_code                   TEXT,
+            occupation_label                  TEXT,
+            seniority_label                   TEXT,
+            source_snapshot_json              TEXT NOT NULL DEFAULT '[]',
+            factor_reasons_json               TEXT NOT NULL DEFAULT '[]',
+            insufficient_reasons_json         TEXT NOT NULL DEFAULT '[]',
+            unsupported_reasons_json          TEXT NOT NULL DEFAULT '[]',
+            source_unavailable_reasons_json   TEXT NOT NULL DEFAULT '[]',
+            warnings_json                     TEXT NOT NULL DEFAULT '[]',
+            estimator_version                 TEXT NOT NULL,
+            estimated_at                      TEXT NOT NULL,
+            company_name                      TEXT,
+            normalized_company                TEXT,
+            role_title                        TEXT,
+            normalized_role                   TEXT,
+            company_tier                      TEXT NOT NULL DEFAULT 'unknown' CHECK (
+                company_tier IN ('tier_1_local', 'tier_2_ambitious', 'tier_3_top_of_market', 'unknown')
+            ),
+            match_scope                       TEXT NOT NULL DEFAULT 'none' CHECK (
+                match_scope IN ('exact_company_role', 'company_adjacent_role', 'tier_role_fallback', 'none')
+            ),
+            PRIMARY KEY (tenant_id, job_url),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(job_market_compensation_estimates)").fetchall()}
+    added = []
+    for col, dtype in {
+        "company_name": "TEXT",
+        "normalized_company": "TEXT",
+        "role_title": "TEXT",
+        "normalized_role": "TEXT",
+        "company_tier": "TEXT NOT NULL DEFAULT 'unknown'",
+        "match_scope": "TEXT NOT NULL DEFAULT 'none'",
+    }.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE job_market_compensation_estimates ADD COLUMN {col} {dtype}")
+            added.append(col)
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_market_compensation_state
+        ON job_market_compensation_estimates (tenant_id, estimate_state)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_market_compensation_company_role
+        ON job_market_compensation_estimates (tenant_id, normalized_company, normalized_role)
+        """
+    )
+    conn.commit()
+    return added
 
 
 def drop_legacy_apply_runs_tables(conn: sqlite3.Connection | None = None) -> list[str]:

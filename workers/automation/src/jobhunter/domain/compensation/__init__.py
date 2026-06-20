@@ -1,5 +1,20 @@
-"""Posted compensation domain model and parser."""
+"""Compensation domain models and deterministic estimators."""
 
+from jobhunter.domain.compensation.market import (
+    ESTIMATOR_VERSION,
+    MARKET_CONFIDENCE_BANDS,
+    MARKET_ESTIMATE_STATES,
+    MARKET_REASON_CODES,
+    MARKET_SOURCE_IDS,
+    MARKET_WARNING_CODES,
+    MarketCompensationEstimate,
+    MarketConfidenceFactor,
+    MarketSourceSnapshot,
+    ReportedCompensationObservation,
+    estimate_market_compensation,
+    not_requested_market_estimate,
+    sanitize_market_source_snapshot,
+)
 from jobhunter.domain.compensation.posted import (
     CONFIDENCE_LEVELS,
     PARSER_VERSION,
@@ -13,11 +28,24 @@ from jobhunter.domain.compensation.posted import (
 
 __all__ = [
     "CONFIDENCE_LEVELS",
+    "ESTIMATOR_VERSION",
+    "MARKET_CONFIDENCE_BANDS",
+    "MARKET_ESTIMATE_STATES",
+    "MARKET_REASON_CODES",
+    "MARKET_SOURCE_IDS",
+    "MARKET_WARNING_CODES",
     "PARSER_VERSION",
     "PARSE_STATES",
     "PERIODS",
     "SOURCE_TEXT_LIMIT",
     "WARNING_CODES",
+    "MarketCompensationEstimate",
+    "MarketConfidenceFactor",
+    "MarketSourceSnapshot",
     "PostedCompensationFact",
+    "ReportedCompensationObservation",
+    "estimate_market_compensation",
+    "not_requested_market_estimate",
     "parse_posted_compensation",
+    "sanitize_market_source_snapshot",
 ]

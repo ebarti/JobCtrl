@@ -217,15 +217,17 @@ coverage notes, and safe operator notes. It does not return credentials, raw
 provider payloads, private-account state, local paths, scraped salary data, or
 salary observations.
 
-Phase 17 keeps the endpoint deterministic and network-free. It does not fetch,
-scrape, cache, import, or display Glassdoor or Levels.fyi compensation data.
-Europe-first public baselines such as Eurostat SES, ESCO, and Spain INE are
-visible as available public sources. Levels.fyi remains unavailable unless
+The endpoint is deterministic and network-free. It does not fetch, scrape,
+cache, or return raw provider payloads. It lists posted salary text, Levels.fyi,
+Glassdoor, and the temporary manual reported-compensation import as safe policy
+entries. Levels.fyi automated access remains unavailable unless
 `JOBHUNTER_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
 `enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
-Glassdoor remains unavailable unless `JOBHUNTER_GLASSDOOR_ACCESS_MODE` is
-`partner_api` or `written_permission`. The endpoint exposes whether those gates
-are configured; it does not describe, request, or return secrets.
+Glassdoor automated access remains unavailable unless
+`JOBHUNTER_GLASSDOOR_ACCESS_MODE` is `partner_api` or `written_permission`.
+Exported, licensed, or otherwise permitted reported rows can be supplied locally
+to `jobhunter compensation-refresh --observations-json`; the source registry
+does not expose secrets or row contents.
 
 `GET /v1/jobs/:jobKey/compensation/posted` returns the Phase 18 read-only
 inspection contract for canonical posted-compensation facts. The endpoint reads
@@ -245,6 +247,39 @@ Phase 18 does not add compensation summary or audit fields to `/v1/jobs` or
 `/v1/jobs/:key`, and it does not change fit score, sorting, filtering, apply
 readiness, apply-review handoff, or apply mutation behavior. Phase 20 owns job
 list/detail read-model propagation and SSE invalidation; Phase 21 owns the Jobs
+triage presentation.
+
+`GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
+inspection contract for canonical company-role reported compensation estimate
+rows. The endpoint reads `job_market_compensation_estimates` only; it does not
+estimate, backfill, update, persist, refresh projections, call providers, scrape
+pages, or normalize anything in React during a GET. Existing jobs without a
+market row return
+`{ ok: true, recordStatus: "not_requested", jobKey }`; unknown jobs return
+`404`.
+
+Recorded market estimates expose one explicit state: `unsupported`,
+`source_unavailable`, `insufficient_evidence`, or `estimated_range`. Range
+fields are present only for `estimated_range`. Non-range states carry
+inspectable reasons, confidence factors, safe source snapshots, and warnings
+instead of nullable precision. Phase 19 source scope is reported compensation
+evidence keyed by company and role: Levels.fyi, Glassdoor, and manual local
+reported-compensation imports. The estimate includes company name, normalized
+company, role title, normalized role, match scope, total compensation component,
+source count, sample count, confidence factors, and trimodal company-tier
+context. Raw benchmark pages, credentials, private account payloads, local
+paths, and user compensation preferences are not returned.
+
+Temporary write trigger: `jobhunter compensation-refresh --observations-json
+<file>` reparses posted salary facts from existing jobs, imports permitted
+reported compensation observations, estimates matching existing jobs, and
+refreshes projections without running discovery, scoring, tailoring, cover, or
+apply automation. `--url <job-url>` narrows the refresh to one existing job.
+
+Phase 19 still does not add compensation summary or audit fields to `/v1/jobs`
+or `/v1/jobs/:key`, and it does not change fit score, sorting, filtering,
+apply readiness, apply-review handoff, or apply mutation behavior. Phase 20
+owns projection propagation and SSE invalidation; Phase 21 owns the Jobs
 triage presentation.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`

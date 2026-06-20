@@ -16,7 +16,7 @@ describe("useCompensationSourcePolicyQuery", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.sources.map((source) => source.sourceId)).toEqual([
-      "eurostat_structure_of_earnings",
+      "manual_reported_compensation",
       "levels_fyi",
       "glassdoor",
     ]);

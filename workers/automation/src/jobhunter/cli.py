@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -800,6 +801,62 @@ def cover(
         dry_run=dry_run,
         validation=validation,
         limit=limit,
+    )
+
+
+@app.command("compensation-refresh")
+def compensation_refresh(
+    observations_json: Optional[Path] = typer.Option(
+        None,
+        "--observations-json",
+        help="JSON file of Levels.fyi, Glassdoor, or manual reported compensation observations.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    url: Optional[str] = typer.Option(None, "--url", help="Refresh one existing job URL instead of every job."),
+    limit: int = typer.Option(0, "--limit", help="Maximum jobs to refresh. 0 means all matching jobs."),
+    tenant_id: str = typer.Option("local", "--tenant-id", help="Tenant id for local canonical compensation rows."),
+) -> None:
+    """Refresh posted salary facts and reported company-role estimates for existing jobs."""
+
+    _bootstrap()
+
+    from jobhunter.database import get_connection
+    from jobhunter.infrastructure.compensation import (
+        SqliteMarketCompensationRepository,
+        SqlitePostedCompensationRepository,
+        load_reported_compensation_observations,
+    )
+    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    parsed_at = datetime.now(timezone.utc).isoformat()
+    observations = (
+        load_reported_compensation_observations(observations_json) if observations_json is not None else ()
+    )
+    conn = get_connection()
+    posted_count = SqlitePostedCompensationRepository(conn).backfill_from_legacy_jobs(
+        tenant_id=tenant_id,
+        parsed_at=parsed_at,
+    )
+    estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
+        observations,
+        tenant_id=tenant_id,
+        estimated_at=parsed_at,
+        limit=limit,
+        job_url=url,
+    )
+    ProjectionBuilder(conn_factory=get_connection).refresh()
+    console.print_json(
+        data={
+            "ok": True,
+            "postedFactsRefreshed": posted_count,
+            "reportedObservationsLoaded": len(observations),
+            "estimatesRefreshed": estimate_count,
+            "jobUrl": url,
+            "tenantId": tenant_id,
+        }
     )
 
 
