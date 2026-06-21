@@ -619,7 +619,7 @@ describe("<JobDetailDrawer>", () => {
     expect(within(drawer).getByLabelText("Apply readiness")).toHaveTextContent("missing apply link");
     expect(within(drawer).getByLabelText("Apply readiness")).not.toHaveTextContent(/compensation|salary|source conflict/i);
     expect(
-      within(triage).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" }),
+      within(triage).getByRole("link", { name: "Open Apply Review for Compensated Platform Role" }),
     ).not.toHaveTextContent(/compensation|salary|source conflict/i);
   });
 
