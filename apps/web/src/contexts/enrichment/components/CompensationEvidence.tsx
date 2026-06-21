@@ -270,7 +270,10 @@ function WarningList({
       <h4>{title}</h4>
       <ul>
         {warnings.map((warning) => (
-          <li key={`${warning.code}:${warning.message}`}>{warning.message}</li>
+          <li key={`${warning.code}:${warning.message}`}>
+            <code>{warning.code}</code>
+            <span>{warning.message}</span>
+          </li>
         ))}
       </ul>
     </div>

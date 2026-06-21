@@ -596,6 +596,167 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects trimodal fallback and source-conflict evidence from canonical compensation rows", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      const db = new Database(dbPath);
+      try {
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET minimum_amount = ?,
+                  maximum_amount = ?,
+                  confidence_band = ?,
+                  confidence_score = ?,
+                  aggregate_bucket = ?,
+                  geography_scope = ?,
+                  source_snapshot_json = ?,
+                  factor_reasons_json = ?,
+                  warnings_json = ?,
+                  company_name = ?,
+                  normalized_company = ?,
+                  role_title = ?,
+                  normalized_role = ?,
+                  company_tier = ?,
+                  match_scope = ?
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(
+          168000,
+          190000,
+          "medium",
+          0.62,
+          "trimodal tier role fallback",
+          "Europe",
+          JSON.stringify([
+            {
+              source_id: "levels_fyi",
+              display_name: "Levels.fyi rawProviderPayload",
+              source_type: "reported_compensation",
+              release_year: 2026,
+              snapshot_version: "rawProviderPayload",
+              geography_scope: "file:///Users/local/private",
+              aggregate_bucket: "credential secret token",
+              attribution: "api_key password",
+              sample_count: 4,
+            },
+            {
+              source_id: "glassdoor",
+              display_name: "Glassdoor",
+              source_type: "reported_compensation",
+              release_year: 2026,
+              sample_count: 3,
+            },
+          ]),
+          JSON.stringify([
+            { name: "company", score: 0.62, band: "medium", reason: "/Users/local credential" },
+            { name: "role", score: 1, band: "high", reason: "exact synthetic role" },
+            { name: "trimodal_tier", score: 0.62, band: "medium", reason: "tier inferred" },
+          ]),
+          JSON.stringify([
+            "reported_compensation_sample",
+            "company_role_fallback",
+            "trimodal_tier_inferred",
+            "source_conflict_with_posted_salary",
+          ]),
+          "Trimodal Labs",
+          "trimodal labs",
+          "Senior Platform Engineer",
+          "platform engineer",
+          "tier_3_top_of_market",
+          "tier_role_fallback",
+          "https://example.com/jobs/event-driven",
+        );
+      } finally {
+        db.close();
+      }
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readonlyDb = new Database(dbPath, { readonly: true });
+      try {
+        const projections = readonlyDb
+          .prepare(
+            `SELECT l.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections AS l
+               JOIN job_detail_projections AS d
+                 ON d.tenant_id = l.tenant_id AND d.job_id = l.job_id
+              WHERE l.tenant_id = 'local' AND l.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        const summary = JSON.parse(projections?.compensation_summary_json ?? "{}");
+        expect(summary).toMatchObject({
+          posted: {
+            recordStatus: "recorded",
+            parseState: "parsed_range",
+          },
+          market: {
+            sourceKind: "reported_company_role_market",
+            recordStatus: "recorded",
+            estimateState: "estimated_range",
+            confidenceBand: "medium",
+            sourceCount: 2,
+            warningCount: 4,
+            displayRange: "EUR 168000-190000/year",
+          },
+        });
+
+        const audit = JSON.parse(projections?.compensation_audit_json ?? "{}");
+        expect(audit.posted.recordStatus).toBe("recorded");
+        expect(audit.market.estimate).toMatchObject({
+          matchScope: "tier_role_fallback",
+          aggregateBucket: "trimodal tier role fallback",
+          confidenceBand: "medium",
+          companyTier: "tier_3_top_of_market",
+        });
+        expect(audit.market.estimate.factors.map((factor: { name: string }) => factor.name)).toEqual(
+          expect.arrayContaining(["company", "role", "trimodal_tier"]),
+        );
+        expect(audit.market.estimate.warnings.map((warning: { code: string }) => warning.code)).toEqual(
+          expect.arrayContaining([
+            "reported_compensation_sample",
+            "company_role_fallback",
+            "trimodal_tier_inferred",
+            "source_conflict_with_posted_salary",
+          ]),
+        );
+        expect(audit.market.estimate.sources.map((source: { sourceId: string }) => source.sourceId)).toEqual([
+          "levels_fyi",
+          "glassdoor",
+        ]);
+        const serialized = JSON.stringify({ summary, audit }).toLowerCase();
+        for (const unsafe of [
+          "/users/",
+          "file://",
+          "rawproviderpayload",
+          "credential",
+          "secret",
+          "api_key",
+          "token",
+          "password",
+        ]) {
+          expect(serialized).not.toContain(unsafe);
+        }
+      } finally {
+        readonlyDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+
   it("projects internal preparation progress as the single discover list stage", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

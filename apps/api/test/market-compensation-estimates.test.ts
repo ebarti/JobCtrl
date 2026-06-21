@@ -261,6 +261,93 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it("serves trimodal fallback and source-conflict evidence from canonical market rows", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    const db = new Database(dbPath);
+    db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+      "https://example.com/jobs/trimodal",
+      "Trimodal Fallback",
+      "€70,000-€82,000/year",
+      "Synthetic trimodal fallback description",
+      "Synthetic full description that must never appear",
+    );
+    db.close();
+    insertEstimate(dbPath, "https://example.com/jobs/trimodal", {
+      minimumAmount: 168_000,
+      maximumAmount: 190_000,
+      confidenceBand: "medium",
+      confidenceScore: 0.62,
+      sourceCount: 2,
+      sampleCount: 7,
+      aggregateBucket: "trimodal tier role fallback",
+      geographyScope: "Europe",
+      companyName: "Trimodal Labs",
+      normalizedCompany: "trimodal labs",
+      roleTitle: "Senior Platform Engineer",
+      normalizedRole: "platform engineer",
+      companyTier: "tier_3_top_of_market",
+      matchScope: "tier_role_fallback",
+      factors: [
+        { name: "company", score: 0.62, band: "medium", reason: "Synthetic tier fallback company support." },
+        { name: "role", score: 1, band: "high", reason: "Synthetic role support." },
+        { name: "trimodal_tier", score: 0.62, band: "medium", reason: "Synthetic trimodal tier support." },
+      ],
+      warnings: [
+        "reported_compensation_sample",
+        "company_role_fallback",
+        "trimodal_tier_inferred",
+        "source_conflict_with_posted_salary",
+      ],
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/trimodal")}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
+      expect(body.estimate).toMatchObject({
+        estimateState: "estimated_range",
+        minimumAmount: 168_000,
+        maximumAmount: 190_000,
+        confidenceBand: "medium",
+        aggregateBucket: "trimodal tier role fallback",
+        companyTier: "tier_3_top_of_market",
+        matchScope: "tier_role_fallback",
+      });
+      expect(body.estimate.warnings.map((warning) => warning.code)).toEqual(
+        expect.arrayContaining([
+          "reported_compensation_sample",
+          "company_role_fallback",
+          "trimodal_tier_inferred",
+          "source_conflict_with_posted_salary",
+        ]),
+      );
+      expect(body.estimate.factors.map((factor) => factor.name)).toEqual(
+        expect.arrayContaining(["company", "role", "trimodal_tier"]),
+      );
+      expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["levels_fyi", "glassdoor"]);
+      const serialized = JSON.stringify(body).toLowerCase();
+      for (const unsafe of [
+        "/users/",
+        "file://",
+        "rawproviderpayload",
+        "credential",
+        "secret",
+        "api_key",
+        "token",
+        "password",
+        "synthetic full description",
+      ]) {
+        expect(serialized).not.toContain(unsafe);
+      }
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("serves unsupported, source-unavailable, and insufficient-evidence rows without range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);

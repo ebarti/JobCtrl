@@ -289,6 +289,7 @@ export const sampleSecondaryJob: JobSummary = {
   appliedAt: "2026-05-04T10:00:00Z",
 };
 
+
 export function makeApplyAudit(overrides: Partial<ApplyAudit> = {}): ApplyAudit {
   const base: ApplyAudit = {
     state: "ready",

@@ -24,6 +24,7 @@ import {
   makeApplyAudit,
   makeJobDetail,
   sampleCompensationAudit,
+  sampleCompensationSummary,
   sampleJob,
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
@@ -71,6 +72,134 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("renders source-conflict compensation warnings only inside compensation evidence", async () => {
+    if (sampleCompensationAudit.market.recordStatus !== "recorded") {
+      throw new Error("sample compensation audit must include recorded market evidence");
+    }
+    const market = sampleCompensationAudit.market;
+    const sourceConflictAudit = {
+      ...sampleCompensationAudit,
+      market: {
+        ...market,
+        estimate: {
+          ...market.estimate,
+          confidenceBand: "medium" as const,
+          confidenceScore: 0.74,
+          sourceCount: 2,
+          sampleCount: 7,
+          warnings: [
+            {
+              code: "reported_compensation_sample" as const,
+              message: "The estimate uses reported compensation rows for the job company and role.",
+            },
+            {
+              code: "source_conflict_with_posted_salary" as const,
+              message: "Market estimate is above the posted range.",
+            },
+          ],
+        },
+      },
+    };
+    const sourceConflictSummary = {
+      ...sampleCompensationSummary,
+      warningCount: 2,
+      market: {
+        ...sampleCompensationSummary.market,
+        confidenceBand: "medium" as const,
+        confidenceScore: 0.74,
+        sourceCount: 2,
+        sampleCount: 7,
+        warningCount: 2,
+      },
+    };
+    expect(JSON.stringify(sourceConflictAudit)).toContain("source_conflict_with_posted_salary");
+    expect(JSON.stringify(sourceConflictAudit)).toContain("reported_compensation_sample");
+    expect(JSON.stringify(sourceConflictAudit)).not.toMatch(/~\/\.jobhunter|\/Users\/|api[_-]?key|oauth|resume|cover letter/i);
+
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleJob,
+              jobKey: String(params["jobKey"]),
+              title: "Compensated Platform Role",
+              currentStage: "apply",
+              currentSubstage: "apply",
+              currentState: "pending",
+              compensationSummary: sourceConflictSummary,
+            },
+            {
+              applyAudit: makeApplyAudit({
+                state: "blocked",
+                label: "missing apply link",
+                summary: "Application review is blocked until the posting URL is confirmed.",
+                missingPrerequisites: [
+                  {
+                    code: "missing_resume_pdf",
+                    label: "Submit-ready PDF missing",
+                    detail: "A submit-ready PDF is still missing.",
+                    severity: "warning",
+                    source: "materials.pdf",
+                  },
+                ],
+                hardBlockers: [
+                  {
+                    code: "missing_application_url",
+                    label: "Missing apply link",
+                    detail: "No application URL is recorded.",
+                    severity: "blocking",
+                    source: "application_url",
+                  },
+                ],
+                eligibilityConcerns: [
+                  {
+                    code: "score_eligibility_warning",
+                    label: "Eligibility warning",
+                    detail: "Sponsorship requirements need review.",
+                    severity: "warning",
+                    source: "score_eligibility",
+                  },
+                ],
+              }),
+              compensationAudit: sourceConflictAudit,
+            },
+          ),
+        ),
+      ),
+    );
+
+    renderJobDetailDrawer("job-source-conflict");
+
+    const compensation = await screen.findByRole("region", { name: "Compensation evidence" });
+    expect(within(compensation).getByText("source_conflict_with_posted_salary")).toBeInTheDocument();
+    expect(within(compensation).getByText("Market estimate is above the posted range.")).toBeInTheDocument();
+    expect(within(compensation).getByText("reported_compensation_sample")).toBeInTheDocument();
+    expect(
+      within(compensation).getByText("The estimate uses reported compensation rows for the job company and role."),
+    ).toBeInTheDocument();
+
+    const triage = screen.getByRole("region", { name: "Why this job is here" });
+    const drawer = screen.getByRole("dialog", { name: "Job details" });
+    for (const text of [
+      "source_conflict_with_posted_salary",
+      "Market estimate is above the posted range.",
+      "reported_compensation_sample",
+      "The estimate uses reported compensation rows for the job company and role.",
+    ]) {
+      expect(within(triage).queryByText(text)).not.toBeInTheDocument();
+    }
+    expect(within(triage).getByText("Apply concerns")).toBeInTheDocument();
+    expect(within(triage).getByText("Missing apply link: No application URL is recorded.")).toBeInTheDocument();
+    expect(within(triage).getByText("Submit-ready PDF missing: A submit-ready PDF is still missing.")).toBeInTheDocument();
+    expect(within(triage).getByText("Eligibility warning: Sponsorship requirements need review.")).toBeInTheDocument();
+    expect(within(drawer).getByLabelText("Apply readiness")).toHaveTextContent("missing apply link");
+    expect(within(drawer).getByLabelText("Apply readiness")).not.toHaveTextContent(/compensation|salary|source conflict/i);
+    expect(
+      within(triage).getByRole("link", { name: "Open Apply Review for Compensated Platform Role" }),
+    ).not.toHaveTextContent(/compensation|salary|source conflict/i);
+  });
+
   it("summarizes ranking, readiness, blockers, eligibility, and Apply Review handoff", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {

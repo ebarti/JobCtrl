@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import {
   makeJobsPage,
+  sampleCompensationSummary,
   sampleJob,
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
@@ -93,6 +94,65 @@ function jobWithStage(
     currentState: currentStage === "apply" ? "pending" : sampleJob.currentState,
   };
 }
+
+function rowForTitle(title: string): HTMLElement {
+  const titleCell = screen.getByText(title);
+  const row = titleCell.closest("tr");
+  if (!row) {
+    throw new Error(`Could not find row for ${title}`);
+  }
+  return row;
+}
+
+describe("<JobsView> compensation source-conflict visibility", () => {
+  it("shows source-conflict warning count without sort or query behavior", async () => {
+    const compensationSummary = {
+      ...sampleCompensationSummary,
+      warningCount: 2,
+      market: {
+        ...sampleCompensationSummary.market,
+        confidenceBand: "medium" as const,
+        confidenceScore: 0.74,
+        sourceCount: 2,
+        sampleCount: 7,
+        warningCount: 2,
+      },
+    };
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage([
+        {
+          ...sampleSecondaryJob,
+          jobKey: "job-source-conflict",
+          title: "Source Conflict Role",
+          compensationSummary,
+        },
+      ]),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Source Conflict Role")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Compensation" })).toBeInTheDocument();
+    const row = within(rowForTitle("Source Conflict Role"));
+    expect(row.getByText("EUR 112000-142000/year")).toBeInTheDocument();
+    expect(row.getByText(/market confidence medium/)).toBeInTheDocument();
+    expect(row.getByText(/2 sources/)).toBeInTheDocument();
+    expect(row.getByText("2 warnings")).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: /sort by Compensation/i })).not.toBeInTheDocument();
+    expect(JSON.stringify(router.state.location.search)).not.toMatch(/compensation|posted|market|warning/i);
+    expect(JSON.stringify(jobs.mock.calls[0]?.[0] ?? {})).not.toMatch(/compensation|posted|market|warning/i);
+    expect(jobs.mock.calls[0]?.[0]).toMatchObject({
+      sort: "discovered_at",
+      dir: "desc",
+    });
+  });
+});
+
 
 describe("<JobsView> bulk delete integration", () => {
   it("keeps the product Discover filter as a single discover-stage jobs query", async () => {

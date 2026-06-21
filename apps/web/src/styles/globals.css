@@ -3822,6 +3822,27 @@ textarea:focus-visible {
   padding-left: 18px;
 }
 
+.compensation-warning-list li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.compensation-warning-list code {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 1px 4px;
+  overflow-wrap: anywhere;
+}
+
+.compensation-warning-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .compensation-source-trail li,
 .compensation-factor-list li {
   min-width: 0;
