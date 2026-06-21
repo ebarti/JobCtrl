@@ -9,7 +9,12 @@ import type {
   DashboardSummary,
   JobAuditEntry,
   JobCompensationAudit,
+  JobCompensationFloorComparison,
+  JobCompensationFloorComparisonArm,
+  JobCompensationRangeSummary,
   JobCompensationSummary,
+  JobMarketCompensationSummary,
+  JobPostedCompensationSummary,
   JobDetail,
   JobSummary,
   PaginatedResponse,
@@ -288,6 +293,569 @@ export const sampleSecondaryJob: JobSummary = {
   applyStatus: "applied",
   appliedAt: "2026-05-04T10:00:00Z",
 };
+
+export function makeCompensationRange(
+  overrides: Partial<JobCompensationRangeSummary> = {},
+): JobCompensationRangeSummary {
+  return {
+    currency: "EUR",
+    period: "year",
+    component: "base_salary",
+    minimumAmount: 120_000,
+    maximumAmount: 150_000,
+    annualizedMinimumAmount: 120_000,
+    annualizedMaximumAmount: 150_000,
+    displayRange: "EUR 120k-150k",
+    ...overrides,
+  };
+}
+
+export function makeCompensationFloorComparisonArm(
+  overrides: Partial<JobCompensationFloorComparisonArm> = {},
+): JobCompensationFloorComparisonArm {
+  return {
+    state: "meets_floor",
+    currency: "EUR",
+    period: "year",
+    component: "base_salary",
+    minimumAmount: 120_000,
+    maximumAmount: 150_000,
+    annualizedMinimumAmount: 120_000,
+    annualizedMaximumAmount: 150_000,
+    displayRange: "EUR 120k-150k",
+    ...overrides,
+  };
+}
+
+export function makeCompensationFloorComparison(
+  overrides: Partial<JobCompensationFloorComparison> = {},
+): JobCompensationFloorComparison {
+  return {
+    state: "meets_floor",
+    basis: "both_posted_and_market",
+    floor: { amount: 100_000, currency: "EUR", period: "year" },
+    posted: makeCompensationFloorComparisonArm(),
+    market: makeCompensationFloorComparisonArm({
+      minimumAmount: 135_000,
+      maximumAmount: 165_000,
+      annualizedMinimumAmount: 135_000,
+      annualizedMaximumAmount: 165_000,
+      displayRange: "EUR 135k-165k",
+    }),
+    warningCount: 0,
+    warningLabels: [],
+    ...overrides,
+  };
+}
+
+export function makeFloorNotConfiguredCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    floorComparison: makeCompensationFloorComparison({
+      state: "not_configured",
+      basis: "floor_not_configured",
+      floor: null,
+      posted: null,
+      market: null,
+      warningCount: 0,
+      warningLabels: [],
+    }),
+    ...overrides,
+  });
+}
+
+export function makeFloorConfiguredCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    floorComparison: makeCompensationFloorComparison({
+      state: "below_floor",
+      basis: "posted_salary_basis",
+      floor: { amount: 140_000, currency: "EUR", period: "year" },
+      posted: makeCompensationFloorComparisonArm({
+        state: "below_floor",
+        minimumAmount: 100_000,
+        maximumAmount: 120_000,
+        annualizedMinimumAmount: 100_000,
+        annualizedMaximumAmount: 120_000,
+        displayRange: "EUR 100k-120k",
+      }),
+      market: null,
+      warningCount: 1,
+      warningLabels: ["Posted salary is below configured profile floor."],
+    }),
+    warningCount: 1,
+    ...overrides,
+  });
+}
+
+export function makePostedCompensationSummary(
+  overrides: Partial<JobPostedCompensationSummary> = {},
+): JobPostedCompensationSummary {
+  return {
+    sourceKind: "posted",
+    recordStatus: "recorded",
+    parseState: "parsed_range",
+    confidence: "high",
+    warningCount: 0,
+    range: makeCompensationRange(),
+    displayRange: "EUR 120k-150k",
+    ...overrides,
+  };
+}
+
+export function makeMarketCompensationSummary(
+  overrides: Partial<JobMarketCompensationSummary> = {},
+): JobMarketCompensationSummary {
+  return {
+    sourceKind: "reported_company_role_market",
+    recordStatus: "recorded",
+    estimateState: "estimated_range",
+    confidenceBand: "high",
+    sourceCount: 6,
+    warningCount: 2,
+    range: makeCompensationRange({
+      minimumAmount: 135_000,
+      maximumAmount: 165_000,
+      annualizedMinimumAmount: 135_000,
+      annualizedMaximumAmount: 165_000,
+      displayRange: "EUR 135k-165k",
+    }),
+    displayRange: "EUR 135k-165k",
+    ...overrides,
+  };
+}
+
+export function makeCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return {
+    projectionVersion: 1,
+    legacyRawSalary: "EUR 120k-150k",
+    warningCount: 2,
+    posted: makePostedCompensationSummary(),
+    market: makeMarketCompensationSummary(),
+    floorComparison: makeCompensationFloorComparison(),
+    ...overrides,
+  };
+}
+
+export function makeNoPostedSalaryCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    legacyRawSalary: null,
+    posted: makePostedCompensationSummary({
+      recordStatus: "recorded",
+      parseState: "missing",
+      confidence: "none",
+      warningCount: 0,
+      range: null,
+      displayRange: null,
+    }),
+    ...overrides,
+  });
+}
+
+export function makeUnsupportedMarketCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    warningCount: 1,
+    market: makeMarketCompensationSummary({
+      estimateState: "unsupported",
+      confidenceBand: "none",
+      sourceCount: 0,
+      warningCount: 1,
+      range: null,
+      displayRange: null,
+    }),
+    ...overrides,
+  });
+}
+
+export function makeInsufficientEvidenceCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    warningCount: 1,
+    market: makeMarketCompensationSummary({
+      estimateState: "insufficient_evidence",
+      confidenceBand: "low",
+      sourceCount: 2,
+      warningCount: 1,
+      range: null,
+      displayRange: null,
+    }),
+    ...overrides,
+  });
+}
+
+export function makeSourceUnavailableCompensationSummary(
+  overrides: Partial<JobCompensationSummary> = {},
+): JobCompensationSummary {
+  return makeCompensationSummary({
+    warningCount: 1,
+    market: makeMarketCompensationSummary({
+      estimateState: "source_unavailable",
+      confidenceBand: "none",
+      sourceCount: 0,
+      warningCount: 1,
+      range: null,
+      displayRange: null,
+    }),
+    ...overrides,
+  });
+}
+
+export function makeCompensationAudit(
+  overrides: Partial<JobCompensationAudit> = {},
+): JobCompensationAudit {
+  return {
+    projectionVersion: 1,
+    posted: {
+      ok: true,
+      recordStatus: "not_recorded",
+      jobKey: sampleJob.jobKey,
+      legacyRawSalary: "EUR 120k-150k",
+    },
+    market: {
+      ok: true,
+      recordStatus: "not_requested",
+      jobKey: sampleJob.jobKey,
+    },
+    floorComparison: makeCompensationFloorComparison(),
+    ...overrides,
+  };
+}
+
+type PostedRecordedResponse = Extract<
+  JobCompensationAudit["posted"],
+  { recordStatus: "recorded" }
+>;
+type PostedFact = PostedRecordedResponse["fact"];
+type PostedParsedRangeFact = Extract<PostedFact, { parseState: "parsed_range" }>;
+type PostedMissingFact = Extract<PostedFact, { parseState: "missing" }>;
+type PostedUnparseableFact = Extract<PostedFact, { parseState: "unparseable" }>;
+type PostedAmbiguousFact = Extract<PostedFact, { parseState: "ambiguous" }>;
+
+function postedFactBase() {
+  return {
+    tenantId: "local",
+    jobKey: sampleJob.jobKey,
+    sourceField: "description",
+    legacyRawSalary: "EUR 120k-150k",
+    parserVersion: "posted-parser-test-v1",
+    sourceHash: "sha256:synthetic-posted-source",
+    parsedAt: "2026-06-20T12:00:00Z",
+    warnings: [],
+  };
+}
+
+export function makeRecordedPostedCompensationAudit(
+  overrides: Partial<PostedParsedRangeFact> = {},
+): PostedRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    fact: {
+      ...postedFactBase(),
+      parseState: "parsed_range",
+      sourceText: "Salary range EUR 120k-150k gross base.",
+      currency: "EUR",
+      period: "year",
+      component: "base_salary",
+      minimumAmount: 120_000,
+      maximumAmount: 150_000,
+      annualizedMinimumAmount: 120_000,
+      annualizedMaximumAmount: 150_000,
+      annualizationAssumption: "Annual gross base salary.",
+      confidence: "high",
+      ...overrides,
+    },
+  };
+}
+
+export function makeMissingPostedCompensationAudit(
+  overrides: Partial<PostedMissingFact> = {},
+): PostedRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    fact: {
+      ...postedFactBase(),
+      parseState: "missing",
+      sourceText: null,
+      confidence: "none",
+      legacyRawSalary: null,
+      ...overrides,
+    },
+  };
+}
+
+export function makeUnparseablePostedCompensationAudit(
+  overrides: Partial<PostedUnparseableFact> = {},
+): PostedRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    fact: {
+      ...postedFactBase(),
+      parseState: "unparseable",
+      sourceText: "Competitive salary with meaningful equity.",
+      confidence: "low",
+      warnings: [{ code: "no_amount_found", message: "No numeric amount was found." }],
+      ...overrides,
+    },
+  };
+}
+
+export function makeAmbiguousPostedCompensationAudit(
+  overrides: Partial<PostedAmbiguousFact> = {},
+): PostedRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    fact: {
+      ...postedFactBase(),
+      parseState: "ambiguous",
+      sourceText: "Base EUR 95k plus OTE EUR 150k.",
+      confidence: "medium",
+      warnings: [
+        { code: "ambiguous_multiple_amounts", message: "Multiple amounts need review." },
+        { code: "ote_component", message: "OTE compensation is not base salary." },
+      ],
+      ...overrides,
+    },
+  };
+}
+
+type MarketRecordedResponse = Extract<
+  JobCompensationAudit["market"],
+  { recordStatus: "recorded" }
+>;
+type MarketEstimate = MarketRecordedResponse["estimate"];
+type MarketEstimatedRange = Extract<MarketEstimate, { estimateState: "estimated_range" }>;
+type MarketUnsupported = Extract<MarketEstimate, { estimateState: "unsupported" }>;
+type MarketInsufficient = Extract<MarketEstimate, { estimateState: "insufficient_evidence" }>;
+type MarketUnavailable = Extract<MarketEstimate, { estimateState: "source_unavailable" }>;
+
+function marketEstimateBase() {
+  return {
+    tenantId: "local",
+    jobKey: sampleJob.jobKey,
+    confidenceBand: "high" as const,
+    confidenceScore: 0.86,
+    sourceCount: 2,
+    sampleCount: 42,
+    aggregateBucket: "company-role",
+    geographyScope: "Europe",
+    occupationCode: "2512",
+    occupationLabel: "Software developers",
+    seniorityLabel: "Staff",
+    companyName: "Acme Corp",
+    normalizedCompany: "acme corp",
+    roleTitle: "Staff Software Engineer",
+    normalizedRole: "staff software engineer",
+    companyTier: "tier_2_ambitious" as const,
+    matchScope: "exact_company_role" as const,
+    sources: [
+      {
+        sourceId: "manual_reported_compensation" as const,
+        displayName: "Manual reported compensation import",
+        sourceType: "reported_compensation" as const,
+        releaseYear: 2026,
+        snapshotVersion: "manual-2026-06",
+        geographyScope: "Europe",
+        aggregateBucket: "company-role",
+        attribution: "Synthetic local reported-compensation fixture.",
+        sampleCount: 24,
+      },
+      {
+        sourceId: "glassdoor" as const,
+        displayName: "Glassdoor",
+        sourceType: "reported_compensation" as const,
+        releaseYear: null,
+        snapshotVersion: "disabled-provider-fixture",
+        geographyScope: "Europe",
+        aggregateBucket: "company-role",
+        attribution: "Provider access disabled in test fixture.",
+        sampleCount: null,
+      },
+    ],
+    factors: [
+      { name: "company" as const, score: 0.92, band: "high" as const, reason: "Exact company match." },
+      { name: "role" as const, score: 0.84, band: "high" as const, reason: "Staff platform role match." },
+      { name: "sample" as const, score: 0.7, band: "medium" as const, reason: "Sample size is adequate." },
+    ],
+    warnings: [
+      {
+        code: "source_conflict_with_posted_salary" as const,
+        message: "Market estimate is above the posted range.",
+      },
+    ],
+    estimatorVersion: "market-estimator-test-v1",
+    estimatedAt: "2026-06-20T12:10:00Z",
+  };
+}
+
+export function makeEstimatedMarketCompensationAudit(
+  overrides: Partial<MarketEstimatedRange> = {},
+): MarketRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    estimate: {
+      ...marketEstimateBase(),
+      estimateState: "estimated_range",
+      currency: "EUR",
+      period: "year",
+      component: "base_salary",
+      minimumAmount: 135_000,
+      maximumAmount: 165_000,
+      ...overrides,
+    },
+  };
+}
+
+export function makeSourceConflictMarketCompensationAudit(
+  overrides: Partial<MarketEstimatedRange> = {},
+): MarketRecordedResponse {
+  return makeEstimatedMarketCompensationAudit({
+    confidenceBand: "medium",
+    confidenceScore: 0.74,
+    sourceCount: 2,
+    sampleCount: 7,
+    sources: [
+      {
+        sourceId: "manual_reported_compensation",
+        displayName: "Manual reported compensation import",
+        sourceType: "reported_compensation",
+        releaseYear: 2026,
+        snapshotVersion: "synthetic-source-conflict-2026-06",
+        geographyScope: "Europe",
+        aggregateBucket: "company-role",
+        attribution: "Synthetic local reported-compensation fixture.",
+        sampleCount: 4,
+      },
+      {
+        sourceId: "glassdoor",
+        displayName: "Glassdoor",
+        sourceType: "reported_compensation",
+        releaseYear: 2026,
+        snapshotVersion: "disabled-provider-synthetic-source-conflict",
+        geographyScope: "Europe",
+        aggregateBucket: "company-role",
+        attribution: "Synthetic provider-disabled reported-compensation fixture.",
+        sampleCount: 3,
+      },
+    ],
+    warnings: [
+      {
+        code: "reported_compensation_sample",
+        message: "The estimate uses reported compensation rows for the job company and role.",
+      },
+      {
+        code: "source_conflict_with_posted_salary",
+        message: "Market estimate is above the posted range.",
+      },
+    ],
+    ...overrides,
+  });
+}
+
+export function makeUnsupportedMarketCompensationAudit(
+  overrides: Partial<MarketUnsupported> = {},
+): MarketRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    estimate: {
+      ...marketEstimateBase(),
+      estimateState: "unsupported",
+      confidenceBand: "none",
+      confidenceScore: 0,
+      sourceCount: 0,
+      sampleCount: null,
+      matchScope: "none",
+      sources: [],
+      factors: [],
+      warnings: [],
+      unsupportedReasons: [{ code: "unsupported_source", message: "This market is not supported." }],
+      ...overrides,
+    },
+  };
+}
+
+export function makeInsufficientMarketCompensationAudit(
+  overrides: Partial<MarketInsufficient> = {},
+): MarketRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    estimate: {
+      ...marketEstimateBase(),
+      estimateState: "insufficient_evidence",
+      confidenceBand: "low",
+      confidenceScore: 0.32,
+      sourceCount: 1,
+      sampleCount: 2,
+      insufficientReasons: [{ code: "low_sample_count", message: "Only two reported rows matched." }],
+      ...overrides,
+    },
+  };
+}
+
+export function makeUnavailableMarketCompensationAudit(
+  overrides: Partial<MarketUnavailable> = {},
+): MarketRecordedResponse {
+  return {
+    ok: true,
+    recordStatus: "recorded",
+    estimate: {
+      ...marketEstimateBase(),
+      estimateState: "source_unavailable",
+      confidenceBand: "none",
+      confidenceScore: 0,
+      sourceCount: 0,
+      sampleCount: null,
+      sources: [],
+      factors: [],
+      warnings: [],
+      sourceUnavailableReasons: [
+        {
+          code: "unsupported_source",
+          message: "Levels.fyi access unavailable until permitted source access is configured.",
+        },
+      ],
+      ...overrides,
+    },
+  };
+}
+
+export function jobWithCompensation(
+  overrides: Partial<JobSummary> = {},
+): JobSummary {
+  return {
+    ...sampleJob,
+    jobKey: "job-compensation",
+    title: "Compensated Platform Role",
+    salary: "EUR 120k-150k",
+    compensationSummary: makeCompensationSummary(),
+    ...overrides,
+  };
+}
+
+export function jobDetailWithCompensation(
+  job: JobSummary = jobWithCompensation(),
+  overrides: Partial<Omit<JobDetail, "ok" | "job">> = {},
+): JobDetail {
+  return makeJobDetail(job, {
+    compensationAudit: makeCompensationAudit(),
+    ...overrides,
+  });
+}
 
 export function makeApplyAudit(overrides: Partial<ApplyAudit> = {}): ApplyAudit {
   const base: ApplyAudit = {
