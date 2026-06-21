@@ -237,7 +237,8 @@ signal text.
 When touching compensation rendering, verify the Jobs table shows a compensation
 column with range and statistical confidence, and the drawer Compensation
 section separates posted salary from reported company-role market evidence,
-source trail, source/sample counts, warnings, and confidence factors.
+source trail, source/sample counts, source-conflict warning code/message,
+warnings, and confidence factors.
 Do not run apply submission, mailbox scanning,
 material regeneration, destructive profile/database actions, or worker-backed
 jobs for this smoke.
