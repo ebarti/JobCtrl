@@ -105,6 +105,112 @@ def test_unknown_method_returns_method_not_found() -> None:
     assert response.to_dict()["error"]["code"] == METHOD_NOT_FOUND
 
 
+def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None:
+    conn = get_connection(tmp_db)
+    selected_url = "https://example.com/jobs/company-metrics"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            selected_url,
+            "Senior Platform Engineer",
+            "Moniepoint",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            (
+                "Through our subsidiaries, Moniepoint Inc. processes over $250 billion "
+                "in digital payment transaction value annually. More than 6 million "
+                "businesses run their financial lives through Moniepoint."
+            ),
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": selected_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["status"] == "succeeded"
+
+    selected_posted = conn.execute(
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
+        (selected_url,),
+    ).fetchone()
+    assert selected_posted["parse_state"] == "missing"
+    assert selected_posted["source_field"] == "jobs.salary"
+    assert selected_posted["minimum_amount"] is None
+    assert selected_posted["maximum_amount"] is None
+
+
+def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> None:
+    conn = get_connection(tmp_db)
+    selected_url = "https://example.com/jobs/remote-prose"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            selected_url,
+            "Senior Platform Engineer",
+            "Acme",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            (
+                "Remote-first role for candidates with potential. "
+                "Spend up to 30 days per year working from another location."
+            ),
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": selected_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+
+    selected_posted = conn.execute(
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
+        (selected_url,),
+    ).fetchone()
+    assert selected_posted["parse_state"] == "missing"
+    assert selected_posted["source_field"] == "jobs.salary"
+    assert selected_posted["minimum_amount"] is None
+    assert selected_posted["maximum_amount"] is None
+
+
 def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/platform"

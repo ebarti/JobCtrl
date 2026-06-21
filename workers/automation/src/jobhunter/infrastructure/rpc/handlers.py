@@ -44,7 +44,19 @@ from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, 
 logger = logging.getLogger(__name__)
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
 COMPENSATION_SOURCE_RE = re.compile(
-    r"salary|compensation|pay range|base pay|base salary|wage|remuneration|€|\$|£|\b(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b",
+    r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
+    re.IGNORECASE,
+)
+COMPENSATION_AMOUNT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:(?:[€$£]|(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b)\s*)"
+    r"\d{1,3}(?:[,.]\d{3})*(?:[,.]\d+)?\s*(?:k|K)?(?![A-Za-z0-9])"
+)
+NON_COMPENSATION_SCALE_RE = re.compile(
+    r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
+    re.IGNORECASE,
+)
+PAY_PERIOD_RE = re.compile(
+    r"(?:/(?:h|hr|hrs|hour|mo|mos|month)|\b(?:hour|hourly|hr|hrs|month|monthly|year|yearly|annual|annually|annum|yr|yrs)\b)",
     re.IGNORECASE,
 )
 
@@ -79,7 +91,7 @@ def _compensation_source_from_job(row: Any) -> tuple[str | None, str]:
         text = _nonempty_text(row[field])
         if text is None:
             continue
-        match = COMPENSATION_SOURCE_RE.search(text)
+        match = _compensation_source_match(text)
         if match is None:
             continue
         start = max(0, match.start() - 80)
@@ -87,6 +99,22 @@ def _compensation_source_from_job(row: Any) -> tuple[str | None, str]:
         return text[start:end].strip(), f"jobs.{field}"
 
     return None, "jobs.salary"
+
+
+def _compensation_source_match(text: str) -> re.Match[str] | None:
+    keyword_match = COMPENSATION_SOURCE_RE.search(text)
+    if keyword_match is not None:
+        return keyword_match
+
+    for amount_match in COMPENSATION_AMOUNT_RE.finditer(text):
+        if NON_COMPENSATION_SCALE_RE.match(text[amount_match.end() :].lstrip()):
+            continue
+        window_start = max(0, amount_match.start() - 40)
+        window_end = min(len(text), amount_match.end() + 40)
+        if PAY_PERIOD_RE.search(text[window_start:window_end]):
+            return amount_match
+
+    return None
 
 
 def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> bool:
