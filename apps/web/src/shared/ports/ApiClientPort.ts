@@ -58,6 +58,7 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RefreshCompensationRequest,
   RoleMatchFeedbackDecisionRequest,
   RoleMatchFeedbackDecisionResponse,
   RoleMatchFeedbackListResponse,
@@ -187,6 +188,7 @@ export interface ApiClientPort {
     body: ResetStaleScoresForRescoreRequest,
   ): Promise<ResetStaleScoresForRescoreResponse>;
   rescoreJob(jobKey: string, body?: Partial<RescoreJobRequest>): Promise<ActionRunResponse>;
+  refreshCompensation(jobKey: string, body?: RefreshCompensationRequest): Promise<ActionRunResponse>;
   rescoreJobsNotOnCurrentScoringPolicy(
     body: BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   ): Promise<ActionRunResponse>;

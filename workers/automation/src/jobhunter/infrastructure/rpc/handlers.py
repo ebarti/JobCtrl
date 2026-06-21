@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from jobhunter.actions import LocalActionRequest, run_local_action
@@ -314,6 +316,64 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
+    """Refresh compensation facts for one existing job without running a pipeline."""
+    tenant_id = _tenant_id(params)
+    job_url = str(_require(params, "jobUrl"))
+
+    from jobhunter.infrastructure.compensation import (
+        SqliteMarketCompensationRepository,
+        SqlitePostedCompensationRepository,
+        load_reported_compensation_observations,
+    )
+    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    conn = get_connection()
+    row = conn.execute("SELECT url, salary FROM jobs WHERE url = ?", (job_url,)).fetchone()
+    if row is None:
+        raise invalid_params(f"unknown jobUrl: {job_url}")
+
+    refreshed_at = datetime.now(timezone.utc).isoformat()
+    salary = row["salary"] if hasattr(row, "keys") else row[1]
+    SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
+        job_url,
+        salary,
+        tenant_id=tenant_id,
+        parsed_at=refreshed_at,
+    )
+    posted_count = 1
+
+    observations_path = params.get("observationsJsonPath")
+    observations = ()
+    estimate_count = 0
+    market_skipped = True
+    if observations_path:
+        observation_file = Path(str(observations_path))
+        if not observation_file.is_file():
+            raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
+        observations = load_reported_compensation_observations(observation_file)
+        estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
+            observations,
+            tenant_id=tenant_id,
+            estimated_at=refreshed_at,
+            limit=1,
+            job_url=job_url,
+        )
+        market_skipped = False
+
+    ProjectionBuilder(conn_factory=get_connection).refresh()
+    return {
+        "ok": True,
+        "status": "succeeded",
+        "jobUrl": job_url,
+        "postedFactsRefreshed": posted_count,
+        "reportedObservationsLoaded": len(observations),
+        "estimatesRefreshed": estimate_count,
+        "marketRefreshSkipped": market_skipped,
+        "tenantId": tenant_id,
+    }
+
+
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
     return _pipeline_workflow_spec(
         params,
@@ -458,6 +518,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # Standalone employer-analysis trigger (D-10) — synchronous; runs the
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
+    server.register("refresh_compensation", refresh_compensation, mode="sync")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

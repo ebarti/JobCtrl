@@ -1,3 +1,5 @@
+import { IconRefresh } from "@tabler/icons-react";
+import { type FormEvent, useState } from "react";
 import type {
   JobCompensationAudit,
   JobCompensationSummary,
@@ -13,6 +15,8 @@ import type {
 } from "@jobhunter/contracts";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import { Input } from "../../../shared/ui/input.js";
+import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
 
 type TagTone = "ok" | "info" | "warn" | "muted";
 
@@ -34,6 +38,7 @@ export interface CompensationSummaryStripProps extends CompensationSummaryCellPr
 }
 
 export interface CompensationAuditSectionProps {
+  readonly jobId?: string;
   readonly summary: JobCompensationSummary | null;
   readonly audit: JobCompensationAudit | null;
   readonly fallbackSalary?: string | null;
@@ -430,7 +435,44 @@ function MarketPanel({
   );
 }
 
+function CompensationRefreshControl({ jobId }: { readonly jobId: string }) {
+  const [observationsJsonPath, setObservationsJsonPath] = useState("");
+  const mutation = useRefreshCompensationMutation();
+  const path = observationsJsonPath.trim();
+  const disabled = mutation.isPending;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (disabled) return;
+    mutation.mutate({
+      jobId,
+      ...(path ? { observationsJsonPath: path } : {}),
+    });
+  };
+
+  return (
+    <form className="compensation-refresh-control" onSubmit={submit}>
+      <label className="compensation-refresh-path">
+        <span>Observation JSON path</span>
+        <Input
+          value={observationsJsonPath}
+          placeholder="/path/to/reported-compensation.json"
+          onChange={(event) => setObservationsJsonPath(event.currentTarget.value)}
+        />
+      </label>
+      <button aria-label="refresh compensation" className="tab" disabled={disabled} type="submit">
+        <IconRefresh aria-hidden="true" size={14} />
+        <span>{disabled ? "refreshing" : "refresh compensation"}</span>
+      </button>
+      <span className="compensation-refresh-status" aria-live="polite">
+        {mutation.isSuccess ? "refreshed" : null}
+      </span>
+    </form>
+  );
+}
+
 export function CompensationAuditSection({
+  jobId,
   summary,
   audit,
   fallbackSalary = null,
@@ -438,7 +480,10 @@ export function CompensationAuditSection({
   if (!summary && !audit && !fallbackSalary) {
     return (
       <section className="section compensation-audit-section" aria-label="Compensation evidence">
-        <h3>Compensation</h3>
+        <div className="compensation-audit-heading">
+          <h3>Compensation</h3>
+          {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
+        </div>
         <Empty title="No compensation evidence recorded." />
       </section>
     );
@@ -479,7 +524,10 @@ export function CompensationAuditSection({
 
   return (
     <section className="section compensation-audit-section" aria-label="Compensation evidence">
-      <h3>Compensation</h3>
+      <div className="compensation-audit-heading">
+        <h3>Compensation</h3>
+        {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
+      </div>
       <CompensationSummaryStrip
         summary={effectiveSummary}
         fallbackSalary={fallbackSalary}

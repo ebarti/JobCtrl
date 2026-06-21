@@ -2146,12 +2146,55 @@ textarea:focus-visible {
 }
 
 .jobs-data-grid-table {
-  min-width: 1500px;
+  min-width: 1780px;
 }
 
-.jobs-data-grid-table .compensation-column {
-  width: 210px;
-  min-width: 190px;
+.jobs-data-grid-table .job-compensation-column {
+  width: 156px;
+  min-width: 132px;
+}
+
+.jobs-data-grid-table .job-compensation-warnings-column {
+  width: 112px;
+  min-width: 96px;
+}
+
+.job-compensation-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.job-compensation-primary {
+  overflow: hidden;
+  color: var(--foreground);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-compensation-meta {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.job-compensation-dash {
+  color: var(--muted-foreground);
+}
+
+.job-compensation-warning-count {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.job-compensation-warning-count.warn {
+  color: var(--status-warning);
 }
 
 .artifacts-data-grid-table {
@@ -3745,6 +3788,42 @@ textarea:focus-visible {
 .compensation-audit-section {
   display: grid;
   gap: 12px;
+}
+
+.compensation-audit-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compensation-refresh-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  justify-content: flex-end;
+}
+
+.compensation-refresh-path {
+  display: grid;
+  gap: 4px;
+  min-width: min(260px, 100%);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.compensation-refresh-status {
+  min-width: 58px;
+  color: var(--status-success);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.compensation-refresh-path input {
+  height: 30px;
+  font-size: 12px;
 }
 
 .compensation-panels {

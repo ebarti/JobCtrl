@@ -249,8 +249,12 @@ The projection-backed `/v1/jobs` and `/v1/jobs/:key` responses now include
 detail response also includes top-level `compensationAudit`, which keeps
 `posted` and `market` inspection payloads separate. The legacy raw
 `JobSummary.salary` string remains present for compatibility. Compensation
-summary/audit data does not change fit score, sorting, filtering, apply
-readiness, apply-review handoff, or apply mutation behavior.
+summary/audit data does not change fit score, apply readiness, apply-review
+handoff, or apply mutation behavior. The Jobs list exposes dedicated sortable
+and filterable scan columns for posted salary range, reported market estimate,
+and compensation warnings; these sort through `compensation_posted`,
+`compensation_market`, and `compensation_warnings` alongside the existing
+sortable job columns.
 
 `GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
 inspection contract for canonical company-role reported compensation estimate
@@ -279,14 +283,24 @@ reported compensation observations, estimates matching existing jobs, and
 refreshes projections without running discovery, scoring, tailoring, cover, or
 apply automation. `--url <job-url>` narrows the refresh to one existing job.
 
+Manual web/API trigger: `POST
+/v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
+compensation refresh through the local worker for one existing job without
+rerunning discovery, scoring, tailoring, cover, or apply automation. The request
+body may include `{ "observationsJsonPath": "/path/to/export.json" }` to import
+permitted reported-compensation observations before estimating market evidence;
+omitting the path reparses the selected job's posted salary facts and leaves
+market estimates untouched. The response is the standard action response with a
+synchronous `succeeded` result when the local JSON-RPC handler completes.
+
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
 summary carries range, market confidence band/score, source count, sample count,
 and warning count for list surfaces; detail audit carries the source trail,
 confidence factors, warnings, and reasons. The web Jobs table, expanded job
 drawer, and Apply Review render these persisted fields without parsing salary
-text in React. This projection and rendering do not change fit score, sorting,
-filtering, apply readiness, apply-review handoff, or apply mutation behavior.
+text in React. This projection and rendering do not change fit score, apply
+readiness, apply-review handoff, or apply mutation behavior.
 
 When Python compensation repositories save posted facts or market estimates,
 they append `CompensationFactsUpdated` to `job_events`. The SSE payload contains

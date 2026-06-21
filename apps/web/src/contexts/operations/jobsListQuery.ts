@@ -148,6 +148,14 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
       return job.title.toLowerCase();
     case "company":
       return job.company.toLowerCase();
+    case "source":
+      return (job.postingSource || job.discoverySource || job.source || "").toLowerCase();
+    case "compensation_posted":
+      return postedCompensationSortValue(job);
+    case "compensation_market":
+      return marketCompensationSortValue(job);
+    case "compensation_warnings":
+      return job.compensationSummary?.warningCount ?? 0;
     case "location":
       return job.location.toLowerCase();
     case "fit_score":
@@ -156,9 +164,41 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
       return job.currentStage;
     case "current_state":
       return `${STATE_RANK[job.currentState] ?? 999}:${job.currentSubstage}`;
+    case "apply_status":
+      return job.applyStatus ?? "";
     case "discovered_at":
     default:
       return job.discoveredAt;
+  }
+}
+
+function postedCompensationSortValue(job: JobSummary): number {
+  const summary = job.compensationSummary;
+  const amount = summary?.posted.range?.annualizedMinimumAmount ?? summary?.posted.range?.minimumAmount;
+  if (Number.isFinite(amount)) return Number(amount);
+  if (summary?.posted.displayRange || summary?.legacyRawSalary || job.salary) return -1;
+  if (summary?.posted.parseState === "ambiguous") return -2;
+  if (summary?.posted.parseState === "unparseable") return -3;
+  if (summary?.posted.parseState === "missing") return -4;
+  return Number.NEGATIVE_INFINITY;
+}
+
+function marketCompensationSortValue(job: JobSummary): number {
+  const market = job.compensationSummary?.market;
+  const amount = market?.range?.annualizedMinimumAmount ?? market?.range?.minimumAmount;
+  if (Number.isFinite(amount)) return Number(amount);
+  switch (market?.estimateState) {
+    case "estimated_range":
+      return -1;
+    case "insufficient_evidence":
+      return -2;
+    case "source_unavailable":
+      return -3;
+    case "unsupported":
+      return -4;
+    case "not_requested":
+    default:
+      return Number.NEGATIVE_INFINITY;
   }
 }
 

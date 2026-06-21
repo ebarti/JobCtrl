@@ -200,6 +200,41 @@ describe("<JobDetailDrawer>", () => {
     ).not.toHaveTextContent(/compensation|salary|source conflict/i);
   });
 
+  it("posts a focused compensation refresh from the compensation evidence section", async () => {
+    const user = userEvent.setup();
+    const calls: unknown[] = [];
+
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleSecondaryJob,
+              jobKey: String(params["jobKey"]),
+              compensationSummary: sampleCompensationSummary,
+            },
+            { compensationAudit: sampleCompensationAudit },
+          ),
+        ),
+      ),
+      http.post("*/v1/jobs/:jobKey/actions/refresh-compensation", async ({ request }) => {
+        calls.push(await request.json());
+        return HttpResponse.json({
+          ok: true,
+          action: "refresh_compensation",
+          status: "succeeded",
+          command: { action: "refresh_compensation", jobKey: "https://example.com/jobs/1" },
+        });
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await user.click(await screen.findByRole("button", { name: "refresh compensation" }));
+
+    await waitFor(() => expect(calls).toEqual([{}]));
+  });
+
   it("summarizes ranking, readiness, blockers, eligibility, and Apply Review handoff", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {

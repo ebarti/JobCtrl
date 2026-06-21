@@ -44,10 +44,15 @@ export const JOB_SORT_FIELDS = [
   "discovered_at",
   "title",
   "company",
+  "source",
+  "compensation_posted",
+  "compensation_market",
+  "compensation_warnings",
   "location",
   "fit_score",
   "current_stage",
   "current_state",
+  "apply_status",
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
@@ -143,6 +148,13 @@ export const RescoreJobRequestSchema = z
   })
   .strict();
 export type RescoreJobRequest = z.infer<typeof RescoreJobRequestSchema>;
+
+export const RefreshCompensationRequestSchema = z
+  .object({
+    observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
+  })
+  .strict();
+export type RefreshCompensationRequest = z.infer<typeof RefreshCompensationRequestSchema>;
 
 export const BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema = z
   .object({
@@ -1902,6 +1914,7 @@ export interface ActionCommandPayload {
     | "retailor_job"
     | "retailor_current_policy"
     | "analyze_job"
+    | "refresh_compensation"
     | "generate_materials"
     | "apply"
     | "cancel"
@@ -1931,6 +1944,7 @@ export interface ActionCommandPayload {
   continuous?: boolean;
   runId?: string;
   reason?: string;
+  observationsJsonPath?: string;
 }
 
 export interface ActionRunResponse {

@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   CancelRunParamsSchema,
   CancelRunResultSchema,
+  RefreshCompensationParamsSchema,
+  RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
   RescoreJobResultSchema,
   RescoreJobsNotOnCurrentScoringPolicyParamsSchema,
@@ -73,6 +75,7 @@ describe("preparation RPC contracts", () => {
     expect(RpcMethods.TailorJob).toBe("tailor_job");
     expect(RpcMethods.RetailorJob).toBe("retailor_job");
     expect(RpcMethods.RetailorCurrentPolicy).toBe("retailor_current_policy");
+    expect(RpcMethods.RefreshCompensation).toBe("refresh_compensation");
   });
 
   it("parses and defaults rescore_job request payloads", () => {
@@ -84,6 +87,42 @@ describe("preparation RPC contracts", () => {
       tenantId: "local",
       jobUrl: "https://example.test/job/1",
       dryRun: false,
+    });
+  });
+
+  it("parses and rejects refresh_compensation payloads", () => {
+    const params = RefreshCompensationParamsSchema.parse({
+      jobUrl: "https://example.test/job/1",
+      observationsJsonPath: "/tmp/reported-compensation.json",
+    });
+
+    expect(params).toEqual({
+      tenantId: "local",
+      jobUrl: "https://example.test/job/1",
+      observationsJsonPath: "/tmp/reported-compensation.json",
+    });
+    expect(() => RefreshCompensationParamsSchema.parse({})).toThrow();
+    expect(() => RefreshCompensationParamsSchema.parse({ jobUrl: "", observationsJsonPath: "" })).toThrow();
+
+    expect(
+      RefreshCompensationResultSchema.parse({
+        ok: true,
+        status: "succeeded",
+        jobUrl: "https://example.test/job/1",
+        postedFactsRefreshed: 1,
+        reportedObservationsLoaded: 2,
+        estimatesRefreshed: 1,
+        tenantId: "local",
+      }),
+    ).toEqual({
+      ok: true,
+      status: "succeeded",
+      jobUrl: "https://example.test/job/1",
+      postedFactsRefreshed: 1,
+      reportedObservationsLoaded: 2,
+      estimatesRefreshed: 1,
+      marketRefreshSkipped: false,
+      tenantId: "local",
     });
   });
 

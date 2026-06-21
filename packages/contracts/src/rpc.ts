@@ -71,6 +71,7 @@ export const RpcMethods = {
   RetailorJob: "retailor_job",
   RetailorCurrentPolicy: "retailor_current_policy",
   AnalyzeJob: "analyze_job",
+  RefreshCompensation: "refresh_compensation",
   Apply: "apply",
   ProfileImport: "profile_import",
   CancelRun: "cancel_run",
@@ -254,6 +255,31 @@ export const AnalyzeJobResultSchema = z
   })
   .strict();
 export type AnalyzeJobResult = z.infer<typeof AnalyzeJobResultSchema>;
+
+export const RefreshCompensationParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    jobUrl: z.string().min(1),
+    observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
+  })
+  .strict();
+export type RefreshCompensationParams = z.infer<typeof RefreshCompensationParamsSchema>;
+
+export const RefreshCompensationResultSchema = z
+  .object({
+    ok: z.literal(true),
+    status: z.literal("succeeded"),
+    jobUrl: z.string(),
+    postedFactsRefreshed: z.number().int().min(0),
+    reportedObservationsLoaded: z.number().int().min(0),
+    estimatesRefreshed: z.number().int().min(0),
+    marketRefreshSkipped: z.boolean().default(false),
+    tenantId: z.string().min(1),
+  })
+  .strict();
+export type RefreshCompensationResult = z.infer<typeof RefreshCompensationResultSchema>;
 
 export const RetailorJobParamsSchema = z
   .object({

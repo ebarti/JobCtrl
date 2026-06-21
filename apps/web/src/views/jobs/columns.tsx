@@ -4,10 +4,6 @@ import { STAGE_STATES } from "@jobhunter/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
-import {
-  CompensationSummaryCell,
-  compensationSearchText,
-} from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
@@ -29,6 +25,180 @@ interface JobColumnsOptions {
 }
 
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+
+type CompensationSummary = NonNullable<JobSummary["compensationSummary"]>;
+type MarketSummary = CompensationSummary["market"];
+
+function pluralize(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function MissingCompensationValue({ label }: { readonly label: string }) {
+  return (
+    <span className="job-compensation-dash" aria-label={label} title={label}>
+      -
+    </span>
+  );
+}
+
+function confidenceLabel(band: MarketSummary["confidenceBand"]): string {
+  return band === "none" ? "no confidence" : `${band} confidence`;
+}
+
+function marketStateLabel(state: MarketSummary["estimateState"]): string {
+  switch (state) {
+    case "estimated_range":
+      return "estimated";
+    case "unsupported":
+      return "unsupported";
+    case "insufficient_evidence":
+      return "insufficient";
+    case "source_unavailable":
+      return "unavailable";
+    case "not_requested":
+      return "not requested";
+  }
+}
+
+function marketMissingLabel(state: MarketSummary["estimateState"]): string {
+  switch (state) {
+    case "unsupported":
+      return "Market estimate unsupported";
+    case "insufficient_evidence":
+      return "Insufficient market evidence";
+    case "source_unavailable":
+      return "Market source unavailable";
+    case "not_requested":
+      return "Market estimate not requested";
+    case "estimated_range":
+      return "Market estimate recorded";
+  }
+}
+
+function postedCompensationLabel(summary: CompensationSummary | null, fallbackSalary = ""): string {
+  const posted = summary?.posted;
+  if (posted?.displayRange) return posted.displayRange;
+  if (summary?.legacyRawSalary) return summary.legacyRawSalary;
+  if (fallbackSalary) return fallbackSalary;
+  if (posted?.parseState === "unparseable") return "Posted salary unparseable";
+  if (posted?.parseState === "ambiguous") return "Posted salary ambiguous";
+  return "No posted salary recorded";
+}
+
+function postedCompensationSortValue(row: JobSummary): number {
+  const summary = row.compensationSummary;
+  const amount = summary?.posted.range?.annualizedMinimumAmount ?? summary?.posted.range?.minimumAmount;
+  if (Number.isFinite(amount)) return Number(amount);
+  if (summary?.posted.displayRange || summary?.legacyRawSalary || row.salary) return -1;
+  if (summary?.posted.parseState === "ambiguous") return -2;
+  if (summary?.posted.parseState === "unparseable") return -3;
+  if (summary?.posted.parseState === "missing") return -4;
+  return Number.NEGATIVE_INFINITY;
+}
+
+function marketCompensationLabel(summary: CompensationSummary | null): string {
+  const market = summary?.market;
+  if (!market) return "Market estimate not requested";
+  if (market.estimateState === "estimated_range" && market.displayRange) {
+    return market.displayRange;
+  }
+  return marketMissingLabel(market.estimateState);
+}
+
+function marketCompensationSortValue(row: JobSummary): number {
+  const market = row.compensationSummary?.market;
+  const amount = market?.range?.annualizedMinimumAmount ?? market?.range?.minimumAmount;
+  if (Number.isFinite(amount)) return Number(amount);
+  switch (market?.estimateState) {
+    case "estimated_range":
+      return -1;
+    case "insufficient_evidence":
+      return -2;
+    case "source_unavailable":
+      return -3;
+    case "unsupported":
+      return -4;
+    case "not_requested":
+    default:
+      return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function sourceSortValue(row: JobSummary): string {
+  return (row.postingSource || row.discoverySource || row.source || "").toLowerCase();
+}
+
+export function PostedCompensationCell({
+  summary,
+  fallbackSalary = "",
+}: {
+  readonly summary: CompensationSummary | null;
+  readonly fallbackSalary?: string;
+}) {
+  const posted = summary?.posted;
+  const fallback = summary?.legacyRawSalary || fallbackSalary || "";
+  if (!posted?.displayRange) {
+    if (fallback) {
+      return (
+        <span className="job-compensation-cell">
+          <span className="job-compensation-primary">{fallback}</span>
+          <span className="job-compensation-meta">legacy posting text</span>
+        </span>
+      );
+    }
+    const label =
+      posted?.parseState === "unparseable"
+        ? "Posted salary unparseable"
+        : posted?.parseState === "ambiguous"
+          ? "Posted salary ambiguous"
+          : "No posted salary recorded";
+    return <MissingCompensationValue label={label} />;
+  }
+
+  return (
+    <span className="job-compensation-cell">
+      <span className="job-compensation-primary">{posted.displayRange}</span>
+      <span className="job-compensation-meta">{posted.confidence} parsed</span>
+    </span>
+  );
+}
+
+export function MarketCompensationCell({ summary }: { readonly summary: CompensationSummary | null }) {
+  const market = summary?.market;
+  if (!market || market.estimateState === "not_requested") {
+    return <MissingCompensationValue label="Market estimate not requested" />;
+  }
+
+  const confidence = confidenceLabel(market.confidenceBand);
+  const sourceCount = market.sourceCount > 0 ? pluralize(market.sourceCount, "source") : null;
+  const stateLabel = marketStateLabel(market.estimateState);
+  const primary =
+    market.estimateState === "estimated_range" && market.displayRange
+      ? market.displayRange
+      : stateLabel;
+
+  return (
+    <span
+      className="job-compensation-cell"
+      aria-label={[marketMissingLabel(market.estimateState), primary, confidence, sourceCount]
+        .filter(Boolean)
+        .join(", ")}
+      title={[primary, confidence, sourceCount].filter(Boolean).join(", ")}
+    >
+      <span className="job-compensation-primary">{primary}</span>
+      <span className="job-compensation-meta">{confidence}</span>
+      {sourceCount ? <span className="job-compensation-meta">{sourceCount}</span> : null}
+    </span>
+  );
+}
+
+export function CompensationWarningsCell({ summary }: { readonly summary: CompensationSummary | null }) {
+  const warningCount = summary?.warningCount ?? 0;
+  if (warningCount === 0) {
+    return <span className="job-compensation-warning-count muted">No warnings</span>;
+  }
+  return <span className="job-compensation-warning-count warn">{pluralize(warningCount, "warning")}</span>;
+}
 
 function updateSelectedRows(
   rowSelection: RowSelectionState,
@@ -217,6 +387,8 @@ export function jobColumns(
     {
       id: "source",
       label: "Sources",
+      sortable: true,
+      getSortValue: sourceSortValue,
       getFilterValue: (row) =>
         row.postingSource || row.discoverySource || row.source || "-",
       getFilterSearchValue: (row) =>
@@ -233,25 +405,59 @@ export function jobColumns(
       ),
     },
     {
+      id: "compensation_posted",
+      label: "Salary range",
+      sortable: true,
+      getSortValue: postedCompensationSortValue,
+      className: "job-compensation-column",
+      headerClassName: "job-compensation-column",
+      width: 156,
+      minWidth: 132,
+      maxWidth: 260,
+      getFilterValue: (row) => postedCompensationLabel(row.compensationSummary, row.salary),
+      getFilterSearchValue: (row) => postedCompensationLabel(row.compensationSummary, row.salary),
+      render: (row) => <PostedCompensationCell summary={row.compensationSummary} fallbackSalary={row.salary} />,
+    },
+    {
+      id: "compensation_market",
+      label: "Market",
+      sortable: true,
+      getSortValue: marketCompensationSortValue,
+      className: "job-compensation-column",
+      headerClassName: "job-compensation-column",
+      width: 164,
+      minWidth: 136,
+      maxWidth: 280,
+      getFilterValue: (row) => marketCompensationLabel(row.compensationSummary),
+      getFilterSearchValue: (row) => marketCompensationLabel(row.compensationSummary),
+      render: (row) => <MarketCompensationCell summary={row.compensationSummary} />,
+    },
+    {
+      id: "compensation_warnings",
+      label: "Warnings",
+      sortable: true,
+      getSortValue: (row) => row.compensationSummary?.warningCount ?? 0,
+      className: "job-compensation-warnings-column",
+      headerClassName: "job-compensation-warnings-column",
+      width: 112,
+      minWidth: 96,
+      maxWidth: 180,
+      getFilterValue: (row) => {
+        const warningCount = row.compensationSummary?.warningCount ?? 0;
+        return warningCount ? pluralize(warningCount, "warning") : "No warnings";
+      },
+      getFilterSearchValue: (row) => {
+        const warningCount = row.compensationSummary?.warningCount ?? 0;
+        return warningCount ? pluralize(warningCount, "warning") : "No warnings";
+      },
+      render: (row) => <CompensationWarningsCell summary={row.compensationSummary} />,
+    },
+    {
       id: "location",
       label: "Location",
       sortable: true,
       getFilterValue: (row) => row.location || "-",
       render: (row) => <span>{row.location || "-"}</span>,
-    },
-    {
-      id: "compensation",
-      label: "Compensation",
-      className: "compensation-column",
-      headerClassName: "compensation-column",
-      getFilterValue: (row) => compensationSearchText(row.compensationSummary, row.salary),
-      getFilterSearchValue: (row) => compensationSearchText(row.compensationSummary, row.salary),
-      render: (row) => (
-        <CompensationSummaryCell
-          summary={row.compensationSummary}
-          fallbackSalary={row.salary}
-        />
-      ),
     },
     {
       id: "current_stage",
@@ -285,6 +491,8 @@ export function jobColumns(
     {
       id: "apply_status",
       label: "Apply",
+      sortable: true,
+      getSortValue: (row) => row.applyStatus ?? "",
       getFilterValue: (row) => row.applyStatus ?? "not applied",
       filterValues: ["applied"],
       render: (row) => {

@@ -876,6 +876,108 @@ describe("local TypeScript API", () => {
       "discover",
     ]);
 
+    const seedDb = new Database(options.dbPath);
+    seedDb
+      .prepare("UPDATE jobs SET salary = ?, apply_status = 'applied', applied_at = ? WHERE url = ?")
+      .run("€55,000/year", "2026-04-29T10:15:00+00:00", "https://example.com/jobs/ready");
+    insertPostedCompensationFact(seedDb, "https://example.com/jobs/ready");
+    insertMarketCompensationEstimate(seedDb, "https://example.com/jobs/ready");
+    seedDb
+      .prepare("INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(
+        "https://example.com/jobs/ready",
+        "enrich",
+        "CompensationFactsUpdated",
+        "info",
+        "Compensation facts refreshed",
+        "2026-06-19T10:01:00Z",
+        JSON.stringify({ tenant_id: "local", changed_sections: ["posted", "market"] }),
+      );
+    seedDb.close();
+
+    for (const sortField of [
+      "source",
+      "compensation_posted",
+      "compensation_market",
+      "compensation_warnings",
+      "apply_status",
+    ]) {
+      const sorted = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?sort=${sortField}&dir=desc&pageSize=3`,
+      });
+      expect(sorted.statusCode, sorted.body).toBe(200);
+      expect(sorted.json().sort).toMatchObject({ field: sortField, dir: "desc" });
+    }
+
+    const salarySorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=compensation_posted&dir=desc&pageSize=3",
+    });
+    expect(salarySorted.statusCode, salarySorted.body).toBe(200);
+    expect(salarySorted.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      compensationSummary: {
+        posted: { displayRange: "EUR 55000/year" },
+      },
+    });
+
+    const marketSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=compensation_market&dir=desc&pageSize=3",
+    });
+    expect(marketSorted.statusCode, marketSorted.body).toBe(200);
+    expect(marketSorted.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      compensationSummary: {
+        market: { displayRange: "EUR 112000-142000/year" },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("dispatches a focused compensation refresh without running the full pipeline", async () => {
+    options.actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
+      status: "succeeded",
+      result: {
+        ok: true,
+        status: "succeeded",
+        jobUrl: "https://example.com/jobs/ready",
+        postedFactsRefreshed: 1,
+        reportedObservationsLoaded: 0,
+        estimatesRefreshed: 0,
+        tenantId: "local",
+      },
+    }));
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/https%3A%2F%2Fexample.com%2Fjobs%2Fready/actions/refresh-compensation",
+      payload: { observationsJsonPath: "/tmp/reported-compensation.json" },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "refresh_compensation",
+      status: "succeeded",
+      jobKey: "https://example.com/jobs/ready",
+      command: {
+        action: "refresh_compensation",
+        jobKey: "https://example.com/jobs/ready",
+        observationsJsonPath: "/tmp/reported-compensation.json",
+      },
+    });
+    expect(options.actionDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "refresh_compensation",
+        jobKey: "https://example.com/jobs/ready",
+        observationsJsonPath: "/tmp/reported-compensation.json",
+      }),
+      expect.objectContaining({ dbPath: options.dbPath }),
+    );
+
     await app.close();
   });
 

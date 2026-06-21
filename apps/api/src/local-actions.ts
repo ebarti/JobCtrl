@@ -145,7 +145,7 @@ export function createActionDispatcher(
         result: response.result,
       };
     }
-    if (rpcCall.method === "run_stage") {
+    if (rpcCall.method === "run_stage" || rpcCall.method === "refresh_compensation") {
       const status = extractStatus(response.result) ?? "succeeded";
       const result: ActionDispatchResult = {
         status,
@@ -363,6 +363,18 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         expectedDbPath: context.dbPath,
         jobUrl: command.jobKey,
         force: Boolean(command.retailor),
+      },
+    };
+  }
+  if (command.action === "refresh_compensation") {
+    return {
+      method: "refresh_compensation",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        jobUrl: command.jobKey,
+        ...(command.observationsJsonPath ? { observationsJsonPath: command.observationsJsonPath } : {}),
       },
     };
   }
