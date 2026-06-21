@@ -13,6 +13,7 @@ def _levels(
     maximum: int = 142_000,
     level: str = "Senior",
     tier: str = "tier_2_ambitious",
+    location: str = "Remote Europe",
     sample_count: int = 4,
     release_year: int = 2026,
 ) -> ReportedCompensationObservation:
@@ -22,7 +23,7 @@ def _levels(
         role_title=role,
         level_label=level,
         company_tier=tier,  # type: ignore[arg-type]
-        location="Remote Europe",
+        location=location,
         minimum_amount=minimum,
         maximum_amount=maximum,
         sample_count=sample_count,
@@ -37,15 +38,18 @@ def _glassdoor(
     role: str = "Senior Software Engineer",
     minimum: int = 112_000,
     maximum: int = 136_000,
+    level: str = "Senior",
+    tier: str = "tier_2_ambitious",
+    location: str = "Madrid, Spain",
     sample_count: int = 3,
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="glassdoor",
         company_name=company,
         role_title=role,
-        level_label="Senior",
-        company_tier="tier_2_ambitious",
-        location="Madrid, Spain",
+        level_label=level,
+        company_tier=tier,  # type: ignore[arg-type]
+        location=location,
         minimum_amount=minimum,
         maximum_amount=maximum,
         sample_count=sample_count,
@@ -95,6 +99,126 @@ def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> Non
     assert estimate.estimate_state == "estimated_range"
     assert estimate.match_scope == "company_adjacent_role"
     assert "company_role_fallback" in estimate.warnings
+
+
+def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/trimodal-tier",
+        company="Trimodal Labs",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(
+            _levels(
+                company="Trimodal Labs",
+                role="Senior Product Manager",
+                minimum=172_000,
+                maximum=196_000,
+                tier="tier_3_top_of_market",
+                sample_count=4,
+            ),
+            _glassdoor(
+                company="Peer TopCo",
+                role="Senior Platform Engineer",
+                minimum=168_000,
+                maximum=190_000,
+                tier="tier_3_top_of_market",
+                sample_count=3,
+            ),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "tier_role_fallback"
+    assert estimate.aggregate_bucket == "trimodal tier role fallback"
+    assert "company_role_fallback" in estimate.warnings
+
+
+def test_infers_trimodal_tier_from_reported_compensation_midpoint() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/inferred-tier",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(
+            _levels(role="Senior Platform Engineer", tier="unknown", minimum=128_000, maximum=152_000),
+            _glassdoor(role="Senior Platform Engineer", tier="unknown", minimum=122_000, maximum=146_000),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "exact_company_role"
+    assert estimate.company_tier != "unknown"
+    assert "trimodal_tier_inferred" in estimate.warnings
+    assert any(factor.name == "trimodal_tier" for factor in estimate.factors)
+
+
+def test_weak_market_factors_degrade_confidence_without_precise_range() -> None:
+    low_sample = estimate_market_compensation(
+        job_url="https://example.com/jobs/low-sample",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(_levels(role="Senior Platform Engineer", sample_count=1),),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    weak_level = estimate_market_compensation(
+        job_url="https://example.com/jobs/weak-level",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(
+            _levels(role="Senior Platform Engineer", level="Junior"),
+            _glassdoor(role="Senior Platform Engineer", level="Junior"),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    weak_location = estimate_market_compensation(
+        job_url="https://example.com/jobs/weak-location",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(
+            _levels(role="Senior Platform Engineer", location="San Francisco, CA"),
+            _glassdoor(role="Senior Platform Engineer", location="Austin, TX"),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    source_dispersion = estimate_market_compensation(
+        job_url="https://example.com/jobs/source-dispersion",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(
+            _levels(role="Senior Platform Engineer", minimum=82_000, maximum=94_000),
+            _glassdoor(role="Senior Platform Engineer", minimum=178_000, maximum=214_000),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    for estimate in (low_sample, weak_level, weak_location, source_dispersion):
+        assert estimate.estimate_state == "insufficient_evidence"
+        assert estimate.confidence_band in {"none", "low"}
+        assert estimate.minimum_amount is None
+        assert estimate.maximum_amount is None
+
+    assert "low_sample_count" in low_sample.warnings
+    assert "low_sample_count" in low_sample.insufficient_reasons
+    assert any(factor.name == "sample" for factor in low_sample.factors)
+
+    assert "weak_level_match" in weak_level.insufficient_reasons
+    assert any(factor.name == "level" for factor in weak_level.factors)
+
+    assert "location_mismatch" in weak_location.warnings
+    assert "weak_location_match" in weak_location.insufficient_reasons
+    assert any(factor.name == "location" for factor in weak_location.factors)
+
+    assert "source_dispersion_too_high" in source_dispersion.insufficient_reasons
+    assert any(factor.name == "agreement" for factor in source_dispersion.factors)
 
 
 def test_company_role_observations_are_required_before_estimating() -> None:
