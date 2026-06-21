@@ -113,25 +113,15 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     assert "reported_compensation_sample" in loaded.warnings
 
 
-@pytest.mark.parametrize(
-    ("company", "state", "reason"),
-    [
-        ("", "insufficient_evidence", "missing_company"),
-        ("Different Company", "insufficient_evidence", "missing_reported_observation"),
-    ],
-)
 def test_repository_round_trips_non_range_states(
     conn: sqlite3.Connection,
-    company: str,
-    state: str,
-    reason: str,
 ) -> None:
-    job_url = _seed_job(conn, url=f"https://example.com/jobs/{reason}", company=company)
+    job_url = _seed_job(conn, url="https://example.com/jobs/missing_company", company="")
     repo = SqliteMarketCompensationRepository(conn)
     estimate = repo.estimate_and_save_job(
         job_url=job_url,
         title="Senior Platform Engineer",
-        company=company,
+        company="",
         location="Remote Europe",
         observations=(_levels(), _glassdoor()),
         estimated_at="2026-06-19T10:00:00Z",
@@ -139,11 +129,38 @@ def test_repository_round_trips_non_range_states(
     loaded = repo.get_estimate("local", job_url)
 
     assert loaded is not None
-    assert loaded.estimate_state == state
+    assert loaded.estimate_state == "insufficient_evidence"
     assert loaded.minimum_amount is None
     assert loaded.maximum_amount is None
-    assert reason in loaded.insufficient_reasons
+    assert "missing_company" in loaded.insufficient_reasons
     assert loaded.estimate_state == estimate.estimate_state
+
+
+def test_repository_round_trips_fallback_ranges_and_confidence_interval(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/location-fallback", company="Different Company")
+    repo = SqliteMarketCompensationRepository(conn)
+
+    estimate = repo.estimate_and_save_job(
+        job_url=job_url,
+        title="Senior Platform Engineer",
+        company="Different Company",
+        location="Remote Europe",
+        observations=(_levels(), _glassdoor()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+    loaded = repo.get_estimate("local", job_url)
+
+    assert loaded is not None
+    assert loaded.estimate_state == "estimated_range"
+    assert loaded.match_scope == "same_location_role_fallback"
+    assert loaded.confidence_interval_minimum_amount == estimate.confidence_interval_minimum_amount
+    assert loaded.confidence_interval_maximum_amount == estimate.confidence_interval_maximum_amount
+    assert loaded.confidence_interval_minimum_amount is not None
+    assert loaded.confidence_interval_minimum_amount < (loaded.minimum_amount or 0)
+    assert loaded.confidence_interval_maximum_amount is not None
+    assert loaded.confidence_interval_maximum_amount > (loaded.maximum_amount or 0)
 
 
 def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connection) -> None:
@@ -227,11 +244,73 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
     assert estimate.company_name == "Acme AI"
     assert estimate.minimum_amount == 100_000
     assert estimate.maximum_amount == 130_000
+    assert estimate.confidence_interval_minimum_amount is not None
+    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
+    assert estimate.confidence_interval_maximum_amount is not None
+    assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
     assert estimate.confidence_band == "low"
     assert "posted_salary_sample" in estimate.warnings
     assert "low_sample_count" in estimate.warnings
     assert estimate.sources[0].source_id == "posted_salary_text"
     assert estimate.sources[0].source_type == "posted_salary"
+
+
+def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_evidence(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(
+        conn,
+        url="https://example.com/jobs/missing-period-salary",
+        title="Staff Engineer",
+        company="Acme AI",
+        salary="Salary to €120,000",
+    )
+    SqlitePostedCompensationRepository(conn).save_fact(
+        parse_posted_compensation(
+            "Salary to €120,000",
+            job_url=job_url,
+            parsed_at="2026-06-19T10:00:00Z",
+        )
+    )
+    repo = SqliteMarketCompensationRepository(conn)
+
+    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
+
+    estimate = repo.get_estimate("local", job_url)
+    assert estimate is not None
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.minimum_amount == 120_000
+    assert estimate.maximum_amount == 120_000
+    assert estimate.confidence_interval_minimum_amount is not None
+    assert estimate.confidence_interval_minimum_amount < 120_000
+
+
+def test_backfill_rejects_bonus_only_missing_period_salary_text_as_market_evidence(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(
+        conn,
+        url="https://example.com/jobs/referral-bonus",
+        title="Staff AI Engineer",
+        company="Acme AI",
+        salary="Referral Bonus: €1500",
+    )
+    SqlitePostedCompensationRepository(conn).save_fact(
+        parse_posted_compensation(
+            "Referral Bonus: €1500",
+            job_url=job_url,
+            parsed_at="2026-06-19T10:00:00Z",
+        )
+    )
+    repo = SqliteMarketCompensationRepository(conn)
+
+    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
+
+    estimate = repo.get_estimate("local", job_url)
+    assert estimate is not None
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
 
 
 def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> None:

@@ -199,16 +199,21 @@ export function MarketCompensationCell({ summary }: { readonly summary: Compensa
     market.estimateState === "estimated_range" && market.displayRange
       ? market.displayRange
       : stateLabel;
+  const interval =
+    market.estimateState === "estimated_range" && market.displayConfidenceInterval
+      ? `CI ${market.displayConfidenceInterval}`
+      : null;
 
   return (
     <span
       className="job-compensation-cell"
-      aria-label={[marketMissingLabel(market.estimateState), primary, confidence, sourceCount]
+      aria-label={[marketMissingLabel(market.estimateState), primary, interval, confidence, sourceCount]
         .filter(Boolean)
         .join(", ")}
-      title={[primary, confidence, sourceCount].filter(Boolean).join(", ")}
+      title={[primary, interval, confidence, sourceCount].filter(Boolean).join(", ")}
     >
       <span className="job-compensation-primary">{primary}</span>
+      {interval ? <span className="job-compensation-meta">{interval}</span> : null}
       <span className="job-compensation-meta">{confidence}</span>
       {sourceCount ? <span className="job-compensation-meta">{sourceCount}</span> : null}
     </span>

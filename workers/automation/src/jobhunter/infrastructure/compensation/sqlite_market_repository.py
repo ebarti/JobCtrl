@@ -25,7 +25,16 @@ SAFE_CONFIDENCE_BANDS = frozenset({"none", "low", "medium", "high"})
 SAFE_SOURCE_IDS = frozenset({"levels_fyi", "glassdoor", "manual_reported_compensation", "posted_salary_text"})
 SAFE_COMPONENTS = frozenset({"base_salary", "total_compensation"})
 SAFE_COMPANY_TIERS = frozenset({"tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"})
-SAFE_MATCH_SCOPES = frozenset({"exact_company_role", "company_adjacent_role", "tier_role_fallback", "none"})
+SAFE_MATCH_SCOPES = frozenset(
+    {
+        "exact_company_role",
+        "same_location_role_fallback",
+        "company_adjacent_role",
+        "tier_role_fallback",
+        "market_baseline_fallback",
+        "none",
+    }
+)
 DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
 EUR_NORMALIZATION_RATES = {
     "EUR": 1,
@@ -54,13 +63,14 @@ class SqliteMarketCompensationRepository:
             """
             INSERT INTO job_market_compensation_estimates (
                 tenant_id, job_url, estimate_state, currency, period, component,
-                minimum_amount, maximum_amount, confidence_band, confidence_score,
+                minimum_amount, maximum_amount, confidence_interval_minimum_amount,
+                confidence_interval_maximum_amount, confidence_band, confidence_score,
                 source_count, sample_count, aggregate_bucket, geography_scope,
                 occupation_code, occupation_label, seniority_label, source_snapshot_json,
                 factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
                 source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
                 company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_url) DO UPDATE SET
                 estimate_state                    = excluded.estimate_state,
                 currency                          = excluded.currency,
@@ -68,6 +78,8 @@ class SqliteMarketCompensationRepository:
                 component                         = excluded.component,
                 minimum_amount                    = excluded.minimum_amount,
                 maximum_amount                    = excluded.maximum_amount,
+                confidence_interval_minimum_amount = excluded.confidence_interval_minimum_amount,
+                confidence_interval_maximum_amount = excluded.confidence_interval_maximum_amount,
                 confidence_band                   = excluded.confidence_band,
                 confidence_score                  = excluded.confidence_score,
                 source_count                      = excluded.source_count,
@@ -101,6 +113,8 @@ class SqliteMarketCompensationRepository:
                 estimate.component,
                 estimate.minimum_amount,
                 estimate.maximum_amount,
+                estimate.confidence_interval_minimum_amount,
+                estimate.confidence_interval_maximum_amount,
                 estimate.confidence_band,
                 estimate.confidence_score,
                 estimate.source_count,
@@ -133,7 +147,8 @@ class SqliteMarketCompensationRepository:
         row = self._conn.execute(
             """
             SELECT tenant_id, job_url, estimate_state, currency, period, component,
-                   minimum_amount, maximum_amount, confidence_band, confidence_score,
+                   minimum_amount, maximum_amount, confidence_interval_minimum_amount,
+                   confidence_interval_maximum_amount, confidence_band, confidence_score,
                    source_count, sample_count, aggregate_bucket, geography_scope,
                    occupation_code, occupation_label, seniority_label, source_snapshot_json,
                    factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
@@ -223,13 +238,19 @@ class SqliteMarketCompensationRepository:
     ) -> tuple[ReportedCompensationObservation, ...]:
         sql = """
             SELECT j.title, j.company, j.site, j.location,
-                   f.currency, f.annualized_minimum_amount, f.annualized_maximum_amount,
-                   f.parsed_at
+                   f.currency, f.period, f.minimum_amount, f.maximum_amount,
+                   f.annualized_minimum_amount, f.annualized_maximum_amount,
+                   f.warnings_json, f.source_text, f.parsed_at
             FROM job_posted_compensation_facts f
             JOIN jobs j ON j.url = f.job_url
             WHERE f.tenant_id = ?
               AND f.parse_state = 'parsed_range'
-              AND (f.annualized_minimum_amount IS NOT NULL OR f.annualized_maximum_amount IS NOT NULL)
+              AND (
+                f.annualized_minimum_amount IS NOT NULL
+                OR f.annualized_maximum_amount IS NOT NULL
+                OR f.minimum_amount IS NOT NULL
+                OR f.maximum_amount IS NOT NULL
+              )
         """
         params: list[Any] = [tenant_id]
         if job_url:
@@ -239,8 +260,23 @@ class SqliteMarketCompensationRepository:
         observations: list[ReportedCompensationObservation] = []
         for row in rows:
             currency = _nullable_str(_row_value(row, "currency"))
-            minimum = _normalize_annualized_eur(_row_value(row, "annualized_minimum_amount"), currency)
-            maximum = _normalize_annualized_eur(_row_value(row, "annualized_maximum_amount"), currency)
+            warnings = tuple(str(item) for item in _json_list(_row_value(row, "warnings_json")))
+            minimum = _posted_annualized_eur(
+                annualized_amount=_row_value(row, "annualized_minimum_amount"),
+                raw_amount=_row_value(row, "minimum_amount"),
+                currency=currency,
+                period=_nullable_str(_row_value(row, "period")),
+                warnings=warnings,
+                source_text=_nullable_str(_row_value(row, "source_text")),
+            )
+            maximum = _posted_annualized_eur(
+                annualized_amount=_row_value(row, "annualized_maximum_amount"),
+                raw_amount=_row_value(row, "maximum_amount"),
+                currency=currency,
+                period=_nullable_str(_row_value(row, "period")),
+                warnings=warnings,
+                source_text=_nullable_str(_row_value(row, "source_text")),
+            )
             company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
             role = _nullable_str(_row_value(row, "title"))
             if not company or not role or (minimum is None and maximum is None):
@@ -387,6 +423,8 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
         component=_component(_row_value(row, "component")),
         minimum_amount=_nullable_int(_row_value(row, "minimum_amount")),
         maximum_amount=_nullable_int(_row_value(row, "maximum_amount")),
+        confidence_interval_minimum_amount=_nullable_int(_row_value(row, "confidence_interval_minimum_amount")),
+        confidence_interval_maximum_amount=_nullable_int(_row_value(row, "confidence_interval_maximum_amount")),
         confidence_band=_confidence_band(_row_value(row, "confidence_band")),  # type: ignore[arg-type]
         confidence_score=float(_row_value(row, "confidence_score") or 0),
         source_count=int(_row_value(row, "source_count") or 0),
@@ -520,6 +558,40 @@ def _normalize_annualized_eur(amount: Any, currency: str | None) -> int | None:
     return round(value * rate)
 
 
+def _posted_annualized_eur(
+    *,
+    annualized_amount: Any,
+    raw_amount: Any,
+    currency: str | None,
+    period: str | None,
+    warnings: tuple[str, ...],
+    source_text: str | None,
+) -> int | None:
+    annualized = _normalize_annualized_eur(annualized_amount, currency)
+    if annualized is not None:
+        return annualized
+    value = _nullable_int(raw_amount)
+    if value is None or not _can_assume_annual_period(value, period, warnings, source_text):
+        return None
+    return _normalize_annualized_eur(value, currency)
+
+
+def _can_assume_annual_period(
+    value: int,
+    period: str | None,
+    warnings: tuple[str, ...],
+    source_text: str | None,
+) -> bool:
+    if str(period or "").casefold() != "unknown":
+        return False
+    if value < 30_000:
+        return False
+    if "bonus_component" in warnings or "one_sided_range" in warnings:
+        return False
+    text = str(source_text or "").casefold()
+    return bool(re.search(r"\b(base salaries|base salary|salary|compensation|gross)\b", text))
+
+
 def _year(value: Any) -> int | None:
     try:
         return int(str(value or "")[:4])
@@ -608,6 +680,8 @@ def _row_value(row: sqlite3.Row | tuple[Any, ...], key: str) -> Any:
         "component",
         "minimum_amount",
         "maximum_amount",
+        "confidence_interval_minimum_amount",
+        "confidence_interval_maximum_amount",
         "confidence_band",
         "confidence_score",
         "source_count",

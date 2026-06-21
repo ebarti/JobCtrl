@@ -288,9 +288,12 @@ reported compensation observations, estimates matching existing jobs, and
 refreshes projections without running discovery, scoring, tailoring, cover, or
 apply automation. When the observations file is omitted, the market estimator
 uses employer-posted salary facts already captured by JobHunter as low-confidence
-posted-salary evidence; it does not label those rows as Levels.fyi, Glassdoor, or
-manual reported-compensation data. `--url <job-url>` narrows the refresh to one
-existing job.
+posted-salary evidence. It falls back through same company/role,
+same-location role, same-company adjacent-role, trimodal company-tier, and broad
+market-baseline tiers so sparse real evidence still produces a best estimate
+with a wider confidence interval. It does not label those rows as Levels.fyi,
+Glassdoor, or manual reported-compensation data. `--url <job-url>` narrows the
+refresh to one existing job.
 
 Manual web/API trigger: `POST
 /v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
@@ -299,9 +302,10 @@ rerunning discovery, scoring, tailoring, cover, or apply automation. The request
 body may include `{ "observationsJsonPath": "/path/to/export.json" }` to import
 permitted reported-compensation observations before estimating market evidence;
 omitting the path refreshes market evidence from the selected job's captured
-employer-posted salary facts when they can be safely annualized. The response is
-the standard action response with a synchronous `succeeded` result when the local
-JSON-RPC handler completes.
+employer-posted salary facts when they can be safely annualized or when
+high-value base-salary text can be treated as annual evidence without using
+bonus-only or one-sided rows. The response is the standard action response with a
+synchronous `succeeded` result when the local JSON-RPC handler completes.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact

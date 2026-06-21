@@ -92,6 +92,19 @@ export const sampleCompensationSummary: JobCompensationSummary = {
       displayRange: "EUR 112000-142000/year",
     },
     displayRange: "EUR 112000-142000/year",
+    confidenceInterval: {
+      currency: "EUR",
+      period: "year",
+      component: "base_salary",
+      minimumAmount: 99000,
+      maximumAmount: 159000,
+      annualizedMinimumAmount: 99000,
+      annualizedMaximumAmount: 159000,
+      annualizedMinimumEur: 99000,
+      annualizedMaximumEur: 159000,
+      displayRange: "EUR 99000-159000/year",
+    },
+    displayConfidenceInterval: "EUR 99000-159000/year",
   },
 };
 
@@ -149,6 +162,10 @@ export const sampleCompensationAudit: JobCompensationAudit = {
       component: "base_salary",
       minimumAmount: 112000,
       maximumAmount: 142000,
+      confidenceInterval: {
+        minimumAmount: 99000,
+        maximumAmount: 159000,
+      },
       sources: [
         {
           sourceId: "levels_fyi",

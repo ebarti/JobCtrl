@@ -27,6 +27,8 @@ type MarketCompensationEstimateRow = {
   component: "base_salary" | "total_compensation";
   minimum_amount: number | null;
   maximum_amount: number | null;
+  confidence_interval_minimum_amount: number | null;
+  confidence_interval_maximum_amount: number | null;
   confidence_band: "none" | "low" | "medium" | "high";
   confidence_score: number;
   source_count: number;
@@ -49,7 +51,13 @@ type MarketCompensationEstimateRow = {
   role_title: string | null;
   normalized_role: string | null;
   company_tier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
-  match_scope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
+  match_scope:
+    | "exact_company_role"
+    | "same_location_role_fallback"
+    | "company_adjacent_role"
+    | "tier_role_fallback"
+    | "market_baseline_fallback"
+    | "none";
 };
 
 type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
@@ -140,8 +148,13 @@ const SOURCE_DEFAULTS: Record<
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([
   ...Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket),
+  "employer-posted same-location role compensation",
+  "employer-posted trimodal tier compensation",
+  "employer-posted trimodal market baseline",
   "reported company adjacent-role compensation",
+  "same-location role compensation fallback",
   "trimodal tier role fallback",
+  "trimodal market baseline fallback",
 ]);
 const SAFE_GEOGRAPHY_SCOPES = new Set(["Europe", "reported"]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
@@ -173,7 +186,10 @@ export function getMarketCompensationEstimate(
     db,
     `
     SELECT tenant_id, job_url, estimate_state, currency, period, component,
-           minimum_amount, maximum_amount, confidence_band, confidence_score,
+           minimum_amount, maximum_amount,
+           ${columnOrNull(tableColumns, "confidence_interval_minimum_amount")} AS confidence_interval_minimum_amount,
+           ${columnOrNull(tableColumns, "confidence_interval_maximum_amount")} AS confidence_interval_maximum_amount,
+           confidence_band, confidence_score,
            source_count, sample_count, aggregate_bucket, geography_scope,
            occupation_code, occupation_label, seniority_label, source_snapshot_json,
            factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
@@ -274,6 +290,12 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     component: row.component,
     minimumAmount: nullableNumber(row.minimum_amount) ?? 0,
     maximumAmount: nullableNumber(row.maximum_amount) ?? 0,
+    confidenceInterval: {
+      minimumAmount:
+        nullableNumber(row.confidence_interval_minimum_amount) ?? nullableNumber(row.minimum_amount) ?? 0,
+      maximumAmount:
+        nullableNumber(row.confidence_interval_maximum_amount) ?? nullableNumber(row.maximum_amount) ?? 0,
+    },
   };
 }
 
@@ -393,8 +415,20 @@ function companyTier(value: unknown): "tier_1_local" | "tier_2_ambitious" | "tie
     : "unknown";
 }
 
-function matchScope(value: unknown): "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none" {
-  return value === "exact_company_role" || value === "company_adjacent_role" || value === "tier_role_fallback"
+function matchScope(
+  value: unknown,
+):
+  | "exact_company_role"
+  | "same_location_role_fallback"
+  | "company_adjacent_role"
+  | "tier_role_fallback"
+  | "market_baseline_fallback"
+  | "none" {
+  return value === "exact_company_role" ||
+    value === "same_location_role_fallback" ||
+    value === "company_adjacent_role" ||
+    value === "tier_role_fallback" ||
+    value === "market_baseline_fallback"
     ? value
     : "none";
 }

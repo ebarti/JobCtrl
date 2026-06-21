@@ -413,6 +413,7 @@ function MarketPanel({
       <dl className="compensation-detail-grid">
         <DetailRow label="State" value={formatToken(market.estimateState)} />
         <DetailRow label="Range" value={market.displayRange} />
+        <DetailRow label="Confidence interval" value={market.displayConfidenceInterval} />
         <DetailRow label="Confidence score" value={score} />
         <DetailRow label="Sources" value={finiteCount(market.sourceCount) ? plural(finiteCount(market.sourceCount), "source") : "0 sources"} />
         <DetailRow
@@ -516,6 +517,8 @@ export function CompensationAuditSection({
             warningCount: audit.market.recordStatus === "recorded" ? audit.market.estimate.warnings.length : 0,
             range: null,
             displayRange: null,
+            confidenceInterval: null,
+            displayConfidenceInterval: null,
           },
         }
       : null);

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
-ESTIMATOR_VERSION = "company-role-reported-compensation-v1"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v2"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -23,7 +23,14 @@ MarketConfidenceBand = Literal["none", "low", "medium", "high"]
 MarketComponent = Literal["base_salary", "total_compensation"]
 MarketPeriod = Literal["year", "month"]
 CompanyCompensationTier = Literal["tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"]
-MarketMatchScope = Literal["exact_company_role", "company_adjacent_role", "tier_role_fallback", "none"]
+MarketMatchScope = Literal[
+    "exact_company_role",
+    "same_location_role_fallback",
+    "company_adjacent_role",
+    "tier_role_fallback",
+    "market_baseline_fallback",
+    "none",
+]
 MarketConfidenceFactorName = Literal[
     "company",
     "role",
@@ -154,6 +161,33 @@ SENIORITY_WORDS = frozenset(
     }
 )
 ROLE_STOP_WORDS = frozenset({"remote", "full", "time", "the"})
+ROLE_FAMILY_MARKERS: dict[str, frozenset[str]] = {
+    "engineering": frozenset(
+        {
+            "architect",
+            "backend",
+            "developer",
+            "devops",
+            "engineer",
+            "engineering",
+            "frontend",
+            "golang",
+            "java",
+            "kotlin",
+            "mobile",
+            "node",
+            "platform",
+            "python",
+            "software",
+            "tech",
+            "technical",
+            "technology",
+        }
+    ),
+    "security": frozenset({"security", "privacy", "trust", "infrastructure", "operations"}),
+    "data": frozenset({"ai", "analytics", "data", "ml", "machine", "omnichannel"}),
+    "leadership": frozenset({"chief", "cto", "director", "head", "manager", "principal", "staff", "vp"}),
+}
 EUROPE_MARKERS = frozenset(
     {
         "europe",
@@ -229,6 +263,8 @@ class MarketCompensationEstimate:
     component: MarketComponent
     minimum_amount: int | None
     maximum_amount: int | None
+    confidence_interval_minimum_amount: int | None
+    confidence_interval_maximum_amount: int | None
     confidence_band: MarketConfidenceBand
     confidence_score: float
     source_count: int
@@ -419,6 +455,8 @@ def estimate_market_compensation(
         usable_rows,
         normalized_company=normalized_company,
         normalized_role=normalized_role,
+        location=location,
+        inferred_level=inferred_level,
     )
     if scope_warning:
         warnings.append(scope_warning)
@@ -476,9 +514,15 @@ def estimate_market_compensation(
     company_score = min(company_scores)
     if match_scope == "tier_role_fallback":
         company_score = max(company_score, 0.62)
+    if match_scope == "same_location_role_fallback":
+        company_score = max(company_score, 0.45)
+    if match_scope == "market_baseline_fallback":
+        company_score = max(company_score, 0.32)
     role_score = min(role_scores)
     if match_scope == "company_adjacent_role":
         role_score = max(role_score, 0.62)
+    if match_scope == "market_baseline_fallback":
+        role_score = max(role_score, 0.35)
     level_score = min(level_scores)
     location_score = min(location_scores)
     freshness_score = min(freshness_scores)
@@ -507,8 +551,19 @@ def estimate_market_compensation(
         min(company_score, role_score, level_score, location_score, freshness_score, sample_score, agreement_score, tier_score),
         2,
     )
-    minimum_score = _minimum_estimate_score(selected_rows)
-    if confidence_score < minimum_score or dispersion_insufficient:
+    confidence_interval_minimum, confidence_interval_maximum = _confidence_interval(
+        minimum,
+        maximum,
+        match_scope=match_scope,
+        confidence_score=confidence_score,
+        sample_count=sample_count,
+        warnings=warnings,
+        rows=selected_rows,
+        dispersion_insufficient=dispersion_insufficient,
+    )
+
+    minimum_score = _minimum_estimate_score(selected_rows, match_scope)
+    if confidence_score < minimum_score:
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
@@ -544,6 +599,8 @@ def estimate_market_compensation(
         component=component_value,
         minimum_amount=minimum,
         maximum_amount=maximum,
+        confidence_interval_minimum_amount=confidence_interval_minimum,
+        confidence_interval_maximum_amount=confidence_interval_maximum,
         factors=factors,
         warnings=warnings,
         sources=tuple(_snapshot(row) for row in selected_rows),
@@ -623,6 +680,8 @@ def _estimate(
     period: MarketPeriod = "year",
     minimum_amount: int | None = None,
     maximum_amount: int | None = None,
+    confidence_interval_minimum_amount: int | None = None,
+    confidence_interval_maximum_amount: int | None = None,
     factors: list[MarketConfidenceFactor] | None = None,
     insufficient: list[MarketReasonCode] | None = None,
     unsupported: list[MarketReasonCode] | None = None,
@@ -648,6 +707,8 @@ def _estimate(
         currency = None
         minimum_amount = None
         maximum_amount = None
+        confidence_interval_minimum_amount = None
+        confidence_interval_maximum_amount = None
     return MarketCompensationEstimate(
         tenant_id=tenant_id,
         job_url=job_url,
@@ -657,6 +718,8 @@ def _estimate(
         component=component,
         minimum_amount=minimum_amount,
         maximum_amount=maximum_amount,
+        confidence_interval_minimum_amount=confidence_interval_minimum_amount,
+        confidence_interval_maximum_amount=confidence_interval_maximum_amount,
         confidence_band=_confidence_band(confidence_score, state, warnings or []),
         confidence_score=round(confidence_score, 2),
         source_count=source_count,
@@ -688,6 +751,8 @@ def _select_rows(
     *,
     normalized_company: str,
     normalized_role: str,
+    location: str | None,
+    inferred_level: str | None,
 ) -> tuple[list[ReportedCompensationObservation], MarketMatchScope, MarketWarningCode | None]:
     exact = [
         row
@@ -715,6 +780,23 @@ def _select_rows(
         ]
         if tier_rows:
             return tier_rows, "tier_role_fallback", "company_role_fallback"
+
+    same_location_role = [
+        row
+        for row in rows
+        if _role_score(normalized_role, row.role_title) >= 0.55 and _location_score(location, row.location) >= 0.78
+    ]
+    if same_location_role:
+        return same_location_role, "same_location_role_fallback", "company_role_fallback"
+
+    target_level = _normalize_level(inferred_level)
+    baseline = [
+        row
+        for row in rows
+        if _level_score(target_level, row.level_label) >= 0.5 and _location_score(location, row.location) >= 0.5
+    ]
+    if baseline:
+        return baseline, "market_baseline_fallback", "company_role_fallback"
 
     return [], "none", None
 
@@ -844,7 +926,15 @@ def _normalize_role(value: str | None) -> str:
 def _role_tokens(value: str | None) -> tuple[str, ...]:
     text = str(value or "").casefold()
     tokens = tuple(re.findall(r"[a-z0-9]+", text))
-    return tuple(token for token in tokens if token not in ROLE_STOP_WORDS)
+    return tuple(_singularize(token) for token in tokens if token not in ROLE_STOP_WORDS)
+
+
+def _singularize(token: str) -> str:
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
 
 
 def _company_score(normalized_company: str, reported_company: str | None) -> float:
@@ -869,7 +959,17 @@ def _role_score(normalized_role: str, reported_title: str | None) -> float:
     if not wanted or not seen:
         return 0.0
     overlap = len(wanted & seen) / len(wanted | seen)
+    wanted_families = _role_families(wanted)
+    seen_families = _role_families(seen)
+    if wanted_families & seen_families:
+        overlap = max(overlap, 0.55)
+    if "engineering" in wanted_families and "engineering" in seen_families:
+        overlap = max(overlap, 0.65)
     return round(overlap, 2)
+
+
+def _role_families(tokens: set[str]) -> set[str]:
+    return {family for family, markers in ROLE_FAMILY_MARKERS.items() if tokens & markers}
 
 
 def _level_from_title(title: str | None) -> str:
@@ -974,13 +1074,57 @@ def _tier_score(company_tier: CompanyCompensationTier, match_scope: MarketMatchS
         return 0.62 if match_scope == "exact_company_role" else 0.45
     if match_scope == "tier_role_fallback":
         return 0.62
+    if match_scope == "market_baseline_fallback":
+        return 0.5
     return 0.82
 
 
-def _minimum_estimate_score(rows: list[ReportedCompensationObservation]) -> float:
+def _minimum_estimate_score(rows: list[ReportedCompensationObservation], match_scope: MarketMatchScope) -> float:
+    if match_scope == "market_baseline_fallback":
+        return 0.3
+    if match_scope in {"same_location_role_fallback", "company_adjacent_role"}:
+        return 0.42
+    if match_scope == "tier_role_fallback":
+        return 0.38
     if rows and all(row.source_id == "posted_salary_text" for row in rows):
         return 0.5
-    return MIN_ESTIMATE_SCORE
+    return 0.3
+
+
+def _confidence_interval(
+    minimum: int,
+    maximum: int,
+    *,
+    match_scope: MarketMatchScope,
+    confidence_score: float,
+    sample_count: int,
+    warnings: list[MarketWarningCode],
+    rows: list[ReportedCompensationObservation],
+    dispersion_insufficient: bool,
+) -> tuple[int, int]:
+    margin_by_scope = {
+        "exact_company_role": 0.12,
+        "same_location_role_fallback": 0.24,
+        "company_adjacent_role": 0.28,
+        "tier_role_fallback": 0.34,
+        "market_baseline_fallback": 0.48,
+        "none": 0.6,
+    }
+    margin = margin_by_scope[match_scope]
+    if sample_count < LOW_SAMPLE_THRESHOLD:
+        margin += 0.12
+    if "location_mismatch" in warnings:
+        margin += 0.08
+    if "company_role_fallback" in warnings:
+        margin += 0.05
+    if dispersion_insufficient:
+        margin += 0.12
+    if rows and all(row.source_id == "posted_salary_text" for row in rows):
+        margin += 0.08
+    if confidence_score < MIN_ESTIMATE_SCORE:
+        margin += 0.08
+    margin = min(margin, 0.75)
+    return max(0, round(minimum * (1 - margin))), round(maximum * (1 + margin))
 
 
 def _row_minimum(row: ReportedCompensationObservation) -> int:
@@ -1065,8 +1209,12 @@ def _aggregate_bucket(company: str | None, title: str | None, match_scope: Marke
         return "reported company-role compensation"
     if match_scope == "company_adjacent_role":
         return "reported company adjacent-role compensation"
+    if match_scope == "same_location_role_fallback":
+        return "same-location role compensation fallback"
     if match_scope == "tier_role_fallback":
         return "trimodal tier role fallback"
+    if match_scope == "market_baseline_fallback":
+        return "trimodal market baseline fallback"
     return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
 
 
@@ -1077,6 +1225,12 @@ def _estimate_aggregate_bucket(
     rows: list[ReportedCompensationObservation],
 ) -> str:
     if rows and all(row.source_id == "posted_salary_text" for row in rows):
+        if match_scope == "same_location_role_fallback":
+            return "employer-posted same-location role compensation"
+        if match_scope == "tier_role_fallback":
+            return "employer-posted trimodal tier compensation"
+        if match_scope == "market_baseline_fallback":
+            return "employer-posted trimodal market baseline"
         return "employer-posted company-role compensation"
     return _aggregate_bucket(company, title, match_scope)
 

@@ -214,10 +214,14 @@ The command reparses current `jobs.salary` values into posted-compensation
 facts, imports local reported compensation rows from Levels.fyi, Glassdoor, or
 manual sources when `--observations-json` is supplied, and refreshes local
 projections. When no observations file is supplied, JobHunter derives low
-confidence market ranges from employer-posted salary facts it already captured;
-those ranges are attributed as job posting salary text, not Levels.fyi,
-Glassdoor, or manual reported data. Use `--url <job-url>` or `--limit N` to
-narrow the refresh.
+confidence market ranges from employer-posted salary facts it already captured.
+It uses the best available grounded tier: same company and role first, then
+same-location role evidence, same-company adjacent roles, trimodal company-tier
+fallbacks, and finally a broad market baseline when that is all the local data
+supports. The market response stores both the best range and a wider confidence
+interval; weaker tiers get wider intervals. Employer-posted rows are attributed
+as job posting salary text, not Levels.fyi, Glassdoor, or manual reported data.
+Use `--url <job-url>` or `--limit N` to narrow the refresh.
 
 Useful options:
 

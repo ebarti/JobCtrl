@@ -1295,6 +1295,8 @@ export interface JobMarketCompensationSummary {
   warningCount: number;
   range: JobCompensationRangeSummary | null;
   displayRange: string | null;
+  confidenceInterval: JobCompensationRangeSummary | null;
+  displayConfidenceInterval: string | null;
 }
 
 export interface JobCompensationSummary {
@@ -2684,7 +2686,13 @@ interface MarketCompensationEstimateBase {
   roleTitle: string | null;
   normalizedRole: string | null;
   companyTier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
-  matchScope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
+  matchScope:
+    | "exact_company_role"
+    | "same_location_role_fallback"
+    | "company_adjacent_role"
+    | "tier_role_fallback"
+    | "market_baseline_fallback"
+    | "none";
   sources: MarketCompensationSourceSnapshot[];
   factors: MarketCompensationFactor[];
   warnings: MarketCompensationWarning[];
@@ -2714,6 +2722,10 @@ export interface MarketCompensationEstimatedRangeEstimate extends MarketCompensa
   component: MarketCompensationComponent;
   minimumAmount: number;
   maximumAmount: number;
+  confidenceInterval: {
+    minimumAmount: number;
+    maximumAmount: number;
+  };
 }
 
 export type MarketCompensationEstimate =
