@@ -467,6 +467,8 @@ def estimate_market_compensation(
         warnings.append("source_conflict_with_posted_salary")
 
     company_score = min(company_scores)
+    if match_scope == "tier_role_fallback":
+        company_score = max(company_score, 0.62)
     role_score = min(role_scores)
     if match_scope == "company_adjacent_role":
         role_score = max(role_score, 0.62)
@@ -984,7 +986,7 @@ def _sample_score(sample_count: int | None) -> float:
     if sample_count >= LOW_SAMPLE_THRESHOLD:
         return 0.78
     if sample_count >= 1:
-        return 0.62
+        return 0.5
     return 0.0
 
 
