@@ -3,6 +3,11 @@ phase: 17-source-registry-access-policy
 plan: 17-02
 status: complete
 completed: 2026-06-19
+requirements-completed:
+  - SRC-01
+  - SRC-04
+  - SRC-05
+  - SRC-06
 ---
 
 # 17-02 Summary: Settings Source Policy UI

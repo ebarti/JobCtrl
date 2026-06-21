@@ -3,7 +3,7 @@ phase: 18-posted-compensation-facts
 plan: 18-02
 status: completed
 completed: 2026-06-19
-requirements:
+requirements-completed:
   - COMP-01
   - COMP-02
   - COMP-03

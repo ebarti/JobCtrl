@@ -10,8 +10,17 @@ A user can trust every line of a tailored resume because each bullet traces visi
 
 ## Current State
 
-**Shipped milestone:** v1.2 Apply Review Audit UX - Drawer + Resume Pins (2026-06-13)
-**Active milestone:** v1.3 Salary Range Estimator
+**Shipped milestone:** v1.3 Salary Range Estimator (2026-06-21)
+**Active milestone:** None. Start the next milestone with `$gsd-new-milestone`.
+
+v1.3 made compensation facts inspectable in Jobs triage while preserving JobHunter's warning-only safety boundary:
+
+- Source policy exposes which compensation sources are public, local, licensed, unavailable, disabled, or gated before any estimate is generated.
+- Posted compensation facts are parsed into canonical persisted rows with source excerpts, confidence, warnings, normalized fields, and raw salary fallback.
+- Company-role reported market estimates use permitted/manual local observations and expose confidence factors, fallback state, source conflict, low-sample, stale-source, and insufficient-evidence explanations.
+- Compensation summary and audit data flow through canonical projections, additive API fields, Python/TypeScript parity, and safe marker-only SSE invalidation.
+- Jobs list and drawer expose posted salary, market estimates, warning counts, floor comparisons, source trail, assumptions, and unavailable states without changing ranking, filtering, fit score, apply readiness, blockers, or dispatch.
+- Release QA used synthetic/manual data only and explicitly avoided auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive local data actions, real external scraping, and worker-backed apply jobs.
 
 v1.2 made the audit path inspectable across the two surfaces where users decide whether a job and generated materials are ready:
 
@@ -21,18 +30,18 @@ v1.2 made the audit path inspectable across the two surfaces where users decide 
 - The Jobs drawer to Apply Review handoff preserves the selected job through the route search state.
 - The folded v1.1 cleanup removed obsolete `lucide-react` usage and normalized final Tailwind 4/shadcn token, icon, font, and QA expectations.
 
-v1.3 will make compensation facts inspectable in Jobs triage by combining posted salary extraction with Europe-only public market salary baselines, including statistical confidence and source provenance for every displayed range.
+The next milestone is not yet defined.
 
-## Current Milestone: v1.3 Salary Range Estimator
+## Latest Milestone: v1.3 Salary Range Estimator
 
 **Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with company-role reported compensation estimates, while preserving an audit trail for every displayed range.
 
-**Target features:**
-- Normalize compensation from raw job salary strings and compensation text in postings into a structured salary-range fact with source text, currency/period, statistical confidence, and parse warnings.
-- Add a market salary estimator that uses reported compensation observations from Levels.fyi, Glassdoor, and manual local imports keyed by company and role, with automated provider access still gated by explicit permitted access configuration.
-- Maintain a salary-source registry/provenance model so every market estimate identifies source type, captured values, freshness, source agreement, sample/source count where available, assumptions, and whether the source supports the specific role/location/seniority claim.
-- Surface posted salary, company-role reported compensation estimate, statistical confidence, source/freshness trail, trimodal company-tier context, and profile-floor comparison in the Jobs list/drawer audit triage.
-- Keep compensation audit-first and warning-only in v1.3: show confidence, source gaps, and unknowns clearly; do not silently rank, filter, or block jobs from posted salaries or market estimates.
+**Delivered features:**
+- Normalized compensation from raw job salary strings and compensation text in postings into structured, source-backed posted-compensation facts.
+- Added a reported company-role market estimator fed by permitted/manual local observations keyed by company and role, with Levels.fyi and Glassdoor automated access still gated by explicit permitted access configuration.
+- Maintained source provenance so market estimates identify source type, freshness, source agreement, sample/source count where available, assumptions, fallback type, and weak-evidence explanations.
+- Surfaced posted salary, company-role reported compensation estimate, statistical confidence, source/freshness trail, trimodal company-tier context, and profile-floor comparison in Jobs list/drawer audit triage.
+- Kept compensation audit-first and warning-only in v1.3: confidence, source gaps, and unknowns are visible, but salary facts and market estimates do not silently rank, filter, block, or apply.
 
 ## Requirements
 
@@ -54,12 +63,11 @@ v1.3 will make compensation facts inspectable in Jobs triage by combining posted
 - [x] v1.0 grounded resume tailoring milestone - employer analysis, per-bullet provenance, granular controls, voice pass, canonical read model, generate-materials wiring, and inspector UI verified on 2026-06-09. See `.planning/MILESTONE-ACCEPTANCE.md`.
 - [x] v1.1 shadcn/token migration through Phases 6-10 - semantic tokens, shared primitives, layout chrome, Tabler icons, status semantics, and route visual QA landed via PRs #151-#155; remaining cleanup was folded into v1.2.
 - [x] v1.2 Apply Review Audit UX - Drawer + Resume Pins - folded cleanup, shared apply audit contract, Jobs drawer audit triage, Apply Review resume pins, same-job handoff, and product-path QA shipped on 2026-06-13. See `.planning/milestones/v1.2-REQUIREMENTS.md` and `.planning/milestones/v1.2-MILESTONE-AUDIT.md`.
+- [x] v1.3 Salary Range Estimator - source policy, posted compensation facts, reported company-role market estimates, canonical compensation projections/API/SSE, Jobs compensation triage UI, and product-path safety release shipped on 2026-06-21. See `.planning/milestones/v1.3-REQUIREMENTS.md` and `.planning/milestones/v1.3-MILESTONE-AUDIT.md`.
 
 ### Active
 
-- [ ] Normalize posted compensation into structured, source-backed salary facts.
-- [ ] Estimate Europe-only public market salary ranges with statistical confidence and provenance.
-- [ ] Surface salary facts, market estimates, source trail, and profile-floor comparison in Jobs triage as warnings without automatic gating.
+- [ ] Define the next milestone requirements.
 
 ### Out of Scope
 
@@ -82,7 +90,8 @@ v1.3 will make compensation facts inspectable in Jobs triage by combining posted
 - **Current token/icon state:** The app uses the shadcn semantic token stack from v1.1. `apps/web/components.json` uses `style: "radix-luma"`, `iconLibrary: "tabler"`, and no Tailwind config file. `lucide-react` was removed after source import proof.
 - **Audit surface state:** `ApplyAudit` is the shared read contract for readiness, missing prerequisites, blockers, eligibility concerns, lifecycle/source metadata, and review evidence availability. Jobs drawer and Apply Review both consume this contract.
 - **Route state:** Apply Review supports route-selected jobs via `/apply-review?jobKey=<jobKey>`, allowing Jobs drawer handoff to preserve the selected job.
-- **Archive state:** v1.2 roadmap, requirements, audit, and phase execution artifacts are archived under `.planning/milestones/`.
+- **Compensation audit state:** v1.3 exposes source policy, posted compensation facts, reported company-role market estimates, canonical compensation summary/audit fields, safe compensation update events, and Jobs list/drawer compensation evidence as warning-only surfaces.
+- **Archive state:** v1.2 and v1.3 roadmap, requirements, audit, and phase execution artifacts are archived under `.planning/milestones/`.
 
 ## Constraints
 
@@ -105,8 +114,30 @@ v1.3 will make compensation facts inspectable in Jobs triage by combining posted
 | Fold v1.1 Phase 11 cleanup into v1.2 as housekeeping | Cleanup was small and should not block the audit UX milestone, but stale config/dependency/docs needed closure | Good - shipped in Phase 12 |
 | Defer blind-auto-apply safety positioning to README/docs | The chosen UI milestone was about audit surfaces; positioning copy belongs in docs later | Deferred |
 | v1.0 grounded resume tailoring architecture is validated | Milestone verification on 2026-06-09 showed all 26 requirements mapped and verified | Good |
+| Keep v1.3 compensation warning-only | Salary evidence is useful for triage but too risky to turn into hidden ranking, filtering, fit score, apply readiness, blockers, or dispatch behavior without a separate product decision | Good - enforced by API/web/e2e tests |
+| Treat Levels.fyi and Glassdoor as permitted/manual reported-observation sources only | Automated provider access requires explicit permitted access; local imports must be authorized before use | Good with residual operator-policy debt |
+| Use canonical compensation rows and projections as the UI source of truth | Every displayed compensation claim needs persisted provenance and parity across TypeScript and Python projections | Good - shipped in v1.3 |
+| Keep product-path QA synthetic/manual-only | Release validation must not trigger auto-apply, browser submission, mailbox scanning, real material regeneration, destructive local data actions, real external scraping, or worker-backed jobs | Good - shipped in Phase 22 |
 
 ## Archived Milestone Briefs
+
+<details>
+<summary>v1.3 Salary Range Estimator</summary>
+
+**Goal:** Make compensation facts inspectable in Jobs triage without turning uncertain salary evidence into hidden ranking, filtering, or apply gates.
+
+**Delivered:**
+
+- Source Registry & Access Policy.
+- Posted Compensation Facts.
+- Company-Role Reported Market Estimates.
+- Canonical Read Model & Realtime API.
+- Jobs Triage UX & Warning-Only Floor.
+- Product-Path QA & Safety Release.
+
+See `.planning/milestones/v1.3-ROADMAP.md` and `.planning/milestones/v1.3-REQUIREMENTS.md`.
+
+</details>
 
 <details>
 <summary>v1.2 Apply Review Audit UX - Drawer + Resume Pins</summary>
@@ -146,4 +177,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-19 after v1.3 milestone start*
+*Last updated: 2026-06-21 after v1.3 milestone completion*
