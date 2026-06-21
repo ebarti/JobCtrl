@@ -1,13 +1,40 @@
 import Database from "better-sqlite3";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 const FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PLATFORM_JOB_TITLE = "Director of Platform Engineering";
 const PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+// Pending-preparation pickup is an existing non-apply Jobs behavior; Phase 22 blocks apply/material/Gmail/destructive paths.
+const PROHIBITED_PRODUCT_PATH_REQUESTS = [
+  /\/v1\/jobs\/.+\/actions\/apply$/i,
+  /\/v1\/jobs\/.+\/actions\/generate-materials$/i,
+  /\/v1\/jobs\/.+\/actions\/tailor$/i,
+  /\/v1\/jobs\/.+\/actions\/retailor-current-policy$/i,
+  /\/v1\/jobs\/.+\/actions\/run-stage$/i,
+  /\/v1\/jobs\/.+\/actions\/retry-stage$/i,
+  /\/v1\/jobs\/bulk-(?:delete|delete-permanent|restore|hide|unhide|retry-failed)$/i,
+  /\/v1\/pipeline\/actions\/run-stage$/i,
+  /\/v1\/materials\/actions\/retailor-current-policy$/i,
+  /\/v1\/outcomes\/gmail\/scan$/i,
+  /\/v1\/profile\/import-resume$/i,
+  /\/v1\/_internal\/rpc$/i,
+] as const;
 
 test.beforeEach(() => {
   seedSyntheticCompensationData();
 });
+
+function watchProhibitedProductPathRequests(page: Page): string[] {
+  const prohibitedRequests: string[] = [];
+  page.on("request", (request) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(request.method())) return;
+    const pathname = new URL(request.url()).pathname;
+    if (PROHIBITED_PRODUCT_PATH_REQUESTS.some((pattern) => pattern.test(pathname))) {
+      prohibitedRequests.push(`${request.method()} ${pathname}`);
+    }
+  });
+  return prohibitedRequests;
+}
 
 function seedSyntheticCompensationData(): void {
   const dbPath = process.env["JOBHUNTER_E2E_DB_PATH"];
@@ -270,6 +297,7 @@ function seedSyntheticCompensationData(): void {
 test("Jobs compensation triage: list columns, drawer audit, and warning-only boundary stay product-visible", async ({
   page,
 }) => {
+  const prohibitedRequests = watchProhibitedProductPathRequests(page);
   await page.setViewportSize({ width: 390, height: 860 });
   await page.goto(`/jobs?${FILTER_PARAMS}`);
 
@@ -352,11 +380,13 @@ test("Jobs compensation triage: list columns, drawer audit, and warning-only bou
   await expect(triage.getByText("Apply concerns")).toHaveCount(0);
   await expect(drawer.getByLabel("Apply readiness")).not.toContainText(/compensation|salary|floor/i);
   await expect(drawer.getByText("Fit score").first()).toBeVisible();
+  expect(prohibitedRequests).toEqual([]);
 });
 
 test("Jobs compensation triage: missing and unavailable states stay explicit without real providers", async ({
   page,
 }) => {
+  const prohibitedRequests = watchProhibitedProductPathRequests(page);
   await page.goto(`/jobs/${encodeURIComponent("https://talent.com/view?id=qa-marketing-director")}?${FILTER_PARAMS}`);
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
@@ -365,11 +395,13 @@ test("Jobs compensation triage: missing and unavailable states stay explicit wit
   await expect(compensation.getByText("No posted salary recorded")).toBeVisible();
   await expect(compensation.getByText("Market estimate not requested")).toBeVisible();
   await expect(compensation.getByText("No comparable compensation basis")).toBeVisible();
+  expect(prohibitedRequests).toEqual([]);
 });
 
 test("Job drawer: opens with requirement fit, stages, artifacts, survives reload, close preserves the URL filter", async ({
   page,
 }) => {
+  const prohibitedRequests = watchProhibitedProductPathRequests(page);
   await page.goto(`/jobs?${FILTER_PARAMS}`);
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
@@ -401,17 +433,11 @@ test("Job drawer: opens with requirement fit, stages, artifacts, survives reload
   await expect(page.getByRole("dialog", { name: "Job details" })).toHaveCount(0);
   await expect(page).toHaveURL(/sort=fit_score/);
   await expect(page).toHaveURL(/\/jobs\?/);
+  expect(prohibitedRequests).toEqual([]);
 });
 
 test("Job drawer: Apply Review handoff preserves the selected job", async ({ page }) => {
-  const prohibitedRequests: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() === "GET") return;
-    const url = request.url();
-    if (/actions\/apply|apply-runs|mailbox|generate-materials|compensation-refresh/i.test(url)) {
-      prohibitedRequests.push(url);
-    }
-  });
+  const prohibitedRequests = watchProhibitedProductPathRequests(page);
 
   const response = await page.request.get("/v1/apply/review-queue");
   expect(response.ok()).toBeTruthy();
