@@ -596,6 +596,1608 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects trimodal fallback and source-conflict evidence from canonical compensation rows", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      const db = new Database(dbPath);
+      try {
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET minimum_amount = ?,
+                  maximum_amount = ?,
+                  confidence_band = ?,
+                  confidence_score = ?,
+                  aggregate_bucket = ?,
+                  geography_scope = ?,
+                  source_snapshot_json = ?,
+                  factor_reasons_json = ?,
+                  warnings_json = ?,
+                  company_name = ?,
+                  normalized_company = ?,
+                  role_title = ?,
+                  normalized_role = ?,
+                  company_tier = ?,
+                  match_scope = ?
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(
+          168000,
+          190000,
+          "medium",
+          0.62,
+          "trimodal tier role fallback",
+          "Europe",
+          JSON.stringify([
+            {
+              source_id: "levels_fyi",
+              display_name: "Levels.fyi rawProviderPayload",
+              source_type: "reported_compensation",
+              release_year: 2026,
+              snapshot_version: "rawProviderPayload",
+              geography_scope: "file:///Users/local/private",
+              aggregate_bucket: "credential secret token",
+              attribution: "api_key password",
+              sample_count: 4,
+            },
+            {
+              source_id: "glassdoor",
+              display_name: "Glassdoor",
+              source_type: "reported_compensation",
+              release_year: 2026,
+              sample_count: 3,
+            },
+          ]),
+          JSON.stringify([
+            { name: "company", score: 0.62, band: "medium", reason: "/Users/local credential" },
+            { name: "role", score: 1, band: "high", reason: "exact synthetic role" },
+            { name: "trimodal_tier", score: 0.62, band: "medium", reason: "tier inferred" },
+          ]),
+          JSON.stringify([
+            "reported_compensation_sample",
+            "company_role_fallback",
+            "trimodal_tier_inferred",
+            "source_conflict_with_posted_salary",
+          ]),
+          "Trimodal Labs",
+          "trimodal labs",
+          "Senior Platform Engineer",
+          "platform engineer",
+          "tier_3_top_of_market",
+          "tier_role_fallback",
+          "https://example.com/jobs/event-driven",
+        );
+      } finally {
+        db.close();
+      }
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readonlyDb = new Database(dbPath, { readonly: true });
+      try {
+        const projections = readonlyDb
+          .prepare(
+            `SELECT l.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections AS l
+               JOIN job_detail_projections AS d
+                 ON d.tenant_id = l.tenant_id AND d.job_id = l.job_id
+              WHERE l.tenant_id = 'local' AND l.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        const summary = JSON.parse(projections?.compensation_summary_json ?? "{}");
+        expect(summary).toMatchObject({
+          posted: {
+            recordStatus: "recorded",
+            parseState: "parsed_range",
+          },
+          market: {
+            sourceKind: "reported_company_role_market",
+            recordStatus: "recorded",
+            estimateState: "estimated_range",
+            confidenceBand: "medium",
+            sourceCount: 2,
+            warningCount: 4,
+            displayRange: "EUR 168000-190000/year",
+          },
+        });
+
+        const audit = JSON.parse(projections?.compensation_audit_json ?? "{}");
+        expect(audit.posted.recordStatus).toBe("recorded");
+        expect(audit.market.estimate).toMatchObject({
+          matchScope: "tier_role_fallback",
+          aggregateBucket: "trimodal tier role fallback",
+          confidenceBand: "medium",
+          companyTier: "tier_3_top_of_market",
+        });
+        expect(audit.market.estimate.factors.map((factor: { name: string }) => factor.name)).toEqual(
+          expect.arrayContaining(["company", "role", "trimodal_tier"]),
+        );
+        expect(audit.market.estimate.warnings.map((warning: { code: string }) => warning.code)).toEqual(
+          expect.arrayContaining([
+            "reported_compensation_sample",
+            "company_role_fallback",
+            "trimodal_tier_inferred",
+            "source_conflict_with_posted_salary",
+          ]),
+        );
+        expect(audit.market.estimate.sources.map((source: { sourceId: string }) => source.sourceId)).toEqual([
+          "levels_fyi",
+          "glassdoor",
+        ]);
+        const serialized = JSON.stringify({ summary, audit }).toLowerCase();
+        for (const unsafe of [
+          "/users/",
+          "file://",
+          "rawproviderpayload",
+          "credential",
+          "secret",
+          "api_key",
+          "token",
+          "password",
+        ]) {
+          expect(serialized).not.toContain(unsafe);
+        }
+      } finally {
+        readonlyDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds legacy compensation projections that lack floor comparison JSON", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'local' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        expect(row).toBeDefined();
+        const legacySummary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const legacyAudit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        delete legacySummary.floorComparison;
+        delete legacyAudit.floorComparison;
+        db.prepare(
+          `UPDATE job_list_projections
+              SET compensation_summary_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacySummary), "https://example.com/jobs/event-driven");
+        db.prepare(
+          `UPDATE job_detail_projections
+              SET compensation_audit_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacyAudit), "https://example.com/jobs/event-driven");
+      } finally {
+        db.close();
+      }
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+        });
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds compensation projections that have malformed floor comparison arms", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'local' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        expect(row).toBeDefined();
+        const legacySummary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const legacyAudit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        legacySummary.floorComparison.posted = {
+          state: "below_floor",
+          currency: "EUR",
+          period: "year",
+          component: "base_salary",
+          displayRange: "EUR 70000-90000/year",
+        };
+        legacySummary.floorComparison.market = {
+          state: "meets_floor",
+          currency: "EUR",
+          period: "year",
+          component: "total_compensation",
+          displayRange: "EUR 112000-142000/year",
+        };
+        legacyAudit.floorComparison.posted = legacySummary.floorComparison.posted;
+        legacyAudit.floorComparison.market = legacySummary.floorComparison.market;
+        db.prepare(
+          `UPDATE job_list_projections
+              SET compensation_summary_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacySummary), "https://example.com/jobs/event-driven");
+        db.prepare(
+          `UPDATE job_detail_projections
+              SET compensation_audit_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacyAudit), "https://example.com/jobs/event-driven");
+      } finally {
+        db.close();
+      }
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary).toMatchObject({
+          posted: { recordStatus: "recorded" },
+          market: { recordStatus: "recorded" },
+          floorComparison: {
+            state: "below_floor",
+            basis: "both_posted_and_market",
+          },
+        });
+        expect(body.compensationAudit.posted.recordStatus).toBe("recorded");
+        expect(body.compensationAudit.market.recordStatus).toBe("recorded");
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds compensation projections that have malformed floor values", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'local' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        expect(row).toBeDefined();
+        const legacySummary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const legacyAudit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        legacySummary.floorComparison.floor = {};
+        legacyAudit.floorComparison.floor = {};
+        db.prepare(
+          `UPDATE job_list_projections
+              SET compensation_summary_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacySummary), "https://example.com/jobs/event-driven");
+        db.prepare(
+          `UPDATE job_detail_projections
+              SET compensation_audit_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacyAudit), "https://example.com/jobs/event-driven");
+      } finally {
+        db.close();
+      }
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary.floorComparison.floor).toEqual({
+          amount: 95000,
+          currency: "EUR",
+          period: "year",
+        });
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds compensation projections that have invalid floor comparison enum and value data", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'local' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        expect(row).toBeDefined();
+        const legacySummary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const legacyAudit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        for (const projection of [legacySummary, legacyAudit]) {
+          projection.floorComparison.state = "legacy_bad_state";
+          projection.floorComparison.basis = "legacy_bad_basis";
+          projection.floorComparison.floor = { amount: -1, currency: "", period: "year" };
+          projection.floorComparison.posted = {
+            state: "legacy_bad_arm",
+            currency: "EUR",
+            period: "year",
+            component: "base_salary",
+            minimumAmount: 70_000,
+            maximumAmount: 90_000,
+            displayRange: "EUR 70000-90000/year",
+          };
+        }
+        db.prepare(
+          `UPDATE job_list_projections
+              SET compensation_summary_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacySummary), "https://example.com/jobs/event-driven");
+        db.prepare(
+          `UPDATE job_detail_projections
+              SET compensation_audit_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacyAudit), "https://example.com/jobs/event-driven");
+      } finally {
+        db.close();
+      }
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+          floor: { amount: 95000, currency: "EUR", period: "year" },
+          posted: { state: "below_floor" },
+        });
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds compensation projections that have invalid posted and market enum data", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'local' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        expect(row).toBeDefined();
+        const legacySummary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const legacyAudit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        legacySummary.posted.recordStatus = "legacy_bad_record";
+        legacySummary.posted.confidence = "legacy_bad_confidence";
+        legacySummary.market.estimateState = "legacy_bad_market";
+        legacySummary.market.confidenceBand = "legacy_bad_band";
+        legacyAudit.posted.fact.parseState = "legacy_bad_parse";
+        legacyAudit.posted.fact.confidence = "legacy_bad_confidence";
+        legacyAudit.market.estimate.estimateState = "legacy_bad_market";
+        legacyAudit.market.estimate.confidenceBand = "legacy_bad_band";
+        db.prepare(
+          `UPDATE job_list_projections
+              SET compensation_summary_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacySummary), "https://example.com/jobs/event-driven");
+        db.prepare(
+          `UPDATE job_detail_projections
+              SET compensation_audit_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(JSON.stringify(legacyAudit), "https://example.com/jobs/event-driven");
+      } finally {
+        db.close();
+      }
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary).toMatchObject({
+          posted: { recordStatus: "recorded", parseState: "parsed_range", confidence: "high" },
+          market: { recordStatus: "recorded", estimateState: "estimated_range", confidenceBand: "medium" },
+        });
+        expect(body.compensationAudit.posted.fact.parseState).toBe("parsed_range");
+        expect(body.compensationAudit.market.estimate.estimateState).toBe("estimated_range");
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("projects warning-only floor comparison for below-floor posted compensation", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const listProjection = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
+        expect(summary.warningCount).toBe(4);
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+          floor: {
+            amount: 95000,
+            currency: "EUR",
+            period: "year",
+          },
+          posted: {
+            state: "below_floor",
+            minimumAmount: 70000,
+            maximumAmount: 90000,
+            annualizedMinimumAmount: 70000,
+            annualizedMaximumAmount: 90000,
+          },
+          market: {
+            state: "meets_floor",
+          },
+          warningCount: 1,
+          warningLabels: ["posted_compensation_below_profile_floor"],
+        });
+
+        const detailProjection = db
+          .prepare(
+            `SELECT compensation_audit_json
+               FROM job_detail_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_audit_json: string }
+          | undefined;
+        const audit = JSON.parse(detailProjection?.compensation_audit_json ?? "{}");
+        expect(audit.floorComparison).toEqual(summary.floorComparison);
+        expect(JSON.stringify(audit.floorComparison)).not.toContain("salary_expectation");
+        expect(JSON.stringify(audit.floorComparison)).not.toContain("/Users/");
+        expect(JSON.stringify(audit.floorComparison)).not.toContain("levels_fyi");
+        expect(JSON.stringify(audit.floorComparison)).not.toContain("glassdoor");
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("parses comma-formatted profile floors as thousands", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "120,000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          floor: { amount: 120000, currency: "EUR", period: "year" },
+          posted: { state: "below_floor" },
+          warningCount: 1,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("parses dot-formatted profile floors as thousands", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "120.000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          floor: { amount: 120000, currency: "EUR", period: "year" },
+          posted: { state: "below_floor" },
+          warningCount: 1,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it.each(["120k", "€120k", "120 000"])(
+    "parses shorthand profile floor %s as thousands",
+    async (floorInput) => {
+      const { dbPath, cleanup } = withTempDb();
+      try {
+        seedSchema(dbPath);
+        insertCompensationRows(dbPath);
+        insertProfileFloor(dbPath, floorInput);
+
+        const app = buildApp({
+          dbPath,
+          settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        });
+        try {
+          const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+          expect(res.statusCode, res.body).toBe(200);
+        } finally {
+          await app.close();
+        }
+
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          const row = db
+            .prepare(
+              `SELECT compensation_summary_json
+                 FROM job_list_projections
+                WHERE tenant_id = 'local' AND job_id = ?`,
+            )
+            .get("https://example.com/jobs/event-driven") as
+            | { compensation_summary_json: string }
+            | undefined;
+          const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+          expect(summary.floorComparison).toMatchObject({
+            state: "below_floor",
+            floor: { amount: 120000, currency: "EUR", period: "year" },
+            posted: { state: "below_floor" },
+            warningCount: 1,
+          });
+        } finally {
+          db.close();
+        }
+      } finally {
+        cleanup();
+      }
+    },
+  );
+
+  it("preserves decimal profile floor values", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "120.50");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          floor: { amount: 120.5, currency: "EUR", period: "year" },
+          posted: { state: "meets_floor" },
+          warningCount: 0,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds compensation projections after profile floor updates", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      insertProfileFloor(dbPath, "150000");
+      insertEvent(dbPath, "ProfileUpdated", "2026-06-19T11:00:00Z", {
+        tenantId: "local",
+        changedSections: ["profile"],
+      });
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+          floor: { amount: 150000, currency: "EUR", period: "year" },
+          posted: { state: "below_floor" },
+          market: { state: "below_floor" },
+          warningLabels: ["compensation_below_profile_floor"],
+        });
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("repairs valid stale compensation projections after silent profile floor changes", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      insertProfileFloor(dbPath, "150000");
+
+      const detailApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await detailApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.job.compensationSummary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+          floor: { amount: 150000, currency: "EUR", period: "year" },
+          posted: { state: "below_floor" },
+          market: { state: "below_floor" },
+          warningLabels: ["compensation_below_profile_floor"],
+        });
+        expect(body.compensationAudit.floorComparison).toEqual(body.job.compensationSummary.floorComparison);
+      } finally {
+        await detailApp.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not use local compensation facts when refreshing a non-local tenant", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "150000", "EUR", "local");
+
+      const db = new Database(dbPath);
+      try {
+        refreshProjections(db, "tenant-b");
+        const row = db
+          .prepare(
+            `SELECT p.compensation_summary_json, d.compensation_audit_json
+               FROM job_list_projections p
+               JOIN job_detail_projections d
+                 ON d.tenant_id = p.tenant_id AND d.job_id = p.job_id
+              WHERE p.tenant_id = 'tenant-b' AND p.job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        const audit = JSON.parse(row?.compensation_audit_json ?? "{}");
+        expect(summary.posted).toMatchObject({
+          sourceKind: "posted",
+          recordStatus: "not_recorded",
+          parseState: null,
+        });
+        expect(summary.market).toMatchObject({
+          sourceKind: "reported_company_role_market",
+          recordStatus: "not_requested",
+          estimateState: "not_requested",
+        });
+        expect(summary.floorComparison).toMatchObject({
+          state: "not_configured",
+          basis: "floor_not_configured",
+          floor: null,
+          warningCount: 0,
+          warningLabels: [],
+        });
+        expect(audit.posted).toMatchObject({
+          recordStatus: "not_recorded",
+          jobKey: "https://example.com/jobs/event-driven",
+        });
+        expect(audit.market).toMatchObject({
+          recordStatus: "not_requested",
+          jobKey: "https://example.com/jobs/event-driven",
+        });
+        expect(JSON.stringify(summary.floorComparison)).not.toContain("150000");
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not let another tenant advance past tenant-scoped compensation events", () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath, "tenant-b");
+      insertProfileFloor(dbPath, "95000", "EUR", "tenant-b");
+
+      const db = new Database(dbPath);
+      try {
+        refreshProjections(db, "tenant-b");
+        db.prepare(
+          `UPDATE job_posted_compensation_facts
+              SET source_text = ?,
+                  legacy_raw_salary = ?,
+                  minimum_amount = ?,
+                  maximum_amount = ?,
+                  annualized_minimum_amount = ?,
+                  annualized_maximum_amount = ?,
+                  source_hash = ?,
+                  parsed_at = ?
+            WHERE tenant_id = 'tenant-b' AND job_url = ?`,
+        ).run(
+          "EUR 140000-160000/year",
+          "EUR 140000-160000/year",
+          140000,
+          160000,
+          140000,
+          160000,
+          "hash-posted-updated",
+          "2026-06-19T11:00:00Z",
+          jobUrl,
+        );
+        db.prepare(
+          `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          jobUrl,
+          "discover",
+          "CompensationFactsUpdated",
+          "info",
+          "Compensation facts updated.",
+          "2026-06-19T11:00:01Z",
+          JSON.stringify({ tenantId: "tenant-b", jobId: jobUrl, changedSections: ["posted"] }),
+        );
+
+        refreshProjections(db, "tenant-a");
+        refreshProjections(db, "tenant-b");
+
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'tenant-b' AND job_id = ?`,
+          )
+          .get(jobUrl) as { compensation_summary_json: string } | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "both_posted_and_market",
+          posted: { state: "meets_floor", maximumAmount: 160000 },
+          warningCount: 0,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("projects both posted and market comparison arms when both are below the profile floor", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "150000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.warningCount).toBe(4);
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "both_posted_and_market",
+          posted: { state: "below_floor", annualizedMaximumAmount: 90000 },
+          market: { state: "below_floor", maximumAmount: 142000 },
+          warningCount: 1,
+          warningLabels: ["compensation_below_profile_floor"],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("treats max-only posted compensation below the floor as comparable", () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const db = new Database(dbPath);
+      try {
+        db.prepare("DELETE FROM job_market_compensation_estimates WHERE tenant_id = 'local' AND job_url = ?").run(jobUrl);
+        db.prepare(
+          `UPDATE job_posted_compensation_facts
+              SET minimum_amount = NULL,
+                  annualized_minimum_amount = NULL,
+                  maximum_amount = ?,
+                  annualized_maximum_amount = ?
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(90000, 90000, jobUrl);
+
+        refreshProjections(db);
+
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(jobUrl) as { compensation_summary_json: string } | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "posted_salary_basis",
+          posted: { state: "below_floor", maximumAmount: 90000 },
+          market: null,
+          warningLabels: ["posted_compensation_below_profile_floor"],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("treats min-only posted compensation meeting the floor as comparable", () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const db = new Database(dbPath);
+      try {
+        db.prepare("DELETE FROM job_market_compensation_estimates WHERE tenant_id = 'local' AND job_url = ?").run(jobUrl);
+        db.prepare(
+          `UPDATE job_posted_compensation_facts
+              SET minimum_amount = ?,
+                  annualized_minimum_amount = ?,
+                  maximum_amount = NULL,
+                  annualized_maximum_amount = NULL
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(120000, 120000, jobUrl);
+
+        refreshProjections(db);
+
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(jobUrl) as { compensation_summary_json: string } | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "posted_salary_basis",
+          posted: { state: "meets_floor", minimumAmount: 120000 },
+          market: null,
+          warningCount: 0,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("treats max-only market compensation below the floor as comparable", () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const db = new Database(dbPath);
+      try {
+        db.prepare("DELETE FROM job_posted_compensation_facts WHERE tenant_id = 'local' AND job_url = ?").run(jobUrl);
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET minimum_amount = NULL,
+                  maximum_amount = ?
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(90000, jobUrl);
+
+        refreshProjections(db);
+
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(jobUrl) as { compensation_summary_json: string } | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "market_estimate_basis",
+          posted: null,
+          market: { state: "below_floor", maximumAmount: 90000 },
+          warningLabels: ["market_compensation_below_profile_floor"],
+        });
+        expect(summary.floorComparison.market.minimumAmount).toBeNull();
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("treats min-only market compensation meeting the floor as comparable", () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const db = new Database(dbPath);
+      try {
+        db.prepare("DELETE FROM job_posted_compensation_facts WHERE tenant_id = 'local' AND job_url = ?").run(jobUrl);
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET minimum_amount = ?,
+                  maximum_amount = NULL
+            WHERE tenant_id = 'local' AND job_url = ?`,
+        ).run(120000, jobUrl);
+
+        refreshProjections(db);
+
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(jobUrl) as { compensation_summary_json: string } | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "market_estimate_basis",
+          posted: null,
+          market: { state: "meets_floor", minimumAmount: 120000 },
+          warningCount: 0,
+        });
+        expect(summary.floorComparison.market.maximumAmount).toBeNull();
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("labels meets-floor compensation with both posted and market comparable arms", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "60000");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "both_posted_and_market",
+          posted: { state: "meets_floor", annualizedMaximumAmount: 90000 },
+          market: { state: "meets_floor", maximumAmount: 142000 },
+          warningCount: 0,
+          warningLabels: [],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("labels meets-floor compensation with only a posted comparable arm", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "60000");
+      const seedDb = new Database(dbPath);
+      seedDb
+        .prepare("DELETE FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_url = ?")
+        .run("local", "https://example.com/jobs/event-driven");
+      seedDb.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "posted_salary_basis",
+          posted: { state: "meets_floor", annualizedMaximumAmount: 90000 },
+          market: null,
+          warningCount: 0,
+          warningLabels: [],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("labels meets-floor compensation with only a market comparable arm", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "60000");
+      const seedDb = new Database(dbPath);
+      seedDb
+        .prepare("DELETE FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_url = ?")
+        .run("local", "https://example.com/jobs/event-driven");
+      seedDb.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "market_estimate_basis",
+          posted: null,
+          market: { state: "meets_floor", maximumAmount: 142000 },
+          warningCount: 0,
+          warningLabels: [],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("annualizes monthly market estimates before floor comparison when market meets floor", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const seedDb = new Database(dbPath);
+      seedDb
+        .prepare("DELETE FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_url = ?")
+        .run("local", "https://example.com/jobs/event-driven");
+      seedDb
+        .prepare(
+          `UPDATE job_market_compensation_estimates
+              SET period = ?, minimum_amount = ?, maximum_amount = ?
+            WHERE tenant_id = ? AND job_url = ?`,
+        )
+        .run("month", 10000, 10000, "local", "https://example.com/jobs/event-driven");
+      seedDb.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "meets_floor",
+          basis: "market_estimate_basis",
+          posted: null,
+          market: {
+            state: "meets_floor",
+            period: "month",
+            minimumAmount: 10000,
+            maximumAmount: 10000,
+            annualizedMinimumAmount: 120000,
+            annualizedMaximumAmount: 120000,
+          },
+          warningCount: 0,
+          warningLabels: [],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("annualizes monthly market estimates before floor comparison when market is below floor", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "95000");
+      const seedDb = new Database(dbPath);
+      seedDb
+        .prepare("DELETE FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_url = ?")
+        .run("local", "https://example.com/jobs/event-driven");
+      seedDb
+        .prepare(
+          `UPDATE job_market_compensation_estimates
+              SET period = ?, minimum_amount = ?, maximum_amount = ?
+            WHERE tenant_id = ? AND job_url = ?`,
+        )
+        .run("month", 7000, 7000, "local", "https://example.com/jobs/event-driven");
+      seedDb.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.floorComparison).toMatchObject({
+          state: "below_floor",
+          basis: "market_estimate_basis",
+          posted: null,
+          market: {
+            state: "below_floor",
+            period: "month",
+            minimumAmount: 7000,
+            maximumAmount: 7000,
+            annualizedMinimumAmount: 84000,
+            annualizedMaximumAmount: 84000,
+          },
+          warningCount: 1,
+          warningLabels: ["market_compensation_below_profile_floor"],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("projects floor-not-configured without adding floor warnings for non-numeric profile minimums", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      insertProfileFloor(dbPath, "negotiable");
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get("https://example.com/jobs/event-driven") as
+          | { compensation_summary_json: string }
+          | undefined;
+        const summary = JSON.parse(row?.compensation_summary_json ?? "{}");
+        expect(summary.warningCount).toBe(3);
+        expect(summary.floorComparison).toMatchObject({
+          state: "not_configured",
+          basis: "floor_not_configured",
+          floor: null,
+          posted: null,
+          market: null,
+          warningCount: 0,
+          warningLabels: [],
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("projects internal preparation progress as the single discover list stage", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
