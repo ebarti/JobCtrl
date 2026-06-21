@@ -33,6 +33,29 @@ function policyResponse(): CompensationSourceRegistryResponse {
         notes: ["Temporary local import path for reported company-role compensation rows."],
       },
       {
+        sourceId: "euro_top_tech",
+        displayName: "Euro Top Tech",
+        sourceType: "reported_compensation",
+        accessMode: "public_dataset",
+        availability: "available",
+        licenseStatus: "not_required",
+        termsUrl: "https://www.eurotoptech.com/terms",
+        sourceUrl: "https://www.eurotoptech.com/data",
+        freshnessPolicy: "Uses approved public data-entry rows exposed by Euro Top Tech at refresh time.",
+        attributionRequirement: "Show attribution to Euro Top Tech when its observations contribute to an estimate.",
+        supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
+        disabledReason: null,
+        configured: true,
+        coverage: {
+          geography: "public_dataset",
+          regions: ["Europe"],
+          notes: "Coverage follows Euro Top Tech submitted European data-entry rows.",
+        },
+        notes: [
+          "Public crowdsourced software-engineer compensation rows are imported during compensation refresh.",
+        ],
+      },
+      {
         sourceId: "levels_fyi",
         displayName: "Levels.fyi",
         sourceType: "reported_compensation",
@@ -102,6 +125,13 @@ describe("<CompensationSourcePolicyPanel>", () => {
     expect(table).toHaveTextContent("base salary");
     expect(table).toHaveTextContent("total compensation");
     expect(table).toHaveTextContent("Europe");
+    expect(table).toHaveTextContent("Euro Top Tech");
+    expect(table).toHaveTextContent("public dataset");
+    expect(screen.getByRole("link", { name: "Euro Top Tech source" })).toHaveAttribute(
+      "href",
+      "https://www.eurotoptech.com/data",
+    );
+    expect(table).toHaveTextContent("Show attribution to Euro Top Tech");
     expect(table).toHaveTextContent("Levels.fyi");
     expect(table).toHaveTextContent(
       "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",

@@ -17,7 +17,13 @@ MarketEstimateState = Literal[
     "insufficient_evidence",
     "estimated_range",
 ]
-MarketSourceId = Literal["levels_fyi", "glassdoor", "manual_reported_compensation", "posted_salary_text"]
+MarketSourceId = Literal[
+    "levels_fyi",
+    "glassdoor",
+    "manual_reported_compensation",
+    "euro_top_tech",
+    "posted_salary_text",
+]
 MarketSourceType = Literal["reported_compensation", "posted_salary"]
 MarketConfidenceBand = Literal["none", "low", "medium", "high"]
 MarketComponent = Literal["base_salary", "total_compensation"]
@@ -78,6 +84,7 @@ MARKET_SOURCE_IDS: tuple[MarketSourceId, ...] = (
     "levels_fyi",
     "glassdoor",
     "manual_reported_compensation",
+    "euro_top_tech",
     "posted_salary_text",
 )
 MARKET_CONFIDENCE_BANDS: tuple[MarketConfidenceBand, ...] = ("none", "low", "medium", "high")
@@ -117,6 +124,7 @@ SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
     "levels_fyi": "Levels.fyi",
     "glassdoor": "Glassdoor",
     "manual_reported_compensation": "Manual reported compensation import",
+    "euro_top_tech": "Euro Top Tech",
     "posted_salary_text": "Job posting salary text",
 }
 SOURCE_DEFAULT_SNAPSHOT_VERSION = "reported-compensation-import-v1"
@@ -124,6 +132,7 @@ SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
     "levels_fyi": "Levels.fyi reported compensation data",
     "glassdoor": "Glassdoor reported compensation data",
     "manual_reported_compensation": "Manual reported compensation import",
+    "euro_top_tech": "Euro Top Tech public crowdsourced compensation data",
     "posted_salary_text": "Employer-posted salary text captured by JobHunter",
 }
 UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
@@ -845,7 +854,11 @@ def _source_type(source_id: str) -> MarketSourceType:
 
 
 def _source_snapshot_version(source_id: str) -> str:
-    return "jobhunter-posted-compensation-v1" if source_id == "posted_salary_text" else SOURCE_DEFAULT_SNAPSHOT_VERSION
+    if source_id == "posted_salary_text":
+        return "jobhunter-posted-compensation-v1"
+    if source_id == "euro_top_tech":
+        return "eurotoptech-data-public"
+    return SOURCE_DEFAULT_SNAPSHOT_VERSION
 
 
 def _source_aggregate_bucket(source_id: str) -> str:
@@ -857,7 +870,7 @@ def _source_aggregate_bucket(source_id: str) -> str:
 def _source_sample_warnings(rows: tuple[ReportedCompensationObservation, ...]) -> list[MarketWarningCode]:
     source_ids = {row.source_id for row in rows}
     warnings: list[MarketWarningCode] = []
-    if source_ids & {"levels_fyi", "glassdoor", "manual_reported_compensation"}:
+    if source_ids & {"levels_fyi", "glassdoor", "manual_reported_compensation", "euro_top_tech"}:
         warnings.append("reported_compensation_sample")
     if "posted_salary_text" in source_ids:
         warnings.append("posted_salary_sample")

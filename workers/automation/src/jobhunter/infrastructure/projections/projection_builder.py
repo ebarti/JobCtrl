@@ -152,6 +152,14 @@ MARKET_SOURCE_DEFAULTS = {
         "aggregateBucket": "reported company-role compensation",
         "attribution": "Manual reported compensation import",
     },
+    "euro_top_tech": {
+        "displayName": "Euro Top Tech",
+        "sourceType": "reported_compensation",
+        "snapshotVersion": "eurotoptech-data-public",
+        "geographyScope": "Europe",
+        "aggregateBucket": "reported company-role compensation",
+        "attribution": "Euro Top Tech public crowdsourced compensation data",
+    },
     "posted_salary_text": {
         "displayName": "Job posting salary text",
         "sourceType": "posted_salary",

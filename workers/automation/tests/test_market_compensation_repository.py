@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import jobhunter.infrastructure.compensation.sqlite_market_repository as sqlite_market_repository
 from jobhunter.database import ensure_market_compensation_tables, init_db
 from jobhunter.domain.compensation import (
     ReportedCompensationObservation,
@@ -16,6 +17,7 @@ from jobhunter.domain.compensation import (
 from jobhunter.infrastructure.compensation import (
     SqliteMarketCompensationRepository,
     SqlitePostedCompensationRepository,
+    load_euro_top_tech_observations,
     load_reported_compensation_observations,
 )
 from jobhunter.infrastructure.compensation.sqlite_market_repository import DEFAULT_FACTOR_REASON
@@ -255,6 +257,97 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
     assert estimate.sources[0].source_type == "posted_salary"
 
 
+def test_posted_backfill_extracts_salary_text_from_full_description(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = "https://example.com/jobs/full-description-salary"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, company, location, salary, full_description, description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Senior Platform Engineer",
+            "indeed",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "The base salary range is €100,000-€130,000 per year for this role.",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    repo = SqlitePostedCompensationRepository(conn)
+
+    assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
+
+    fact = repo.get_fact("local", job_url)
+    assert fact is not None
+    assert fact.parse_state == "parsed_range"
+    assert fact.source_field == "jobs.full_description"
+    assert fact.annualized_minimum_amount == 100_000
+    assert fact.annualized_maximum_amount == 130_000
+
+
+def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(
+        conn,
+        url="https://example.com/jobs/reported-too-weak",
+        title="Staff AI Engineer",
+        company="Acme AI",
+        location="Remote Europe",
+        salary="€100,000-€130,000/year",
+    )
+    SqlitePostedCompensationRepository(conn).save_fact(
+        parse_posted_compensation(
+            "€100,000-€130,000/year",
+            job_url=job_url,
+            parsed_at="2026-06-19T10:00:00Z",
+        )
+    )
+    weak_reported_observations = (
+        ReportedCompensationObservation(
+            source_id="euro_top_tech",
+            company_name="Unrelated Company",
+            role_title="Staff AI Engineer",
+            minimum_amount=30_000,
+            maximum_amount=30_000,
+            component="total_compensation",
+            location="Berlin, Germany",
+            level_label="Staff",
+            sample_count=1,
+            attribution="Euro Top Tech public crowdsourced compensation data",
+        ),
+        ReportedCompensationObservation(
+            source_id="euro_top_tech",
+            company_name="Different Company",
+            role_title="Staff AI Engineer",
+            minimum_amount=250_000,
+            maximum_amount=250_000,
+            component="total_compensation",
+            location="Madrid, Spain",
+            level_label="Staff",
+            sample_count=1,
+            attribution="Euro Top Tech public crowdsourced compensation data",
+        ),
+    )
+    repo = SqliteMarketCompensationRepository(conn)
+
+    assert repo.backfill_from_jobs(weak_reported_observations, estimated_at="2026-06-19T10:00:00Z") == 1
+
+    estimate = repo.get_estimate("local", job_url)
+    assert estimate is not None
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.component == "base_salary"
+    assert estimate.minimum_amount == 100_000
+    assert estimate.maximum_amount == 130_000
+    assert estimate.sources[0].source_id == "posted_salary_text"
+
+
 def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_evidence(
     conn: sqlite3.Connection,
 ) -> None:
@@ -350,6 +443,105 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
     assert observations[0].company_tier == "tier_2_ambitious"
     assert observations[1].minimum_amount == 125_000
     assert observations[1].maximum_amount == 125_000
+
+
+def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = [
+        {
+            "rows": [
+                {
+                    "country": "Spain",
+                    "city": "Barcelona",
+                    "jobTitle": "Staff Software Engineer",
+                    "company": "Airbnb",
+                    "seniority": "Staff / Engineering Manager",
+                    "preTaxTC": 242000,
+                    "submittedMonth": "2026-06",
+                },
+                {
+                    "country": "India",
+                    "city": "Pune",
+                    "jobTitle": "Software Engineer",
+                    "company": "Filtered",
+                    "seniority": "Mid-Level",
+                    "preTaxTC": 25000,
+                    "submittedMonth": "2026-06",
+                },
+            ],
+            "hasMore": True,
+            "nextCursor": "cursor-2",
+        },
+        {
+            "rows": [
+                {
+                    "country": "Germany",
+                    "city": "Munich",
+                    "jobTitle": None,
+                    "company": None,
+                    "seniority": "Senior",
+                    "preTaxTC": 102000,
+                    "submittedMonth": "2026-06",
+                }
+            ],
+            "hasMore": False,
+        },
+    ]
+
+    def fake_fetch_json(url: str, *, timeout_seconds: float) -> dict:
+        assert timeout_seconds > 0
+        assert "api/data-entries" in url
+        return payloads.pop(0)
+
+    monkeypatch.setattr(sqlite_market_repository, "_fetch_json", fake_fetch_json)
+
+    observations = load_euro_top_tech_observations(max_pages=2)
+
+    assert [observation.source_id for observation in observations] == ["euro_top_tech", "euro_top_tech"]
+    assert observations[0].company_name == "Airbnb"
+    assert observations[0].role_title == "Staff Software Engineer"
+    assert observations[0].minimum_amount == 242_000
+    assert observations[0].component == "total_compensation"
+    assert observations[0].location == "Barcelona, Spain"
+    assert observations[0].attribution and "Euro Top Tech" in observations[0].attribution
+    assert observations[1].company_name == "Euro Top Tech community"
+    assert observations[1].role_title == "Senior Software Engineer"
+
+
+def test_euro_top_tech_importer_keeps_loaded_rows_when_later_page_is_throttled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "rows": [
+            {
+                "country": "Spain",
+                "city": "Barcelona",
+                "jobTitle": "Staff Software Engineer",
+                "company": "Airbnb",
+                "seniority": "Staff / Engineering Manager",
+                "preTaxTC": 242000,
+                "submittedMonth": "2026-06",
+            }
+        ],
+        "hasMore": True,
+        "nextCursor": "cursor-2",
+    }
+    calls = 0
+
+    def fake_fetch_json(url: str, *, timeout_seconds: float) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return payload
+        raise RuntimeError("too many requests")
+
+    monkeypatch.setattr(sqlite_market_repository, "_fetch_json", fake_fetch_json)
+
+    observations = load_euro_top_tech_observations(max_pages=2)
+
+    assert calls == 2
+    assert len(observations) == 1
+    assert observations[0].source_id == "euro_top_tech"
+    assert observations[0].minimum_amount == 242_000
 
 
 def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Connection) -> None:

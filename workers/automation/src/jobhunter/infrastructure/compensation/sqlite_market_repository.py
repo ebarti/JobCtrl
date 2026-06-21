@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,9 @@ SAFE_FACTOR_NAMES = frozenset(
     {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
 )
 SAFE_CONFIDENCE_BANDS = frozenset({"none", "low", "medium", "high"})
-SAFE_SOURCE_IDS = frozenset({"levels_fyi", "glassdoor", "manual_reported_compensation", "posted_salary_text"})
+SAFE_SOURCE_IDS = frozenset(
+    {"levels_fyi", "glassdoor", "manual_reported_compensation", "euro_top_tech", "posted_salary_text"}
+)
 SAFE_COMPONENTS = frozenset({"base_salary", "total_compensation"})
 SAFE_COMPANY_TIERS = frozenset({"tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"})
 SAFE_MATCH_SCOPES = frozenset(
@@ -36,6 +40,55 @@ SAFE_MATCH_SCOPES = frozenset(
     }
 )
 DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+EURO_TOP_TECH_DATA_ENTRIES_URL = "https://www.eurotoptech.com/api/data-entries?sort=submitted&dir=desc"
+EURO_TOP_TECH_ATTRIBUTION = "Euro Top Tech public crowdsourced compensation data (https://www.eurotoptech.com/data)"
+EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
+    {
+        "albania",
+        "andorra",
+        "austria",
+        "belarus",
+        "belgium",
+        "bosnia and herzegovina",
+        "bulgaria",
+        "croatia",
+        "cyprus",
+        "czech republic",
+        "czechia",
+        "denmark",
+        "estonia",
+        "finland",
+        "france",
+        "germany",
+        "greece",
+        "hungary",
+        "iceland",
+        "ireland",
+        "italy",
+        "latvia",
+        "liechtenstein",
+        "lithuania",
+        "luxembourg",
+        "malta",
+        "moldova",
+        "monaco",
+        "montenegro",
+        "netherlands",
+        "north macedonia",
+        "norway",
+        "poland",
+        "portugal",
+        "romania",
+        "serbia",
+        "slovakia",
+        "slovenia",
+        "spain",
+        "sweden",
+        "switzerland",
+        "ukraine",
+        "united kingdom",
+    }
+)
 EUR_NORMALIZATION_RATES = {
     "EUR": 1,
     "USD": 0.92,
@@ -174,8 +227,35 @@ class SqliteMarketCompensationRepository:
         seniority_label: str | None = None,
         estimated_at: str | None = None,
     ) -> MarketCompensationEstimate:
+        estimate = self._estimate_job(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            title=title,
+            company=company,
+            location=location,
+            observations=observations,
+            component=component,
+            seniority_label=seniority_label,
+            estimated_at=estimated_at,
+        )
+        self.save_estimate(estimate)
+        return estimate
+
+    def _estimate_job(
+        self,
+        *,
+        job_url: str,
+        title: str,
+        company: str | None,
+        location: str | None,
+        observations: tuple[ReportedCompensationObservation, ...],
+        tenant_id: str,
+        component: str,
+        seniority_label: str | None = None,
+        estimated_at: str | None = None,
+    ) -> MarketCompensationEstimate:
         posted_minimum, posted_maximum = self._posted_annualized_range(tenant_id, job_url)
-        estimate = estimate_market_compensation(
+        return estimate_market_compensation(
             tenant_id=tenant_id,
             job_url=job_url,
             title=title,
@@ -188,8 +268,6 @@ class SqliteMarketCompensationRepository:
             posted_annualized_maximum=posted_maximum,
             estimated_at=estimated_at,
         )
-        self.save_estimate(estimate)
-        return estimate
 
     def backfill_from_jobs(
         self,
@@ -200,12 +278,7 @@ class SqliteMarketCompensationRepository:
         limit: int = 0,
         job_url: str | None = None,
     ) -> int:
-        effective_observations = (
-            observations
-            if observations
-            else self._posted_salary_observations(tenant_id=tenant_id, job_url=job_url)
-        )
-        component = "total_compensation" if observations else "base_salary"
+        posted_observations = self._posted_salary_observations(tenant_id=tenant_id, job_url=job_url)
         sql = "SELECT url, title, site, company, location FROM jobs"
         params: list[Any] = []
         if job_url:
@@ -217,16 +290,34 @@ class SqliteMarketCompensationRepository:
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
         for row in rows:
-            self.estimate_and_save_job(
-                tenant_id=tenant_id,
-                job_url=str(_row_value(row, "url")),
-                title=str(_row_value(row, "title") or ""),
-                company=_nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site")),
-                location=_nullable_str(_row_value(row, "location")),
-                observations=effective_observations,
-                component=component,
-                estimated_at=estimated_at,
-            )
+            current_job_url = str(_row_value(row, "url"))
+            title = str(_row_value(row, "title") or "")
+            company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
+            location = _nullable_str(_row_value(row, "location"))
+            estimate: MarketCompensationEstimate | None = None
+            if observations:
+                estimate = self._estimate_job(
+                    tenant_id=tenant_id,
+                    job_url=current_job_url,
+                    title=title,
+                    company=company,
+                    location=location,
+                    observations=observations,
+                    component="total_compensation",
+                    estimated_at=estimated_at,
+                )
+            if estimate is None or (estimate.estimate_state != "estimated_range" and posted_observations):
+                estimate = self._estimate_job(
+                    tenant_id=tenant_id,
+                    job_url=current_job_url,
+                    title=title,
+                    company=company,
+                    location=location,
+                    observations=posted_observations,
+                    component="base_salary",
+                    estimated_at=estimated_at,
+                )
+            self.save_estimate(estimate)
         self._conn.commit()
         return len(rows)
 
@@ -358,6 +449,99 @@ def load_reported_compensation_observations(path: Path | str) -> tuple[ReportedC
         if observation is not None:
             observations.append(observation)
     return tuple(observations)
+
+
+def load_euro_top_tech_observations(
+    *,
+    url: str = EURO_TOP_TECH_DATA_ENTRIES_URL,
+    max_pages: int = 10,
+    timeout_seconds: float = 10.0,
+) -> tuple[ReportedCompensationObservation, ...]:
+    """Load public Euro Top Tech approved data-entry rows as compensation observations."""
+
+    observations: list[ReportedCompensationObservation] = []
+    next_url: str | None = url
+    seen_urls: set[str] = set()
+    pages = 0
+    while next_url and pages < max(0, max_pages) and next_url not in seen_urls:
+        seen_urls.add(next_url)
+        try:
+            payload = _fetch_json(next_url, timeout_seconds=timeout_seconds)
+        except Exception:
+            if observations:
+                break
+            raise
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            break
+        for item in rows:
+            if isinstance(item, dict) and (observation := _euro_top_tech_observation(item)) is not None:
+                observations.append(observation)
+        pages += 1
+        cursor = payload.get("nextCursor") if payload.get("hasMore") else None
+        next_url = _cursor_url(url, str(cursor)) if cursor else None
+    return tuple(observations)
+
+
+def _fetch_json(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "JobHunter/0.3"})
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        raw = response.read()
+    parsed = json.loads(raw.decode("utf-8"))
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _cursor_url(base_url: str, cursor: str) -> str:
+    parts = urllib.parse.urlsplit(base_url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query = [(key, value) for key, value in query if key != "cursor"]
+    query.append(("cursor", cursor))
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment))
+
+
+def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObservation | None:
+    amount = _nullable_int(data.get("preTaxTC"))
+    country = _text(data.get("country"), default=None)
+    if amount is None or amount < 10_000 or country is None or country.casefold() not in EURO_TOP_TECH_EUROPE_COUNTRIES:
+        return None
+    role = _text(data.get("jobTitle"), default=None) or _role_from_euro_top_tech_seniority(data.get("seniority"))
+    level = _text(data.get("seniority"), default=None)
+    submitted_month = _text(data.get("submittedMonth"), default=None)
+    return ReportedCompensationObservation(
+        source_id="euro_top_tech",
+        company_name=_text(data.get("company"), default=None) or "Euro Top Tech community",
+        role_title=role,
+        minimum_amount=amount,
+        maximum_amount=amount,
+        currency="EUR",
+        period="year",
+        component="total_compensation",
+        location=_euro_top_tech_location(data),
+        level_label=level,
+        company_tier="unknown",
+        release_year=_year(submitted_month),
+        snapshot_version=_euro_top_tech_snapshot_version(submitted_month),
+        sample_count=1,
+        attribution=EURO_TOP_TECH_ATTRIBUTION,
+    )
+
+
+def _role_from_euro_top_tech_seniority(value: Any) -> str:
+    text = str(value or "").strip()
+    return f"{text} Software Engineer" if text else "Software Engineer"
+
+
+def _euro_top_tech_location(data: dict[str, Any]) -> str:
+    country = _text(data.get("country"), default="")
+    city = _text(data.get("city"), default="")
+    if city and country:
+        return f"{city}, {country}"
+    return str(country or city or "Europe")
+
+
+def _euro_top_tech_snapshot_version(submitted_month: str | None) -> str:
+    text = str(submitted_month or "").strip()
+    return f"eurotoptech-data-{text}" if re.fullmatch(r"\d{4}-\d{2}", text) else "eurotoptech-data-public"
 
 
 def _observation_from_dict(data: dict[str, Any]) -> ReportedCompensationObservation | None:
@@ -536,6 +720,9 @@ def _source_id(value: Any) -> Any:
         "glassdoor_reported_compensation": "glassdoor",
         "manual": "manual_reported_compensation",
         "manual_reported_compensation": "manual_reported_compensation",
+        "eurotoptech": "euro_top_tech",
+        "euro_top_tech": "euro_top_tech",
+        "euro_top_tech_reported_compensation": "euro_top_tech",
         "posted_salary_text": "posted_salary_text",
         "posted_salary": "posted_salary_text",
         "job_posting_salary_text": "posted_salary_text",

@@ -28,6 +28,7 @@ export function listCompensationSources(
       levelsSource(env),
       glassdoorSource(env),
       manualReportedCompensationSource(),
+      euroTopTechSource(),
     ],
   };
 }
@@ -155,6 +156,30 @@ function manualReportedCompensationSource(): CompensationSourcePolicySummary {
       notes: "Coverage follows the rows supplied to the temporary compensation-refresh command.",
     },
     notes: ["Temporary local import path for reported company-role compensation rows."],
+  };
+}
+
+function euroTopTechSource(): CompensationSourcePolicySummary {
+  return {
+    sourceId: "euro_top_tech",
+    displayName: "Euro Top Tech",
+    sourceType: "reported_compensation",
+    accessMode: "public_dataset",
+    availability: "available",
+    licenseStatus: "not_required",
+    termsUrl: "https://www.eurotoptech.com/terms",
+    sourceUrl: "https://www.eurotoptech.com/data",
+    freshnessPolicy: "Uses approved public data-entry rows exposed by Euro Top Tech at refresh time.",
+    attributionRequirement: "Show as Euro Top Tech public crowdsourced compensation data.",
+    supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
+    disabledReason: null,
+    configured: true,
+    coverage: {
+      geography: "public_dataset",
+      regions: ["Europe"],
+      notes: "Coverage follows public approved Euro Top Tech data-entry rows.",
+    },
+    notes: ["Public crowdsourced compensation rows are loaded through the compensation refresh path."],
   };
 }
 

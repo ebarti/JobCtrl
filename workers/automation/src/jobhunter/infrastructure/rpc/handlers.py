@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,22 +42,6 @@ from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, 
 
 logger = logging.getLogger(__name__)
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
-COMPENSATION_SOURCE_RE = re.compile(
-    r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
-    re.IGNORECASE,
-)
-COMPENSATION_AMOUNT_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:(?:[€$£]|(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b)\s*)"
-    r"\d{1,3}(?:[,.]\d{3})*(?:[,.]\d+)?\s*(?:k|K)?(?![A-Za-z0-9])"
-)
-NON_COMPENSATION_SCALE_RE = re.compile(
-    r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
-    re.IGNORECASE,
-)
-PAY_PERIOD_RE = re.compile(
-    r"(?:/(?:h|hr|hrs|hour|mo|mos|month)|\b(?:hour|hourly|hr|hrs|month|monthly|year|yearly|annual|annually|annum|yr|yrs)\b)",
-    re.IGNORECASE,
-)
 
 
 def _tenant_id(params: dict[str, Any]) -> str:
@@ -73,48 +56,6 @@ def _require(params: dict[str, Any], name: str) -> Any:
     if name not in params or params[name] in (None, ""):
         raise invalid_params(f"missing required param: {name}")
     return params[name]
-
-
-def _nonempty_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = re.sub(r"\s+", " ", str(value).strip())
-    return text or None
-
-
-def _compensation_source_from_job(row: Any) -> tuple[str | None, str]:
-    salary = _nonempty_text(row["salary"])
-    if salary is not None:
-        return salary, "jobs.salary"
-
-    for field in ("full_description", "description"):
-        text = _nonempty_text(row[field])
-        if text is None:
-            continue
-        match = _compensation_source_match(text)
-        if match is None:
-            continue
-        start = max(0, match.start() - 80)
-        end = min(len(text), match.end() + 220)
-        return text[start:end].strip(), f"jobs.{field}"
-
-    return None, "jobs.salary"
-
-
-def _compensation_source_match(text: str) -> re.Match[str] | None:
-    keyword_match = COMPENSATION_SOURCE_RE.search(text)
-    if keyword_match is not None:
-        return keyword_match
-
-    for amount_match in COMPENSATION_AMOUNT_RE.finditer(text):
-        if NON_COMPENSATION_SCALE_RE.match(text[amount_match.end() :].lstrip()):
-            continue
-        window_start = max(0, amount_match.start() - 40)
-        window_end = min(len(text), amount_match.end() + 40)
-        if PAY_PERIOD_RE.search(text[window_start:window_end]):
-            return amount_match
-
-    return None
 
 
 def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> bool:
@@ -383,7 +324,9 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     from jobhunter.infrastructure.compensation import (
         SqliteMarketCompensationRepository,
         SqlitePostedCompensationRepository,
+        load_euro_top_tech_observations,
         load_reported_compensation_observations,
+        posted_compensation_source_from_job,
     )
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 
@@ -396,7 +339,7 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
         raise invalid_params(f"unknown jobUrl: {job_url}")
 
     refreshed_at = datetime.now(timezone.utc).isoformat()
-    source_text, source_field = _compensation_source_from_job(row)
+    source_text, source_field = posted_compensation_source_from_job(row)
     SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
         job_url,
         source_text,
@@ -407,22 +350,34 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     posted_count = 1
 
     observations_path = params.get("observationsJsonPath")
-    observations = ()
-    estimate_count = 0
-    market_skipped = True
+    local_observations = ()
     if observations_path:
         observation_file = Path(str(observations_path))
         if not observation_file.is_file():
             raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
-        observations = load_reported_compensation_observations(observation_file)
-        estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
-            observations,
-            tenant_id=tenant_id,
-            estimated_at=refreshed_at,
-            limit=1,
-            job_url=job_url,
-        )
-        market_skipped = False
+        local_observations = load_reported_compensation_observations(observation_file)
+
+    include_eurotoptech_param = params.get("includeEuroTopTech")
+    include_eurotoptech = (
+        bool(include_eurotoptech_param) if include_eurotoptech_param is not None else observations_path is None
+    )
+    eurotoptech_observations = ()
+    if include_eurotoptech:
+        try:
+            eurotoptech_observations = load_euro_top_tech_observations(
+                max_pages=int(params.get("euroTopTechMaxPages") or 10)
+            )
+        except Exception as exc:  # noqa: BLE001 - manual refresh should degrade to local evidence
+            logger.warning("Euro Top Tech compensation data could not be loaded: %s", exc)
+
+    observations = (*local_observations, *eurotoptech_observations)
+    estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
+        observations,
+        tenant_id=tenant_id,
+        estimated_at=refreshed_at,
+        limit=1,
+        job_url=job_url,
+    )
 
     ProjectionBuilder(conn_factory=get_connection).refresh()
     return {
@@ -431,8 +386,10 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
         "jobUrl": job_url,
         "postedFactsRefreshed": posted_count,
         "reportedObservationsLoaded": len(observations),
+        "localReportedObservationsLoaded": len(local_observations),
+        "euroTopTechObservationsLoaded": len(eurotoptech_observations),
         "estimatesRefreshed": estimate_count,
-        "marketRefreshSkipped": market_skipped,
+        "marketRefreshSkipped": False,
         "tenantId": tenant_id,
     }
 

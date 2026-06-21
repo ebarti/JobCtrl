@@ -94,12 +94,16 @@ describe("preparation RPC contracts", () => {
     const params = RefreshCompensationParamsSchema.parse({
       jobUrl: "https://example.test/job/1",
       observationsJsonPath: "/tmp/reported-compensation.json",
+      includeEuroTopTech: true,
+      euroTopTechMaxPages: 3,
     });
 
     expect(params).toEqual({
       tenantId: "local",
       jobUrl: "https://example.test/job/1",
       observationsJsonPath: "/tmp/reported-compensation.json",
+      includeEuroTopTech: true,
+      euroTopTechMaxPages: 3,
     });
     expect(() => RefreshCompensationParamsSchema.parse({})).toThrow();
     expect(() => RefreshCompensationParamsSchema.parse({ jobUrl: "", observationsJsonPath: "" })).toThrow();
@@ -120,6 +124,8 @@ describe("preparation RPC contracts", () => {
       jobUrl: "https://example.test/job/1",
       postedFactsRefreshed: 1,
       reportedObservationsLoaded: 2,
+      localReportedObservationsLoaded: 0,
+      euroTopTechObservationsLoaded: 0,
       estimatesRefreshed: 1,
       marketRefreshSkipped: false,
       tenantId: "local",

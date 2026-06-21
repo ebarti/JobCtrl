@@ -424,15 +424,17 @@ inspection API and projection-backed job list/detail compensation summaries.
 Company-role market compensation estimates are persisted in
 `job_market_compensation_estimates` before inspection. Phase 19 estimates are
 deterministic local facts derived from imported or manually supplied reported
-compensation observations for Levels.fyi, Glassdoor, or manual sources, or from
-employer-posted salary facts already captured by JobHunter. Employer-posted
-market rows are labeled as job posting salary text and remain low confidence when
-they are based on a single posting or extrapolated fallback tier. These rows
-store explicit estimate states, normalized company and role, match scope,
-trimodal company tier, confidence factors, confidence interval bounds, safe
-source snapshots, warnings, and reasons. They do not store raw benchmark pages,
-provider payloads, credentials, local paths, private account state, user
-compensation preferences, or U.S. salary baselines.
+compensation observations for Euro Top Tech, Levels.fyi, Glassdoor, or manual
+sources, or from employer-posted salary facts already captured by JobHunter.
+Euro Top Tech rows are treated as public community-reported EUR/year total
+compensation observations. Employer-posted market rows are labeled as job
+posting salary text and remain low confidence when they are based on a single
+posting or extrapolated fallback tier. These rows store explicit estimate
+states, normalized company and role, match scope, trimodal company tier,
+confidence factors, confidence interval bounds, safe source snapshots, warnings,
+and reasons. They do not store raw benchmark pages, provider payloads,
+credentials, local paths, private account state, user compensation preferences,
+or U.S. salary baselines.
 Compensation writes emit `CompensationFactsUpdated` rows into `job_events`.
 Those payloads carry only job id, changed section, state markers, and timestamp;
 the Operations/SSE invalidation path refreshes job list/detail queries from the

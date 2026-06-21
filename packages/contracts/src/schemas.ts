@@ -154,6 +154,8 @@ export type RescoreJobRequest = z.infer<typeof RescoreJobRequestSchema>;
 export const RefreshCompensationRequestSchema = z
   .object({
     observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
+    includeEuroTopTech: z.boolean().optional(),
+    euroTopTechMaxPages: z.coerce.number().int().min(1).max(100).optional(),
   })
   .strict();
 export type RefreshCompensationRequest = z.infer<typeof RefreshCompensationRequestSchema>;
@@ -1951,6 +1953,8 @@ export interface ActionCommandPayload {
   runId?: string;
   reason?: string;
   observationsJsonPath?: string;
+  includeEuroTopTech?: boolean;
+  euroTopTechMaxPages?: number;
 }
 
 export interface ActionRunResponse {
@@ -2582,6 +2586,7 @@ export const MARKET_COMPENSATION_SOURCE_IDS = [
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "euro_top_tech",
   "posted_salary_text",
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];

@@ -375,6 +375,8 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         expectedDbPath: context.dbPath,
         jobUrl: command.jobKey,
         ...(command.observationsJsonPath ? { observationsJsonPath: command.observationsJsonPath } : {}),
+        ...(command.includeEuroTopTech !== undefined ? { includeEuroTopTech: command.includeEuroTopTech } : {}),
+        ...(command.euroTopTechMaxPages ? { euroTopTechMaxPages: command.euroTopTechMaxPages } : {}),
       },
     };
   }

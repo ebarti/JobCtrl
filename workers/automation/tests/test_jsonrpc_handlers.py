@@ -8,8 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+import jobhunter.infrastructure.compensation as compensation_infra
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
+from jobhunter.domain.compensation import ReportedCompensationObservation
 from jobhunter.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -325,6 +327,82 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
     assert estimate["estimate_state"] == "estimated_range"
     assert estimate["minimum_amount"] == 118_000
     assert estimate["maximum_amount"] == 142_000
+
+
+def test_refresh_compensation_without_observations_uses_euro_top_tech_and_updates_market(
+    tmp_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/jobs/staff-engineer"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Staff Software Engineer",
+            "Acme AI",
+            "Barcelona, Spain",
+            "",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+        assert max_pages == 10
+        return (
+            ReportedCompensationObservation(
+                source_id="euro_top_tech",
+                company_name="Airbnb",
+                role_title="Staff Software Engineer",
+                minimum_amount=242_000,
+                maximum_amount=242_000,
+                component="total_compensation",
+                location="Barcelona, Spain",
+                level_label="Staff / Engineering Manager",
+                sample_count=1,
+                attribution="Euro Top Tech public crowdsourced compensation data",
+            ),
+        )
+
+    monkeypatch.setattr(compensation_infra, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "jobUrl": job_url,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["reportedObservationsLoaded"] == 1
+    assert body["result"]["localReportedObservationsLoaded"] == 0
+    assert body["result"]["euroTopTechObservationsLoaded"] == 1
+    assert body["result"]["marketRefreshSkipped"] is False
+    estimate = conn.execute(
+        """
+        SELECT estimate_state, minimum_amount, maximum_amount, component, match_scope, source_snapshot_json
+        FROM job_market_compensation_estimates WHERE job_url = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert estimate["estimate_state"] == "estimated_range"
+    assert estimate["minimum_amount"] == 242_000
+    assert estimate["maximum_amount"] == 242_000
+    assert estimate["component"] == "total_compensation"
+    assert estimate["match_scope"] == "same_location_role_fallback"
+    assert "euro_top_tech" in estimate["source_snapshot_json"]
 
 
 # ---------------------------------------------------------------------------

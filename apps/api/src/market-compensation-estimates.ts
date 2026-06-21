@@ -94,6 +94,7 @@ const SOURCE_IDS = new Set<MarketCompensationSourceId>([
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "euro_top_tech",
   "posted_salary_text",
 ]);
 const RECORDED_ESTIMATE_STATES = new Set([
@@ -136,6 +137,14 @@ const SOURCE_DEFAULTS: Record<
     geographyScope: "reported",
     aggregateBucket: "reported company-role compensation",
     attribution: "Manual reported compensation import",
+  },
+  euro_top_tech: {
+    displayName: "Euro Top Tech",
+    sourceType: "reported_compensation",
+    snapshotVersion: "eurotoptech-data-public",
+    geographyScope: "Europe",
+    aggregateBucket: "reported company-role compensation",
+    attribution: "Euro Top Tech public crowdsourced compensation data",
   },
   posted_salary_text: {
     displayName: "Job posting salary text",

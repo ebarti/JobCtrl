@@ -263,6 +263,8 @@ export const RefreshCompensationParamsSchema = z
     expectedDbPath: z.string().trim().min(1).optional(),
     jobUrl: z.string().min(1),
     observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
+    includeEuroTopTech: z.boolean().optional(),
+    euroTopTechMaxPages: z.number().int().min(1).max(100).optional(),
   })
   .strict();
 export type RefreshCompensationParams = z.infer<typeof RefreshCompensationParamsSchema>;
@@ -274,6 +276,8 @@ export const RefreshCompensationResultSchema = z
     jobUrl: z.string(),
     postedFactsRefreshed: z.number().int().min(0),
     reportedObservationsLoaded: z.number().int().min(0),
+    localReportedObservationsLoaded: z.number().int().min(0).default(0),
+    euroTopTechObservationsLoaded: z.number().int().min(0).default(0),
     estimatesRefreshed: z.number().int().min(0),
     marketRefreshSkipped: z.boolean().default(false),
     tenantId: z.string().min(1),

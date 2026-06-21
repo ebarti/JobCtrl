@@ -538,6 +538,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (body.observationsJsonPath) {
           command.observationsJsonPath = body.observationsJsonPath;
         }
+        if (body.includeEuroTopTech !== undefined) {
+          command.includeEuroTopTech = body.includeEuroTopTech;
+        }
+        if (body.euroTopTechMaxPages !== undefined) {
+          command.euroTopTechMaxPages = body.euroTopTechMaxPages;
+        }
         const dispatch = await actionDispatcher(command, actionContext);
         void reply.code(dispatch.status === "queued" ? 202 : 200);
         return buildActionResponse(command, dispatch);

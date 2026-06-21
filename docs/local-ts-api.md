@@ -218,9 +218,9 @@ provider payloads, private-account state, local paths, scraped salary data, or
 salary observations.
 
 The endpoint is deterministic and network-free. It does not fetch, scrape,
-cache, or return raw provider payloads. It lists posted salary text, Levels.fyi,
-Glassdoor, and the temporary manual reported-compensation import as safe policy
-entries. Levels.fyi automated access remains unavailable unless
+cache, or return raw provider payloads. It lists posted salary text, Euro Top
+Tech, Levels.fyi, Glassdoor, and the temporary manual reported-compensation
+import as safe policy entries. Levels.fyi automated access remains unavailable unless
 `JOBHUNTER_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
 `enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
 Glassdoor automated access remains unavailable unless
@@ -275,37 +275,43 @@ Recorded market estimates expose one explicit state: `unsupported`,
 fields are present only for `estimated_range`. Non-range states carry
 inspectable reasons, confidence factors, safe source snapshots, and warnings
 instead of nullable precision. Phase 19 source scope is reported compensation
-evidence keyed by company and role: Levels.fyi, Glassdoor, and manual local
-reported-compensation imports. The estimate includes company name, normalized
-company, role title, normalized role, match scope, total compensation component,
-source count, sample count, confidence factors, and trimodal company-tier
-context. Raw benchmark pages, credentials, private account payloads, local
-paths, and user compensation preferences are not returned.
+evidence keyed by company and role: Euro Top Tech public community-reported
+rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
+estimate includes company name, normalized company, role title, normalized role,
+match scope, total compensation component, source count, sample count,
+confidence factors, and trimodal company-tier context. Raw benchmark pages,
+credentials, private account payloads, local paths, and user compensation
+preferences are not returned.
 
 Temporary write trigger: `jobhunter compensation-refresh --observations-json
-<file>` reparses posted salary facts from existing jobs, imports permitted
-reported compensation observations, estimates matching existing jobs, and
-refreshes projections without running discovery, scoring, tailoring, cover, or
-apply automation. When the observations file is omitted, the market estimator
-uses employer-posted salary facts already captured by JobHunter as low-confidence
-posted-salary evidence. It falls back through same company/role,
+<file>` reparses posted salary facts from existing `jobs.salary` values and
+description compensation text, imports permitted reported compensation
+observations, estimates matching existing jobs, and refreshes projections
+without running discovery, scoring, tailoring, cover, or apply automation. When
+the observations file is omitted, the refresh imports public Euro Top Tech
+community-reported rows by default, then falls back to employer-posted salary
+facts already captured by JobHunter as low-confidence posted-salary evidence. It
+falls back through same company/role,
 same-location role, same-company adjacent-role, trimodal company-tier, and broad
 market-baseline tiers so sparse real evidence still produces a best estimate
 with a wider confidence interval. It does not label those rows as Levels.fyi,
-Glassdoor, or manual reported-compensation data. `--url <job-url>` narrows the
-refresh to one existing job.
+Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
+source actually contributed observations. `--url <job-url>` narrows the refresh
+to one existing job.
 
 Manual web/API trigger: `POST
 /v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
 compensation refresh through the local worker for one existing job without
 rerunning discovery, scoring, tailoring, cover, or apply automation. The request
 body may include `{ "observationsJsonPath": "/path/to/export.json" }` to import
-permitted reported-compensation observations before estimating market evidence;
-omitting the path refreshes market evidence from the selected job's captured
+permitted reported-compensation observations before estimating market evidence,
+or `{ "includeEuroTopTech": true, "euroTopTechMaxPages": 10 }` to include the
+public Euro Top Tech import. When both are omitted, Euro Top Tech is included by
+default and the estimator still falls back to the selected job's captured
 employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
-bonus-only or one-sided rows. The response is the standard action response with a
-synchronous `succeeded` result when the local JSON-RPC handler completes.
+bonus-only or one-sided rows. The response is the standard action response with
+a synchronous `succeeded` result when the local JSON-RPC handler completes.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
