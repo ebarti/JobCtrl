@@ -203,7 +203,10 @@ function seedSyntheticCompensationData(): void {
       "[]",
       "[]",
       "[]",
-      JSON.stringify(["reported_compensation_sample"]),
+      JSON.stringify([
+        "reported_compensation_sample",
+        "source_conflict_with_posted_salary",
+      ]),
       "company-role-reported-compensation-v1",
       "2026-06-19T10:00:00Z",
       "Greenhouse",
