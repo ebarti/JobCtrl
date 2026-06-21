@@ -28,6 +28,11 @@ const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
 
 type CompensationSummary = NonNullable<JobSummary["compensationSummary"]>;
 type MarketSummary = CompensationSummary["market"];
+type CompensationRangeSummary = NonNullable<CompensationSummary["posted"]["range"]>;
+
+const EUR_PER_YEAR_FORMATTER = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0,
+});
 
 function pluralize(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
@@ -85,15 +90,36 @@ function postedCompensationLabel(summary: CompensationSummary | null, fallbackSa
   return "No posted salary recorded";
 }
 
-function postedCompensationSortValue(row: JobSummary): number {
-  const summary = row.compensationSummary;
-  const amount = summary?.posted.range?.annualizedMinimumAmount ?? summary?.posted.range?.minimumAmount;
-  if (Number.isFinite(amount)) return Number(amount);
-  if (summary?.posted.displayRange || summary?.legacyRawSalary || row.salary) return -1;
-  if (summary?.posted.parseState === "ambiguous") return -2;
-  if (summary?.posted.parseState === "unparseable") return -3;
-  if (summary?.posted.parseState === "missing") return -4;
-  return Number.NEGATIVE_INFINITY;
+function salaryAmountEur(summary: CompensationSummary | null, bound: "min" | "max"): number | null {
+  return compensationRangeAmountEur(summary?.posted.range, bound);
+}
+
+function salaryAmountSortValue(row: JobSummary, bound: "min" | "max"): number {
+  return salaryAmountEur(row.compensationSummary, bound) ?? Number.NEGATIVE_INFINITY;
+}
+
+function formatEurPerYear(amount: number): string {
+  return `EUR ${EUR_PER_YEAR_FORMATTER.format(amount)}/yr`;
+}
+
+function salaryAmountLabel(summary: CompensationSummary | null, bound: "min" | "max", fallbackSalary = ""): string {
+  const amount = salaryAmountEur(summary, bound);
+  if (amount !== null) return formatEurPerYear(amount);
+  return postedCompensationLabel(summary, fallbackSalary);
+}
+
+function compensationRangeAmountEur(
+  range: CompensationRangeSummary | null | undefined,
+  bound: "min" | "max",
+): number | null {
+  const normalized = bound === "min" ? range?.annualizedMinimumEur : range?.annualizedMaximumEur;
+  if (Number.isFinite(normalized)) return Number(normalized);
+  if (range?.currency?.toUpperCase() !== "EUR") return null;
+  const annualized = bound === "min" ? range.annualizedMinimumAmount : range.annualizedMaximumAmount;
+  if (Number.isFinite(annualized)) return Number(annualized);
+  if (range.period !== "year") return null;
+  const source = bound === "min" ? range.minimumAmount : range.maximumAmount;
+  return Number.isFinite(source) ? Number(source) : null;
 }
 
 function marketCompensationLabel(summary: CompensationSummary | null): string {
@@ -128,26 +154,19 @@ function sourceSortValue(row: JobSummary): string {
   return (row.postingSource || row.discoverySource || row.source || "").toLowerCase();
 }
 
-export function PostedCompensationCell({
+export function SalaryAmountCell({
   summary,
-  fallbackSalary = "",
+  bound,
 }: {
   readonly summary: CompensationSummary | null;
-  readonly fallbackSalary?: string;
+  readonly bound: "min" | "max";
 }) {
   const posted = summary?.posted;
-  const fallback = summary?.legacyRawSalary || fallbackSalary || "";
-  if (!posted?.displayRange) {
-    if (fallback) {
-      return (
-        <span className="job-compensation-cell">
-          <span className="job-compensation-primary">{fallback}</span>
-          <span className="job-compensation-meta">legacy posting text</span>
-        </span>
-      );
-    }
-    const label =
-      posted?.parseState === "unparseable"
+  const amount = salaryAmountEur(summary, bound);
+  if (amount === null) {
+    const label = posted?.range
+      ? "Posted salary is not normalized to EUR per year"
+      : posted?.parseState === "unparseable"
         ? "Posted salary unparseable"
         : posted?.parseState === "ambiguous"
           ? "Posted salary ambiguous"
@@ -156,9 +175,13 @@ export function PostedCompensationCell({
   }
 
   return (
-    <span className="job-compensation-cell">
-      <span className="job-compensation-primary">{posted.displayRange}</span>
-      <span className="job-compensation-meta">{posted.confidence} parsed</span>
+    <span
+      className="job-compensation-cell"
+      aria-label={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYear(amount)}`}
+      title={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYear(amount)}`}
+    >
+      <span className="job-compensation-primary">{formatEurPerYear(amount)}</span>
+      <span className="job-compensation-meta">EUR/year</span>
     </span>
   );
 }
@@ -405,18 +428,32 @@ export function jobColumns(
       ),
     },
     {
-      id: "compensation_posted",
-      label: "Salary range",
+      id: "compensation_min_eur",
+      label: "Salary min",
       sortable: true,
-      getSortValue: postedCompensationSortValue,
+      getSortValue: (row) => salaryAmountSortValue(row, "min"),
       className: "job-compensation-column",
       headerClassName: "job-compensation-column",
-      width: 156,
-      minWidth: 132,
-      maxWidth: 260,
-      getFilterValue: (row) => postedCompensationLabel(row.compensationSummary, row.salary),
-      getFilterSearchValue: (row) => postedCompensationLabel(row.compensationSummary, row.salary),
-      render: (row) => <PostedCompensationCell summary={row.compensationSummary} fallbackSalary={row.salary} />,
+      width: 136,
+      minWidth: 124,
+      maxWidth: 180,
+      getFilterValue: (row) => salaryAmountLabel(row.compensationSummary, "min", row.salary),
+      getFilterSearchValue: (row) => salaryAmountLabel(row.compensationSummary, "min", row.salary),
+      render: (row) => <SalaryAmountCell summary={row.compensationSummary} bound="min" />,
+    },
+    {
+      id: "compensation_max_eur",
+      label: "Salary max",
+      sortable: true,
+      getSortValue: (row) => salaryAmountSortValue(row, "max"),
+      className: "job-compensation-column",
+      headerClassName: "job-compensation-column",
+      width: 136,
+      minWidth: 124,
+      maxWidth: 180,
+      getFilterValue: (row) => salaryAmountLabel(row.compensationSummary, "max", row.salary),
+      getFilterSearchValue: (row) => salaryAmountLabel(row.compensationSummary, "max", row.salary),
+      render: (row) => <SalaryAmountCell summary={row.compensationSummary} bound="max" />,
     },
     {
       id: "compensation_market",

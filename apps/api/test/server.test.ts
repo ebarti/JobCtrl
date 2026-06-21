@@ -881,6 +881,7 @@ describe("local TypeScript API", () => {
       .prepare("UPDATE jobs SET salary = ?, apply_status = 'applied', applied_at = ? WHERE url = ?")
       .run("€55,000/year", "2026-04-29T10:15:00+00:00", "https://example.com/jobs/ready");
     insertPostedCompensationFact(seedDb, "https://example.com/jobs/ready");
+    insertUnannualizedPostedCompensationFact(seedDb, "https://example.com/jobs/failed-score");
     insertMarketCompensationEstimate(seedDb, "https://example.com/jobs/ready");
     seedDb
       .prepare("INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -897,6 +898,8 @@ describe("local TypeScript API", () => {
 
     for (const sortField of [
       "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
       "compensation_posted",
       "compensation_market",
       "compensation_warnings",
@@ -912,14 +915,29 @@ describe("local TypeScript API", () => {
 
     const salarySorted = await app.inject({
       method: "GET",
-      url: "/v1/jobs?sort=compensation_posted&dir=desc&pageSize=3",
+      url: "/v1/jobs?sort=compensation_min_eur&dir=desc&pageSize=3",
     });
     expect(salarySorted.statusCode, salarySorted.body).toBe(200);
     expect(salarySorted.json().items[0]).toMatchObject({
       jobKey: "https://example.com/jobs/ready",
       compensationSummary: {
-        posted: { displayRange: "EUR 55000/year" },
+        posted: {
+          displayRange: "EUR 55000/year",
+          range: {
+            annualizedMinimumEur: 55000,
+            annualizedMaximumEur: 55000,
+          },
+        },
       },
+    });
+
+    const salaryMaxSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=compensation_max_eur&dir=desc&pageSize=3",
+    });
+    expect(salaryMaxSorted.statusCode, salaryMaxSorted.body).toBe(200);
+    expect(salaryMaxSorted.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
     });
 
     const marketSorted = await app.inject({
@@ -6205,6 +6223,37 @@ function insertPostedCompensationFact(db: Database.Database, jobUrl: string): vo
     "posted-compensation-v1",
     "b".repeat(64),
     "2026-06-19T10:00:00Z",
+  );
+}
+
+function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl: string): void {
+  db.prepare(
+    `INSERT INTO job_posted_compensation_facts (
+      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      parse_state, currency, period, component, minimum_amount, maximum_amount,
+      annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
+      confidence, warnings_json, parser_version, source_hash, parsed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "jobs.full_description",
+    "EUR 120000-130000",
+    "EUR 120000-130000",
+    "parsed_range",
+    "EUR",
+    "unknown",
+    "base_salary",
+    120_000,
+    130_000,
+    null,
+    null,
+    null,
+    "low",
+    "[]",
+    "posted-compensation-v1",
+    "c".repeat(64),
+    "2026-06-19T10:00:30Z",
   );
 }
 

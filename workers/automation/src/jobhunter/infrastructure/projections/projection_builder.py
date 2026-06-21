@@ -1773,6 +1773,14 @@ def _posted_range_summary(fact: dict[str, Any]) -> dict[str, Any] | None:
         "maximumAmount": fact.get("maximumAmount"),
         "annualizedMinimumAmount": fact.get("annualizedMinimumAmount"),
         "annualizedMaximumAmount": fact.get("annualizedMaximumAmount"),
+        "annualizedMinimumEur": _normalize_annualized_eur(
+            fact.get("annualizedMinimumAmount"),
+            fact.get("currency"),
+        ),
+        "annualizedMaximumEur": _normalize_annualized_eur(
+            fact.get("annualizedMaximumAmount"),
+            fact.get("currency"),
+        ),
         "displayRange": _format_compensation_range(
             fact.get("currency"),
             fact.get("minimumAmount"),
@@ -1791,6 +1799,22 @@ def _market_range_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
         "component": estimate.get("component"),
         "minimumAmount": estimate.get("minimumAmount"),
         "maximumAmount": estimate.get("maximumAmount"),
+        "annualizedMinimumAmount": _annualize_compensation_amount(
+            estimate.get("minimumAmount"),
+            estimate.get("period"),
+        ),
+        "annualizedMaximumAmount": _annualize_compensation_amount(
+            estimate.get("maximumAmount"),
+            estimate.get("period"),
+        ),
+        "annualizedMinimumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(estimate.get("minimumAmount"), estimate.get("period")),
+            estimate.get("currency"),
+        ),
+        "annualizedMaximumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(estimate.get("maximumAmount"), estimate.get("period")),
+            estimate.get("currency"),
+        ),
         "displayRange": _format_compensation_range(
             estimate.get("currency"),
             estimate.get("minimumAmount"),
@@ -1798,6 +1822,42 @@ def _market_range_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
             estimate.get("period"),
         ),
     }
+
+
+EUR_NORMALIZATION_RATES: dict[str, float] = {
+    "EUR": 1,
+    "USD": 0.92,
+    "GBP": 1.17,
+    "CHF": 1.06,
+    "SEK": 0.09,
+    "NOK": 0.087,
+    "DKK": 0.134,
+    "PLN": 0.235,
+    "CZK": 0.041,
+}
+
+
+def _normalize_annualized_eur(amount: object, currency: object) -> int | None:
+    annualized = _nullable_int(amount)
+    if annualized is None:
+        return None
+    rate = EUR_NORMALIZATION_RATES.get(str(currency).upper()) if currency else None
+    if rate is None:
+        return None
+    return round(annualized * rate)
+
+
+def _annualize_compensation_amount(amount: object, period: object) -> int | None:
+    value = _nullable_int(amount)
+    if value is None:
+        return None
+    if period == "year":
+        return value
+    if period == "month":
+        return value * 12
+    if period == "hour":
+        return value * 2080
+    return None
 
 
 def _format_compensation_range(

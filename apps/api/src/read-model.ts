@@ -294,6 +294,8 @@ const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
 
 const IN_MEMORY_JOB_SORT_FIELDS = new Set([
   "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
   "compensation_posted",
   "compensation_market",
   "compensation_warnings",
@@ -4058,6 +4060,14 @@ function compareJobs(left: JobSummary, right: JobSummary, field: string, directi
     title: [left.title, right.title],
     company: [left.company, right.company],
     source: [jobSourceSortValue(left), jobSourceSortValue(right)],
+    compensation_min_eur: [
+      postedCompensationAmountEur(left.compensationSummary, "min"),
+      postedCompensationAmountEur(right.compensationSummary, "min"),
+    ],
+    compensation_max_eur: [
+      postedCompensationAmountEur(left.compensationSummary, "max"),
+      postedCompensationAmountEur(right.compensationSummary, "max"),
+    ],
     compensation_posted: [
       postedCompensationSortValue(left.compensationSummary, left.salary),
       postedCompensationSortValue(right.compensationSummary, right.salary),
@@ -4092,8 +4102,8 @@ function postedCompensationSortValue(
   summary: JobCompensationSummary | null,
   fallbackSalary: string,
 ): number {
-  const amount = summary?.posted.range?.annualizedMinimumAmount ?? summary?.posted.range?.minimumAmount;
-  if (Number.isFinite(amount)) return Number(amount);
+  const amount = postedCompensationAmountEur(summary, "min");
+  if (amount !== null) return amount;
   if (summary?.posted.displayRange || summary?.legacyRawSalary || fallbackSalary) return -1;
   if (summary?.posted.parseState === "ambiguous") return -2;
   if (summary?.posted.parseState === "unparseable") return -3;
@@ -4101,9 +4111,17 @@ function postedCompensationSortValue(
   return Number.NEGATIVE_INFINITY;
 }
 
+function postedCompensationAmountEur(
+  summary: JobCompensationSummary | null,
+  bound: "min" | "max",
+): number | null {
+  const range = summary?.posted.range;
+  return compensationRangeAmountEur(range, bound);
+}
+
 function marketCompensationSortValue(summary: JobCompensationSummary | null): number {
-  const amount = summary?.market.range?.annualizedMinimumAmount ?? summary?.market.range?.minimumAmount;
-  if (Number.isFinite(amount)) return Number(amount);
+  const amount = compensationRangeAmountEur(summary?.market.range ?? null, "min");
+  if (amount !== null) return amount;
   switch (summary?.market.estimateState) {
     case "estimated_range":
       return -1;
@@ -4117,6 +4135,20 @@ function marketCompensationSortValue(summary: JobCompensationSummary | null): nu
     default:
       return Number.NEGATIVE_INFINITY;
   }
+}
+
+function compensationRangeAmountEur(
+  range: JobCompensationSummary["posted"]["range"] | null | undefined,
+  bound: "min" | "max",
+): number | null {
+  const normalized = bound === "min" ? range?.annualizedMinimumEur : range?.annualizedMaximumEur;
+  if (Number.isFinite(normalized)) return Number(normalized);
+  if (range?.currency?.toUpperCase() !== "EUR") return null;
+  const annualized = bound === "min" ? range.annualizedMinimumAmount : range.annualizedMaximumAmount;
+  if (Number.isFinite(annualized)) return Number(annualized);
+  if (range.period !== "year") return null;
+  const source = bound === "min" ? range.minimumAmount : range.maximumAmount;
+  return Number.isFinite(source) ? Number(source) : null;
 }
 
 function compareArtifacts(

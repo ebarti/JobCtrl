@@ -105,7 +105,7 @@ function rowForTitle(title: string): HTMLElement {
 }
 
 describe("<JobsView> compensation source-conflict visibility", () => {
-  it("shows salary range, market, and warning scan columns with every data column sortable", async () => {
+  it("shows salary min/max, market, and warning scan columns with every data column sortable", async () => {
     const user = userEvent.setup();
     const compensationSummary = {
       ...sampleCompensationSummary,
@@ -137,11 +137,13 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Source Conflict Role")).toBeInTheDocument();
-    expect(screen.getByText("Salary range")).toBeInTheDocument();
+    expect(screen.getByText("Salary min")).toBeInTheDocument();
+    expect(screen.getByText("Salary max")).toBeInTheDocument();
     expect(screen.getByText("Market")).toBeInTheDocument();
     expect(screen.getByText("Warnings")).toBeInTheDocument();
     const row = within(rowForTitle("Source Conflict Role"));
-    expect(row.getByText("EUR 70000-90000/year")).toBeInTheDocument();
+    expect(row.getByText("EUR 70,000/yr")).toBeInTheDocument();
+    expect(row.getByText("EUR 90,000/yr")).toBeInTheDocument();
     expect(row.getByText("EUR 112000-142000/year")).toBeInTheDocument();
     expect(row.getByText(/medium confidence/)).toBeInTheDocument();
     expect(row.getByText(/2 sources/)).toBeInTheDocument();
@@ -152,7 +154,8 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       "Title",
       "Company",
       "Sources",
-      "Salary range",
+      "Salary min",
+      "Salary max",
       "Market",
       "Warnings",
       "Location",
@@ -170,14 +173,19 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       dir: "desc",
     });
 
-    await user.click(screen.getByRole("button", { name: "Sort by Salary range" }));
+    await user.click(screen.getByRole("button", { name: "Sort by Salary min" }));
     await waitFor(() =>
-      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_posted", dir: "asc" })),
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_min_eur", dir: "asc" })),
     );
     expect(router.state.location.search).toMatchObject({
-      sort: "compensation_posted",
+      sort: "compensation_min_eur",
       dir: "asc",
     });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Salary max" }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_max_eur", dir: "asc" })),
+    );
   });
 });
 

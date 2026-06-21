@@ -135,9 +135,12 @@ describe("<JobsTable>", () => {
   it("renders separate compensation scan columns", () => {
     renderJobsTable([sampleSecondaryJob]);
 
-    expect(screen.getByText("Salary range")).toBeInTheDocument();
+    expect(screen.getByText("Salary min")).toBeInTheDocument();
+    expect(screen.getByText("Salary max")).toBeInTheDocument();
     expect(screen.getByText("Market")).toBeInTheDocument();
     expect(screen.getByText("Warnings")).toBeInTheDocument();
+    expect(screen.getByText("EUR 70,000/yr")).toBeInTheDocument();
+    expect(screen.getByText("EUR 90,000/yr")).toBeInTheDocument();
     expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
     expect(screen.getByText(/medium confidence/i)).toBeInTheDocument();
     expect(screen.getByText(/2 sources/i)).toBeInTheDocument();

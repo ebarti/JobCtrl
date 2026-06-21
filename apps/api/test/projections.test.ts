@@ -309,7 +309,7 @@ function insertOperationalMetric(
 function insertCompensationRows(dbPath: string): void {
   const db = new Database(dbPath);
   const jobUrl = "https://example.com/jobs/event-driven";
-  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("EUR 70000-90000/year", jobUrl);
+  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("USD 70000-90000/year", jobUrl);
   db.exec(`
     CREATE TABLE job_posted_compensation_facts (
       tenant_id TEXT NOT NULL DEFAULT 'local',
@@ -380,10 +380,10 @@ function insertCompensationRows(dbPath: string): void {
     "local",
     jobUrl,
     "jobs.salary",
-    "EUR 70000-90000/year",
-    "EUR 70000-90000/year",
+    "USD 70000-90000/year",
+    "USD 70000-90000/year",
     "parsed_range",
-    "EUR",
+    "USD",
     "year",
     "base_salary",
     70000,
@@ -539,7 +539,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           .get("https://example.com/jobs/event-driven") as
           | { salary: string; compensation_summary_json: string }
           | undefined;
-        expect(listProjection?.salary).toBe("EUR 70000-90000/year");
+        expect(listProjection?.salary).toBe("USD 70000-90000/year");
         const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
         expect(summary).toMatchObject({
           projectionVersion: 1,
@@ -547,8 +547,14 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           posted: {
             recordStatus: "recorded",
             parseState: "parsed_range",
-            displayRange: "EUR 70000-90000/year",
+            displayRange: "USD 70000-90000/year",
             warningCount: 1,
+            range: {
+              annualizedMinimumAmount: 70000,
+              annualizedMaximumAmount: 90000,
+              annualizedMinimumEur: 64400,
+              annualizedMaximumEur: 82800,
+            },
           },
           market: {
             sourceKind: "reported_company_role_market",
@@ -559,6 +565,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             sourceCount: 2,
             sampleCount: 7,
             warningCount: 2,
+            range: {
+              annualizedMinimumAmount: 112000,
+              annualizedMaximumAmount: 142000,
+              annualizedMinimumEur: 112000,
+              annualizedMaximumEur: 142000,
+            },
           },
         });
 
@@ -572,7 +584,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           | { compensation_audit_json: string }
           | undefined;
         const audit = JSON.parse(detailProjection?.compensation_audit_json ?? "{}");
-        expect(audit.posted.fact.sourceText).toBe("EUR 70000-90000/year");
+        expect(audit.posted.fact.sourceText).toBe("USD 70000-90000/year");
         expect(audit.market.estimate.sources).toEqual(
           expect.arrayContaining([
             expect.objectContaining({

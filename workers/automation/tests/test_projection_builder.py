@@ -134,10 +134,10 @@ def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connec
 def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) -> None:
     job_url = "https://example.com/compensation"
     _seed_job(conn, job_url)
-    conn.execute("UPDATE jobs SET salary = ? WHERE url = ?", ("EUR 70000-90000/year", job_url))
+    conn.execute("UPDATE jobs SET salary = ? WHERE url = ?", ("USD 70000-90000/year", job_url))
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
-            "EUR 70000-90000/year",
+            "USD 70000-90000/year",
             job_url=job_url,
             parsed_at="2026-06-19T10:00:00Z",
         )
@@ -190,13 +190,17 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
         (job_url,),
     ).fetchone()
     assert row is not None
-    assert row["salary"] == "EUR 70000-90000/year"
+    assert row["salary"] == "USD 70000-90000/year"
     summary = json.loads(row["compensation_summary_json"])
     assert summary["posted"]["recordStatus"] == "recorded"
-    assert summary["posted"]["displayRange"] == "EUR 70000-90000/year"
+    assert summary["posted"]["displayRange"] == "USD 70000-90000/year"
+    assert summary["posted"]["range"]["annualizedMinimumEur"] == 64_400
+    assert summary["posted"]["range"]["annualizedMaximumEur"] == 82_800
     assert summary["market"]["recordStatus"] == "recorded"
     assert summary["market"]["sourceKind"] == "reported_company_role_market"
     assert summary["market"]["displayRange"] == "EUR 112000-142000/year"
+    assert summary["market"]["range"]["annualizedMinimumEur"] == 112_000
+    assert summary["market"]["range"]["annualizedMaximumEur"] == 142_000
     assert summary["market"]["confidenceScore"] == 0.78
     assert summary["market"]["sourceCount"] == 2
     assert summary["market"]["sampleCount"] == 7
@@ -211,7 +215,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     ).fetchone()
     assert detail is not None
     audit = json.loads(detail["compensation_audit_json"])
-    assert audit["posted"]["fact"]["sourceText"] == "EUR 70000-90000/year"
+    assert audit["posted"]["fact"]["sourceText"] == "USD 70000-90000/year"
     assert {
         source["sourceId"] for source in audit["market"]["estimate"]["sources"]
     } == {"levels_fyi", "glassdoor"}

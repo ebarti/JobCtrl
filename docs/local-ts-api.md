@@ -251,10 +251,15 @@ detail response also includes top-level `compensationAudit`, which keeps
 `JobSummary.salary` string remains present for compatibility. Compensation
 summary/audit data does not change fit score, apply readiness, apply-review
 handoff, or apply mutation behavior. The Jobs list exposes dedicated sortable
-and filterable scan columns for posted salary range, reported market estimate,
-and compensation warnings; these sort through `compensation_posted`,
+and filterable scan columns for posted salary minimum and maximum normalized to
+EUR/year, reported market estimate, and compensation warnings; these sort
+through `compensation_min_eur`, `compensation_max_eur`,
 `compensation_market`, and `compensation_warnings` alongside the existing
-sortable job columns.
+sortable job columns. The legacy `compensation_posted` sort remains accepted as
+a compatibility alias for the posted minimum. Currency normalization is a
+projection concern: supported parsed currencies are converted to EUR/year;
+unsupported or missing currencies leave the normalized min/max empty instead of
+guessing.
 
 `GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
 inspection contract for canonical company-role reported compensation estimate

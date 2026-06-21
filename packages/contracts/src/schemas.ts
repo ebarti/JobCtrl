@@ -45,6 +45,8 @@ export const JOB_SORT_FIELDS = [
   "title",
   "company",
   "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
   "compensation_posted",
   "compensation_market",
   "compensation_warnings",
@@ -1267,6 +1269,8 @@ export interface JobCompensationRangeSummary {
   maximumAmount: number | null;
   annualizedMinimumAmount?: number | null;
   annualizedMaximumAmount?: number | null;
+  annualizedMinimumEur?: number | null;
+  annualizedMaximumEur?: number | null;
   displayRange: string | null;
 }
 

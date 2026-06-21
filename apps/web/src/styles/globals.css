@@ -2146,12 +2146,12 @@ textarea:focus-visible {
 }
 
 .jobs-data-grid-table {
-  min-width: 1780px;
+  min-width: 1910px;
 }
 
 .jobs-data-grid-table .job-compensation-column {
-  width: 156px;
-  min-width: 132px;
+  width: 136px;
+  min-width: 124px;
 }
 
 .jobs-data-grid-table .job-compensation-warnings-column {

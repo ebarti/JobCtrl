@@ -1817,6 +1817,8 @@ interface CompensationRangeSummary {
   maximumAmount: number | null;
   annualizedMinimumAmount?: number | null;
   annualizedMaximumAmount?: number | null;
+  annualizedMinimumEur?: number | null;
+  annualizedMaximumEur?: number | null;
   displayRange: string | null;
 }
 
@@ -1903,6 +1905,8 @@ function postedRangeSummary(
     maximumAmount: fact.maximumAmount,
     annualizedMinimumAmount: fact.annualizedMinimumAmount,
     annualizedMaximumAmount: fact.annualizedMaximumAmount,
+    annualizedMinimumEur: normalizeAnnualizedEur(fact.annualizedMinimumAmount, fact.currency),
+    annualizedMaximumEur: normalizeAnnualizedEur(fact.annualizedMaximumAmount, fact.currency),
     displayRange: formatCompensationRange(fact.currency, fact.minimumAmount, fact.maximumAmount, fact.period),
   };
 }
@@ -1919,6 +1923,16 @@ function marketRangeSummary(
     component: estimate.component,
     minimumAmount: estimate.minimumAmount,
     maximumAmount: estimate.maximumAmount,
+    annualizedMinimumAmount: annualizeCompensationAmount(estimate.minimumAmount, estimate.period),
+    annualizedMaximumAmount: annualizeCompensationAmount(estimate.maximumAmount, estimate.period),
+    annualizedMinimumEur: normalizeAnnualizedEur(
+      annualizeCompensationAmount(estimate.minimumAmount, estimate.period),
+      estimate.currency,
+    ),
+    annualizedMaximumEur: normalizeAnnualizedEur(
+      annualizeCompensationAmount(estimate.maximumAmount, estimate.period),
+      estimate.currency,
+    ),
     displayRange: formatCompensationRange(
       estimate.currency,
       estimate.minimumAmount,
@@ -1926,6 +1940,34 @@ function marketRangeSummary(
       estimate.period,
     ),
   };
+}
+
+const EUR_NORMALIZATION_RATES: Readonly<Record<string, number>> = {
+  EUR: 1,
+  USD: 0.92,
+  GBP: 1.17,
+  CHF: 1.06,
+  SEK: 0.09,
+  NOK: 0.087,
+  DKK: 0.134,
+  PLN: 0.235,
+  CZK: 0.041,
+};
+
+function normalizeAnnualizedEur(amount: number | null | undefined, currency: string | null | undefined): number | null {
+  if (!Number.isFinite(amount)) return null;
+  const rate = currency ? EUR_NORMALIZATION_RATES[currency.toUpperCase()] : undefined;
+  if (!rate) return null;
+  return Math.round(Number(amount) * rate);
+}
+
+function annualizeCompensationAmount(amount: number | null, period: string): number | null {
+  if (!Number.isFinite(amount)) return null;
+  const value = Number(amount);
+  if (period === "year") return value;
+  if (period === "month") return value * 12;
+  if (period === "hour") return value * 2080;
+  return null;
 }
 
 function formatCompensationRange(
