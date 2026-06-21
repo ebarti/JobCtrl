@@ -17,7 +17,8 @@ MarketEstimateState = Literal[
     "insufficient_evidence",
     "estimated_range",
 ]
-MarketSourceId = Literal["levels_fyi", "glassdoor", "manual_reported_compensation"]
+MarketSourceId = Literal["levels_fyi", "glassdoor", "manual_reported_compensation", "posted_salary_text"]
+MarketSourceType = Literal["reported_compensation", "posted_salary"]
 MarketConfidenceBand = Literal["none", "low", "medium", "high"]
 MarketComponent = Literal["base_salary", "total_compensation"]
 MarketPeriod = Literal["year", "month"]
@@ -36,6 +37,7 @@ MarketConfidenceFactorName = Literal[
 ]
 MarketWarningCode = Literal[
     "reported_compensation_sample",
+    "posted_salary_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
@@ -69,10 +71,12 @@ MARKET_SOURCE_IDS: tuple[MarketSourceId, ...] = (
     "levels_fyi",
     "glassdoor",
     "manual_reported_compensation",
+    "posted_salary_text",
 )
 MARKET_CONFIDENCE_BANDS: tuple[MarketConfidenceBand, ...] = ("none", "low", "medium", "high")
 MARKET_WARNING_CODES: tuple[MarketWarningCode, ...] = (
     "reported_compensation_sample",
+    "posted_salary_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
@@ -106,12 +110,14 @@ SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
     "levels_fyi": "Levels.fyi",
     "glassdoor": "Glassdoor",
     "manual_reported_compensation": "Manual reported compensation import",
+    "posted_salary_text": "Job posting salary text",
 }
 SOURCE_DEFAULT_SNAPSHOT_VERSION = "reported-compensation-import-v1"
 SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
     "levels_fyi": "Levels.fyi reported compensation data",
     "glassdoor": "Glassdoor reported compensation data",
     "manual_reported_compensation": "Manual reported compensation import",
+    "posted_salary_text": "Employer-posted salary text captured by JobHunter",
 }
 UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -185,7 +191,7 @@ class MarketConfidenceFactor:
 class MarketSourceSnapshot:
     source_id: MarketSourceId
     display_name: str
-    source_type: Literal["reported_compensation"]
+    source_type: MarketSourceType
     release_year: int | None
     snapshot_version: str
     geography_scope: str
@@ -265,7 +271,7 @@ def estimate_market_compensation(
     """Estimate compensation from reported company-role salary observations."""
 
     now = estimated_at or datetime.now(timezone.utc).isoformat()
-    warnings: list[MarketWarningCode] = ["reported_compensation_sample"]
+    warnings: list[MarketWarningCode] = []
     unsupported_reasons: list[MarketReasonCode] = []
     source_unavailable_reasons: list[MarketReasonCode] = []
     insufficient_reasons: list[MarketReasonCode] = []
@@ -360,6 +366,7 @@ def estimate_market_compensation(
             warnings=warnings,
             estimated_at=now,
         )
+    warnings.extend(_source_sample_warnings(component_rows))
 
     usable_rows: list[ReportedCompensationObservation] = []
     for row in component_rows:
@@ -500,7 +507,8 @@ def estimate_market_compensation(
         min(company_score, role_score, level_score, location_score, freshness_score, sample_score, agreement_score, tier_score),
         2,
     )
-    if confidence_score < MIN_ESTIMATE_SCORE or dispersion_insufficient:
+    minimum_score = _minimum_estimate_score(selected_rows)
+    if confidence_score < minimum_score or dispersion_insufficient:
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
@@ -512,7 +520,7 @@ def estimate_market_compensation(
             sources=tuple(_snapshot(row) for row in selected_rows),
             source_count=source_count,
             sample_count=sample_count,
-            aggregate_bucket=_aggregate_bucket(company, title, match_scope),
+            aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
             geography_scope=_geography_scope(location, selected_rows),
             occupation_code=normalized_company,
             occupation_label=normalized_role,
@@ -541,7 +549,7 @@ def estimate_market_compensation(
         sources=tuple(_snapshot(row) for row in selected_rows),
         source_count=source_count,
         sample_count=sample_count,
-        aggregate_bucket=_aggregate_bucket(company, title, match_scope),
+        aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
         geography_scope=_geography_scope(location, selected_rows),
         occupation_code=normalized_company,
         occupation_label=normalized_role,
@@ -716,11 +724,11 @@ def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
         MarketSourceSnapshot(
             source_id=row.source_id,
             display_name=_display_name(row.source_id),
-            source_type="reported_compensation",
+            source_type=_source_type(row.source_id),
             release_year=row.release_year,
             snapshot_version=row.snapshot_version,
             geography_scope=_safe_text(_reported_geography(row.location)),
-            aggregate_bucket="reported company-role compensation",
+            aggregate_bucket=_source_aggregate_bucket(row.source_id),
             attribution=row.attribution or SOURCE_DEFAULT_ATTRIBUTION[row.source_id],
             sample_count=row.sample_count,
         )
@@ -734,11 +742,11 @@ def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourc
     return MarketSourceSnapshot(
         source_id=source_id,
         display_name=_display_name(source_id),
-        source_type="reported_compensation",
+        source_type=_source_type(source_id),
         release_year=source.release_year,
-        snapshot_version=SOURCE_DEFAULT_SNAPSHOT_VERSION,
+        snapshot_version=_source_snapshot_version(source_id),
         geography_scope=_safe_text(source.geography_scope) or "reported",
-        aggregate_bucket="reported company-role compensation",
+        aggregate_bucket=_source_aggregate_bucket(source_id),
         attribution=SOURCE_DEFAULT_ATTRIBUTION[source_id],
         sample_count=source.sample_count,
     )
@@ -748,6 +756,30 @@ def _display_name(source_id: str) -> str:
     if source_id in SOURCE_DISPLAY_NAMES:
         return SOURCE_DISPLAY_NAMES[source_id]  # type: ignore[index]
     return "Manual reported compensation import"
+
+
+def _source_type(source_id: str) -> MarketSourceType:
+    return "posted_salary" if source_id == "posted_salary_text" else "reported_compensation"
+
+
+def _source_snapshot_version(source_id: str) -> str:
+    return "jobhunter-posted-compensation-v1" if source_id == "posted_salary_text" else SOURCE_DEFAULT_SNAPSHOT_VERSION
+
+
+def _source_aggregate_bucket(source_id: str) -> str:
+    if source_id == "posted_salary_text":
+        return "employer-posted company-role compensation"
+    return "reported company-role compensation"
+
+
+def _source_sample_warnings(rows: tuple[ReportedCompensationObservation, ...]) -> list[MarketWarningCode]:
+    source_ids = {row.source_id for row in rows}
+    warnings: list[MarketWarningCode] = []
+    if source_ids & {"levels_fyi", "glassdoor", "manual_reported_compensation"}:
+        warnings.append("reported_compensation_sample")
+    if "posted_salary_text" in source_ids:
+        warnings.append("posted_salary_sample")
+    return warnings
 
 
 def _safe_text(value: str | None) -> str:
@@ -790,6 +822,8 @@ def _confidence_band(
         return "high"
     if state == "estimated_range" and score >= MIN_ESTIMATE_SCORE:
         return "medium"
+    if state == "estimated_range" and score > 0:
+        return "low"
     if state in {"insufficient_evidence", "source_unavailable"} and score > 0:
         return "low"
     return "none"
@@ -943,6 +977,12 @@ def _tier_score(company_tier: CompanyCompensationTier, match_scope: MarketMatchS
     return 0.82
 
 
+def _minimum_estimate_score(rows: list[ReportedCompensationObservation]) -> float:
+    if rows and all(row.source_id == "posted_salary_text" for row in rows):
+        return 0.5
+    return MIN_ESTIMATE_SCORE
+
+
 def _row_minimum(row: ReportedCompensationObservation) -> int:
     if row.minimum_amount is not None:
         return int(row.minimum_amount)
@@ -1028,6 +1068,17 @@ def _aggregate_bucket(company: str | None, title: str | None, match_scope: Marke
     if match_scope == "tier_role_fallback":
         return "trimodal tier role fallback"
     return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
+
+
+def _estimate_aggregate_bucket(
+    company: str | None,
+    title: str | None,
+    match_scope: MarketMatchScope,
+    rows: list[ReportedCompensationObservation],
+) -> str:
+    if rows and all(row.source_id == "posted_salary_text" for row in rows):
+        return "employer-posted company-role compensation"
+    return _aggregate_bucket(company, title, match_scope)
 
 
 def _geography_scope(location: str | None, rows: list[ReportedCompensationObservation]) -> str:

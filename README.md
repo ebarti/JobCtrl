@@ -212,8 +212,12 @@ uv --project workers/automation run jobhunter compensation-refresh \
 
 The command reparses current `jobs.salary` values into posted-compensation
 facts, imports local reported compensation rows from Levels.fyi, Glassdoor, or
-manual sources, estimates matching company-role ranges, and refreshes local
-projections. Use `--url <job-url>` or `--limit N` to narrow the refresh.
+manual sources when `--observations-json` is supplied, and refreshes local
+projections. When no observations file is supplied, JobHunter derives low
+confidence market ranges from employer-posted salary facts it already captured;
+those ranges are attributed as job posting salary text, not Levels.fyi,
+Glassdoor, or manual reported data. Use `--url <job-url>` or `--limit N` to
+narrow the refresh.
 
 Useful options:
 

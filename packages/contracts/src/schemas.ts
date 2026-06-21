@@ -2580,6 +2580,7 @@ export const MARKET_COMPENSATION_SOURCE_IDS = [
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "posted_salary_text",
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
 
@@ -2610,6 +2611,7 @@ export type MarketCompensationFactorName = (typeof MARKET_COMPENSATION_FACTOR_NA
 
 export const MARKET_COMPENSATION_WARNING_CODES = [
   "reported_compensation_sample",
+  "posted_salary_sample",
   "source_conflict_with_posted_salary",
   "stale_source_snapshot",
   "low_sample_count",
@@ -2655,7 +2657,7 @@ export interface MarketCompensationFactor {
 export interface MarketCompensationSourceSnapshot {
   sourceId: MarketCompensationSourceId;
   displayName: string;
-  sourceType: "reported_compensation";
+  sourceType: "reported_compensation" | "posted_salary";
   releaseYear: number | null;
   snapshotVersion: string;
   geographyScope: string;

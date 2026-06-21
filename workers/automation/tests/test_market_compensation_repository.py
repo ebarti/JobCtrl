@@ -188,6 +188,52 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     assert salary == "€100,000-€130,000/year"
 
 
+def test_backfill_derives_market_range_from_posted_salary_fact_and_company_column(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = "https://example.com/jobs/posted-market"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, company, location, salary, description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Senior Platform Engineer",
+            "indeed",
+            "Acme AI",
+            "Remote Europe",
+            "€100,000-€130,000/year",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    SqlitePostedCompensationRepository(conn).save_fact(
+        parse_posted_compensation(
+            "€100,000-€130,000/year",
+            job_url=job_url,
+            parsed_at="2026-06-19T10:00:00Z",
+        )
+    )
+    repo = SqliteMarketCompensationRepository(conn)
+
+    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
+
+    estimate = repo.get_estimate("local", job_url)
+    assert estimate is not None
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.component == "base_salary"
+    assert estimate.company_name == "Acme AI"
+    assert estimate.minimum_amount == 100_000
+    assert estimate.maximum_amount == 130_000
+    assert estimate.confidence_band == "low"
+    assert "posted_salary_sample" in estimate.warnings
+    assert "low_sample_count" in estimate.warnings
+    assert estimate.sources[0].source_id == "posted_salary_text"
+    assert estimate.sources[0].source_type == "posted_salary"
+
+
 def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> None:
     path = tmp_path / "reported-comp.json"
     path.write_text(

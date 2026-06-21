@@ -108,6 +108,7 @@ MARKET_COMPENSATION_WARNING_MESSAGES = {
     "location_mismatch": "Reported compensation locations did not strongly match the job location.",
     "low_sample_count": "Reported compensation sample support is low.",
     "reported_compensation_sample": "The estimate uses reported compensation rows for the job company and role.",
+    "posted_salary_sample": "The estimate uses employer-posted salary text captured by JobHunter.",
     "source_conflict_with_posted_salary": "Reported compensation diverges materially from the posted salary.",
     "stale_source_snapshot": "A source snapshot is stale under the freshness policy.",
     "trimodal_tier_inferred": "The company tier was inferred from reported compensation amounts.",
@@ -151,11 +152,20 @@ MARKET_SOURCE_DEFAULTS = {
         "aggregateBucket": "reported company-role compensation",
         "attribution": "Manual reported compensation import",
     },
+    "posted_salary_text": {
+        "displayName": "Job posting salary text",
+        "sourceType": "posted_salary",
+        "snapshotVersion": "jobhunter-posted-compensation-v1",
+        "geographyScope": "reported",
+        "aggregateBucket": "employer-posted company-role compensation",
+        "attribution": "Employer-posted salary text captured by JobHunter",
+    },
 }
 MARKET_SAFE_AGGREGATE_BUCKETS = {
     "reported company-role compensation",
     "reported company adjacent-role compensation",
     "trimodal tier role fallback",
+    "employer-posted company-role compensation",
 }
 MARKET_SAFE_GEOGRAPHY_SCOPES = {"Europe", "reported"}
 MARKET_SAFE_FACTOR_NAMES = {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}

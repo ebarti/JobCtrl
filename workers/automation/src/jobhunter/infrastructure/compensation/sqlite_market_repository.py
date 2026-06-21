@@ -22,11 +22,22 @@ SAFE_FACTOR_NAMES = frozenset(
     {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
 )
 SAFE_CONFIDENCE_BANDS = frozenset({"none", "low", "medium", "high"})
-SAFE_SOURCE_IDS = frozenset({"levels_fyi", "glassdoor", "manual_reported_compensation"})
+SAFE_SOURCE_IDS = frozenset({"levels_fyi", "glassdoor", "manual_reported_compensation", "posted_salary_text"})
 SAFE_COMPONENTS = frozenset({"base_salary", "total_compensation"})
 SAFE_COMPANY_TIERS = frozenset({"tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"})
 SAFE_MATCH_SCOPES = frozenset({"exact_company_role", "company_adjacent_role", "tier_role_fallback", "none"})
 DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+EUR_NORMALIZATION_RATES = {
+    "EUR": 1,
+    "USD": 0.92,
+    "GBP": 1.17,
+    "CHF": 1.06,
+    "SEK": 0.09,
+    "NOK": 0.087,
+    "DKK": 0.134,
+    "PLN": 0.235,
+    "CZK": 0.041,
+}
 
 
 class SqliteMarketCompensationRepository:
@@ -174,7 +185,13 @@ class SqliteMarketCompensationRepository:
         limit: int = 0,
         job_url: str | None = None,
     ) -> int:
-        sql = "SELECT url, title, site, location FROM jobs"
+        effective_observations = (
+            observations
+            if observations
+            else self._posted_salary_observations(tenant_id=tenant_id, job_url=job_url)
+        )
+        component = "total_compensation" if observations else "base_salary"
+        sql = "SELECT url, title, site, company, location FROM jobs"
         params: list[Any] = []
         if job_url:
             sql += " WHERE url = ?"
@@ -189,13 +206,65 @@ class SqliteMarketCompensationRepository:
                 tenant_id=tenant_id,
                 job_url=str(_row_value(row, "url")),
                 title=str(_row_value(row, "title") or ""),
-                company=_nullable_str(_row_value(row, "site")),
+                company=_nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site")),
                 location=_nullable_str(_row_value(row, "location")),
-                observations=observations,
+                observations=effective_observations,
+                component=component,
                 estimated_at=estimated_at,
             )
         self._conn.commit()
         return len(rows)
+
+    def _posted_salary_observations(
+        self,
+        *,
+        tenant_id: str,
+        job_url: str | None,
+    ) -> tuple[ReportedCompensationObservation, ...]:
+        sql = """
+            SELECT j.title, j.company, j.site, j.location,
+                   f.currency, f.annualized_minimum_amount, f.annualized_maximum_amount,
+                   f.parsed_at
+            FROM job_posted_compensation_facts f
+            JOIN jobs j ON j.url = f.job_url
+            WHERE f.tenant_id = ?
+              AND f.parse_state = 'parsed_range'
+              AND (f.annualized_minimum_amount IS NOT NULL OR f.annualized_maximum_amount IS NOT NULL)
+        """
+        params: list[Any] = [tenant_id]
+        if job_url:
+            sql += " AND f.job_url = ?"
+            params.append(job_url)
+        rows = self._conn.execute(sql, params).fetchall()
+        observations: list[ReportedCompensationObservation] = []
+        for row in rows:
+            currency = _nullable_str(_row_value(row, "currency"))
+            minimum = _normalize_annualized_eur(_row_value(row, "annualized_minimum_amount"), currency)
+            maximum = _normalize_annualized_eur(_row_value(row, "annualized_maximum_amount"), currency)
+            company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
+            role = _nullable_str(_row_value(row, "title"))
+            if not company or not role or (minimum is None and maximum is None):
+                continue
+            observations.append(
+                ReportedCompensationObservation(
+                    source_id="posted_salary_text",
+                    company_name=company,
+                    role_title=role,
+                    minimum_amount=minimum,
+                    maximum_amount=maximum,
+                    currency="EUR",
+                    period="year",
+                    component="base_salary",
+                    location=_nullable_str(_row_value(row, "location")),
+                    level_label=None,
+                    company_tier="unknown",
+                    release_year=_year(_row_value(row, "parsed_at")),
+                    snapshot_version="jobhunter-posted-compensation-v1",
+                    sample_count=1,
+                    attribution="Employer-posted salary text captured by JobHunter",
+                )
+            )
+        return tuple(observations)
 
     def _posted_annualized_range(self, tenant_id: str, job_url: str) -> tuple[int | None, int | None]:
         row = self._conn.execute(
@@ -378,7 +447,7 @@ def _source_from_dict(value: Any) -> MarketSourceSnapshot | None:
         MarketSourceSnapshot(
             source_id=source_id,
             display_name=str(data.get("display_name") or ""),
-            source_type="reported_compensation",
+            source_type=_source_type(source_id),
             release_year=_nullable_int(data.get("release_year")),
             snapshot_version=str(data.get("snapshot_version") or ""),
             geography_scope=str(data.get("geography_scope") or ""),
@@ -429,9 +498,33 @@ def _source_id(value: Any) -> Any:
         "glassdoor_reported_compensation": "glassdoor",
         "manual": "manual_reported_compensation",
         "manual_reported_compensation": "manual_reported_compensation",
+        "posted_salary_text": "posted_salary_text",
+        "posted_salary": "posted_salary_text",
+        "job_posting_salary_text": "posted_salary_text",
     }
     source_id = aliases.get(text)
     return source_id if source_id in SAFE_SOURCE_IDS else None
+
+
+def _source_type(source_id: str) -> Any:
+    return "posted_salary" if source_id == "posted_salary_text" else "reported_compensation"
+
+
+def _normalize_annualized_eur(amount: Any, currency: str | None) -> int | None:
+    value = _nullable_int(amount)
+    if value is None:
+        return None
+    rate = EUR_NORMALIZATION_RATES.get(str(currency or "").upper())
+    if rate is None:
+        return None
+    return round(value * rate)
+
+
+def _year(value: Any) -> int | None:
+    try:
+        return int(str(value or "")[:4])
+    except ValueError:
+        return None
 
 
 def _company_tier(value: Any) -> Any:

@@ -61,6 +61,7 @@ const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
   location_mismatch: "Reported compensation locations did not strongly match the job location.",
   low_sample_count: "Reported compensation sample support is low.",
   reported_compensation_sample: "The estimate uses reported compensation rows for the job company and role.",
+  posted_salary_sample: "The estimate uses employer-posted salary text captured by JobHunter.",
   source_conflict_with_posted_salary: "Reported compensation diverges materially from the posted salary.",
   stale_source_snapshot: "A reported compensation source snapshot is stale under the freshness policy.",
   trimodal_tier_inferred: "The company tier was inferred from reported compensation amounts.",
@@ -85,6 +86,7 @@ const SOURCE_IDS = new Set<MarketCompensationSourceId>([
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "posted_salary_text",
 ]);
 const RECORDED_ESTIMATE_STATES = new Set([
   "unsupported",
@@ -96,7 +98,7 @@ const SOURCE_DEFAULTS: Record<
   MarketCompensationSourceId,
   {
     displayName: string;
-    sourceType: "reported_compensation";
+    sourceType: "reported_compensation" | "posted_salary";
     snapshotVersion: string;
     geographyScope: string;
     aggregateBucket: string;
@@ -126,6 +128,14 @@ const SOURCE_DEFAULTS: Record<
     geographyScope: "reported",
     aggregateBucket: "reported company-role compensation",
     attribution: "Manual reported compensation import",
+  },
+  posted_salary_text: {
+    displayName: "Job posting salary text",
+    sourceType: "posted_salary",
+    snapshotVersion: "jobhunter-posted-compensation-v1",
+    geographyScope: "reported",
+    aggregateBucket: "employer-posted company-role compensation",
+    attribution: "Employer-posted salary text captured by JobHunter",
   },
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([

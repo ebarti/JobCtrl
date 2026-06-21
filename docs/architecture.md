@@ -421,15 +421,17 @@ outcome notes, and email body text stay out of the response.
 Posted-compensation facts are persisted in `job_posted_compensation_facts`
 before inspection. They are exposed through both the narrow read-only
 inspection API and projection-backed job list/detail compensation summaries.
-Company-role reported compensation estimates are persisted in
+Company-role market compensation estimates are persisted in
 `job_market_compensation_estimates` before inspection. Phase 19 estimates are
 deterministic local facts derived from imported or manually supplied reported
-compensation observations for Levels.fyi, Glassdoor, or manual sources. These
-rows store explicit estimate states, normalized company and role, match scope,
-trimodal company tier, confidence factors, safe source snapshots, warnings, and
-reasons. They do not store raw benchmark pages, provider payloads, credentials,
-local paths, private account state, user compensation preferences, or U.S.
-salary baselines.
+compensation observations for Levels.fyi, Glassdoor, or manual sources, or from
+employer-posted salary facts already captured by JobHunter. Employer-posted
+market rows are labeled as job posting salary text and remain low confidence when
+they are based on a single posting. These rows store explicit estimate states,
+normalized company and role, match scope, trimodal company tier, confidence
+factors, safe source snapshots, warnings, and reasons. They do not store raw
+benchmark pages, provider payloads, credentials, local paths, private account
+state, user compensation preferences, or U.S. salary baselines.
 Compensation writes emit `CompensationFactsUpdated` rows into `job_events`.
 Those payloads carry only job id, changed section, state markers, and timestamp;
 the Operations/SSE invalidation path refreshes job list/detail queries from the
@@ -801,13 +803,16 @@ store full descriptions, provider raw payloads, credentials, local paths, or
 licensed-source salary data.
 Market compensation estimates live in the canonical
 `job_market_compensation_estimates` table. The estimator consumes deterministic
-local reported compensation observations keyed by company and role, records
-explicit non-range states for unsupported, unavailable, and
-insufficient-evidence cases, and emits range fields only when company, role,
+local compensation observations keyed by company and role, including imported
+reported-compensation observations and employer-posted salary facts captured by
+JobHunter. It records explicit non-range states for unsupported, unavailable,
+and insufficient-evidence cases, and emits range fields only when company, role,
 level, freshness, sample, source-agreement, and trimodal-tier confidence factors
-pass threshold. The temporary `jobhunter compensation-refresh` command reparses
-existing posted salary text, imports reported observations, writes estimates for
-existing jobs, and refreshes projections without running the job pipeline. It
+pass threshold. Employer-posted salary observations can emit low-confidence
+ranges with low-sample warnings. The temporary `jobhunter compensation-refresh`
+command reparses existing posted salary text, imports reported observations when
+provided, writes estimates for existing jobs, and refreshes projections without
+running the job pipeline. It
 does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
 or apply dispatch behavior in Phase 19.
 Operations projections materialize compensation read data from those canonical
