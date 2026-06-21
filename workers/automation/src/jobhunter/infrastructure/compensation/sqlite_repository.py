@@ -92,9 +92,16 @@ class SqlitePostedCompensationRepository:
         salary: str | None,
         *,
         tenant_id: str = "local",
+        source_field: str = "jobs.salary",
         parsed_at: str | None = None,
     ) -> PostedCompensationFact:
-        fact = parse_posted_compensation(salary, tenant_id=tenant_id, job_url=job_url, parsed_at=parsed_at)
+        fact = parse_posted_compensation(
+            salary,
+            tenant_id=tenant_id,
+            job_url=job_url,
+            source_field=source_field,
+            parsed_at=parsed_at,
+        )
         self.save_fact(fact)
         return fact
 

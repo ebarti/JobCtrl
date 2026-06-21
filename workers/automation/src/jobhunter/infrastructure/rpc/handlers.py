@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,10 @@ from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, 
 
 logger = logging.getLogger(__name__)
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
+COMPENSATION_SOURCE_RE = re.compile(
+    r"salary|compensation|pay range|base pay|base salary|wage|remuneration|€|\$|£|\b(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b",
+    re.IGNORECASE,
+)
 
 
 def _tenant_id(params: dict[str, Any]) -> str:
@@ -56,6 +61,32 @@ def _require(params: dict[str, Any], name: str) -> Any:
     if name not in params or params[name] in (None, ""):
         raise invalid_params(f"missing required param: {name}")
     return params[name]
+
+
+def _nonempty_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = re.sub(r"\s+", " ", str(value).strip())
+    return text or None
+
+
+def _compensation_source_from_job(row: Any) -> tuple[str | None, str]:
+    salary = _nonempty_text(row["salary"])
+    if salary is not None:
+        return salary, "jobs.salary"
+
+    for field in ("full_description", "description"):
+        text = _nonempty_text(row[field])
+        if text is None:
+            continue
+        match = COMPENSATION_SOURCE_RE.search(text)
+        if match is None:
+            continue
+        start = max(0, match.start() - 80)
+        end = min(len(text), match.end() + 220)
+        return text[start:end].strip(), f"jobs.{field}"
+
+    return None, "jobs.salary"
 
 
 def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> bool:
@@ -329,16 +360,20 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 
     conn = get_connection()
-    row = conn.execute("SELECT url, salary FROM jobs WHERE url = ?", (job_url,)).fetchone()
+    row = conn.execute(
+        "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
+        (job_url,),
+    ).fetchone()
     if row is None:
         raise invalid_params(f"unknown jobUrl: {job_url}")
 
     refreshed_at = datetime.now(timezone.utc).isoformat()
-    salary = row["salary"] if hasattr(row, "keys") else row[1]
+    source_text, source_field = _compensation_source_from_job(row)
     SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
         job_url,
-        salary,
+        source_text,
         tenant_id=tenant_id,
+        source_field=source_field,
         parsed_at=refreshed_at,
     )
     posted_count = 1

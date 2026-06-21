@@ -110,14 +110,19 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
     selected_url = "https://example.com/jobs/platform"
     other_url = "https://example.com/jobs/other"
     conn.execute(
-        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         (
             selected_url,
             "Senior Platform Engineer",
             "Acme AI",
             "Remote Europe",
-            "€100,000-€130,000/year",
+            "",
             "Synthetic job",
+            "We build platform tooling. The salary range is €100,000-€130,000/year.",
             "2026-06-19T10:00:00Z",
         ),
     )
@@ -191,7 +196,11 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
     assert started_workflows == []
 
     selected_posted = conn.execute(
-        "SELECT parse_state FROM job_posted_compensation_facts WHERE job_url = ?",
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
         (selected_url,),
     ).fetchone()
     other_posted = conn.execute(
@@ -203,6 +212,9 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
         (selected_url,),
     ).fetchone()
     assert selected_posted["parse_state"] == "parsed_range"
+    assert selected_posted["source_field"] == "jobs.full_description"
+    assert selected_posted["minimum_amount"] == 100_000
+    assert selected_posted["maximum_amount"] == 130_000
     assert other_posted is None
     assert estimate["estimate_state"] == "estimated_range"
     assert estimate["minimum_amount"] == 118_000
