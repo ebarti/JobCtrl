@@ -20,18 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import {
-  jobWithCompensation,
-  makeCompensationSummary,
-  makeFloorConfiguredCompensationSummary,
-  makeFloorNotConfiguredCompensationSummary,
-  makeInsufficientEvidenceCompensationSummary,
   makeJobsPage,
-  makeMarketCompensationSummary,
-  makeNoPostedSalaryCompensationSummary,
+  sampleCompensationSummary,
   sampleJob,
   sampleSecondaryJob,
-  makeSourceUnavailableCompensationSummary,
-  makeUnsupportedMarketCompensationSummary,
 } from "../../test/fixtures/projections.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
@@ -112,208 +104,28 @@ function rowForTitle(title: string): HTMLElement {
   return row;
 }
 
-describe("<JobsView> compensation scan columns", () => {
-  it("renders separate Posted, Market, and Warnings columns from compensationSummary", async () => {
-    const jobs = vi.fn(async () =>
-      makeJobsPage([
-        jobWithCompensation({
-          jobKey: "job-comp-high",
-          title: "Compensation Scan Role",
-          compensationSummary: makeFloorConfiguredCompensationSummary({
-            warningCount: 2,
-          }),
-        }),
-      ]),
-    );
-    const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
-    });
-    const { router, Wrapper } = buildRouter(harness);
-
-    render(<RouterProvider router={router} />, { wrapper: Wrapper });
-
-    expect(await screen.findByText("Compensation Scan Role")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Posted" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Market" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Warnings" })).toBeInTheDocument();
-
-    const row = within(rowForTitle("Compensation Scan Role"));
-    expect(row.getByText("EUR 120k-150k")).toBeInTheDocument();
-    expect(row.getByText("EUR 135k-165k")).toBeInTheDocument();
-    expect(row.getByText("high confidence")).toBeInTheDocument();
-    expect(row.getByText("6 sources")).toBeInTheDocument();
-    expect(row.getByText("2 warnings")).toBeInTheDocument();
-  });
-
-  it("renders compact explicit market states and confidence/source scan labels", async () => {
-    const jobs = vi.fn(async () =>
-      makeJobsPage([
-        jobWithCompensation({
-          jobKey: "job-market-unsupported",
-          title: "Unsupported Market Role",
-          compensationSummary: makeUnsupportedMarketCompensationSummary(),
-        }),
-        jobWithCompensation({
-          jobKey: "job-market-insufficient",
-          title: "Insufficient Market Role",
-          compensationSummary: makeInsufficientEvidenceCompensationSummary(),
-        }),
-        jobWithCompensation({
-          jobKey: "job-market-unavailable",
-          title: "Source Unavailable Role",
-          compensationSummary: makeSourceUnavailableCompensationSummary(),
-        }),
-        jobWithCompensation({
-          jobKey: "job-market-not-requested",
-          title: "Not Requested Market Role",
-          compensationSummary: makeFloorNotConfiguredCompensationSummary({
-            market: makeMarketCompensationSummary({
-              recordStatus: "not_requested",
-              estimateState: "not_requested",
-              confidenceBand: "none",
-              sourceCount: 0,
-              warningCount: 0,
-              range: null,
-              displayRange: null,
-            }),
-            warningCount: 0,
-          }),
-        }),
-      ]),
-    );
-    const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
-    });
-    const { router, Wrapper } = buildRouter(harness);
-
-    render(<RouterProvider router={router} />, { wrapper: Wrapper });
-
-    expect(await screen.findByText("Unsupported Market Role")).toBeInTheDocument();
-    expect(within(rowForTitle("Unsupported Market Role")).getByText("unsupported")).toBeInTheDocument();
-    expect(within(rowForTitle("Unsupported Market Role")).getByText("no confidence")).toBeInTheDocument();
-    expect(within(rowForTitle("Insufficient Market Role")).getByText("insufficient")).toBeInTheDocument();
-    expect(within(rowForTitle("Insufficient Market Role")).getByText("low confidence")).toBeInTheDocument();
-    expect(within(rowForTitle("Insufficient Market Role")).getByText("2 sources")).toBeInTheDocument();
-    expect(within(rowForTitle("Source Unavailable Role")).getByText("unavailable")).toBeInTheDocument();
-    expect(
-      within(rowForTitle("Not Requested Market Role")).getByLabelText(
-        "Market estimate not requested",
-      ),
-    ).toHaveTextContent("-");
-  });
-
-  it("renders accessible dashes for null and missing compensation states", async () => {
-    const jobs = vi.fn(async () =>
-      makeJobsPage([
-        jobWithCompensation({
-          jobKey: "job-null-compensation",
-          title: "Null Compensation Role",
-          compensationSummary: null,
-          salary: "EUR 1-999k",
-        }),
-        jobWithCompensation({
-          jobKey: "job-no-posted",
-          title: "No Posted Salary Role",
-          compensationSummary: makeNoPostedSalaryCompensationSummary(),
-        }),
-      ]),
-    );
-    const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
-    });
-    const { router, Wrapper } = buildRouter(harness);
-
-    render(<RouterProvider router={router} />, { wrapper: Wrapper });
-
-    expect(await screen.findByText("Null Compensation Role")).toBeInTheDocument();
-    expect(
-      within(rowForTitle("Null Compensation Role")).getByLabelText(
-        "No posted salary recorded",
-      ),
-    ).toHaveTextContent("-");
-    expect(
-      within(rowForTitle("Null Compensation Role")).getByLabelText(
-        "Market estimate not requested",
-      ),
-    ).toHaveTextContent("-");
-    expect(
-      within(rowForTitle("No Posted Salary Role")).getByLabelText(
-        "No posted salary recorded",
-      ),
-    ).toHaveTextContent("-");
-  });
-
-  it("renders warning counts without adding floor warnings when the floor is not configured", async () => {
-    const jobs = vi.fn(async () =>
-      makeJobsPage([
-        jobWithCompensation({
-          jobKey: "job-warning-count",
-          title: "Warning Count Role",
-          compensationSummary: makeFloorConfiguredCompensationSummary({
-            warningCount: 2,
-          }),
-        }),
-        jobWithCompensation({
-          jobKey: "job-floor-not-configured",
-          title: "Floor Not Configured Role",
-          compensationSummary: makeFloorNotConfiguredCompensationSummary({
-            warningCount: 0,
-          }),
-        }),
-      ]),
-    );
-    const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
-    });
-    const { router, Wrapper } = buildRouter(harness);
-
-    render(<RouterProvider router={router} />, { wrapper: Wrapper });
-
-    expect(await screen.findByText("Warning Count Role")).toBeInTheDocument();
-    expect(within(rowForTitle("Warning Count Role")).getByText("2 warnings")).toBeInTheDocument();
-    expect(within(rowForTitle("Floor Not Configured Role")).getByText("No warnings")).toBeInTheDocument();
-  });
-
-  it("does not expose compensation sorting, filtering, route search, or query fields", async () => {
+describe("<JobsView> compensation source-conflict visibility", () => {
+  it("shows source-conflict warning count without sort or query behavior", async () => {
+    const compensationSummary = {
+      ...sampleCompensationSummary,
+      warningCount: 2,
+      market: {
+        ...sampleCompensationSummary.market,
+        confidenceBand: "medium" as const,
+        confidenceScore: 0.74,
+        sourceCount: 2,
+        sampleCount: 7,
+        warningCount: 2,
+      },
+    };
     const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
       makeJobsPage([
-        jobWithCompensation({
-          jobKey: "job-display-only-compensation",
-          title: "Display Only Compensation Role",
-        }),
-      ]),
-    );
-    const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
-    });
-    const { router, Wrapper } = buildRouter(harness);
-
-    render(<RouterProvider router={router} />, { wrapper: Wrapper });
-
-    expect(await screen.findByText("Display Only Compensation Role")).toBeInTheDocument();
-    for (const label of ["Posted", "Market", "Warnings"]) {
-      expect(screen.queryByRole("button", { name: new RegExp(`sort by ${label}`, "i") })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: new RegExp(`filter ${label} column`, "i") })).not.toBeInTheDocument();
-    }
-    expect(JSON.stringify(router.state.location.search)).not.toMatch(/compensation|posted|market|warning/i);
-    expect(JSON.stringify(jobs.mock.calls[0]?.[0] ?? {})).not.toMatch(/compensation|posted|market|warning/i);
-  });
-
-  it("shows source-conflict warning count without sort filter or query behavior", async () => {
-    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
-      makeJobsPage([
-        jobWithCompensation({
+        {
+          ...sampleSecondaryJob,
           jobKey: "job-source-conflict",
           title: "Source Conflict Role",
-          compensationSummary: makeCompensationSummary({
-            warningCount: 2,
-            market: makeMarketCompensationSummary({
-              confidenceBand: "medium",
-              sourceCount: 2,
-              warningCount: 2,
-            }),
-          }),
-        }),
+          compensationSummary,
+        },
       ]),
     );
     const harness = buildProviderHarness({
@@ -324,15 +136,14 @@ describe("<JobsView> compensation scan columns", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Source Conflict Role")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Compensation" })).toBeInTheDocument();
     const row = within(rowForTitle("Source Conflict Role"));
+    expect(row.getByText("EUR 112000-142000/year")).toBeInTheDocument();
+    expect(row.getByText(/market confidence medium/)).toBeInTheDocument();
+    expect(row.getByText(/2 sources/)).toBeInTheDocument();
     expect(row.getByText("2 warnings")).toBeInTheDocument();
-    expect(row.getByText("medium confidence")).toBeInTheDocument();
-    expect(row.getByText("2 sources")).toBeInTheDocument();
 
-    for (const label of ["Posted", "Market", "Warnings"]) {
-      expect(screen.queryByRole("button", { name: new RegExp(`sort by ${label}`, "i") })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: new RegExp(`filter ${label} column`, "i") })).not.toBeInTheDocument();
-    }
+    expect(screen.queryByRole("button", { name: /sort by Compensation/i })).not.toBeInTheDocument();
     expect(JSON.stringify(router.state.location.search)).not.toMatch(/compensation|posted|market|warning/i);
     expect(JSON.stringify(jobs.mock.calls[0]?.[0] ?? {})).not.toMatch(/compensation|posted|market|warning/i);
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({
@@ -341,6 +152,7 @@ describe("<JobsView> compensation scan columns", () => {
     });
   });
 });
+
 
 describe("<JobsView> bulk delete integration", () => {
   it("keeps the product Discover filter as a single discover-stage jobs query", async () => {

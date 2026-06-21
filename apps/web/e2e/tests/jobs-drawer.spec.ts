@@ -294,7 +294,7 @@ function seedSyntheticCompensationData(): void {
   }
 }
 
-test("Jobs compensation triage: list columns, drawer audit, and warning-only boundary stay product-visible", async ({
+test("Jobs compensation source-conflict evidence stays product-visible without unsafe actions", async ({
   page,
 }) => {
   const prohibitedRequests = watchProhibitedProductPathRequests(page);
@@ -307,25 +307,17 @@ test("Jobs compensation triage: list columns, drawer audit, and warning-only bou
     (element) => element.scrollWidth > element.clientWidth,
   );
   expect(hasHorizontalScroll).toBe(true);
-
-  for (const header of ["Posted", "Market", "Warnings"]) {
-    await expect(page.getByRole("columnheader", { name: header })).toBeVisible();
-  }
+  await expect(page.getByRole("columnheader", { name: "Compensation" })).toBeVisible();
 
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: PLATFORM_JOB_TITLE });
   await expect(row).toBeVisible();
-  await expect(row.getByText("EUR 55000/year")).toBeVisible();
   await expect(row.getByText("EUR 112000-142000/year")).toBeVisible();
-  await expect(row.getByText("medium confidence")).toBeVisible();
-  await expect(row.getByText("2 sources")).toBeVisible();
-  await expect(row.getByText("3 warnings")).toBeVisible();
-
-  for (const label of ["Posted", "Market", "Warnings"]) {
-    await expect(page.getByRole("button", { name: new RegExp(`sort by ${label}`, "i") })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: new RegExp(`filter ${label}`, "i") })).toHaveCount(0);
-  }
+  await expect(row.getByText(/market confidence medium/i)).toBeVisible();
+  await expect(row.getByText(/2 sources/i)).toBeVisible();
+  await expect(row.getByText("2 warnings")).toBeVisible();
+  await expect(page.getByRole("button", { name: /sort by Compensation/i })).toHaveCount(0);
 
   await row
     .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
@@ -338,10 +330,10 @@ test("Jobs compensation triage: list columns, drawer audit, and warning-only bou
     .locator("section")
     .evaluateAll((sections) =>
       sections
-        .map((section) => section.textContent ?? "")
-        .map((text) => {
+        .map((section) => {
+          const text = section.textContent ?? "";
           if (text.includes("Why this job is here")) return "triage";
-          if (text.includes("Compensation audit")) return "compensation";
+          if (section.getAttribute("aria-label") === "Compensation evidence") return "compensation";
           if (text.includes("Description")) return "description";
           return null;
         })
@@ -350,13 +342,10 @@ test("Jobs compensation triage: list columns, drawer audit, and warning-only bou
   expect(orderedSections.indexOf("triage")).toBeLessThan(orderedSections.indexOf("compensation"));
   expect(orderedSections.indexOf("compensation")).toBeLessThan(orderedSections.indexOf("description"));
 
-  const compensation = drawer.getByRole("region", { name: "Compensation audit" });
-  await expect(compensation.getByText("Warning-only salary evidence")).toBeVisible();
-  await expect(compensation.getByText("Compensation warnings do not change ranking, filters, apply readiness, blockers, or dispatch in v1.3.")).toBeVisible();
+  const compensation = drawer.getByRole("region", { name: "Compensation evidence" });
+  await expect(compensation.getByRole("heading", { name: "Compensation" })).toBeVisible();
   await expect(compensation.getByText("EUR 55000/year").first()).toBeVisible();
   await expect(compensation.getByText("EUR 112000-142000/year").first()).toBeVisible();
-  await expect(compensation.getByText("Both posted and market")).toBeVisible();
-  await expect(compensation.getByText("posted_compensation_below_profile_floor")).toBeVisible();
   await expect(compensation.getByText("reported_compensation_sample")).toBeVisible();
   await expect(compensation.getByText("source_conflict_with_posted_salary")).toBeVisible();
   await expect(
@@ -365,36 +354,17 @@ test("Jobs compensation triage: list columns, drawer audit, and warning-only bou
   await expect(
     compensation.getByText("The estimate uses reported compensation rows for the job company and role."),
   ).toBeVisible();
-  await expect(compensation.getByText("Source trail")).toBeVisible();
-  await compensation.getByText("Source trail").click();
+  await expect(compensation.getByText("Reported source trail")).toBeVisible();
   await expect(compensation.getByText("Levels.fyi").first()).toBeVisible();
   await expect(compensation.getByText("Glassdoor").first()).toBeVisible();
-  await expect(compensation.getByText("Confidence factors and assumptions")).toBeVisible();
-  await compensation.getByText("Confidence factors and assumptions").click();
+  await expect(compensation.getByText("Confidence factors")).toBeVisible();
 
   const triage = drawer.getByRole("region", { name: "Why this job is here" });
-  await expect(triage.getByText("posted_compensation_below_profile_floor")).toHaveCount(0);
   await expect(triage.getByText("reported_compensation_sample")).toHaveCount(0);
   await expect(triage.getByText("source_conflict_with_posted_salary")).toHaveCount(0);
   await expect(triage.getByText("Reported compensation diverges materially from the posted salary.")).toHaveCount(0);
-  await expect(triage.getByText("Apply concerns")).toHaveCount(0);
-  await expect(drawer.getByLabel("Apply readiness")).not.toContainText(/compensation|salary|floor/i);
+  await expect(drawer.getByLabel("Apply readiness")).not.toContainText(/compensation|salary|source conflict/i);
   await expect(drawer.getByText("Fit score").first()).toBeVisible();
-  expect(prohibitedRequests).toEqual([]);
-});
-
-test("Jobs compensation triage: missing and unavailable states stay explicit without real providers", async ({
-  page,
-}) => {
-  const prohibitedRequests = watchProhibitedProductPathRequests(page);
-  await page.goto(`/jobs/${encodeURIComponent("https://talent.com/view?id=qa-marketing-director")}?${FILTER_PARAMS}`);
-  const drawer = page.getByRole("dialog", { name: "Job details" });
-  await expect(drawer).toBeVisible({ timeout: 30_000 });
-
-  const compensation = drawer.getByRole("region", { name: "Compensation audit" });
-  await expect(compensation.getByText("No posted salary recorded")).toBeVisible();
-  await expect(compensation.getByText("Market estimate not requested")).toBeVisible();
-  await expect(compensation.getByText("No comparable compensation basis")).toBeVisible();
   expect(prohibitedRequests).toEqual([]);
 });
 

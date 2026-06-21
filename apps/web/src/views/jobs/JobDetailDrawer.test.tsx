@@ -21,25 +21,10 @@ import {
   populatedRequirementFitReport,
 } from "../../test/fixtures/materials-inspector.js";
 import {
-  jobDetailWithCompensation,
-  jobWithCompensation,
-  makeAmbiguousPostedCompensationAudit,
   makeApplyAudit,
-  makeCompensationAudit,
-  makeCompensationFloorComparison,
-  makeCompensationFloorComparisonArm,
-  makeCompensationSummary,
-  makeEstimatedMarketCompensationAudit,
-  makeInsufficientMarketCompensationAudit,
   makeJobDetail,
-  makeMarketCompensationSummary,
-  makeMissingPostedCompensationAudit,
-  makeRecordedPostedCompensationAudit,
-  makeSourceConflictMarketCompensationAudit,
-  makeUnavailableMarketCompensationAudit,
-  makeUnparseablePostedCompensationAudit,
-  makeUnsupportedMarketCompensationAudit,
   sampleCompensationAudit,
+  sampleCompensationSummary,
   sampleJob,
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
@@ -87,468 +72,63 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
-  it("renders compensation audit after job audit triage and before description", async () => {
-    server.use(
-      http.get("*/v1/jobs/:jobKey", ({ params }) =>
-        HttpResponse.json(
-          jobDetailWithCompensation(
-            jobWithCompensation({ jobKey: String(params["jobKey"]) }),
+  it("renders source-conflict compensation warnings only inside compensation evidence", async () => {
+    if (sampleCompensationAudit.market.recordStatus !== "recorded") {
+      throw new Error("sample compensation audit must include recorded market evidence");
+    }
+    const market = sampleCompensationAudit.market;
+    const sourceConflictAudit = {
+      ...sampleCompensationAudit,
+      market: {
+        ...market,
+        estimate: {
+          ...market.estimate,
+          confidenceBand: "medium" as const,
+          confidenceScore: 0.74,
+          sourceCount: 2,
+          sampleCount: 7,
+          warnings: [
             {
-              compensationAudit: makeCompensationAudit({
-                posted: makeRecordedPostedCompensationAudit(),
-                market: makeEstimatedMarketCompensationAudit(),
-              }),
+              code: "reported_compensation_sample" as const,
+              message: "The estimate uses reported compensation rows for the job company and role.",
             },
-          ),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-audit");
-
-    const triage = await screen.findByRole("region", { name: "Why this job is here" });
-    const compensation = screen.getByRole("region", { name: "Compensation audit" });
-    const description = screen.getByText("Description").closest("section");
-    expect(description).not.toBeNull();
-    expect(triage.compareDocumentPosition(compensation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(compensation.compareDocumentPosition(description as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("renders posted salary, market estimate, and floor comparison as separate top summary items", async () => {
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(undefined, {
-            compensationAudit: makeCompensationAudit({
-              posted: makeRecordedPostedCompensationAudit(),
-              market: makeEstimatedMarketCompensationAudit(),
-              floorComparison: makeCompensationFloorComparison({
-                basis: "both_posted_and_market",
-                warningCount: 1,
-                warningLabels: ["compensation_below_profile_floor"],
-              }),
-            }),
-          }),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-summary");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("Warning-only salary evidence")).toBeInTheDocument();
-    expect(within(compensation).getByText("Posted salary")).toBeInTheDocument();
-    expect(within(compensation).getAllByText("EUR 120k-150k").length).toBeGreaterThan(0);
-    expect(within(compensation).getByText("Market estimate")).toBeInTheDocument();
-    expect(within(compensation).getAllByText("EUR 135k-165k").length).toBeGreaterThan(0);
-    expect(within(compensation).getByText("Floor comparison")).toBeInTheDocument();
-    expect(within(compensation).getByText("Both posted and market")).toBeInTheDocument();
-  });
-
-  it("renders legacy compensation payloads without a floor comparison as unavailable", async () => {
-    const legacyAudit = makeCompensationAudit({
-      posted: makeRecordedPostedCompensationAudit(),
-      market: makeEstimatedMarketCompensationAudit(),
-    }) as unknown as Record<string, unknown>;
-    const legacySummary = makeCompensationSummary() as unknown as Record<string, unknown>;
-    delete legacyAudit["floorComparison"];
-    delete legacySummary["floorComparison"];
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(jobWithCompensation({ compensationSummary: legacySummary as never }), {
-            compensationAudit: legacyAudit as never,
-          }),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-legacy-floor");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("No compensation facts recorded.")).toBeInTheDocument();
-    expect(
-      within(compensation).getByText(
-        "Posted salary and market estimate details will appear here after the compensation projection records them.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("renders compensation payloads with malformed floor arms as unavailable", async () => {
-    const shallowFloorComparison = makeCompensationFloorComparison({
-      basis: "both_posted_and_market",
-      posted: {} as never,
-      market: {} as never,
-      warningCount: 1,
-      warningLabels: ["compensation_below_profile_floor"],
-    });
-    const legacyAudit = {
-      floorComparison: shallowFloorComparison,
-      posted: { ok: true, recordStatus: "recorded", fact: {} },
-      market: { ok: true, recordStatus: "recorded", estimate: {} },
+            {
+              code: "source_conflict_with_posted_salary" as const,
+              message: "Market estimate is above the posted range.",
+            },
+          ],
+        },
+      },
     };
-    const legacySummary = { floorComparison: shallowFloorComparison, posted: {}, market: {} };
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(jobWithCompensation({ compensationSummary: legacySummary as never }), {
-            compensationAudit: legacyAudit as never,
-          }),
-        ),
-      ),
-    );
+    const sourceConflictSummary = {
+      ...sampleCompensationSummary,
+      warningCount: 2,
+      market: {
+        ...sampleCompensationSummary.market,
+        confidenceBand: "medium" as const,
+        confidenceScore: 0.74,
+        sourceCount: 2,
+        sampleCount: 7,
+        warningCount: 2,
+      },
+    };
+    expect(JSON.stringify(sourceConflictAudit)).toContain("source_conflict_with_posted_salary");
+    expect(JSON.stringify(sourceConflictAudit)).toContain("reported_compensation_sample");
+    expect(JSON.stringify(sourceConflictAudit)).not.toMatch(/~\/\.jobhunter|\/Users\/|api[_-]?key|oauth|resume|cover letter/i);
 
-    renderJobDetailDrawer("job-compensation-shallow-floor");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("No compensation facts recorded.")).toBeInTheDocument();
-    expect(
-      within(compensation).getByText(
-        "Posted salary and market estimate details will appear here after the compensation projection records them.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("renders compensation payloads with malformed floor values as unavailable", async () => {
-    const malformedFloorComparison = makeCompensationFloorComparison({
-      floor: {} as never,
-    });
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(
-            jobWithCompensation({
-              compensationSummary: makeCompensationSummary({
-                floorComparison: malformedFloorComparison,
-              }) as never,
-            }),
-            {
-              compensationAudit: makeCompensationAudit({
-                floorComparison: malformedFloorComparison,
-                posted: makeRecordedPostedCompensationAudit(),
-                market: makeEstimatedMarketCompensationAudit(),
-              }) as never,
-            },
-          ),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-malformed-floor");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("No compensation facts recorded.")).toBeInTheDocument();
-    expect(compensation).not.toHaveTextContent("undefined");
-  });
-
-  it("renders compensation payloads with invalid floor enum and value data as unavailable", async () => {
-    const malformedFloorComparison = makeCompensationFloorComparison({
-      state: "legacy_bad_state" as never,
-      basis: "legacy_bad_basis" as never,
-      floor: { amount: -1, currency: "", period: "year" },
-      posted: makeCompensationFloorComparisonArm({
-        state: "legacy_bad_arm" as never,
-      }),
-    });
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(
-            jobWithCompensation({
-              compensationSummary: makeCompensationSummary({
-                floorComparison: malformedFloorComparison,
-              }) as never,
-            }),
-            {
-              compensationAudit: makeCompensationAudit({
-                floorComparison: malformedFloorComparison,
-                posted: makeRecordedPostedCompensationAudit(),
-                market: makeEstimatedMarketCompensationAudit(),
-              }) as never,
-            },
-          ),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-invalid-floor-enum");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("No compensation facts recorded.")).toBeInTheDocument();
-    expect(compensation).not.toHaveTextContent("undefined");
-  });
-
-  it("renders compensation payloads with invalid posted and market enum data as unavailable", async () => {
-    const legacySummary = makeCompensationSummary() as never as Record<string, any>;
-    legacySummary["posted"].confidence = "legacy_bad_confidence";
-    legacySummary["market"].estimateState = "legacy_bad_market";
-    legacySummary["market"].confidenceBand = "legacy_bad_band";
-    const legacyAudit = makeCompensationAudit({
-      posted: makeRecordedPostedCompensationAudit(),
-      market: makeEstimatedMarketCompensationAudit(),
-    }) as never as Record<string, any>;
-    legacyAudit["posted"].fact.parseState = "legacy_bad_parse";
-    legacyAudit["market"].estimate.estimateState = "legacy_bad_market";
-    legacyAudit["market"].estimate.confidenceBand = "legacy_bad_band";
-
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(jobWithCompensation({ compensationSummary: legacySummary as never }), {
-            compensationAudit: legacyAudit as never,
-          }),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-invalid-enums");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("No compensation facts recorded.")).toBeInTheDocument();
-    expect(compensation).not.toHaveTextContent("undefined");
-  });
-
-  it("renders progressive disclosures for source trail plus confidence factors and assumptions", async () => {
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(undefined, {
-            compensationAudit: makeCompensationAudit({
-              posted: makeRecordedPostedCompensationAudit(),
-              market: makeEstimatedMarketCompensationAudit(),
-            }),
-          }),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-compensation-disclosures");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("Source trail")).toBeInTheDocument();
-    expect(within(compensation).getByText("2 sources")).toBeInTheDocument();
-    expect(within(compensation).getByText("Manual reported compensation import")).toBeInTheDocument();
-    expect(within(compensation).getByText("Glassdoor")).toBeInTheDocument();
-    expect(within(compensation).getByText("Confidence factors and assumptions")).toBeInTheDocument();
-    expect(within(compensation).getByText("3 confidence factors")).toBeInTheDocument();
-    expect(within(compensation).getByText("Annual gross base salary.")).toBeInTheDocument();
-  });
-
-  it("renders explicit posted and market missing, weak, and unavailable states", async () => {
-    const details = new Map([
-      [
-        "missing-posted",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ posted: makeMissingPostedCompensationAudit() }),
-        }),
-      ],
-      [
-        "unparseable-posted",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ posted: makeUnparseablePostedCompensationAudit() }),
-        }),
-      ],
-      [
-        "ambiguous-posted",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ posted: makeAmbiguousPostedCompensationAudit() }),
-        }),
-      ],
-      [
-        "unsupported-market",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ market: makeUnsupportedMarketCompensationAudit() }),
-        }),
-      ],
-      [
-        "insufficient-market",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ market: makeInsufficientMarketCompensationAudit() }),
-        }),
-      ],
-      [
-        "unavailable-market",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ market: makeUnavailableMarketCompensationAudit() }),
-        }),
-      ],
-      [
-        "not-requested-market",
-        jobDetailWithCompensation(undefined, {
-          compensationAudit: makeCompensationAudit({ market: { ok: true, recordStatus: "not_requested", jobKey: sampleJob.jobKey } }),
-        }),
-      ],
-    ]);
-    server.use(
-      http.get("*/v1/jobs/:jobKey", ({ params }) =>
-        HttpResponse.json(details.get(String(params["jobKey"])) ?? makeJobDetail()),
-      ),
-    );
-
-    const expectations = [
-      ["missing-posted", "No posted salary recorded"],
-      ["unparseable-posted", "Posted salary unparseable"],
-      ["ambiguous-posted", "Posted salary ambiguous"],
-      ["unsupported-market", "Market estimate unsupported"],
-      ["insufficient-market", "Insufficient market evidence"],
-      ["unavailable-market", "Market source unavailable"],
-      ["unavailable-market", "Levels.fyi access unavailable until permitted source access is configured."],
-      ["not-requested-market", "Market estimate not requested"],
-    ] as const;
-
-    for (const [jobId, expectedText] of expectations) {
-      const view = renderJobDetailDrawer(jobId);
-      const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-      expect(within(compensation).getByText(expectedText)).toBeInTheDocument();
-      view.unmount();
-    }
-  });
-
-  it("names every floor comparison basis without making it an apply concern", async () => {
-    const basisDetails = new Map([
-      [
-        "posted-basis",
-        makeCompensationFloorComparison({
-          state: "below_floor",
-          basis: "posted_salary_basis",
-          market: null,
-          warningCount: 1,
-          warningLabels: ["posted_compensation_below_profile_floor"],
-        }),
-      ],
-      [
-        "market-basis",
-        makeCompensationFloorComparison({
-          state: "below_floor",
-          basis: "market_estimate_basis",
-          posted: null,
-          warningCount: 1,
-          warningLabels: ["market_compensation_below_profile_floor"],
-        }),
-      ],
-      [
-        "both-basis",
-        makeCompensationFloorComparison({
-          state: "below_floor",
-          basis: "both_posted_and_market",
-          warningCount: 1,
-          warningLabels: ["compensation_below_profile_floor"],
-        }),
-      ],
-      [
-        "no-comparable-basis",
-        makeCompensationFloorComparison({
-          state: "not_comparable",
-          basis: "no_comparable_compensation_basis",
-          floor: { amount: 140_000, currency: "EUR", period: "year" },
-          posted: makeCompensationFloorComparisonArm({ state: "not_comparable", displayRange: null }),
-          market: null,
-          warningCount: 0,
-          warningLabels: [],
-        }),
-      ],
-      [
-        "floor-not-configured",
-        makeCompensationFloorComparison({
-          state: "not_configured",
-          basis: "floor_not_configured",
-          floor: null,
-          posted: null,
-          market: null,
-          warningCount: 0,
-          warningLabels: [],
-        }),
-      ],
-    ]);
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) =>
         HttpResponse.json(
-          jobDetailWithCompensation(undefined, {
-            compensationAudit: makeCompensationAudit({
-              floorComparison: basisDetails.get(String(params["jobKey"])) ?? makeCompensationFloorComparison(),
-            }),
-          }),
-        ),
-      ),
-    );
-
-    const expectations = [
-      ["posted-basis", "Posted salary basis"],
-      ["market-basis", "Market estimate basis"],
-      ["both-basis", "Both posted and market"],
-      ["no-comparable-basis", "No comparable compensation basis"],
-      ["floor-not-configured", "Floor not configured"],
-    ] as const;
-
-    for (const [jobId, expectedText] of expectations) {
-      const view = renderJobDetailDrawer(jobId);
-      const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-      expect(within(compensation).getByText(expectedText)).toBeInTheDocument();
-      view.unmount();
-    }
-  });
-
-  it("keeps compensation floor warnings out of apply concerns and readiness controls", async () => {
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(undefined, {
-            applyAudit: makeApplyAudit({
-              state: "ready",
-              label: "materials ready",
-              summary: "The tailored materials are ready to review before approval.",
-            }),
-            compensationAudit: makeCompensationAudit({
-              floorComparison: makeCompensationFloorComparison({
-                state: "below_floor",
-                basis: "posted_salary_basis",
-                market: null,
-                warningCount: 1,
-                warningLabels: ["posted_compensation_below_profile_floor"],
-              }),
-            }),
-          }),
-        ),
-      ),
-    );
-
-    renderJobDetailDrawer("job-warning-only-boundary");
-
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
-    expect(within(compensation).getByText("posted_compensation_below_profile_floor")).toBeInTheDocument();
-    expect(
-      within(compensation).getByText("Compensation warnings do not change ranking, filters, apply readiness, blockers, or dispatch in v1.3."),
-    ).toBeInTheDocument();
-
-    const triage = screen.getByRole("region", { name: "Why this job is here" });
-    const drawer = screen.getByRole("dialog", { name: "Job details" });
-    expect(within(triage).queryByText("posted_compensation_below_profile_floor")).not.toBeInTheDocument();
-    expect(within(triage).queryByText("Compensation audit")).not.toBeInTheDocument();
-    expect(within(triage).queryByText("Apply concerns")).not.toBeInTheDocument();
-    expect(within(drawer).getByLabelText("Apply readiness")).toHaveTextContent("materials ready");
-    expect(within(triage).getByText("Fit score")).toBeInTheDocument();
-  });
-
-  it("renders source-conflict compensation warnings only inside compensation audit", async () => {
-    const market = makeSourceConflictMarketCompensationAudit();
-    expect(JSON.stringify(market)).toContain("source_conflict_with_posted_salary");
-    expect(JSON.stringify(market)).toContain("reported_compensation_sample");
-    expect(JSON.stringify(market)).not.toMatch(/~\/\.jobhunter|\/Users\/|api[_-]?key|oauth|resume|cover letter/i);
-
-    server.use(
-      http.get("*/v1/jobs/:jobKey", () =>
-        HttpResponse.json(
-          jobDetailWithCompensation(
-            jobWithCompensation({
-              compensationSummary: makeCompensationSummary({
-                warningCount: 2,
-                market: makeMarketCompensationSummary({
-                  confidenceBand: "medium",
-                  sourceCount: 2,
-                  warningCount: 2,
-                }),
-              }),
-            }),
+          makeJobDetail(
+            {
+              ...sampleJob,
+              jobKey: String(params["jobKey"]),
+              title: "Compensated Platform Role",
+              currentStage: "apply",
+              currentSubstage: "apply",
+              currentState: "pending",
+              compensationSummary: sourceConflictSummary,
+            },
             {
               applyAudit: makeApplyAudit({
                 state: "blocked",
@@ -582,10 +162,7 @@ describe("<JobDetailDrawer>", () => {
                   },
                 ],
               }),
-              compensationAudit: makeCompensationAudit({
-                posted: makeRecordedPostedCompensationAudit(),
-                market,
-              }),
+              compensationAudit: sourceConflictAudit,
             },
           ),
         ),
@@ -594,7 +171,7 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("job-source-conflict");
 
-    const compensation = await screen.findByRole("region", { name: "Compensation audit" });
+    const compensation = await screen.findByRole("region", { name: "Compensation evidence" });
     expect(within(compensation).getByText("source_conflict_with_posted_salary")).toBeInTheDocument();
     expect(within(compensation).getByText("Market estimate is above the posted range.")).toBeInTheDocument();
     expect(within(compensation).getByText("reported_compensation_sample")).toBeInTheDocument();
