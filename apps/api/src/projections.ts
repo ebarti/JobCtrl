@@ -1862,6 +1862,8 @@ function buildCompensationSummary(
   const marketWarnings = market.recordStatus === "recorded" ? market.estimate.warnings.length : 0;
   const postedRange = posted.recordStatus === "recorded" ? postedRangeSummary(posted.fact) : null;
   const marketRange = market.recordStatus === "recorded" ? marketRangeSummary(market.estimate) : null;
+  const marketConfidenceInterval =
+    market.recordStatus === "recorded" ? marketConfidenceIntervalSummary(market.estimate) : null;
   return {
     projectionVersion: COMPENSATION_PROJECTION_VERSION,
     legacyRawSalary:
@@ -1887,6 +1889,8 @@ function buildCompensationSummary(
       warningCount: marketWarnings,
       range: marketRange,
       displayRange: marketRange?.displayRange ?? null,
+      confidenceInterval: marketConfidenceInterval,
+      displayConfidenceInterval: marketConfidenceInterval?.displayRange ?? null,
     },
   };
 }
@@ -1937,6 +1941,43 @@ function marketRangeSummary(
       estimate.currency,
       estimate.minimumAmount,
       estimate.maximumAmount,
+      estimate.period,
+    ),
+  };
+}
+
+function marketConfidenceIntervalSummary(
+  estimate: Extract<MarketCompensationProjectionResponse, { recordStatus: "recorded" }>["estimate"],
+): CompensationRangeSummary | null {
+  if (estimate.estimateState !== "estimated_range") {
+    return null;
+  }
+  return {
+    currency: estimate.currency,
+    period: estimate.period,
+    component: estimate.component,
+    minimumAmount: estimate.confidenceInterval.minimumAmount,
+    maximumAmount: estimate.confidenceInterval.maximumAmount,
+    annualizedMinimumAmount: annualizeCompensationAmount(
+      estimate.confidenceInterval.minimumAmount,
+      estimate.period,
+    ),
+    annualizedMaximumAmount: annualizeCompensationAmount(
+      estimate.confidenceInterval.maximumAmount,
+      estimate.period,
+    ),
+    annualizedMinimumEur: normalizeAnnualizedEur(
+      annualizeCompensationAmount(estimate.confidenceInterval.minimumAmount, estimate.period),
+      estimate.currency,
+    ),
+    annualizedMaximumEur: normalizeAnnualizedEur(
+      annualizeCompensationAmount(estimate.confidenceInterval.maximumAmount, estimate.period),
+      estimate.currency,
+    ),
+    displayRange: formatCompensationRange(
+      estimate.currency,
+      estimate.confidenceInterval.minimumAmount,
+      estimate.confidenceInterval.maximumAmount,
       estimate.period,
     ),
   };

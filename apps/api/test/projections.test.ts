@@ -342,6 +342,8 @@ function insertCompensationRows(dbPath: string): void {
       component TEXT NOT NULL DEFAULT 'base_salary',
       minimum_amount INTEGER,
       maximum_amount INTEGER,
+      confidence_interval_minimum_amount INTEGER,
+      confidence_interval_maximum_amount INTEGER,
       confidence_band TEXT NOT NULL DEFAULT 'none',
       confidence_score REAL NOT NULL DEFAULT 0,
       source_count INTEGER NOT NULL DEFAULT 0,
@@ -400,13 +402,14 @@ function insertCompensationRows(dbPath: string): void {
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
       tenant_id, job_url, estimate_state, currency, period, component,
-      minimum_amount, maximum_amount, confidence_band, confidence_score,
+      minimum_amount, maximum_amount, confidence_interval_minimum_amount,
+      confidence_interval_maximum_amount, confidence_band, confidence_score,
       source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json,
       factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
       source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
       company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
     jobUrl,
@@ -416,6 +419,8 @@ function insertCompensationRows(dbPath: string): void {
     "total_compensation",
     112000,
     142000,
+    98000,
+    176000,
     "medium",
     0.82,
     2,
@@ -561,6 +566,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             recordStatus: "recorded",
             estimateState: "estimated_range",
             displayRange: "EUR 112000-142000/year",
+            displayConfidenceInterval: "EUR 98000-176000/year",
             confidenceScore: 0.82,
             sourceCount: 2,
             sampleCount: 7,
@@ -570,6 +576,15 @@ describe("apply_run_projections without legacy apply_runs table", () => {
               annualizedMaximumAmount: 142000,
               annualizedMinimumEur: 112000,
               annualizedMaximumEur: 142000,
+            },
+            confidenceInterval: {
+              minimumAmount: 98000,
+              maximumAmount: 176000,
+              annualizedMinimumAmount: 98000,
+              annualizedMaximumAmount: 176000,
+              annualizedMinimumEur: 98000,
+              annualizedMaximumEur: 176000,
+              displayRange: "EUR 98000-176000/year",
             },
           },
         });
@@ -599,6 +614,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
         expect(audit.market.estimate.companyName).toBe("Acme AI");
         expect(audit.market.estimate.matchScope).toBe("exact_company_role");
+        expect(audit.market.estimate.confidenceInterval).toEqual({
+          minimumAmount: 98000,
+          maximumAmount: 176000,
+        });
         expect(JSON.stringify(audit)).not.toContain("/Users/");
       } finally {
         db.close();
