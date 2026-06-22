@@ -44,7 +44,7 @@ function renderArtifactRoute(
     ports: {
       ...ports,
       api: Object.assign(Object.create(Object.getPrototypeOf(ports.api)), ports.api, {
-        artifact: vi.fn(async () => ({ ok: true as const, artifact, tailoringExplanation })),
+        artifact: vi.fn(async () => ({ ok: true as const, artifact, layoutBoxes: [], tailoringExplanation })),
         artifactPreviewPdfUrl,
       }),
     },

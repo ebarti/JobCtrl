@@ -619,6 +619,7 @@ function PdfResumeLineReview({
       <h3 className="sr-only">PDF resume line review</h3>
       <PdfAuditPreviewViewer
         cacheKey={`${artifactId}:${item.jobKey}`}
+        layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
         loadingMessage="The tailored resume PDF is loading into the in-app preview."
         loadingTitle="Rendering tailored resume."

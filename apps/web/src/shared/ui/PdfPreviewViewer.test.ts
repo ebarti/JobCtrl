@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { pdfTextLines, type PdfAuditLineTarget } from "./pdf-audit-lines.js";
-import { pageImageUrlForPreview } from "./PdfPreviewViewer.js";
+import { pageImageUrlForPreview, renderedLinesFromLayoutBoxes } from "./PdfPreviewViewer.js";
 
 const pdfjs = {
   Util: {
@@ -24,6 +24,43 @@ function textItem(str: string, left: number, baseline: number, width = 360) {
 }
 
 describe("PdfAuditPreviewViewer line geometry", () => {
+  it("uses persisted layout boxes as selectable resume lines when available", () => {
+    const lines = renderedLinesFromLayoutBoxes(2, [
+      {
+        semanticId: "experience:acme:bullet:1",
+        pageNumber: 1,
+        lineNumber: 6,
+        textExcerpt: "Wrong page.",
+        leftPct: 1,
+        topPct: 2,
+        widthPct: 3,
+        heightPct: 4,
+      },
+      {
+        semanticId: "experience:acme:bullet:2",
+        pageNumber: 2,
+        lineNumber: 7,
+        textExcerpt: "Cut latency.",
+        leftPct: 12.5,
+        topPct: 24,
+        widthPct: 62,
+        heightPct: 2.4,
+      },
+    ]);
+
+    expect(lines).toEqual([
+      {
+        heightPct: 2.4,
+        leftPct: 12.5,
+        resumeLineNumber: 7,
+        resumeLineText: "Cut latency.",
+        text: "Cut latency.",
+        topPct: 24,
+        widthPct: 62,
+      },
+    ]);
+  });
+
   it("treats wrapped PDF rows for one resume line as one cohesive target", () => {
     const targets: PdfAuditLineTarget[] = [
       { lineNumber: 4, text: "Executive Profile" },

@@ -4,9 +4,8 @@ See ddd-target.md §5.5. Implements the cover-letter half of
 :class:`PdfRendererPort` by wrapping the Playwright headless Chromium
 HTML→PDF logic that previously lived in ``scoring/pdf.py``.
 
-The resume half lives in :class:`LatexPdfAdapter`. Cover letters use
-HTML/Playwright because they don't share the moderncv visual identity
-the LaTeX template carries.
+The resume half lives in :class:`HtmlResumePdfAdapter`. Cover letters use their
+own HTML/Playwright scaffold because they don't share the resume layout map.
 """
 
 from __future__ import annotations
@@ -116,7 +115,7 @@ def convert_cover_letter_text_to_pdf(text: str, output_path: str | os.PathLike[s
 class PlaywrightHtmlPdfAdapter:
     """Concrete :class:`PdfRendererPort` that renders cover letters via Playwright.
 
-    Resumes use :class:`LatexPdfAdapter`; this adapter raises
+    Resumes use :class:`HtmlResumePdfAdapter`; this adapter raises
     :class:`NotImplementedError` from :meth:`render_resume_to_pdf` so a
     misconfigured wiring fails loudly instead of silently producing
     nothing.
@@ -131,7 +130,7 @@ class PlaywrightHtmlPdfAdapter:
         created_at: str,
     ) -> Artifact:
         raise NotImplementedError(
-            "PlaywrightHtmlPdfAdapter does not render resumes; use LatexPdfAdapter."
+            "PlaywrightHtmlPdfAdapter does not render resumes; use HtmlResumePdfAdapter."
         )
 
     def render_cover_letter_to_pdf(

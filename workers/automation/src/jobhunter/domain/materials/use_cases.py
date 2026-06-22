@@ -2527,8 +2527,8 @@ class RenderPdfUseCase:
 
     Two PDFs are eligible:
 
-      * resume PDF — rendered from the tailored payload via
-        :class:`LatexPdfAdapter` when the tailored resume is approved.
+      * resume PDF — rendered from the tailored payload via the configured
+        resume renderer when the tailored resume is approved.
       * cover-letter PDF — rendered from the cover-letter text via
         :class:`PlaywrightHtmlPdfAdapter` when the cover letter is
         approved.

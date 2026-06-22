@@ -33,10 +33,22 @@ export interface PdfPreviewViewerProps {
 
 export interface PdfAuditPreviewViewerProps extends PdfPreviewViewerProps {
   lineTargets: readonly PdfAuditLineTarget[];
+  layoutBoxes?: readonly PdfAuditLayoutBox[];
   selectedLineKey?: string | null;
   selectedLineNumber?: number | null;
   onSelectLine?: (selection: PdfAuditLineSelection) => void;
   onSelectLineNumber?: (lineNumber: number | null) => void;
+}
+
+export interface PdfAuditLayoutBox {
+  readonly semanticId: string;
+  readonly pageNumber: number;
+  readonly lineNumber: number | null;
+  readonly textExcerpt: string;
+  readonly leftPct: number;
+  readonly topPct: number;
+  readonly widthPct: number;
+  readonly heightPct: number;
 }
 
 export interface PdfAuditLineSelection {
@@ -237,6 +249,7 @@ export function PdfAuditPreviewViewer({
   pageAltPrefix,
   openLabel = "open PDF",
   lineTargets,
+  layoutBoxes = [],
   selectedLineKey = null,
   selectedLineNumber = null,
   onSelectLine,
@@ -276,8 +289,9 @@ export function PdfAuditPreviewViewer({
           const page = await document.getPage(pageNumber);
           const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
           const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
-          const textContent = await page.getTextContent();
-          const pdfLines = pdfTextLines(pdfjs, textContent.items, viewport, lineTargets);
+          const pdfLines = layoutBoxes.length
+            ? renderedLinesFromLayoutBoxes(pageNumber, layoutBoxes)
+            : pdfTextLines(pdfjs, (await page.getTextContent()).items, viewport, lineTargets);
           const pageImageUrl = pageImageUrlForPreview(url, pageNumber);
           let src = pageImageUrl;
           if (!src) {
@@ -329,7 +343,7 @@ export function PdfAuditPreviewViewer({
       abortController.abort();
       void loadingTask?.destroy();
     };
-  }, [cacheKey, lineTargets, loadingMessage, url]);
+  }, [cacheKey, layoutBoxes, lineTargets, loadingMessage, url]);
 
   return (
     <div className="pdf-preview-viewer pdf-audit-preview-viewer">
@@ -416,4 +430,22 @@ export function PdfAuditPreviewViewer({
       ) : null}
     </div>
   );
+}
+
+export function renderedLinesFromLayoutBoxes(
+  pageNumber: number,
+  layoutBoxes: readonly PdfAuditLayoutBox[],
+): RenderedPdfLine[] {
+  return layoutBoxes
+    .filter((box) => box.pageNumber === pageNumber)
+    .map((box) => ({
+      heightPct: box.heightPct,
+      leftPct: box.leftPct,
+      resumeLineNumber: box.lineNumber,
+      resumeLineText: box.textExcerpt,
+      text: box.textExcerpt,
+      topPct: box.topPct,
+      widthPct: box.widthPct,
+    }))
+    .filter((line) => line.text.trim().length > 0);
 }

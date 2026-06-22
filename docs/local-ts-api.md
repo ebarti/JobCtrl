@@ -50,6 +50,10 @@ artifact files from the local artifact projection; they return `404` for
 missing metadata/files, `415` for non-PDF artifacts, and `400` for invalid page
 numbers. The separate `POST /v1/artifacts/:artifactId/open` route still
 delegates to the local OS opener.
+PDF artifact detail responses also include `layoutBoxes` when the Materials
+projection has generated resume layout metadata. Boxes use page-relative
+percent coordinates plus optional resume line numbers, and are omitted as an
+empty array for legacy PDFs or artifacts without a layout map.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,
@@ -366,7 +370,10 @@ verification-code MCP server:
   or close enough for human review, plus materials readiness, latest apply-run
   context, blockers, latest review state, `compensationSummary` from the job
   list projection, and `applyAudit`, the canonical readiness/blocker/eligibility
-  DTO used by Apply Review.
+  DTO used by Apply Review. The materials preview includes the selected resume
+  text artifact, selected resume PDF artifact, and `resumePdfLayoutBoxes` for
+  generation-time PDF line highlighting when the selected PDF was rendered
+  through the HTML/CSS resume renderer.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

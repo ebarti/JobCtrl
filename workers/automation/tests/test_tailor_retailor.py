@@ -25,11 +25,13 @@ from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.pipeline import _count_pending
 from jobhunter.state import ensure_job_stage_rows, set_stage_state
 from jobhunter.scoring.tailor import (
+    _build_pdf_renderer,
     _build_llm_policy,
     _build_master_tailor_prompt,
     _tailor_one_job,
     tailor_job_by_url,
 )
+from jobhunter.infrastructure.materials import HtmlResumePdfAdapter, LatexPdfAdapter
 
 
 def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
@@ -186,6 +188,22 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
         assert unrelated_stage is None
     finally:
         close_connection(db_path)
+
+
+def test_build_pdf_renderer_defaults_to_html_resume_renderer(monkeypatch) -> None:
+    monkeypatch.delenv("JOBHUNTER_RESUME_RENDERER", raising=False)
+
+    renderer = _build_pdf_renderer()
+
+    assert isinstance(renderer, HtmlResumePdfAdapter)
+
+
+def test_build_pdf_renderer_can_use_legacy_latex_renderer(monkeypatch) -> None:
+    monkeypatch.setenv("JOBHUNTER_RESUME_RENDERER", "latex_pdf")
+
+    renderer = _build_pdf_renderer()
+
+    assert isinstance(renderer, LatexPdfAdapter)
 
 
 def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(

@@ -1175,6 +1175,120 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects resume layout boxes for HTML-rendered PDF artifacts", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_validation_json TEXT,
+          last_verdict_json TEXT,
+          metadata_json TEXT,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        CREATE TABLE job_material_layout_boxes (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_id TEXT NOT NULL,
+          box_index INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          semantic_id TEXT NOT NULL,
+          page_number INTEGER NOT NULL,
+          line_number INTEGER,
+          text_excerpt TEXT NOT NULL,
+          left_pct REAL NOT NULL,
+          top_pct REAL NOT NULL,
+          width_pct REAL NOT NULL,
+          height_pct REAL NOT NULL,
+          audit_target_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation, artifact_id, box_index)
+        );
+      `);
+      const jobUrl = "https://example.com/jobs/event-driven";
+      db.prepare(
+        `INSERT INTO job_materials (
+          job_url, generation, tenant_id, status, created_at, updated_at
+        ) VALUES (?, 1, 'local', 'complete', ?, ?)`,
+      ).run(jobUrl, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
+      db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'resume_pdf', 'html-resume-pdf', 'approved', ?, 'html_pdf', 20, '{}', ?)`,
+      ).run(jobUrl, "/tmp/html-resume.pdf", "2026-05-04T13:06:00+00:00");
+      db.prepare(
+        `INSERT INTO job_material_layout_boxes (
+          job_url, generation, artifact_id, box_index, tenant_id,
+          semantic_id, page_number, line_number, text_excerpt,
+          left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
+        ) VALUES (?, 1, 'html-resume-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+      ).run(jobUrl, "experience:acme:bullet:1", "Cut latency.", "2026-05-04T13:06:00+00:00");
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readDb = new Database(dbPath, { readonly: true });
+      try {
+        const projection = readDb
+          .prepare(
+            `SELECT layout_boxes_json
+               FROM artifact_list_projections
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_id = 'html-resume-pdf'`,
+          )
+          .get(jobUrl) as { layout_boxes_json: string | null } | undefined;
+        expect(JSON.parse(projection?.layout_boxes_json ?? "[]")).toEqual([
+          {
+            semanticId: "experience:acme:bullet:1",
+            pageNumber: 1,
+            lineNumber: 6,
+            textExcerpt: "Cut latency.",
+            leftPct: 12.5,
+            topPct: 24,
+            widthPct: 62,
+            heightPct: 2.4,
+          },
+        ]);
+      } finally {
+        readDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("repairs stale artifact projection metadata from canonical material artifacts", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

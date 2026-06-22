@@ -181,6 +181,7 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   created_at: string | null;
   generation: number | null;
   metadata_json: string | null;
+  layout_boxes_json: string | null;
   bullet_provenance_json: string | null;
   coverage_audit_json: string | null;
   voice_pass_json: string | null;
@@ -1857,8 +1858,52 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
   return {
     ok: true,
     artifact: rowToArtifactSummary(row),
+    layoutBoxes: parseResumeLayoutBoxes(row.layout_boxes_json),
     tailoringExplanation: tailoringExplanationForArtifact(db, row),
   };
+}
+
+function parseResumeLayoutBoxes(value: string | null): ArtifactDetail["layoutBoxes"] {
+  let parsed: unknown = null;
+  try {
+    parsed = value ? JSON.parse(value) : null;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const boxes: ArtifactDetail["layoutBoxes"] = [];
+  for (const raw of parsed) {
+    if (!isRecord(raw)) continue;
+    const pageNumber = positiveInteger(raw.pageNumber);
+    const leftPct = boundedPercent(raw.leftPct);
+    const topPct = boundedPercent(raw.topPct);
+    const widthPct = boundedPercent(raw.widthPct);
+    const heightPct = boundedPercent(raw.heightPct);
+    const semanticId = safeAuditText(raw.semanticId, 160);
+    const textExcerpt = safeAuditText(raw.textExcerpt, 500);
+    if (
+      !semanticId ||
+      !textExcerpt ||
+      pageNumber === null ||
+      leftPct === null ||
+      topPct === null ||
+      widthPct === null ||
+      heightPct === null
+    ) {
+      continue;
+    }
+    boxes.push({
+      semanticId,
+      pageNumber,
+      lineNumber: nullableInteger(raw.lineNumber),
+      textExcerpt,
+      leftPct,
+      topPct,
+      widthPct,
+      heightPct,
+    });
+  }
+  return boxes;
 }
 
 /** Validate candidate profile data. Used by callers (e.g. tests, future
@@ -4877,6 +4922,23 @@ function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function nullableInteger(value: unknown): number | null {
+  const numberValue = nullableNumber(value);
+  if (numberValue === null) return null;
+  return Number.isInteger(numberValue) ? numberValue : Math.trunc(numberValue);
+}
+
+function positiveInteger(value: unknown): number | null {
+  const numberValue = nullableInteger(value);
+  return numberValue !== null && numberValue > 0 ? numberValue : null;
+}
+
+function boundedPercent(value: unknown): number | null {
+  const numberValue = nullableNumber(value);
+  if (numberValue === null || numberValue < 0) return null;
+  return Math.min(100, numberValue);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

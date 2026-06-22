@@ -405,6 +405,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       created_at             TEXT,
       generation             INTEGER,
       metadata_json          TEXT,
+      layout_boxes_json      TEXT,
       bullet_provenance_json TEXT,
       coverage_audit_json    TEXT,
       voice_pass_json        TEXT
@@ -529,6 +530,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "requirement_fit_report_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "artifact_list_projections", "layout_boxes_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "artifact_list_projections", "bullet_provenance_json", "TEXT") || schemaChanged;
   schemaChanged =
@@ -1782,9 +1785,10 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO artifact_list_projections (
        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
        status, local_path, size_bytes, created_at, generation, metadata_json,
-       bullet_provenance_json, coverage_audit_json, voice_pass_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       layout_boxes_json, bullet_provenance_json, coverage_audit_json, voice_pass_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const layoutBoxesByArtifact = loadLayoutBoxesByArtifact(db, tenantId, jobUrl);
   for (const a of artifacts) {
     insertArtifact.run(
       a.artifactId,
@@ -1799,11 +1803,61 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       a.createdAt,
       a.generation,
       a.metadataJson,
+      layoutBoxesByArtifact.get(a.artifactId) ?? null,
       provenanceByArtifact.get(a.artifactId) ?? null,
       coverageByArtifact.get(a.artifactId) ?? null,
       voiceByArtifact.get(a.artifactId) ?? null,
     );
   }
+}
+
+function loadLayoutBoxesByArtifact(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!tableExists(db, "job_material_layout_boxes")) return result;
+  const rows = allRows<{
+    artifact_id: string;
+    semantic_id: string;
+    page_number: number;
+    line_number: number | null;
+    text_excerpt: string;
+    left_pct: number;
+    top_pct: number;
+    width_pct: number;
+    height_pct: number;
+  }>(
+    db,
+    `SELECT artifact_id, semantic_id, page_number, line_number, text_excerpt,
+            left_pct, top_pct, width_pct, height_pct
+       FROM job_material_layout_boxes
+      WHERE tenant_id = ? AND job_url = ?
+      ORDER BY artifact_id, page_number, box_index`,
+    [tenantId, jobUrl],
+  );
+  const byArtifact = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows) {
+    const artifactId = String(row.artifact_id || "");
+    if (!artifactId) continue;
+    const boxes = byArtifact.get(artifactId) ?? [];
+    boxes.push({
+      semanticId: String(row.semantic_id || ""),
+      pageNumber: Number(row.page_number || 1),
+      lineNumber: row.line_number === null || row.line_number === undefined ? null : Number(row.line_number),
+      textExcerpt: String(row.text_excerpt || ""),
+      leftPct: Number(row.left_pct || 0),
+      topPct: Number(row.top_pct || 0),
+      widthPct: Number(row.width_pct || 0),
+      heightPct: Number(row.height_pct || 0),
+    });
+    byArtifact.set(artifactId, boxes);
+  }
+  for (const [artifactId, boxes] of byArtifact) {
+    result.set(artifactId, JSON.stringify(boxes));
+  }
+  return result;
 }
 
 type PostedCompensationProjectionResponse = NonNullable<ReturnType<typeof getPostedCompensationFact>>;

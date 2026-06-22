@@ -344,6 +344,28 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("returns resume PDF layout boxes for apply-review highlighting", async () => {
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)?.materialsPreview.resumePdfLayoutBoxes).toEqual([
+      {
+        semanticId: "experience:acme:bullet:1",
+        pageNumber: 1,
+        lineNumber: 6,
+        textExcerpt: "Owned platform reliability improvements for incident response.",
+        leftPct: 12.5,
+        topPct: 24,
+        widthPct: 62,
+        heightPct: 2.4,
+      },
+    ]);
+
+    await app.close();
+  });
+
   it("returns full resume text for apply-review PDF audit targets", async () => {
     const longResumeText = [
       "Eloi Example",
@@ -979,6 +1001,24 @@ function seedDatabase(dbPath: string): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (job_url, generation, bullet_id)
     );
+    CREATE TABLE job_material_layout_boxes (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_id TEXT NOT NULL,
+      box_index INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      semantic_id TEXT NOT NULL,
+      page_number INTEGER NOT NULL,
+      line_number INTEGER,
+      text_excerpt TEXT NOT NULL,
+      left_pct REAL NOT NULL,
+      top_pct REAL NOT NULL,
+      width_pct REAL NOT NULL,
+      height_pct REAL NOT NULL,
+      audit_target_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, artifact_id, box_index)
+    );
     CREATE TABLE job_employer_analysis (
       job_url TEXT NOT NULL,
       generation INTEGER NOT NULL,
@@ -1352,6 +1392,19 @@ function insertMaterials(
        job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(jobUrl, 1, `${artifactPrefix}-resume-pdf`, "resume_pdf", "approved", resumePdfPath, NOW, 15);
+  db.prepare(
+    `INSERT INTO job_material_layout_boxes (
+       job_url, generation, artifact_id, box_index, tenant_id,
+       semantic_id, page_number, line_number, text_excerpt,
+       left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
+     ) VALUES (?, 1, ?, 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+  ).run(
+    jobUrl,
+    `${artifactPrefix}-resume-pdf`,
+    "experience:acme:bullet:1",
+    "Owned platform reliability improvements for incident response.",
+    NOW,
+  );
   db.prepare(
     `INSERT INTO job_materials_artifacts (
        job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes

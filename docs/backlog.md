@@ -147,12 +147,10 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   critical operational columns such as Source visible, but users need a
   first-class control for choosing which columns are shown and hidden, with
   persisted preferences per local profile or workspace.
-- Spike the best long-term resume rendering path. Evaluate whether to keep
-  LaTeX as the PDF source of truth, switch to Tectonic, replace LaTeX with a
-  different document engine such as Typst, or move to an HTML/CSS paged-media
-  renderer. The spike should compare PDF fidelity, browser preview quality,
-  editable profile UX, local packaging, performance, generated artifact
-  compatibility, and migration cost.
+- Harden HTML/CSS resume pagination with deterministic page containers if
+  browser-native print fragmentation proves unstable on dense real resumes.
+  The migration record lives in
+  `docs/plans/proposed/2026-06-22-swap-latex-for-html-css.md`.
 - Auto-suggest target roles, target locations, and work-model preferences in
   the Profile preferences editor based on the candidate's experience entries,
   current title, location history, and imported resume text. Keep suggestions

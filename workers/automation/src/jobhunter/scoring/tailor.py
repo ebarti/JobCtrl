@@ -56,6 +56,7 @@ from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import get_llm_adapter
 from jobhunter.infrastructure.materials import (
+    HtmlResumePdfAdapter,
     LatexPdfAdapter,
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
@@ -202,7 +203,15 @@ def _build_use_case(
 
 
 def _build_pdf_renderer() -> PdfRendererPort:
-    return LatexPdfAdapter()
+    renderer = os.environ.get("JOBHUNTER_RESUME_RENDERER", "html_pdf").strip().lower()
+    if renderer in {"latex", "latex_pdf", "pdflatex"}:
+        return LatexPdfAdapter()
+    if renderer and renderer not in {"html", "html_pdf", "playwright", "playwright_html"}:
+        log.warning(
+            "Unsupported JOBHUNTER_RESUME_RENDERER=%r; using html_pdf resume renderer",
+            renderer,
+        )
+    return HtmlResumePdfAdapter()
 
 
 def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):

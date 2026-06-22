@@ -1520,18 +1520,45 @@ def doctor() -> None:
     else:
         results.append(("resume.txt", fail_mark, "Run 'jobhunter init' to add your resume"))
 
-    # LaTeX is mandatory for tailored resume PDFs.
-    try:
-        from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
+    import os
 
-        results.append(("pdflatex", ok_mark, _find_pdflatex()))
-    except FileNotFoundError:
-        results.append(("pdflatex", fail_mark, "Install TeX Live/MacTeX or set PDFLATEX_PATH"))
+    resume_renderer = os.environ.get("JOBHUNTER_RESUME_RENDERER", "html_pdf").strip().lower()
+    if resume_renderer in {"latex", "latex_pdf", "pdflatex"}:
+        try:
+            from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
+
+            results.append(("resume PDF renderer", ok_mark, f"pdflatex at {_find_pdflatex()}"))
+        except FileNotFoundError:
+            results.append(
+                (
+                    "resume PDF renderer",
+                    fail_mark,
+                    "Install TeX Live/MacTeX, set PDFLATEX_PATH, or unset JOBHUNTER_RESUME_RENDERER",
+                )
+            )
+    else:
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as playwright:
+                chromium_path = str(playwright.chromium.executable_path)
+            if Path(chromium_path).exists():
+                results.append(("resume PDF renderer", ok_mark, f"HTML/CSS via Playwright Chromium at {chromium_path}"))
+            else:
+                results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
+        except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
+            results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
 
     if RESUME_TEMPLATE_PATH.exists():
-        results.append(("resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
+        results.append(("legacy resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
     else:
-        results.append(("resume_template.tex", warn_mark, "Use the local UI profile view to create/edit"))
+        results.append(
+            (
+                "legacy resume_template.tex",
+                "[dim]optional[/dim]",
+                "Only needed with JOBHUNTER_RESUME_RENDERER=latex_pdf",
+            )
+        )
 
     try:
         search_cfg = load_search_config()
@@ -1556,7 +1583,6 @@ def doctor() -> None:
                         "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
 
     # --- Tier 2 checks ---
-    import os
     has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))

@@ -362,7 +362,9 @@ PDFs) for jobs that pass the scoring threshold.
   stuffing, AI-sounding phrasing, weak seniority alignment, and missing evidence
 - Run adversarial review for high-fit jobs after normal validation and judge pass
 - Generate cover letters
-- Render documents to PDF (resume via LaTeX, cover letter via HTML/Playwright)
+- Render documents to PDF (resume via HTML/CSS + Playwright by default, with
+  LaTeX available only as a compatibility renderer; cover letter via
+  HTML/Playwright)
 - Register generated artifacts with provenance metadata
 - Emit domain events for each material milestone
 
@@ -1066,15 +1068,15 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `LlmPort` | `GeminiAdapter`, `OpenAiAdapter` | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
-| `PdfRendererPort` | `LatexPdfAdapter` (pdflatex subprocess), `PlaywrightHtmlPdfAdapter` (cover letters) | `TectonicPdfAdapter` (**Tectonic** LaTeX engine in container; no TeX Live install required) or `TypstPdfAdapter` (if rendering spike favors Typst). Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
+| `PdfRendererPort` | `HtmlResumePdfAdapter` (default structured resume HTML/CSS + Playwright renderer with layout boxes), `LatexPdfAdapter` (legacy `pdflatex` compatibility renderer), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering; keep LaTeX/Tectonic only for compatibility if required. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
 | `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobhunter/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobhunter-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |
 
-**Seam justification:** The `PdfRendererPort` is critical because the backlog
-explicitly calls for a resume rendering spike (LaTeX vs Tectonic vs Typst vs
-HTML/CSS). The port means the spike can evaluate multiple adapters without
-touching materials domain logic. The `ArtifactStoragePort` absorbs the
-local-to-cloud transition for generated files.
+**Seam justification:** The `PdfRendererPort` absorbed the renderer swap:
+HTML/CSS + Playwright is now the production default for resume PDFs, emits
+layout boxes for Apply Review, and keeps LaTeX as an explicitly selected
+compatibility adapter without touching materials domain logic. The
+`ArtifactStoragePort` absorbs the local-to-cloud transition for generated files.
 
 ### 5.6 Apply Automation Context
 
@@ -1864,7 +1866,7 @@ cloud" (circular), but measurable conditions.
 | No auth | Auth0 / Cognito JWT | Any public-facing deployment | Local loopback assumption breaks when API is remotely accessible. |
 | No billing / entitlements | Stripe + `EntitlementPort` | First paying customer | Until then, all entitlements return `Allowed`. The `EntitlementPort` exists as a no-op adapter locally. |
 | No audit log | Postgres `audit_events` + CloudWatch | First compliance requirement (SOC2, GDPR data access log) | The `AuditSink` port is a no-op locally. |
-| `pdflatex` subprocess | Tectonic / Typst in container | Rendering spike conclusion **OR** cloud deployment (TeX Live is 4 GB, too large for containers) | `PdfRendererPort` absorbs any engine. |
+| `pdflatex` subprocess for resume PDFs | HTML/CSS + Playwright/Chromium renderer, with LaTeX compatibility by explicit opt-in | Completed for local default **OR** cloud deployment (TeX Live is 4 GB, too large for containers) | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
 
 ### 9.5 Cloud Migration Order
 
@@ -2016,10 +2018,12 @@ single-user system.
    (b) adjust scoring rubric weights, (c) use corrections as few-shot examples.
    *Needs product input.*
 
-3. **Resume rendering engine.** The backlog spike (LaTeX vs Tectonic vs Typst vs
-   HTML/CSS) is unresolved. The `PdfRendererPort` is designed to absorb any
-   choice, but the adapter implementation depends on the spike outcome. *Blocked
-   on spike results.*
+3. **Resume rendering rollout.** The engine decision is HTML/CSS + Playwright,
+   and `HtmlResumePdfAdapter` is the default renderer. Layout-map persistence
+   and Apply Review layout-box consumption are in place for new artifacts; the
+   remaining compatibility policy is how long to retain explicit
+   `JOBHUNTER_RESUME_RENDERER=latex_pdf` support for historical custom
+   templates.
 
 4. **Event streaming to the frontend.** The backlog calls for "event streaming or
    targeted row patching so lists do not reload wholesale." Should this be SSE,

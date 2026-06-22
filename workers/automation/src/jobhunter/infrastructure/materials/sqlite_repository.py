@@ -18,6 +18,7 @@ See ddd-target.md §7.1 / §7.2 (per-aggregate repository, schema decoupling).
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
@@ -451,6 +452,7 @@ class SqliteMaterialsRepository:
     # ------------------------------------------------------------------
 
     def _upsert_artifact(self, materials: MaterialsSet, artifact: Artifact) -> None:
+        metadata, layout_boxes = _metadata_and_layout_boxes(artifact.metadata)
         self._conn.execute(
             """
             INSERT INTO job_materials_artifacts (
@@ -477,10 +479,61 @@ class SqliteMaterialsRepository:
                 artifact.path,
                 artifact.render_format.value,
                 artifact.size_bytes,
-                _dumps(artifact.metadata) if artifact.metadata else None,
+                _dumps(metadata) if metadata else None,
                 artifact.created_at,
                 artifact.superseded_at,
             ),
+        )
+        self._replace_layout_boxes(materials, artifact, layout_boxes)
+
+    def _replace_layout_boxes(
+        self,
+        materials: MaterialsSet,
+        artifact: Artifact,
+        layout_boxes: list[dict[str, Any]],
+    ) -> None:
+        try:
+            self._conn.execute(
+                """
+                DELETE FROM job_material_layout_boxes
+                WHERE job_url = ? AND generation = ? AND artifact_id = ?
+                """,
+                (str(materials.job_id), materials.generation, artifact.artifact_id),
+            )
+        except sqlite3.OperationalError:
+            return
+        if not layout_boxes:
+            return
+        rows = [
+            (
+                str(materials.job_id),
+                materials.generation,
+                artifact.artifact_id,
+                index,
+                str(materials.tenant_id),
+                box["semantic_id"],
+                box["page_number"],
+                box.get("line_number"),
+                box["text_excerpt"],
+                box["left_pct"],
+                box["top_pct"],
+                box["width_pct"],
+                box["height_pct"],
+                _dumps(box.get("audit_target", {})) or "{}",
+                artifact.created_at,
+            )
+            for index, box in enumerate(layout_boxes)
+        ]
+        self._conn.executemany(
+            """
+            INSERT INTO job_material_layout_boxes (
+                job_url, generation, artifact_id, box_index, tenant_id,
+                semantic_id, page_number, line_number, text_excerpt,
+                left_pct, top_pct, width_pct, height_pct, audit_target_json,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
         )
 
     def _row_to_materials(self, row: Any, tenant_id: TenantId) -> MaterialsSet:
@@ -586,6 +639,78 @@ def _loads(value: str | None) -> dict | None:
     except (TypeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _metadata_and_layout_boxes(metadata: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    cleaned_metadata = dict(metadata or {})
+    raw_boxes = cleaned_metadata.pop("layout_boxes", None)
+    return cleaned_metadata, _layout_boxes(raw_boxes)
+
+
+def _layout_boxes(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    boxes: list[dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        semantic_id = " ".join(str(raw.get("semantic_id", "")).split())
+        text_excerpt = " ".join(str(raw.get("text_excerpt", "")).split())
+        page_number = _positive_int(raw.get("page_number"))
+        line_number = _nullable_int(raw.get("line_number"))
+        left_pct = _bounded_float(raw.get("left_pct"))
+        top_pct = _bounded_float(raw.get("top_pct"))
+        width_pct = _bounded_float(raw.get("width_pct"))
+        height_pct = _bounded_float(raw.get("height_pct"))
+        if (
+            not semantic_id
+            or not text_excerpt
+            or page_number is None
+            or left_pct is None
+            or top_pct is None
+            or width_pct is None
+            or height_pct is None
+        ):
+            continue
+        boxes.append(
+            {
+                "semantic_id": semantic_id[:160],
+                "page_number": page_number,
+                "line_number": line_number,
+                "text_excerpt": text_excerpt[:500],
+                "left_pct": left_pct,
+                "top_pct": top_pct,
+                "width_pct": width_pct,
+                "height_pct": height_pct,
+                "audit_target": raw.get("audit_target") if isinstance(raw.get("audit_target"), dict) else {},
+            }
+        )
+    return boxes
+
+
+def _positive_int(value: Any) -> int | None:
+    parsed = _nullable_int(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _nullable_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
+def _bounded_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed < 0:
+        return None
+    return min(100.0, parsed)
 
 
 class SqliteTailoringPolicyRepository:

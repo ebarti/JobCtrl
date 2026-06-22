@@ -18,6 +18,7 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
     </div>
   ),
   PdfAuditPreviewViewer: ({
+    layoutBoxes = [],
     lineTargets,
     onSelectLine,
     onSelectLineNumber,
@@ -26,6 +27,7 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
     title,
     url,
   }: {
+    readonly layoutBoxes?: readonly unknown[];
     readonly lineTargets: readonly { lineNumber: number; text: string }[];
     readonly onSelectLine?: (selection: {
       lineKey: string;
@@ -58,6 +60,7 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
         <div aria-label={title} data-url={url} role="img">
           PDF preview
         </div>
+        <span data-testid="pdf-layout-box-count">{layoutBoxes.length}</span>
         <div aria-label="PDF resume selectable lines">
           {lineTargets.map((line) => (
             <button
@@ -441,6 +444,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
 
@@ -508,6 +512,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: pinnedTailoringExplanation,
     }));
 
@@ -595,6 +600,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: sourceBackedExplanation,
     }));
     const queueWithContextualResume = {
@@ -667,6 +673,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: null,
     }));
 
@@ -739,6 +746,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: explanationWithSkillProvenance,
     }));
 
@@ -791,6 +799,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
+      layoutBoxes: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
 
@@ -893,6 +902,44 @@ describe("<ApplyReviewView>", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();
+  });
+
+  it("passes generated resume layout boxes into the PDF audit viewer", async () => {
+    const queueWithLayoutBoxes = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumePdfLayoutBoxes: [
+                  {
+                    semanticId: "experience:acme:bullet:1",
+                    pageNumber: 1,
+                    lineNumber: 3,
+                    textExcerpt: "Owned platform reliability improvements for incident response.",
+                    leftPct: 12.5,
+                    topPct: 24,
+                    widthPct: 62,
+                    heightPct: 2.4,
+                  },
+                ],
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queueWithLayoutBoxes),
+        },
+      }),
+    });
+
+    expect(await screen.findByTestId("pdf-layout-box-count")).toHaveTextContent("1");
   });
 
   it("opens job detail as an in-place overlay", async () => {

@@ -5,9 +5,10 @@ See ddd-target.md §5.5. Two ports here:
   ``MaterialsRepository`` — persistence for the :class:`MaterialsSet`
                              aggregate root (one aggregate per ``(tenant,
                              job, generation)`` triple).
-  ``PdfRendererPort``      — render text artifacts to PDF; the LaTeX
-                             adapter wraps ``pdflatex``, the HTML adapter
-                             wraps Playwright headless Chromium.
+  ``PdfRendererPort``      — render text artifacts to PDF; the resume HTML
+                             adapter and cover-letter adapter wrap Playwright
+                             headless Chromium, with LaTeX kept as an
+                             opt-in compatibility adapter.
 
 Both protocols are tenant-scoped: local adapters accept ``tenant_id`` and
 ignore it (single-tenant); hosted adapters use it for row isolation.
@@ -319,15 +320,18 @@ class VoicePort(Protocol):
 class PdfRendererPort(Protocol):
     """Render text artifacts to PDF.
 
-    Two distinct rendering paths today:
+    Two distinct default rendering paths today:
 
-      * ``LatexPdfAdapter`` consumes a structured tailored-resume payload
-        plus a profile snapshot, builds a moderncv LaTeX document, and
-        compiles it with ``pdflatex``. Used for resumes only — the LaTeX
-        template carries the visual identity.
+      * ``HtmlResumePdfAdapter`` consumes a structured tailored-resume
+        payload plus a profile snapshot, builds a print HTML/CSS document,
+        records layout boxes, and prints it to PDF via headless Chromium.
+        Used for resumes only.
       * ``PlaywrightHtmlPdfAdapter`` wraps a plain-text cover letter into
         a minimal HTML document and prints it to PDF via headless
         Chromium. Used for cover letters only.
+
+    ``LatexPdfAdapter`` remains available for legacy resume rendering when
+    explicitly selected by local wiring.
 
     Both methods return a fully populated :class:`Artifact` value object
     (status ``CANDIDATE``) — the use case is responsible for promoting

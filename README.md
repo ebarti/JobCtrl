@@ -88,7 +88,11 @@ Core pipeline:
   Gemini, OpenAI, and local HTTP-backed providers are supported through
   environment variables. Gemini keys default to `gemini-3.5-flash` unless
   `LLM_MODEL` overrides the model.
-- A TeX distribution with `pdflatex` for PDF output.
+- Playwright Chromium for HTML/CSS resume and cover-letter PDF output. The
+  Python worker dependency includes Playwright; if Chromium is missing, run
+  `uv --project workers/automation run playwright install chromium`.
+- Optional TeX distribution with `pdflatex` only for the legacy resume renderer
+  selected with `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
 - Poppler with `pdftoppm` on `PATH` for local PDF page previews in the web UI.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
@@ -171,7 +175,9 @@ At minimum, confirm:
 - optional frontend-only keys such as `VITE_GOOGLE_MAPS_API_KEY` are available
   from repo `.env`, `~/.jobhunter/.env`, or `~/Jobhunter/.env` before starting
   `pnpm dev`;
-- `pdflatex` is available if you need PDFs;
+- Playwright Chromium is available for resume and cover-letter PDFs;
+- `pdflatex` is available only if you explicitly use
+  `JOBHUNTER_RESUME_RENDERER=latex_pdf`;
 - `pdftoppm` is available if you need PDF page previews in the web UI;
 - Chrome and Claude Code are available only if you intend to use auto-apply.
 
@@ -711,7 +717,9 @@ Common environment variables:
 - `JOBHUNTER_LINKEDIN_APPLY_HEADLESS`: set to `1` to run the LinkedIn resolver
   profile headless. The default is visible Chrome so a throwaway LinkedIn
   account can be logged in and kept fresh.
-- `PDFLATEX_PATH`: override LaTeX detection.
+- `JOBHUNTER_RESUME_RENDERER`: set to `latex_pdf` to use the legacy LaTeX
+  resume renderer; defaults to `html_pdf`.
+- `PDFLATEX_PATH`: override LaTeX detection when the legacy renderer is enabled.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout
   (`900` seconds by default).

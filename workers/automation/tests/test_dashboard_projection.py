@@ -241,6 +241,65 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     assert json.loads(_row_value(synthetic_pdf, "metadata_json", "{}")) == metadata
 
 
+def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/materials-layout"
+    _seed_job(conn, url)
+    now = utc_now()
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+        """,
+        (url, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'html_pdf', 120, '{}', ?)
+        """,
+        (url, "/tmp/resume.pdf", now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_material_layout_boxes (
+            job_url, generation, artifact_id, box_index, tenant_id,
+            semantic_id, page_number, line_number, text_excerpt,
+            left_pct, top_pct, width_pct, height_pct, audit_target_json,
+            created_at
+        ) VALUES (?, 1, 'artifact-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)
+        """,
+        (url, "experience:acme:bullet:1", "Cut latency.", now),
+    )
+    record_job_event(conn, url, "tailor", "PdfRendered")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = conn.execute(
+        """
+        SELECT layout_boxes_json
+        FROM artifact_list_projections
+        WHERE tenant_id = 'local' AND artifact_id = 'artifact-pdf'
+        """
+    ).fetchone()
+
+    layout_boxes = json.loads(_row_value(row, "layout_boxes_json", "[]"))
+    assert layout_boxes == [
+        {
+            "semanticId": "experience:acme:bullet:1",
+            "pageNumber": 1,
+            "lineNumber": 6,
+            "textExcerpt": "Cut latency.",
+            "leftPct": 12.5,
+            "topPct": 24.0,
+            "widthPct": 62.0,
+            "heightPct": 2.4,
+        }
+    ]
+
+
 def test_funnel_counts_per_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/funnel"
     _seed_job(conn, url)

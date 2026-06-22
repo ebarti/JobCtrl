@@ -491,6 +491,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
         resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
+        resumePdfLayoutBoxes: [],
         profileSourceFields: [
           {
             path: "personal.full_name",
@@ -563,6 +564,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
         resumeTextArtifactId: "resume-text-1",
         resumePdfArtifactId: "resume-pdf-1",
+        resumePdfLayoutBoxes: [],
         profileSourceFields: [],
         coverLetterText: null,
       },
@@ -768,7 +770,7 @@ export function makeActivityPage(
 }
 
 export function makeArtifactDetail(artifact: ArtifactSummary = sampleArtifact): ArtifactDetail {
-  return { ok: true, artifact, tailoringExplanation: null };
+  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation: null };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {
