@@ -44,10 +44,18 @@ export const JOB_SORT_FIELDS = [
   "discovered_at",
   "title",
   "company",
+  "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
+  "compensation_posted",
+  "compensation_market",
+  "compensation_confidence",
+  "compensation_warnings",
   "location",
   "fit_score",
   "current_stage",
   "current_state",
+  "apply_status",
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
@@ -143,6 +151,15 @@ export const RescoreJobRequestSchema = z
   })
   .strict();
 export type RescoreJobRequest = z.infer<typeof RescoreJobRequestSchema>;
+
+export const RefreshCompensationRequestSchema = z
+  .object({
+    observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
+    includeEuroTopTech: z.boolean().optional(),
+    euroTopTechMaxPages: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+export type RefreshCompensationRequest = z.infer<typeof RefreshCompensationRequestSchema>;
 
 export const BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema = z
   .object({
@@ -1255,6 +1272,8 @@ export interface JobCompensationRangeSummary {
   maximumAmount: number | null;
   annualizedMinimumAmount?: number | null;
   annualizedMaximumAmount?: number | null;
+  annualizedMinimumEur?: number | null;
+  annualizedMaximumEur?: number | null;
   displayRange: string | null;
 }
 
@@ -1279,6 +1298,8 @@ export interface JobMarketCompensationSummary {
   warningCount: number;
   range: JobCompensationRangeSummary | null;
   displayRange: string | null;
+  confidenceInterval: JobCompensationRangeSummary | null;
+  displayConfidenceInterval: string | null;
 }
 
 export interface JobCompensationSummary {
@@ -1902,6 +1923,7 @@ export interface ActionCommandPayload {
     | "retailor_job"
     | "retailor_current_policy"
     | "analyze_job"
+    | "refresh_compensation"
     | "generate_materials"
     | "apply"
     | "cancel"
@@ -1931,6 +1953,9 @@ export interface ActionCommandPayload {
   continuous?: boolean;
   runId?: string;
   reason?: string;
+  observationsJsonPath?: string;
+  includeEuroTopTech?: boolean;
+  euroTopTechMaxPages?: number;
 }
 
 export interface ActionRunResponse {
@@ -2562,6 +2587,8 @@ export const MARKET_COMPENSATION_SOURCE_IDS = [
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "euro_top_tech",
+  "posted_salary_text",
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
 
@@ -2592,6 +2619,7 @@ export type MarketCompensationFactorName = (typeof MARKET_COMPENSATION_FACTOR_NA
 
 export const MARKET_COMPENSATION_WARNING_CODES = [
   "reported_compensation_sample",
+  "posted_salary_sample",
   "source_conflict_with_posted_salary",
   "stale_source_snapshot",
   "low_sample_count",
@@ -2637,13 +2665,36 @@ export interface MarketCompensationFactor {
 export interface MarketCompensationSourceSnapshot {
   sourceId: MarketCompensationSourceId;
   displayName: string;
-  sourceType: "reported_compensation";
+  sourceType: "reported_compensation" | "posted_salary";
   releaseYear: number | null;
   snapshotVersion: string;
   geographyScope: string;
   aggregateBucket: string;
   attribution: string;
   sampleCount: number | null;
+}
+
+export interface MarketCompensationEvidenceRow {
+  sourceId: MarketCompensationSourceId;
+  displayName: string;
+  sourceUrl: string | null;
+  companyName: string;
+  roleTitle: string;
+  location: string | null;
+  levelLabel: string | null;
+  companyTier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
+  component: MarketCompensationComponent;
+  currency: string;
+  period: MarketCompensationPeriod;
+  minimumAmount: number;
+  maximumAmount: number;
+  sampleCount: number | null;
+  releaseYear: number | null;
+  companyScore: number;
+  roleScore: number;
+  levelScore: number;
+  locationScore: number;
+  freshnessScore: number;
 }
 
 interface MarketCompensationEstimateBase {
@@ -2664,9 +2715,16 @@ interface MarketCompensationEstimateBase {
   roleTitle: string | null;
   normalizedRole: string | null;
   companyTier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
-  matchScope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
+  matchScope:
+    | "exact_company_role"
+    | "same_location_role_fallback"
+    | "company_adjacent_role"
+    | "tier_role_fallback"
+    | "market_baseline_fallback"
+    | "none";
   sources: MarketCompensationSourceSnapshot[];
   factors: MarketCompensationFactor[];
+  evidence: MarketCompensationEvidenceRow[];
   warnings: MarketCompensationWarning[];
   estimatorVersion: string;
   estimatedAt: string;
@@ -2694,6 +2752,10 @@ export interface MarketCompensationEstimatedRangeEstimate extends MarketCompensa
   component: MarketCompensationComponent;
   minimumAmount: number;
   maximumAmount: number;
+  confidenceInterval: {
+    minimumAmount: number;
+    maximumAmount: number;
+  };
 }
 
 export type MarketCompensationEstimate =

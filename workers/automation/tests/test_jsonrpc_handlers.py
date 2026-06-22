@@ -10,6 +10,8 @@ import pytest
 
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
+from jobhunter.domain.compensation import ReportedCompensationObservation
+from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobhunter.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -85,6 +87,7 @@ def test_default_handlers_are_registered() -> None:
         "tailor_job",
         "retailor_job",
         "retailor_current_policy",
+        "refresh_compensation",
         "apply",
         "profile_import",
     }
@@ -102,6 +105,494 @@ def test_unknown_method_returns_method_not_found() -> None:
     response = server.dispatch(JsonRpcRequest(method="does_not_exist", id=1))
     assert response is not None
     assert response.to_dict()["error"]["code"] == METHOD_NOT_FOUND
+
+
+def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None:
+    conn = get_connection(tmp_db)
+    selected_url = "https://example.com/jobs/company-metrics"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            selected_url,
+            "Senior Platform Engineer",
+            "Moniepoint",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            (
+                "Through our subsidiaries, Moniepoint Inc. processes over $250 billion "
+                "in digital payment transaction value annually. More than 6 million "
+                "businesses run their financial lives through Moniepoint."
+            ),
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": selected_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["status"] == "succeeded"
+
+    selected_posted = conn.execute(
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
+        (selected_url,),
+    ).fetchone()
+    assert selected_posted["parse_state"] == "missing"
+    assert selected_posted["source_field"] == "jobs.salary"
+    assert selected_posted["minimum_amount"] is None
+    assert selected_posted["maximum_amount"] is None
+
+
+def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> None:
+    conn = get_connection(tmp_db)
+    selected_url = "https://example.com/jobs/remote-prose"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            selected_url,
+            "Senior Platform Engineer",
+            "Acme",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            (
+                "Remote-first role for candidates with potential. "
+                "Spend up to 30 days per year working from another location."
+            ),
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": selected_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+
+    selected_posted = conn.execute(
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
+        (selected_url,),
+    ).fetchone()
+    assert selected_posted["parse_state"] == "missing"
+    assert selected_posted["source_field"] == "jobs.salary"
+    assert selected_posted["minimum_amount"] is None
+    assert selected_posted["maximum_amount"] is None
+
+
+def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
+    conn = get_connection(tmp_db)
+    selected_url = "https://example.com/jobs/platform"
+    other_url = "https://example.com/jobs/other"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            selected_url,
+            "Senior Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            "We build platform tooling. The salary range is €100,000-€130,000/year.",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            other_url,
+            "Staff Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "€90,000-€110,000/year",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    observations_path = tmp_path / "reported-comp.json"
+    observations_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sourceId": "levels.fyi",
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "totalCompensationMin": 118000,
+                    "totalCompensationMax": 142000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 4,
+                },
+                {
+                    "sourceId": "glassdoor",
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "amount": 125000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 3,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    started_workflows: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("unexpected")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "jobUrl": selected_url,
+                "observationsJsonPath": str(observations_path),
+                "includeEuroTopTech": False,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["status"] == "succeeded"
+    assert body["result"]["postedFactsRefreshed"] == 1
+    assert body["result"]["reportedObservationsLoaded"] == 2
+    assert body["result"]["estimatesRefreshed"] == 1
+    assert started_workflows == []
+
+    selected_posted = conn.execute(
+        """
+        SELECT parse_state, source_field, minimum_amount, maximum_amount
+        FROM job_posted_compensation_facts
+        WHERE job_url = ?
+        """,
+        (selected_url,),
+    ).fetchone()
+    other_posted = conn.execute(
+        "SELECT parse_state FROM job_posted_compensation_facts WHERE job_url = ?",
+        (other_url,),
+    ).fetchone()
+    estimate = conn.execute(
+        "SELECT estimate_state, minimum_amount, maximum_amount FROM job_market_compensation_estimates WHERE job_url = ?",
+        (selected_url,),
+    ).fetchone()
+    assert selected_posted["parse_state"] == "parsed_range"
+    assert selected_posted["source_field"] == "jobs.full_description"
+    assert selected_posted["minimum_amount"] == 100_000
+    assert selected_posted["maximum_amount"] == 130_000
+    assert other_posted is None
+    assert estimate["estimate_state"] == "estimated_range"
+    assert estimate["minimum_amount"] == 118_000
+    assert estimate["maximum_amount"] == 142_000
+
+
+def test_refresh_compensation_updates_all_jobs_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
+    conn = get_connection(tmp_db)
+    first_url = "https://example.com/jobs/platform"
+    second_url = "https://example.com/jobs/other"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            first_url,
+            "Senior Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            "We build platform tooling. The salary range is €100,000-€130,000/year.",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            second_url,
+            "Staff Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "€90,000-€110,000/year",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    observations_path = tmp_path / "empty-reported-comp.json"
+    observations_path.write_text("[]", encoding="utf-8")
+
+    started_workflows: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("unexpected")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "allJobs": True,
+                "observationsJsonPath": str(observations_path),
+                "includeEuroTopTech": False,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["status"] == "succeeded"
+    assert body["result"]["jobUrl"] is None
+    assert body["result"]["postedFactsRefreshed"] == 2
+    assert body["result"]["reportedObservationsLoaded"] == 0
+    assert body["result"]["estimatesRefreshed"] == 2
+    assert started_workflows == []
+
+    posted_rows = conn.execute(
+        "SELECT job_url, parse_state FROM job_posted_compensation_facts ORDER BY job_url",
+    ).fetchall()
+    estimate_rows = conn.execute(
+        "SELECT job_url, estimate_state FROM job_market_compensation_estimates ORDER BY job_url",
+    ).fetchall()
+    assert [row["job_url"] for row in posted_rows] == sorted([first_url, second_url])
+    assert [row["parse_state"] for row in posted_rows] == ["parsed_range", "parsed_range"]
+    assert [row["job_url"] for row in estimate_rows] == sorted([first_url, second_url])
+    assert [row["estimate_state"] for row in estimate_rows] == ["estimated_range", "estimated_range"]
+
+
+def test_refresh_compensation_without_observations_uses_euro_top_tech_and_updates_market(
+    tmp_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/jobs/staff-engineer"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Staff Software Engineer",
+            "Acme AI",
+            "Barcelona, Spain",
+            "",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+        assert max_pages == 10
+        return (
+            ReportedCompensationObservation(
+                source_id="euro_top_tech",
+                company_name="Airbnb",
+                role_title="Staff Software Engineer",
+                minimum_amount=242_000,
+                maximum_amount=242_000,
+                component="total_compensation",
+                location="Barcelona, Spain",
+                level_label="Staff / Engineering Manager",
+                sample_count=1,
+                attribution="Euro Top Tech public crowdsourced compensation data",
+            ),
+        )
+
+    monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "jobUrl": job_url,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["reportedObservationsLoaded"] == 1
+    assert body["result"]["localReportedObservationsLoaded"] == 0
+    assert body["result"]["euroTopTechObservationsLoaded"] == 1
+    assert body["result"]["marketRefreshSkipped"] is False
+    estimate = conn.execute(
+        """
+        SELECT estimate_state, minimum_amount, maximum_amount, component, match_scope, source_snapshot_json
+        FROM job_market_compensation_estimates WHERE job_url = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert estimate["estimate_state"] == "estimated_range"
+    assert estimate["minimum_amount"] == 242_000
+    assert estimate["maximum_amount"] == 242_000
+    assert estimate["component"] == "total_compensation"
+    assert estimate["match_scope"] == "same_location_role_fallback"
+    assert "euro_top_tech" in estimate["source_snapshot_json"]
+
+
+def test_refresh_compensation_loads_all_configured_sources_by_default(
+    tmp_db: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/jobs/platform"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Senior Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    levels_path = tmp_path / "levels.json"
+    levels_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "totalCompensationMin": 118000,
+                    "totalCompensationMax": 142000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 4,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    glassdoor_path = tmp_path / "glassdoor.json"
+    glassdoor_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "amount": 125000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_ACCESS_MODE", "licensed_data_feed")
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE", "true")
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
+    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_ACCESS_MODE", "written_permission")
+    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
+
+    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+        return (
+            ReportedCompensationObservation(
+                source_id="euro_top_tech",
+                company_name="Acme AI",
+                role_title="Senior Platform Engineer",
+                minimum_amount=160_000,
+                maximum_amount=160_000,
+                component="total_compensation",
+                location="Berlin, Germany",
+                level_label="Senior",
+                company_tier="tier_2_ambitious",
+                sample_count=1,
+                attribution="Euro Top Tech public crowdsourced compensation data",
+            ),
+        )
+
+    monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": job_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["reportedObservationsLoaded"] == 3
+    assert body["result"]["licensedReportedObservationsLoaded"] == 2
+    assert body["result"]["levelsFyiObservationsLoaded"] == 1
+    assert body["result"]["glassdoorObservationsLoaded"] == 1
+    assert body["result"]["euroTopTechObservationsLoaded"] == 1
+    estimate = conn.execute(
+        """
+        SELECT minimum_amount, maximum_amount, source_snapshot_json
+        FROM job_market_compensation_estimates WHERE job_url = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert estimate["minimum_amount"] == 118_000
+    assert estimate["maximum_amount"] == 160_000
+    source_ids = {item["source_id"] for item in json.loads(estimate["source_snapshot_json"])}
+    assert source_ids == {"levels_fyi", "glassdoor", "euro_top_tech"}
 
 
 # ---------------------------------------------------------------------------

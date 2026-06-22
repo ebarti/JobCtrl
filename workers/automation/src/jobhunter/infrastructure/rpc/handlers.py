@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from jobhunter.actions import LocalActionRequest, run_local_action
@@ -314,6 +316,97 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
+    """Refresh compensation facts without running a pipeline."""
+    tenant_id = _tenant_id(params)
+    job_url_param = params.get("jobUrl")
+    all_jobs = params.get("allJobs") is True
+    if job_url_param and all_jobs:
+        raise invalid_params("provide exactly one of jobUrl or allJobs")
+    if not job_url_param and not all_jobs:
+        raise invalid_params("provide exactly one of jobUrl or allJobs")
+    job_url = str(job_url_param) if job_url_param else None
+
+    from jobhunter.infrastructure.compensation import (
+        SqliteMarketCompensationRepository,
+        SqlitePostedCompensationRepository,
+        load_default_reported_compensation_observations,
+        posted_compensation_source_from_job,
+    )
+    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    conn = get_connection()
+    refreshed_at = datetime.now(timezone.utc).isoformat()
+    posted_repository = SqlitePostedCompensationRepository(conn)
+    if job_url:
+        row = conn.execute(
+            "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
+            (job_url,),
+        ).fetchone()
+        if row is None:
+            raise invalid_params(f"unknown jobUrl: {job_url}")
+        source_text, source_field = posted_compensation_source_from_job(row)
+        posted_repository.parse_and_save_job_salary(
+            job_url,
+            source_text,
+            tenant_id=tenant_id,
+            source_field=source_field,
+            parsed_at=refreshed_at,
+        )
+        posted_count = 1
+    else:
+        posted_count = posted_repository.backfill_from_legacy_jobs(
+            tenant_id=tenant_id,
+            parsed_at=refreshed_at,
+        )
+
+    include_eurotoptech_param = params.get("includeEuroTopTech")
+    include_eurotoptech = bool(include_eurotoptech_param) if include_eurotoptech_param is not None else True
+    observations_path = params.get("observationsJsonPath")
+    observation_file = Path(str(observations_path)) if observations_path else None
+    if observation_file is not None and not observation_file.exists():
+        raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
+    try:
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observation_file,
+            include_eurotoptech=include_eurotoptech,
+            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
+        )
+    except Exception as exc:  # noqa: BLE001 - manual refresh should degrade to local evidence
+        logger.warning("Reported compensation sources could not be fully loaded: %s", exc)
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observation_file,
+            include_eurotoptech=False,
+            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
+        )
+
+    observations = source_load.observations
+    estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
+        observations,
+        tenant_id=tenant_id,
+        estimated_at=refreshed_at,
+        limit=1 if job_url else 0,
+        job_url=job_url,
+    )
+
+    ProjectionBuilder(conn_factory=get_connection).refresh()
+    return {
+        "ok": True,
+        "status": "succeeded",
+        "jobUrl": job_url,
+        "postedFactsRefreshed": posted_count,
+        "reportedObservationsLoaded": len(observations),
+        "localReportedObservationsLoaded": source_load.local_count,
+        "licensedReportedObservationsLoaded": source_load.licensed_count,
+        "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
+        "glassdoorObservationsLoaded": source_load.glassdoor_count,
+        "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
+        "estimatesRefreshed": estimate_count,
+        "marketRefreshSkipped": False,
+        "tenantId": tenant_id,
+    }
+
+
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
     return _pipeline_workflow_spec(
         params,
@@ -458,6 +551,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # Standalone employer-analysis trigger (D-10) — synchronous; runs the
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
+    server.register("refresh_compensation", refresh_compensation, mode="sync")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

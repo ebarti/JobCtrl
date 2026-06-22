@@ -62,6 +62,7 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RefreshCompensationRequest,
   RoleMatchFeedbackDecisionRequest,
   RoleMatchFeedbackDecisionResponse,
   RoleMatchFeedbackListResponse,
@@ -187,6 +188,14 @@ export class JobHunterApiClient {
 
   marketCompensationEstimate(jobKey: string): Promise<MarketCompensationEstimateResponse> {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`);
+  }
+
+  refreshCompensation(jobKey: string, body: RefreshCompensationRequest = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/refresh-compensation`, body);
+  }
+
+  refreshAllCompensation(body: RefreshCompensationRequest = {}): Promise<ActionRunResponse> {
+    return this.post("/v1/jobs/actions/refresh-compensation", body);
   }
 
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {

@@ -218,16 +218,19 @@ provider payloads, private-account state, local paths, scraped salary data, or
 salary observations.
 
 The endpoint is deterministic and network-free. It does not fetch, scrape,
-cache, or return raw provider payloads. It lists posted salary text, Levels.fyi,
-Glassdoor, and the temporary manual reported-compensation import as safe policy
-entries. Levels.fyi automated access remains unavailable unless
+cache, or return raw provider payloads. It lists posted salary text, Euro Top
+Tech, Levels.fyi, Glassdoor, and the temporary manual reported-compensation
+import as safe policy entries. Levels.fyi automated access remains unavailable unless
 `JOBHUNTER_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
 `enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
 Glassdoor automated access remains unavailable unless
 `JOBHUNTER_GLASSDOOR_ACCESS_MODE` is `partner_api` or `written_permission`.
-Exported, licensed, or otherwise permitted reported rows can be supplied locally
-to `jobhunter compensation-refresh --observations-json`; the source registry
-does not expose secrets or row contents.
+When available, refresh paths automatically load licensed Levels.fyi rows from
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL`. JSON and CSV feeds are accepted. The
+source registry does not expose secrets, row contents, local paths, or feed URLs.
 
 `GET /v1/jobs/:jobKey/compensation/posted` returns the Phase 18 read-only
 inspection contract for canonical posted-compensation facts. The endpoint reads
@@ -249,8 +252,19 @@ The projection-backed `/v1/jobs` and `/v1/jobs/:key` responses now include
 detail response also includes top-level `compensationAudit`, which keeps
 `posted` and `market` inspection payloads separate. The legacy raw
 `JobSummary.salary` string remains present for compatibility. Compensation
-summary/audit data does not change fit score, sorting, filtering, apply
-readiness, apply-review handoff, or apply mutation behavior.
+summary/audit data does not change fit score, apply readiness, apply-review
+handoff, or apply mutation behavior. The Jobs list exposes dedicated sortable
+and filterable scan columns for posted salary minimum and maximum normalized to
+EUR/year, reported market estimate, market confidence, and compensation
+warnings; these sort through `compensation_min_eur`,
+`compensation_max_eur`, `compensation_market`, `compensation_confidence`, and
+`compensation_warnings` alongside the existing sortable job columns. The Salary
+min, Salary max, and Market headers carry the `EUR/year` unit so row values stay
+compact. The legacy `compensation_posted` sort remains accepted as a
+compatibility alias for the posted minimum. Currency normalization is a
+projection concern: supported parsed currencies are converted to EUR/year;
+unsupported or missing currencies leave the normalized min/max empty instead of
+guessing.
 
 `GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
 inspection contract for canonical company-role reported compensation estimate
@@ -266,27 +280,60 @@ Recorded market estimates expose one explicit state: `unsupported`,
 fields are present only for `estimated_range`. Non-range states carry
 inspectable reasons, confidence factors, safe source snapshots, and warnings
 instead of nullable precision. Phase 19 source scope is reported compensation
-evidence keyed by company and role: Levels.fyi, Glassdoor, and manual local
-reported-compensation imports. The estimate includes company name, normalized
-company, role title, normalized role, match scope, total compensation component,
-source count, sample count, confidence factors, and trimodal company-tier
-context. Raw benchmark pages, credentials, private account payloads, local
-paths, and user compensation preferences are not returned.
+evidence keyed by company and role: Euro Top Tech public community-reported
+rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
+estimate includes company name, normalized company, role title, normalized role,
+match scope, total compensation component, source count, sample count,
+confidence factors, selected evidence rows, and trimodal company-tier context.
+Selected evidence rows are the sanitized reported observations used to choose
+the range, including source id/display name, company, role, location, level,
+component, EUR/year range, sample count, release year, source URL when the
+observation has a safe public URL, and match scores. Raw benchmark pages,
+credentials, private account payloads, local paths, unsafe/private URLs, and
+user compensation preferences are not returned.
 
-Temporary write trigger: `jobhunter compensation-refresh --observations-json
-<file>` reparses posted salary facts from existing jobs, imports permitted
-reported compensation observations, estimates matching existing jobs, and
-refreshes projections without running discovery, scoring, tailoring, cover, or
-apply automation. `--url <job-url>` narrows the refresh to one existing job.
+Temporary write trigger: `jobhunter compensation-refresh` reparses posted salary
+facts from existing `jobs.salary` values and description compensation text,
+imports all configured reported compensation observations, estimates matching
+existing jobs, and refreshes projections without running discovery, scoring,
+tailoring, cover, or apply automation. Explicit `--observations-json <file>`
+imports are additive with configured Levels.fyi feeds, configured Glassdoor
+feeds, and public Euro Top Tech rows. When reported evidence does not match, the
+estimator falls back to employer-posted salary facts already captured by
+JobHunter as low-confidence posted-salary evidence. It falls back through same company/role,
+same-location role, same-company adjacent-role, trimodal company-tier, and broad
+market-baseline tiers so sparse real evidence still produces a best estimate
+with a wider confidence interval. Fallback matching is seniority-aware, so
+executive CTO/VP roles do not reuse staff, principal, or director observations
+unless the selected source row is also executive-level. It does not label those rows as Levels.fyi,
+Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
+source actually contributed observations. `--url <job-url>` narrows the refresh
+to one existing job.
+
+Manual web/API triggers: `POST
+/v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
+compensation refresh through the local worker for one existing job, while `POST
+/v1/jobs/actions/refresh-compensation` refreshes every existing job. Both paths
+avoid rerunning discovery, scoring, tailoring, cover, or apply automation. The
+request body may include `{ "observationsJsonPath": "/path/to/export.json" }`
+to import additional reported-compensation observations before estimating market
+evidence, or `{ "includeEuroTopTech": false }` to disable only the public Euro
+Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
+default. When no reported source matches, the estimator still falls back to the
+selected job's captured employer-posted salary facts when they can be safely annualized or when
+high-value base-salary text can be treated as annual evidence without using
+bonus-only or one-sided rows. The response is the standard action response with
+a synchronous `succeeded` result when the local JSON-RPC handler completes.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
 summary carries range, market confidence band/score, source count, sample count,
 and warning count for list surfaces; detail audit carries the source trail,
-confidence factors, warnings, and reasons. The web Jobs table, expanded job
-drawer, and Apply Review render these persisted fields without parsing salary
-text in React. This projection and rendering do not change fit score, sorting,
-filtering, apply readiness, apply-review handoff, or apply mutation behavior.
+selected evidence rows with safe source URLs, confidence factors, warnings, and
+reasons. The web Jobs
+table, expanded job drawer, and Apply Review render these persisted fields
+without parsing salary text in React. This projection and rendering do not change fit score, apply
+readiness, apply-review handoff, or apply mutation behavior.
 
 When Python compensation repositories save posted facts or market estimates,
 they append `CompensationFactsUpdated` to `job_events`. The SSE payload contains

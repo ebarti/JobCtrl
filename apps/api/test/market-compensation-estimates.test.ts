@@ -75,6 +75,7 @@ function createEstimateTable(db: Database.Database): void {
       seniority_label TEXT,
       source_snapshot_json TEXT NOT NULL DEFAULT '[]',
       factor_reasons_json TEXT NOT NULL DEFAULT '[]',
+      selected_evidence_json TEXT NOT NULL DEFAULT '[]',
       insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
       unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
       source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
@@ -117,6 +118,7 @@ function insertEstimate(
     matchScope: string;
     sources: unknown[];
     factors: unknown[];
+    evidence: unknown[];
     insufficientReasons: string[];
     unsupportedReasons: string[];
     sourceUnavailableReasons: string[];
@@ -130,10 +132,10 @@ function insertEstimate(
       tenant_id, job_url, estimate_state, currency, period, component, minimum_amount, maximum_amount,
       confidence_band, confidence_score, source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json, factor_reasons_json,
-      insufficient_reasons_json, unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
+      selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
       estimator_version, estimated_at, company_name, normalized_company, role_title, normalized_role,
       company_tier, match_scope
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
     jobUrl,
@@ -182,6 +184,31 @@ function insertEstimate(
       values.factors ?? [
         { name: "company", score: 1, band: "high", reason: "Company matched Acme AI." },
         { name: "role", score: 1, band: "high", reason: "Role matched Senior Platform Engineer." },
+      ],
+    ),
+    JSON.stringify(
+      values.evidence ?? [
+        {
+          source_id: "levels_fyi",
+          source_url: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+          company_name: values.companyName ?? "Acme AI",
+          role_title: values.roleTitle ?? "Senior Platform Engineer",
+          location: "Europe",
+          level_label: "senior",
+          company_tier: values.companyTier ?? "tier_2_ambitious",
+          component: "total_compensation",
+          currency: "EUR",
+          period: "year",
+          minimum_amount: values.minimumAmount === undefined ? 112_000 : values.minimumAmount,
+          maximum_amount: values.maximumAmount === undefined ? 142_000 : values.maximumAmount,
+          sample_count: values.sampleCount ?? 4,
+          release_year: 2026,
+          company_score: 1,
+          role_score: 0.96,
+          level_score: 0.95,
+          location_score: 0.78,
+          freshness_score: 0.95,
+        },
       ],
     ),
     JSON.stringify(values.insufficientReasons ?? []),
@@ -326,6 +353,20 @@ describe("market compensation estimates API", () => {
       );
       expect(body.estimate.factors.map((factor) => factor.name)).toEqual(
         expect.arrayContaining(["company", "role", "trimodal_tier"]),
+      );
+      expect(body.estimate.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceId: "levels_fyi",
+            sourceUrl: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+            companyName: "Trimodal Labs",
+            roleTitle: "Senior Platform Engineer",
+            minimumAmount: 168_000,
+            maximumAmount: 190_000,
+            companyScore: 1,
+            roleScore: 0.96,
+          }),
+        ]),
       );
       expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["levels_fyi", "glassdoor"]);
       const serialized = JSON.stringify(body).toLowerCase();
@@ -579,7 +620,33 @@ describe("market compensation estimates API", () => {
       unsupportedReasons: ["unsupported_source", "unknown_reason"],
       aggregateBucket: "private page",
       geographyScope: "/Users/private",
-      factors: [{ name: "company", score: 1, band: "high", reason: "private /Users/local credential" }],
+      factors: [
+        { name: "company", score: 1, band: "high", reason: "private /Users/local credential" },
+        { name: "sample", score: 0.5, band: "low", reason: "Reported compensation sample count: 1." },
+      ],
+      evidence: [
+        {
+          source_id: "levels_fyi",
+          source_url: "https://levels.example/private?token=secret",
+          company_name: "private /Users/local credential",
+          role_title: "Senior Platform Engineer",
+          location: "file:///Users/local/private",
+          level_label: "senior",
+          company_tier: "tier_2_ambitious",
+          component: "total_compensation",
+          currency: "EUR",
+          period: "year",
+          minimum_amount: 112_000,
+          maximum_amount: 142_000,
+          sample_count: 4,
+          release_year: 2026,
+          company_score: 1,
+          role_score: 0.96,
+          level_score: 0.95,
+          location_score: 0.78,
+          freshness_score: 0.95,
+        },
+      ],
     });
     try {
       const response = await app.inject({
@@ -608,6 +675,13 @@ describe("market compensation estimates API", () => {
       expect(body.estimate.factors[0]?.reason).toBe(
         "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
       );
+      expect(body.estimate.factors[1]?.reason).toBe("Reported compensation sample count: 1.");
+      expect(body.estimate.evidence[0]).toMatchObject({
+        sourceUrl: null,
+        companyName: "unknown company",
+        roleTitle: "Senior Platform Engineer",
+        location: null,
+      });
     } finally {
       await app.close();
       cleanup();

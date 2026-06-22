@@ -382,6 +382,14 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
             "RENAME TO job_market_compensation_estimates_public_legacy"
         )
         conn.commit()
+        existing_table = None
+
+    rebuild_table: str | None = None
+    if existing_table is not None and "market_baseline_fallback" not in str(existing_table["sql"]):
+        rebuild_table = "job_market_compensation_estimates_scope_legacy"
+        conn.execute(f"DROP TABLE IF EXISTS {rebuild_table}")
+        conn.execute(f"ALTER TABLE job_market_compensation_estimates RENAME TO {rebuild_table}")
+        conn.commit()
 
     conn.execute(
         """
@@ -398,6 +406,8 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
             ),
             minimum_amount                    INTEGER,
             maximum_amount                    INTEGER,
+            confidence_interval_minimum_amount INTEGER,
+            confidence_interval_maximum_amount INTEGER,
             confidence_band                   TEXT NOT NULL DEFAULT 'none' CHECK (
                 confidence_band IN ('none', 'low', 'medium', 'high')
             ),
@@ -411,6 +421,7 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
             seniority_label                   TEXT,
             source_snapshot_json              TEXT NOT NULL DEFAULT '[]',
             factor_reasons_json               TEXT NOT NULL DEFAULT '[]',
+            selected_evidence_json            TEXT NOT NULL DEFAULT '[]',
             insufficient_reasons_json         TEXT NOT NULL DEFAULT '[]',
             unsupported_reasons_json          TEXT NOT NULL DEFAULT '[]',
             source_unavailable_reasons_json   TEXT NOT NULL DEFAULT '[]',
@@ -425,16 +436,36 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
                 company_tier IN ('tier_1_local', 'tier_2_ambitious', 'tier_3_top_of_market', 'unknown')
             ),
             match_scope                       TEXT NOT NULL DEFAULT 'none' CHECK (
-                match_scope IN ('exact_company_role', 'company_adjacent_role', 'tier_role_fallback', 'none')
+                match_scope IN (
+                    'exact_company_role',
+                    'same_location_role_fallback',
+                    'company_adjacent_role',
+                    'tier_role_fallback',
+                    'market_baseline_fallback',
+                    'none'
+                )
             ),
             PRIMARY KEY (tenant_id, job_url),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
         """
     )
+    if rebuild_table is not None:
+        old_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({rebuild_table})").fetchall()}
+        new_cols = [row[1] for row in conn.execute("PRAGMA table_info(job_market_compensation_estimates)").fetchall()]
+        copied_cols = [col for col in new_cols if col in old_cols]
+        if copied_cols:
+            col_sql = ", ".join(copied_cols)
+            conn.execute(
+                f"INSERT OR REPLACE INTO job_market_compensation_estimates ({col_sql}) SELECT {col_sql} FROM {rebuild_table}"
+            )
+        conn.execute(f"DROP TABLE IF EXISTS {rebuild_table}")
     existing = {row[1] for row in conn.execute("PRAGMA table_info(job_market_compensation_estimates)").fetchall()}
     added = []
     for col, dtype in {
+        "confidence_interval_minimum_amount": "INTEGER",
+        "confidence_interval_maximum_amount": "INTEGER",
+        "selected_evidence_json": "TEXT NOT NULL DEFAULT '[]'",
         "company_name": "TEXT",
         "normalized_company": "TEXT",
         "role_title": "TEXT",

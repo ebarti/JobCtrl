@@ -59,6 +59,7 @@ describe("compensation source policy", () => {
         "levels_fyi",
         "glassdoor",
         "manual_reported_compensation",
+        "euro_top_tech",
       ]);
       expect(source(body, "manual_reported_compensation")).toMatchObject({
         sourceType: "reported_compensation",
@@ -72,6 +73,13 @@ describe("compensation source policy", () => {
         sourceType: "posted_salary",
         accessMode: "local_posting_text",
         availability: "available",
+      });
+      expect(source(body, "euro_top_tech")).toMatchObject({
+        sourceType: "reported_compensation",
+        accessMode: "public_dataset",
+        availability: "available",
+        licenseStatus: "not_required",
+        sourceUrl: "https://www.eurotoptech.com/data",
       });
       for (const entry of body.sources) {
         expect(entry.displayName).toBeTruthy();

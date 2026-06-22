@@ -200,6 +200,41 @@ describe("<JobDetailDrawer>", () => {
     ).not.toHaveTextContent(/compensation|salary|source conflict/i);
   });
 
+  it("posts a focused compensation refresh from the compensation evidence section", async () => {
+    const user = userEvent.setup();
+    const calls: unknown[] = [];
+
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleSecondaryJob,
+              jobKey: String(params["jobKey"]),
+              compensationSummary: sampleCompensationSummary,
+            },
+            { compensationAudit: sampleCompensationAudit },
+          ),
+        ),
+      ),
+      http.post("*/v1/jobs/:jobKey/actions/refresh-compensation", async ({ request }) => {
+        calls.push(await request.json());
+        return HttpResponse.json({
+          ok: true,
+          action: "refresh_compensation",
+          status: "succeeded",
+          command: { action: "refresh_compensation", jobKey: "https://example.com/jobs/1" },
+        });
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await user.click(await screen.findByRole("button", { name: "refresh compensation" }));
+
+    await waitFor(() => expect(calls).toEqual([{}]));
+  });
+
   it("summarizes ranking, readiness, blockers, eligibility, and Apply Review handoff", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
@@ -345,11 +380,22 @@ describe("<JobDetailDrawer>", () => {
     expect(within(compensation).getAllByText(/7 samples/i).length).toBeGreaterThan(0);
     expect(within(compensation).getByText("Posted Salary")).toBeInTheDocument();
     expect(within(compensation).getByText("Reported Company-Role Market")).toBeInTheDocument();
-    expect(within(compensation).getByText("Levels.fyi")).toBeInTheDocument();
+    expect(within(compensation).getAllByText("Levels.fyi").length).toBeGreaterThan(0);
     expect(within(compensation).getByText("Glassdoor")).toBeInTheDocument();
     expect(within(compensation).getByText("exact company role")).toBeInTheDocument();
     expect(within(compensation).getByText("Confidence factors")).toBeInTheDocument();
     expect(within(compensation).getByText("Reported rows match Globex directly.")).toBeInTheDocument();
+    const evidenceSummary = within(compensation).getByText("Evidence rows");
+    const evidenceDisclosure = evidenceSummary.closest("details");
+    expect(evidenceDisclosure).not.toBeNull();
+    expect(evidenceDisclosure).not.toHaveAttribute("open");
+    expect(within(evidenceDisclosure as HTMLElement).getByText("1 row")).toBeInTheDocument();
+    expect(within(evidenceDisclosure as HTMLElement).getByText("Principal Platform Engineer")).toBeInTheDocument();
+    expect(within(evidenceDisclosure as HTMLElement).getByText("EUR 112,000-142,000/year")).toBeInTheDocument();
+    expect(within(evidenceDisclosure as HTMLElement).getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "https://www.levels.fyi/companies/globex/salaries/software-engineer",
+    );
   });
 
   it("shows employer requirements beside canonical requirement fit evidence", async () => {

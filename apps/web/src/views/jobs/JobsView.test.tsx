@@ -105,7 +105,8 @@ function rowForTitle(title: string): HTMLElement {
 }
 
 describe("<JobsView> compensation source-conflict visibility", () => {
-  it("shows source-conflict warning count without sort or query behavior", async () => {
+  it("shows salary min/max, market, and warning scan columns with every data column sortable", async () => {
+    const user = userEvent.setup();
     const compensationSummary = {
       ...sampleCompensationSummary,
       warningCount: 2,
@@ -136,20 +137,63 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Source Conflict Role")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Compensation" })).toBeInTheDocument();
+    expect(screen.getByText("Salary min (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Salary max (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Market (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Confidence")).toBeInTheDocument();
+    expect(screen.getByText("Warnings")).toBeInTheDocument();
     const row = within(rowForTitle("Source Conflict Role"));
-    expect(row.getByText("EUR 112000-142000/year")).toBeInTheDocument();
-    expect(row.getByText(/market confidence medium/)).toBeInTheDocument();
+    expect(row.getByText("70,000")).toBeInTheDocument();
+    expect(row.getByText("90,000")).toBeInTheDocument();
+    expect(row.getByText("112,000-142,000")).toBeInTheDocument();
+    expect(row.getByText("Medium")).toBeInTheDocument();
+    expect(row.getByText("74%")).toBeInTheDocument();
     expect(row.getByText(/2 sources/)).toBeInTheDocument();
     expect(row.getByText("2 warnings")).toBeInTheDocument();
 
-    expect(screen.queryByRole("button", { name: /sort by Compensation/i })).not.toBeInTheDocument();
-    expect(JSON.stringify(router.state.location.search)).not.toMatch(/compensation|posted|market|warning/i);
-    expect(JSON.stringify(jobs.mock.calls[0]?.[0] ?? {})).not.toMatch(/compensation|posted|market|warning/i);
+    for (const label of [
+      "Fit score",
+      "Title",
+      "Company",
+      "Sources",
+      "Salary min (€ / year)",
+      "Salary max (€ / year)",
+      "Market (€ / year)",
+      "Confidence",
+      "Warnings",
+      "Location",
+      "Stage",
+      "State",
+      "Discovered",
+      "Apply",
+    ]) {
+      const name = label === "Discovered" ? /^Sort by Discovered/ : `Sort by ${label}`;
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({
       sort: "discovered_at",
       dir: "desc",
     });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Salary min (€ / year)" }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_min_eur", dir: "asc" })),
+    );
+    expect(router.state.location.search).toMatchObject({
+      sort: "compensation_min_eur",
+      dir: "asc",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Salary max (€ / year)" }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_max_eur", dir: "asc" })),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sort by Confidence" }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_confidence", dir: "asc" })),
+    );
   });
 });
 

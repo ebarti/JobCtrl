@@ -29,6 +29,7 @@ def _levels(
         sample_count=sample_count,
         release_year=release_year,
         attribution="Levels.fyi reported compensation data",
+        source_url="https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
     )
 
 
@@ -54,6 +55,57 @@ def _glassdoor(
         maximum_amount=maximum,
         sample_count=sample_count,
         attribution="Glassdoor reported compensation data",
+        source_url="https://www.glassdoor.com/Salary/Acme-AI-Senior-Software-Engineer-Salaries.htm",
+    )
+
+
+def _euro_top_tech(
+    *,
+    company: str = "Euro Top Tech community",
+    role: str = "Chief Product Officer",
+    minimum: int = 315_000,
+    maximum: int = 315_000,
+    level: str = "Executive",
+    location: str = "Amsterdam, Netherlands",
+    sample_count: int = 1,
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="euro_top_tech",
+        company_name=company,
+        role_title=role,
+        level_label=level,
+        company_tier="unknown",
+        location=location,
+        minimum_amount=minimum,
+        maximum_amount=maximum,
+        sample_count=sample_count,
+        attribution="Euro Top Tech public crowdsourced compensation data",
+        source_url="https://www.eurotoptech.com/data",
+    )
+
+
+def _posted_salary(
+    *,
+    company: str = "Novartis",
+    role: str = "Director Digital Trust Platforms",
+    minimum: int = 84_400,
+    maximum: int = 156_800,
+    location: str = "Barcelona, Spain",
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="posted_salary_text",
+        company_name=company,
+        role_title=role,
+        level_label=None,
+        company_tier="unknown",
+        location=location,
+        minimum_amount=minimum,
+        maximum_amount=maximum,
+        currency="EUR",
+        period="year",
+        component="base_salary",
+        sample_count=1,
+        attribution="Employer-posted salary text captured by JobHunter",
     )
 
 
@@ -74,6 +126,10 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
     assert estimate.currency == "EUR"
     assert estimate.minimum_amount == 112_000
     assert estimate.maximum_amount == 142_000
+    assert estimate.confidence_interval_minimum_amount is not None
+    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
+    assert estimate.confidence_interval_maximum_amount is not None
+    assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
     assert estimate.company_name == "Acme AI Ltd."
     assert estimate.normalized_company == "acme ai"
     assert estimate.normalized_role == "platform engineer"
@@ -82,8 +138,63 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
     assert estimate.source_count == 2
     assert estimate.sample_count == 7
     assert {source.source_id for source in estimate.sources} == {"levels_fyi", "glassdoor"}
+    assert len(estimate.evidence) == 2
+    evidence_ranges = {(row.minimum_amount, row.maximum_amount) for row in estimate.evidence}
+    assert evidence_ranges == {(118_000, 142_000), (112_000, 136_000)}
+    assert {row.company_name for row in estimate.evidence} == {"Acme AI"}
+    assert {row.role_title for row in estimate.evidence} == {"Senior Platform Engineer"}
+    assert {row.source_url for row in estimate.evidence} == {
+        "https://www.glassdoor.com/Salary/Acme-AI-Senior-Software-Engineer-Salaries.htm",
+        "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+    }
+    assert all(row.company_score == 1 for row in estimate.evidence)
+    assert all(row.role_score >= 0.95 for row in estimate.evidence)
     assert "reported_compensation_sample" in estimate.warnings
     assert "company_role_fallback" not in estimate.warnings
+
+
+def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/cto",
+        company="Different Company",
+        title="CTO (Chief Technology Officer)",
+        location="Spain (Remote)",
+        observations=(
+            _euro_top_tech(role="Chief Product Officer", minimum=315_000, maximum=315_000),
+            _euro_top_tech(company="US based startup", role="COO", minimum=175_000, maximum=175_000, location="Prague, Czechia"),
+            _euro_top_tech(role="Staff Software Engineer", level="Staff / Engineering Manager", minimum=147_000, maximum=147_000),
+            _euro_top_tech(role="Principal / Director Software Engineer", level="Principal / Director", minimum=350_000, maximum=350_000),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "market_baseline_fallback"
+    assert estimate.seniority_label == "executive"
+    assert estimate.minimum_amount == 175_000
+    assert estimate.maximum_amount == 315_000
+    assert estimate.confidence_band == "low"
+    assert "company_role_fallback" in estimate.warnings
+
+
+def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/cto-posted",
+        company="Different Company",
+        title="Chief Technology Officer (CTO)",
+        location="Spain (Remote)",
+        observations=(
+            _posted_salary(role="Director Digital Trust Platforms", minimum=84_400, maximum=156_800),
+            _posted_salary(role="Principal Engineer", minimum=80_000, maximum=100_000),
+            _posted_salary(role="Staff Software Engineer", minimum=120_000, maximum=120_000),
+        ),
+        component="base_salary",
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
 
 
 def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:
@@ -154,7 +265,7 @@ def test_infers_trimodal_tier_from_reported_compensation_midpoint() -> None:
     assert any(factor.name == "trimodal_tier" for factor in estimate.factors)
 
 
-def test_weak_market_factors_degrade_confidence_without_precise_range() -> None:
+def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -> None:
     low_sample = estimate_market_compensation(
         job_url="https://example.com/jobs/low-sample",
         company="Acme AI",
@@ -201,27 +312,27 @@ def test_weak_market_factors_degrade_confidence_without_precise_range() -> None:
     )
 
     for estimate in (low_sample, weak_level, weak_location, source_dispersion):
-        assert estimate.estimate_state == "insufficient_evidence"
-        assert estimate.confidence_band in {"none", "low"}
-        assert estimate.minimum_amount is None
-        assert estimate.maximum_amount is None
+        assert estimate.estimate_state == "estimated_range"
+        assert estimate.confidence_band == "low"
+        assert estimate.minimum_amount is not None
+        assert estimate.maximum_amount is not None
+        assert estimate.confidence_interval_minimum_amount is not None
+        assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
+        assert estimate.confidence_interval_maximum_amount is not None
+        assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
 
     assert "low_sample_count" in low_sample.warnings
-    assert "low_sample_count" in low_sample.insufficient_reasons
     assert any(factor.name == "sample" for factor in low_sample.factors)
 
-    assert "weak_level_match" in weak_level.insufficient_reasons
     assert any(factor.name == "level" for factor in weak_level.factors)
 
     assert "location_mismatch" in weak_location.warnings
-    assert "weak_location_match" in weak_location.insufficient_reasons
     assert any(factor.name == "location" for factor in weak_location.factors)
 
-    assert "source_dispersion_too_high" in source_dispersion.insufficient_reasons
     assert any(factor.name == "agreement" for factor in source_dispersion.factors)
 
 
-def test_company_role_observations_are_required_before_estimating() -> None:
+def test_same_location_role_fallback_estimates_when_company_role_is_missing() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/missing",
         company="Different Company",
@@ -231,10 +342,14 @@ def test_company_role_observations_are_required_before_estimating() -> None:
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-    assert "missing_reported_observation" in estimate.insufficient_reasons
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "same_location_role_fallback"
+    assert estimate.minimum_amount == 112_000
+    assert estimate.maximum_amount == 142_000
+    assert estimate.confidence_band == "low"
+    assert estimate.confidence_interval_minimum_amount is not None
+    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
+    assert "company_role_fallback" in estimate.warnings
 
 
 def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:

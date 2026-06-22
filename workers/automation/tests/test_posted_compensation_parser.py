@@ -24,6 +24,42 @@ def test_unparseable_salary_preserves_raw_fallback_and_warning() -> None:
     assert fact.minimum_amount is None
 
 
+def test_company_metric_amounts_are_not_posted_compensation() -> None:
+    fact = parse_posted_compensation(
+        (
+            "Through our subsidiaries, Moniepoint Inc. processes over $250 billion "
+            "in digital payment transaction value annually. More than 6 million "
+            "businesses run their financial lives through Moniepoint."
+        ),
+        job_url="job-1",
+        source_field="jobs.full_description",
+        parsed_at="2026-06-19T10:00:00Z",
+    )
+
+    assert fact.parse_state == "unparseable"
+    assert fact.minimum_amount is None
+    assert fact.maximum_amount is None
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount is None
+    assert "no_amount_found" in fact.warnings
+
+
+def test_small_benefit_counts_are_not_salary_amounts() -> None:
+    fact = parse_posted_compensation(
+        "Strong base salary and competitive pay. Spend up to 30 days per year working remotely.",
+        job_url="job-1",
+        source_field="jobs.full_description",
+        parsed_at="2026-06-19T10:00:00Z",
+    )
+
+    assert fact.parse_state == "unparseable"
+    assert fact.minimum_amount is None
+    assert fact.maximum_amount is None
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount is None
+    assert "no_amount_found" in fact.warnings
+
+
 def test_ambiguous_salary_when_multiple_components_compete() -> None:
     fact = parse_posted_compensation(
         "€70k base, €30k bonus, €100k OTE",
@@ -91,6 +127,26 @@ def test_parses_monthly_and_hourly_values_with_explicit_assumptions() -> None:
     assert hourly.annualization_assumption == "Hourly amounts annualized by multiplying by 2,080 work hours."
     assert "hourly_period" in hourly.warnings
     assert hourly.confidence == "low"
+
+
+def test_truncated_mo_fragment_does_not_make_salary_monthly() -> None:
+    fact = parse_posted_compensation(
+        (
+            "For this role, depending on your level and location, we offer a "
+            "salary up to $190,900, plus a generous equity package. We offer "
+            "26 weeks of parental leave for mo"
+        ),
+        job_url="job-1",
+        source_field="jobs.full_description",
+        parsed_at="2026-06-19T10:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.period == "unknown"
+    assert fact.maximum_amount == 190_900
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount is None
+    assert "missing_period" in fact.warnings
 
 
 def test_one_sided_and_broad_ranges_are_warned() -> None:

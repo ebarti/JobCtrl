@@ -818,6 +818,17 @@ def compensation_refresh(
     url: Optional[str] = typer.Option(None, "--url", help="Refresh one existing job URL instead of every job."),
     limit: int = typer.Option(0, "--limit", help="Maximum jobs to refresh. 0 means all matching jobs."),
     tenant_id: str = typer.Option("local", "--tenant-id", help="Tenant id for local canonical compensation rows."),
+    include_eurotoptech: Optional[bool] = typer.Option(
+        None,
+        "--include-eurotoptech/--no-eurotoptech",
+        help="Include public Euro Top Tech data. Defaults to on when --observations-json is omitted.",
+    ),
+    eurotoptech_max_pages: int = typer.Option(
+        10,
+        "--eurotoptech-max-pages",
+        min=1,
+        help="Maximum Euro Top Tech data-entry pages to load when Euro Top Tech is included.",
+    ),
 ) -> None:
     """Refresh posted salary facts and reported company-role estimates for existing jobs."""
 
@@ -827,14 +838,26 @@ def compensation_refresh(
     from jobhunter.infrastructure.compensation import (
         SqliteMarketCompensationRepository,
         SqlitePostedCompensationRepository,
-        load_reported_compensation_observations,
+        load_default_reported_compensation_observations,
     )
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 
     parsed_at = datetime.now(timezone.utc).isoformat()
-    observations = (
-        load_reported_compensation_observations(observations_json) if observations_json is not None else ()
-    )
+    should_include_eurotoptech = include_eurotoptech if include_eurotoptech is not None else True
+    try:
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observations_json,
+            include_eurotoptech=should_include_eurotoptech,
+            eurotoptech_max_pages=eurotoptech_max_pages,
+        )
+    except Exception as exc:  # noqa: BLE001 - source loading should not block posted-salary refresh
+        log.warning("Reported compensation sources could not be fully loaded: %s", exc)
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observations_json,
+            include_eurotoptech=False,
+            eurotoptech_max_pages=eurotoptech_max_pages,
+        )
+    observations = source_load.observations
     conn = get_connection()
     posted_count = SqlitePostedCompensationRepository(conn).backfill_from_legacy_jobs(
         tenant_id=tenant_id,
@@ -853,6 +876,11 @@ def compensation_refresh(
             "ok": True,
             "postedFactsRefreshed": posted_count,
             "reportedObservationsLoaded": len(observations),
+            "localReportedObservationsLoaded": source_load.local_count,
+            "licensedReportedObservationsLoaded": source_load.licensed_count,
+            "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
+            "glassdoorObservationsLoaded": source_load.glassdoor_count,
+            "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
             "estimatesRefreshed": estimate_count,
             "jobUrl": url,
             "tenantId": tenant_id,

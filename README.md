@@ -30,7 +30,8 @@ JobHunter can:
 - convert generated text artifacts to PDFs;
 - show stage state, failures, retries, artifacts, and apply runs in a local UI;
 - show posted and reported company-role compensation ranges with statistical
-  confidence in Jobs triage and Apply Review;
+  confidence and selected source-row evidence, including source links when
+  available, in Jobs triage and Apply Review;
 - optionally drive local browser-based application submission.
 
 Auto-apply is powerful and should be treated as an explicit submission tool. Use
@@ -210,10 +211,31 @@ uv --project workers/automation run jobhunter compensation-refresh \
   --observations-json /path/to/reported-compensation.json
 ```
 
-The command reparses current `jobs.salary` values into posted-compensation
-facts, imports local reported compensation rows from Levels.fyi, Glassdoor, or
-manual sources, estimates matching company-role ranges, and refreshes local
-projections. Use `--url <job-url>` or `--limit N` to narrow the refresh.
+The command reparses current `jobs.salary` values plus compensation text found
+in job descriptions into posted-compensation facts, imports local reported
+compensation rows from `--observations-json` when supplied, imports configured
+licensed Levels.fyi and Glassdoor feeds by default when their source-policy
+environment variables and feed path or URL are present, imports public Euro Top
+Tech community-reported rows by default, and refreshes local projections. Set
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` for Levels.fyi feeds and
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL` for Glassdoor feeds; JSON and CSV feeds
+are accepted. When no external reported evidence matches,
+JobHunter derives low-confidence market ranges from employer-posted salary facts
+it already captured.
+It uses the best available grounded tier: same company and role first, then
+same-location role evidence, same-company adjacent roles, trimodal company-tier
+fallbacks, and finally a broad market baseline when that is all the local data
+supports. The market response stores both the best range and a wider confidence
+interval; weaker tiers get wider intervals. Employer-posted rows are attributed
+as job posting salary text, not Levels.fyi, Glassdoor, Euro Top Tech, or manual
+reported data. Use `--url <job-url>` or `--limit N` to narrow the refresh. Use
+`--no-eurotoptech` to disable only the public Euro Top Tech import, or
+`--eurotoptech-max-pages N` to cap its paginated data-entry fetch.
+The Jobs toolbar also exposes a `refresh compensation` maintenance action that
+uses the same source-loading path for every existing job without rerunning the
+application pipeline.
 
 Useful options:
 
@@ -444,9 +466,10 @@ Its compensation column shows the best available persisted range, whether it
 comes from posted salary text or reported company-role market data, plus
 statistical confidence, source/sample support, and warnings. The expanded job
 drawer keeps posted salary and reported market evidence separate with source
-trail and confidence factors. Compensation display is warning-only: it does not
-change fit score, sorting, filtering, apply readiness, Apply Review handoff, or
-apply mutation behavior.
+trail, collapsed selected evidence rows, source links when available, and
+confidence factors. Compensation
+display is warning-only: it does not change fit score, sorting, filtering, apply
+readiness, Apply Review handoff, or apply mutation behavior.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
 Debug activity, expose resizable column handles in the headers so long local
 data can be inspected without changing code or global density settings.

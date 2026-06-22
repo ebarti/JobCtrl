@@ -423,4 +423,38 @@ describe("<JobBulkActions>", () => {
       }),
     );
   });
+
+  it("posts an all-jobs compensation refresh from the toolbar", async () => {
+    const user = userEvent.setup();
+    const refreshAllCompensation = vi.fn(async () => queued("refresh_compensation", "pipeline"));
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      writable: true,
+      value: () => true,
+    });
+
+    renderWithProviders(
+      <JobBulkActions
+        search={baseSearch}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+      {
+        ports: buildTestPorts({ api: { refreshAllCompensation } }),
+      },
+    );
+
+    await user.click(screen.getByRole("button", { name: "refresh compensation" }));
+
+    await waitFor(() => expect(refreshAllCompensation).toHaveBeenCalledWith({}));
+  });
 });

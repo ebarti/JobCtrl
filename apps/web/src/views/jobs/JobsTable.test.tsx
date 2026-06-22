@@ -132,15 +132,19 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("tailor stage")).toBeInTheDocument();
   });
 
-  it("renders compensation range and statistical confidence in its own column", () => {
+  it("renders separate compensation scan columns", () => {
     renderJobsTable([sampleSecondaryJob]);
 
-    expect(screen.getByText("Compensation")).toBeInTheDocument();
-    expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
-    expect(screen.getByText("reported company-role market")).toBeInTheDocument();
-    expect(screen.getByText(/market confidence medium/i)).toBeInTheDocument();
+    expect(screen.getByText("Salary min (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Salary max (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Market (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Confidence")).toBeInTheDocument();
+    expect(screen.getByText("Warnings")).toBeInTheDocument();
+    expect(screen.getByText("70,000")).toBeInTheDocument();
+    expect(screen.getByText("90,000")).toBeInTheDocument();
+    expect(screen.getByText("112,000-142,000")).toBeInTheDocument();
+    expect(screen.getByText("Medium")).toBeInTheDocument();
     expect(screen.getByText(/2 sources/i)).toBeInTheDocument();
-    expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
     expect(screen.getByText("1 warning")).toBeInTheDocument();
   });
 

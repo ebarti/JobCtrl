@@ -309,7 +309,7 @@ function insertOperationalMetric(
 function insertCompensationRows(dbPath: string): void {
   const db = new Database(dbPath);
   const jobUrl = "https://example.com/jobs/event-driven";
-  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("EUR 70000-90000/year", jobUrl);
+  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("USD 70000-90000/year", jobUrl);
   db.exec(`
     CREATE TABLE job_posted_compensation_facts (
       tenant_id TEXT NOT NULL DEFAULT 'local',
@@ -342,6 +342,8 @@ function insertCompensationRows(dbPath: string): void {
       component TEXT NOT NULL DEFAULT 'base_salary',
       minimum_amount INTEGER,
       maximum_amount INTEGER,
+      confidence_interval_minimum_amount INTEGER,
+      confidence_interval_maximum_amount INTEGER,
       confidence_band TEXT NOT NULL DEFAULT 'none',
       confidence_score REAL NOT NULL DEFAULT 0,
       source_count INTEGER NOT NULL DEFAULT 0,
@@ -353,6 +355,7 @@ function insertCompensationRows(dbPath: string): void {
       seniority_label TEXT,
       source_snapshot_json TEXT NOT NULL DEFAULT '[]',
       factor_reasons_json TEXT NOT NULL DEFAULT '[]',
+      selected_evidence_json TEXT NOT NULL DEFAULT '[]',
       insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
       unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
       source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
@@ -380,10 +383,10 @@ function insertCompensationRows(dbPath: string): void {
     "local",
     jobUrl,
     "jobs.salary",
-    "EUR 70000-90000/year",
-    "EUR 70000-90000/year",
+    "USD 70000-90000/year",
+    "USD 70000-90000/year",
     "parsed_range",
-    "EUR",
+    "USD",
     "year",
     "base_salary",
     70000,
@@ -400,13 +403,14 @@ function insertCompensationRows(dbPath: string): void {
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
       tenant_id, job_url, estimate_state, currency, period, component,
-      minimum_amount, maximum_amount, confidence_band, confidence_score,
+      minimum_amount, maximum_amount, confidence_interval_minimum_amount,
+      confidence_interval_maximum_amount, confidence_band, confidence_score,
       source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json,
-      factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+      factor_reasons_json, selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json,
       source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
       company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
     jobUrl,
@@ -416,6 +420,8 @@ function insertCompensationRows(dbPath: string): void {
     "total_compensation",
     112000,
     142000,
+    98000,
+    176000,
     "medium",
     0.82,
     2,
@@ -442,6 +448,29 @@ function insertCompensationRows(dbPath: string): void {
     JSON.stringify([
       { name: "company", score: 1, band: "high" },
       { name: "role", score: 1, band: "high" },
+    ]),
+    JSON.stringify([
+      {
+        source_id: "levels_fyi",
+        source_url: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+        company_name: "Acme AI",
+        role_title: "Senior Platform Engineer",
+        location: "Europe",
+        level_label: "senior",
+        company_tier: "tier_2_ambitious",
+        component: "total_compensation",
+        currency: "EUR",
+        period: "year",
+        minimum_amount: 112000,
+        maximum_amount: 142000,
+        sample_count: 4,
+        release_year: 2026,
+        company_score: 1,
+        role_score: 1,
+        level_score: 0.95,
+        location_score: 0.78,
+        freshness_score: 0.95,
+      },
     ]),
     "[]",
     "[]",
@@ -539,7 +568,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           .get("https://example.com/jobs/event-driven") as
           | { salary: string; compensation_summary_json: string }
           | undefined;
-        expect(listProjection?.salary).toBe("EUR 70000-90000/year");
+        expect(listProjection?.salary).toBe("USD 70000-90000/year");
         const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
         expect(summary).toMatchObject({
           projectionVersion: 1,
@@ -547,18 +576,40 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           posted: {
             recordStatus: "recorded",
             parseState: "parsed_range",
-            displayRange: "EUR 70000-90000/year",
+            displayRange: "USD 70000-90000/year",
             warningCount: 1,
+            range: {
+              annualizedMinimumAmount: 70000,
+              annualizedMaximumAmount: 90000,
+              annualizedMinimumEur: 64400,
+              annualizedMaximumEur: 82800,
+            },
           },
           market: {
             sourceKind: "reported_company_role_market",
             recordStatus: "recorded",
             estimateState: "estimated_range",
             displayRange: "EUR 112000-142000/year",
+            displayConfidenceInterval: "EUR 98000-176000/year",
             confidenceScore: 0.82,
             sourceCount: 2,
             sampleCount: 7,
             warningCount: 2,
+            range: {
+              annualizedMinimumAmount: 112000,
+              annualizedMaximumAmount: 142000,
+              annualizedMinimumEur: 112000,
+              annualizedMaximumEur: 142000,
+            },
+            confidenceInterval: {
+              minimumAmount: 98000,
+              maximumAmount: 176000,
+              annualizedMinimumAmount: 98000,
+              annualizedMaximumAmount: 176000,
+              annualizedMinimumEur: 98000,
+              annualizedMaximumEur: 176000,
+              displayRange: "EUR 98000-176000/year",
+            },
           },
         });
 
@@ -572,7 +623,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           | { compensation_audit_json: string }
           | undefined;
         const audit = JSON.parse(detailProjection?.compensation_audit_json ?? "{}");
-        expect(audit.posted.fact.sourceText).toBe("EUR 70000-90000/year");
+        expect(audit.posted.fact.sourceText).toBe("USD 70000-90000/year");
         expect(audit.market.estimate.sources).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
@@ -587,6 +638,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
         expect(audit.market.estimate.companyName).toBe("Acme AI");
         expect(audit.market.estimate.matchScope).toBe("exact_company_role");
+        expect(audit.market.estimate.confidenceInterval).toEqual({
+          minimumAmount: 98000,
+          maximumAmount: 176000,
+        });
         expect(JSON.stringify(audit)).not.toContain("/Users/");
       } finally {
         db.close();
@@ -613,6 +668,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                   geography_scope = ?,
                   source_snapshot_json = ?,
                   factor_reasons_json = ?,
+                  selected_evidence_json = ?,
                   warnings_json = ?,
                   company_name = ?,
                   normalized_company = ?,
@@ -650,8 +706,52 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           ]),
           JSON.stringify([
             { name: "company", score: 0.62, band: "medium", reason: "/Users/local credential" },
-            { name: "role", score: 1, band: "high", reason: "exact synthetic role" },
+            { name: "role", score: 1, band: "high", reason: "Reported rows matched role Senior Platform Engineer." },
             { name: "trimodal_tier", score: 0.62, band: "medium", reason: "tier inferred" },
+          ]),
+          JSON.stringify([
+            {
+              source_id: "levels_fyi",
+              source_url: "https://levels.example/private?token=secret",
+              company_name: "private /Users/local credential",
+              role_title: "Senior Platform Engineer",
+              location: "file:///Users/local/private",
+              level_label: "senior",
+              company_tier: "tier_3_top_of_market",
+              component: "total_compensation",
+              currency: "EUR",
+              period: "year",
+              minimum_amount: 168000,
+              maximum_amount: 190000,
+              sample_count: 4,
+              release_year: 2026,
+              company_score: 0.62,
+              role_score: 1,
+              level_score: 0.95,
+              location_score: 0.78,
+              freshness_score: 0.95,
+            },
+            {
+              source_id: "glassdoor",
+              source_url: "https://www.glassdoor.com/Salary/Trimodal-Labs-Senior-Platform-Engineer-Salaries.htm",
+              company_name: "Trimodal Labs",
+              role_title: "Senior Platform Engineer",
+              location: "Europe",
+              level_label: "senior",
+              company_tier: "tier_3_top_of_market",
+              component: "total_compensation",
+              currency: "EUR",
+              period: "year",
+              minimum_amount: 170000,
+              maximum_amount: 188000,
+              sample_count: 3,
+              release_year: 2026,
+              company_score: 1,
+              role_score: 1,
+              level_score: 0.95,
+              location_score: 0.78,
+              freshness_score: 0.95,
+            },
           ]),
           JSON.stringify([
             "reported_compensation_sample",
@@ -722,6 +822,39 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         });
         expect(audit.market.estimate.factors.map((factor: { name: string }) => factor.name)).toEqual(
           expect.arrayContaining(["company", "role", "trimodal_tier"]),
+        );
+        expect(audit.market.estimate.factors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: "role",
+              reason: "Reported rows matched role Senior Platform Engineer.",
+            }),
+            expect.objectContaining({
+              name: "company",
+              reason: "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
+            }),
+          ]),
+        );
+        expect(audit.market.estimate.evidence).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceId: "levels_fyi",
+              sourceUrl: null,
+              companyName: "unknown company",
+              roleTitle: "Senior Platform Engineer",
+              location: null,
+              minimumAmount: 168000,
+              maximumAmount: 190000,
+            }),
+            expect.objectContaining({
+              sourceId: "glassdoor",
+              sourceUrl: "https://www.glassdoor.com/Salary/Trimodal-Labs-Senior-Platform-Engineer-Salaries.htm",
+              companyName: "Trimodal Labs",
+              roleTitle: "Senior Platform Engineer",
+              minimumAmount: 170000,
+              maximumAmount: 188000,
+            }),
+          ]),
         );
         expect(audit.market.estimate.warnings.map((warning: { code: string }) => warning.code)).toEqual(
           expect.arrayContaining([

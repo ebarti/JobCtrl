@@ -28,6 +28,7 @@ export function listCompensationSources(
       levelsSource(env),
       glassdoorSource(env),
       manualReportedCompensationSource(),
+      euroTopTechSource(),
     ],
   };
 }
@@ -91,7 +92,7 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Europe coverage is not configured.",
     },
     notes: [
-      "Automated access requires a permitted provider mode. Exported or licensed rows can be supplied to jobhunter compensation-refresh --observations-json.",
+      "Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
     ],
   };
 }
@@ -129,7 +130,7 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Coverage is not configured.",
     },
     notes: [
-      "Automated access requires partner API access or written permission. Exported or permitted rows can be supplied to jobhunter compensation-refresh --observations-json.",
+      "Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
     ],
   };
 }
@@ -154,7 +155,31 @@ function manualReportedCompensationSource(): CompensationSourcePolicySummary {
       regions: ["Europe", "configured import scope"],
       notes: "Coverage follows the rows supplied to the temporary compensation-refresh command.",
     },
-    notes: ["Temporary local import path for reported company-role compensation rows."],
+    notes: ["Explicit local imports are additive with configured licensed sources and Euro Top Tech refresh data."],
+  };
+}
+
+function euroTopTechSource(): CompensationSourcePolicySummary {
+  return {
+    sourceId: "euro_top_tech",
+    displayName: "Euro Top Tech",
+    sourceType: "reported_compensation",
+    accessMode: "public_dataset",
+    availability: "available",
+    licenseStatus: "not_required",
+    termsUrl: "https://www.eurotoptech.com/terms",
+    sourceUrl: "https://www.eurotoptech.com/data",
+    freshnessPolicy: "Uses approved public data-entry rows exposed by Euro Top Tech at refresh time.",
+    attributionRequirement: "Show as Euro Top Tech public crowdsourced compensation data.",
+    supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
+    disabledReason: null,
+    configured: true,
+    coverage: {
+      geography: "public_dataset",
+      regions: ["Europe"],
+      notes: "Coverage follows public approved Euro Top Tech data-entry rows.",
+    },
+    notes: ["Public crowdsourced compensation rows are loaded through the compensation refresh path."],
   };
 }
 

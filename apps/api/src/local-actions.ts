@@ -145,7 +145,7 @@ export function createActionDispatcher(
         result: response.result,
       };
     }
-    if (rpcCall.method === "run_stage") {
+    if (rpcCall.method === "run_stage" || rpcCall.method === "refresh_compensation") {
       const status = extractStatus(response.result) ?? "succeeded";
       const result: ActionDispatchResult = {
         status,
@@ -364,6 +364,25 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         jobUrl: command.jobKey,
         force: Boolean(command.retailor),
       },
+    };
+  }
+  if (command.action === "refresh_compensation") {
+    const params: Record<string, unknown> = {
+      tenantId: "local",
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      ...(command.observationsJsonPath ? { observationsJsonPath: command.observationsJsonPath } : {}),
+      ...(command.includeEuroTopTech !== undefined ? { includeEuroTopTech: command.includeEuroTopTech } : {}),
+      ...(command.euroTopTechMaxPages !== undefined ? { euroTopTechMaxPages: command.euroTopTechMaxPages } : {}),
+    };
+    if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+      params.jobUrl = command.jobKey;
+    } else {
+      params.allJobs = true;
+    }
+    return {
+      method: "refresh_compensation",
+      params,
     };
   }
   if (command.action === "generate_materials") return null;

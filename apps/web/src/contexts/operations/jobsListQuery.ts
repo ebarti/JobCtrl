@@ -29,6 +29,7 @@ const STATE_RANK: Record<StageState, number> = {
 };
 
 type ConcreteJobsListInput = Partial<JobListQuery>;
+type CompensationRangeSummary = NonNullable<NonNullable<JobSummary["compensationSummary"]>["posted"]["range"]>;
 
 export async function fetchJobsList(
   api: Pick<ApiClientPort, "jobs">,
@@ -148,6 +149,20 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
       return job.title.toLowerCase();
     case "company":
       return job.company.toLowerCase();
+    case "source":
+      return (job.postingSource || job.discoverySource || job.source || "").toLowerCase();
+    case "compensation_min_eur":
+      return postedCompensationAmountEur(job, "min");
+    case "compensation_max_eur":
+      return postedCompensationAmountEur(job, "max");
+    case "compensation_posted":
+      return postedCompensationSortValue(job);
+    case "compensation_market":
+      return marketCompensationSortValue(job);
+    case "compensation_confidence":
+      return marketConfidenceSortValue(job);
+    case "compensation_warnings":
+      return job.compensationSummary?.warningCount ?? 0;
     case "location":
       return job.location.toLowerCase();
     case "fit_score":
@@ -156,10 +171,77 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
       return job.currentStage;
     case "current_state":
       return `${STATE_RANK[job.currentState] ?? 999}:${job.currentSubstage}`;
+    case "apply_status":
+      return job.applyStatus ?? "";
     case "discovered_at":
     default:
       return job.discoveredAt;
   }
+}
+
+function postedCompensationSortValue(job: JobSummary): number {
+  const summary = job.compensationSummary;
+  const amount = postedCompensationAmountEur(job, "min");
+  if (amount !== null) return amount;
+  if (summary?.posted.displayRange || summary?.legacyRawSalary || job.salary) return -1;
+  if (summary?.posted.parseState === "ambiguous") return -2;
+  if (summary?.posted.parseState === "unparseable") return -3;
+  if (summary?.posted.parseState === "missing") return -4;
+  return Number.NEGATIVE_INFINITY;
+}
+
+function postedCompensationAmountEur(job: JobSummary, bound: "min" | "max"): number | null {
+  const range = job.compensationSummary?.posted.range;
+  return compensationRangeAmountEur(range, bound);
+}
+
+function marketCompensationSortValue(job: JobSummary): number {
+  const market = job.compensationSummary?.market;
+  const amount = compensationRangeAmountEur(market?.range ?? null, "min");
+  if (amount !== null) return amount;
+  switch (market?.estimateState) {
+    case "estimated_range":
+      return -1;
+    case "insufficient_evidence":
+      return -2;
+    case "source_unavailable":
+      return -3;
+    case "unsupported":
+      return -4;
+    case "not_requested":
+    default:
+      return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function marketConfidenceSortValue(job: JobSummary): number {
+  const market = job.compensationSummary?.market;
+  if (!market || market.recordStatus === "not_requested") return Number.NEGATIVE_INFINITY;
+  if (Number.isFinite(market.confidenceScore)) return Number(market.confidenceScore);
+  switch (market.confidenceBand) {
+    case "high":
+      return 0.9;
+    case "medium":
+      return 0.62;
+    case "low":
+      return 0.3;
+    case "none":
+      return 0;
+  }
+}
+
+function compensationRangeAmountEur(
+  range: CompensationRangeSummary | null | undefined,
+  bound: "min" | "max",
+): number | null {
+  const normalized = bound === "min" ? range?.annualizedMinimumEur : range?.annualizedMaximumEur;
+  if (Number.isFinite(normalized)) return Number(normalized);
+  if (range?.currency?.toUpperCase() !== "EUR") return null;
+  const annualized = bound === "min" ? range.annualizedMinimumAmount : range.annualizedMaximumAmount;
+  if (Number.isFinite(annualized)) return Number(annualized);
+  if (range.period !== "year") return null;
+  const source = bound === "min" ? range.minimumAmount : range.maximumAmount;
+  return Number.isFinite(source) ? Number(source) : null;
 }
 
 function compareValues(left: unknown, right: unknown): number {

@@ -37,10 +37,18 @@ const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "discovered_at",
   "title",
   "company",
+  "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
+  "compensation_posted",
+  "compensation_market",
+  "compensation_confidence",
+  "compensation_warnings",
   "location",
   "fit_score",
   "current_stage",
   "current_state",
+  "apply_status",
 ]);
 
 type BulkJobMutation = UseMutationResult<

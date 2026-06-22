@@ -37,8 +37,10 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import threading
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -108,6 +110,7 @@ MARKET_COMPENSATION_WARNING_MESSAGES = {
     "location_mismatch": "Reported compensation locations did not strongly match the job location.",
     "low_sample_count": "Reported compensation sample support is low.",
     "reported_compensation_sample": "The estimate uses reported compensation rows for the job company and role.",
+    "posted_salary_sample": "The estimate uses employer-posted salary text captured by JobHunter.",
     "source_conflict_with_posted_salary": "Reported compensation diverges materially from the posted salary.",
     "stale_source_snapshot": "A source snapshot is stale under the freshness policy.",
     "trimodal_tier_inferred": "The company tier was inferred from reported compensation amounts.",
@@ -151,17 +154,54 @@ MARKET_SOURCE_DEFAULTS = {
         "aggregateBucket": "reported company-role compensation",
         "attribution": "Manual reported compensation import",
     },
+    "euro_top_tech": {
+        "displayName": "Euro Top Tech",
+        "sourceType": "reported_compensation",
+        "snapshotVersion": "eurotoptech-data-public",
+        "geographyScope": "Europe",
+        "aggregateBucket": "reported company-role compensation",
+        "attribution": "Euro Top Tech public crowdsourced compensation data",
+    },
+    "posted_salary_text": {
+        "displayName": "Job posting salary text",
+        "sourceType": "posted_salary",
+        "snapshotVersion": "jobhunter-posted-compensation-v1",
+        "geographyScope": "reported",
+        "aggregateBucket": "employer-posted company-role compensation",
+        "attribution": "Employer-posted salary text captured by JobHunter",
+    },
 }
 MARKET_SAFE_AGGREGATE_BUCKETS = {
     "reported company-role compensation",
     "reported company adjacent-role compensation",
+    "same-location role compensation fallback",
     "trimodal tier role fallback",
+    "trimodal market baseline fallback",
+    "employer-posted company-role compensation",
+    "employer-posted same-location role compensation",
+    "employer-posted trimodal tier compensation",
+    "employer-posted trimodal market baseline",
 }
 MARKET_SAFE_GEOGRAPHY_SCOPES = {"Europe", "reported"}
 MARKET_SAFE_FACTOR_NAMES = {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
 MARKET_CONFIDENCE_BANDS = {"high", "medium", "low", "none"}
 MARKET_RECORDED_STATES = {"unsupported", "source_unavailable", "insufficient_evidence", "estimated_range"}
 MARKET_DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+MARKET_MAX_FACTOR_REASON_LENGTH = 240
+MARKET_UNSAFE_FACTOR_REASON_TERMS = (
+    "/users/",
+    "\\users\\",
+    "file://",
+    "rawproviderpayload",
+    "credential",
+    "secret",
+    "token",
+    "password",
+    "api_key",
+    "api key",
+    "api-key",
+    "private",
+)
 
 STAGE_ORDER: tuple[str, ...] = (
     "discover",
@@ -660,6 +700,11 @@ class ProjectionBuilder:
             if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
             else None
         )
+        market_confidence_interval = (
+            _market_confidence_interval_summary(market["estimate"])
+            if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
+            else None
+        )
         summary = {
             "projectionVersion": COMPENSATION_PROJECTION_VERSION,
             "legacyRawSalary": (
@@ -716,6 +761,10 @@ class ProjectionBuilder:
                 "warningCount": market_warning_count,
                 "range": market_range,
                 "displayRange": market_range.get("displayRange") if market_range else None,
+                "confidenceInterval": market_confidence_interval,
+                "displayConfidenceInterval": (
+                    market_confidence_interval.get("displayRange") if market_confidence_interval else None
+                ),
             },
         }
         audit = {
@@ -762,10 +811,13 @@ class ProjectionBuilder:
                 """
                 SELECT tenant_id, job_url, estimate_state, currency, period,
                        component, minimum_amount, maximum_amount,
+                       confidence_interval_minimum_amount,
+                       confidence_interval_maximum_amount,
                        confidence_band, confidence_score, source_count,
                        sample_count, aggregate_bucket, geography_scope,
                        occupation_code, occupation_label, seniority_label,
                        source_snapshot_json, factor_reasons_json,
+                       selected_evidence_json,
                        insufficient_reasons_json, unsupported_reasons_json,
                        source_unavailable_reasons_json, warnings_json,
                        estimator_version, estimated_at, company_name,
@@ -1720,6 +1772,7 @@ def _market_estimate_from_row(row: object) -> dict[str, Any]:
         "matchScope": _market_match_scope(_row_get(row, "match_scope")),
         "sources": sources,
         "factors": _market_factors(_row_str(row, "factor_reasons_json")),
+        "evidence": _market_evidence(_row_str(row, "selected_evidence_json")),
         "warnings": _warnings(_row_str(row, "warnings_json"), MARKET_COMPENSATION_WARNING_MESSAGES),
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
@@ -1759,6 +1812,14 @@ def _market_estimate_from_row(row: object) -> dict[str, Any]:
         "component": _row_str(row, "component"),
         "minimumAmount": _nullable_int(_row_get(row, "minimum_amount")) or 0,
         "maximumAmount": _nullable_int(_row_get(row, "maximum_amount")) or 0,
+        "confidenceInterval": {
+            "minimumAmount": _nullable_int(_row_get(row, "confidence_interval_minimum_amount"))
+            or _nullable_int(_row_get(row, "minimum_amount"))
+            or 0,
+            "maximumAmount": _nullable_int(_row_get(row, "confidence_interval_maximum_amount"))
+            or _nullable_int(_row_get(row, "maximum_amount"))
+            or 0,
+        },
     }
 
 
@@ -1773,6 +1834,14 @@ def _posted_range_summary(fact: dict[str, Any]) -> dict[str, Any] | None:
         "maximumAmount": fact.get("maximumAmount"),
         "annualizedMinimumAmount": fact.get("annualizedMinimumAmount"),
         "annualizedMaximumAmount": fact.get("annualizedMaximumAmount"),
+        "annualizedMinimumEur": _normalize_annualized_eur(
+            fact.get("annualizedMinimumAmount"),
+            fact.get("currency"),
+        ),
+        "annualizedMaximumEur": _normalize_annualized_eur(
+            fact.get("annualizedMaximumAmount"),
+            fact.get("currency"),
+        ),
         "displayRange": _format_compensation_range(
             fact.get("currency"),
             fact.get("minimumAmount"),
@@ -1791,6 +1860,22 @@ def _market_range_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
         "component": estimate.get("component"),
         "minimumAmount": estimate.get("minimumAmount"),
         "maximumAmount": estimate.get("maximumAmount"),
+        "annualizedMinimumAmount": _annualize_compensation_amount(
+            estimate.get("minimumAmount"),
+            estimate.get("period"),
+        ),
+        "annualizedMaximumAmount": _annualize_compensation_amount(
+            estimate.get("maximumAmount"),
+            estimate.get("period"),
+        ),
+        "annualizedMinimumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(estimate.get("minimumAmount"), estimate.get("period")),
+            estimate.get("currency"),
+        ),
+        "annualizedMaximumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(estimate.get("maximumAmount"), estimate.get("period")),
+            estimate.get("currency"),
+        ),
         "displayRange": _format_compensation_range(
             estimate.get("currency"),
             estimate.get("minimumAmount"),
@@ -1798,6 +1883,75 @@ def _market_range_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
             estimate.get("period"),
         ),
     }
+
+
+def _market_confidence_interval_summary(estimate: dict[str, Any]) -> dict[str, Any] | None:
+    if estimate.get("estimateState") != "estimated_range":
+        return None
+    interval = estimate.get("confidenceInterval")
+    if not isinstance(interval, dict):
+        return None
+    minimum = interval.get("minimumAmount")
+    maximum = interval.get("maximumAmount")
+    return {
+        "currency": estimate.get("currency"),
+        "period": estimate.get("period"),
+        "component": estimate.get("component"),
+        "minimumAmount": minimum,
+        "maximumAmount": maximum,
+        "annualizedMinimumAmount": _annualize_compensation_amount(minimum, estimate.get("period")),
+        "annualizedMaximumAmount": _annualize_compensation_amount(maximum, estimate.get("period")),
+        "annualizedMinimumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(minimum, estimate.get("period")),
+            estimate.get("currency"),
+        ),
+        "annualizedMaximumEur": _normalize_annualized_eur(
+            _annualize_compensation_amount(maximum, estimate.get("period")),
+            estimate.get("currency"),
+        ),
+        "displayRange": _format_compensation_range(
+            estimate.get("currency"),
+            minimum,
+            maximum,
+            estimate.get("period"),
+        ),
+    }
+
+
+EUR_NORMALIZATION_RATES: dict[str, float] = {
+    "EUR": 1,
+    "USD": 0.92,
+    "GBP": 1.17,
+    "CHF": 1.06,
+    "SEK": 0.09,
+    "NOK": 0.087,
+    "DKK": 0.134,
+    "PLN": 0.235,
+    "CZK": 0.041,
+}
+
+
+def _normalize_annualized_eur(amount: object, currency: object) -> int | None:
+    annualized = _nullable_int(amount)
+    if annualized is None:
+        return None
+    rate = EUR_NORMALIZATION_RATES.get(str(currency).upper()) if currency else None
+    if rate is None:
+        return None
+    return round(annualized * rate)
+
+
+def _annualize_compensation_amount(amount: object, period: object) -> int | None:
+    value = _nullable_int(amount)
+    if value is None:
+        return None
+    if period == "year":
+        return value
+    if period == "month":
+        return value * 12
+    if period == "hour":
+        return value * 2080
+    return None
 
 
 def _format_compensation_range(
@@ -1838,10 +1992,24 @@ def _market_factors(value: str) -> list[dict[str, Any]]:
                 "name": name,
                 "score": _number(item.get("score")),
                 "band": _confidence_band(item.get("band")),
-                "reason": MARKET_DEFAULT_FACTOR_REASON,
+                "reason": _safe_market_factor_reason(item.get("reason")),
             }
         )
     return factors
+
+
+def _safe_market_factor_reason(value: object) -> str:
+    if not isinstance(value, str):
+        return MARKET_DEFAULT_FACTOR_REASON
+    text = " ".join(value.split())
+    if not text:
+        return MARKET_DEFAULT_FACTOR_REASON
+    lowered = text.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return MARKET_DEFAULT_FACTOR_REASON
+    if len(text) > MARKET_MAX_FACTOR_REASON_LENGTH:
+        return text[: MARKET_MAX_FACTOR_REASON_LENGTH - 3].rstrip() + "..."
+    return text
 
 
 def _market_sources(value: str) -> list[dict[str, Any]]:
@@ -1868,6 +2036,90 @@ def _market_sources(value: str) -> list[dict[str, Any]]:
     return sources
 
 
+def _market_evidence(value: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in _json_records(value):
+        source_id = str(item.get("source_id") or "")
+        defaults = MARKET_SOURCE_DEFAULTS.get(source_id)
+        if defaults is None:
+            continue
+        minimum_amount = _nullable_int(item.get("minimum_amount"))
+        maximum_amount = _nullable_int(item.get("maximum_amount"))
+        if minimum_amount is None and maximum_amount is None:
+            continue
+        rows.append(
+            {
+                "sourceId": source_id,
+                "displayName": defaults["displayName"],
+                "sourceUrl": _safe_market_evidence_url(item.get("source_url")),
+                "companyName": _safe_market_evidence_text(item.get("company_name")) or "unknown company",
+                "roleTitle": _safe_market_evidence_text(item.get("role_title")) or "unknown role",
+                "location": _safe_market_evidence_text(item.get("location")),
+                "levelLabel": _safe_market_evidence_text(item.get("level_label")),
+                "companyTier": _company_tier(item.get("company_tier")),
+                "component": _market_component(item.get("component")),
+                "currency": _market_currency(item.get("currency")),
+                "period": _market_period(item.get("period")),
+                "minimumAmount": minimum_amount if minimum_amount is not None else maximum_amount or 0,
+                "maximumAmount": maximum_amount if maximum_amount is not None else minimum_amount or 0,
+                "sampleCount": _nullable_int(item.get("sample_count")),
+                "releaseYear": _nullable_int(item.get("release_year")),
+                "companyScore": _market_score(item.get("company_score")),
+                "roleScore": _market_score(item.get("role_score")),
+                "levelScore": _market_score(item.get("level_score")),
+                "locationScore": _market_score(item.get("location_score")),
+                "freshnessScore": _market_score(item.get("freshness_score")),
+            }
+        )
+    return rows
+
+
+def _safe_market_evidence_text(value: object) -> str | None:
+    text = _nullable_text(value)
+    if text is None:
+        return None
+    compact = " ".join(text.split())
+    lowered = compact.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return None
+    return compact[:160] if compact else None
+
+
+def _safe_market_evidence_url(value: object) -> str | None:
+    text = _nullable_text(value)
+    if text is None:
+        return None
+    compact = text.strip()
+    if not compact:
+        return None
+    lowered = compact.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return None
+    parsed = urllib.parse.urlsplit(compact)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def _market_component(value: object) -> str:
+    text = _nullable_text(value)
+    return text if text in {"base_salary", "total_compensation"} else "total_compensation"
+
+
+def _market_period(value: object) -> str:
+    text = _nullable_text(value)
+    return text if text in {"year", "month"} else "year"
+
+
+def _market_currency(value: object) -> str:
+    text = str(value or "EUR").strip().upper()
+    return text if re.fullmatch(r"[A-Z]{3}", text) else "EUR"
+
+
+def _market_score(value: object) -> float:
+    return round(max(0.0, min(1.0, _number(value))), 2)
+
+
 def _safe_market_aggregate_bucket(value: object, sources: list[dict[str, Any]]) -> str | None:
     text = _nullable_text(value)
     if text in MARKET_SAFE_AGGREGATE_BUCKETS:
@@ -1890,7 +2142,13 @@ def _company_tier(value: object) -> str:
 
 def _market_match_scope(value: object) -> str:
     text = _nullable_text(value)
-    if text in {"exact_company_role", "company_adjacent_role", "tier_role_fallback"}:
+    if text in {
+        "exact_company_role",
+        "same_location_role_fallback",
+        "company_adjacent_role",
+        "tier_role_fallback",
+        "market_baseline_fallback",
+    }:
         return text
     return "none"
 

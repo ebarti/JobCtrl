@@ -1,6 +1,7 @@
 import type {
   MarketCompensationEstimate,
   MarketCompensationEstimateResponse,
+  MarketCompensationEvidenceRow,
   MarketCompensationFactor,
   MarketCompensationFactorName,
   MarketCompensationReason,
@@ -27,6 +28,8 @@ type MarketCompensationEstimateRow = {
   component: "base_salary" | "total_compensation";
   minimum_amount: number | null;
   maximum_amount: number | null;
+  confidence_interval_minimum_amount: number | null;
+  confidence_interval_maximum_amount: number | null;
   confidence_band: "none" | "low" | "medium" | "high";
   confidence_score: number;
   source_count: number;
@@ -38,6 +41,7 @@ type MarketCompensationEstimateRow = {
   seniority_label: string | null;
   source_snapshot_json: string;
   factor_reasons_json: string;
+  selected_evidence_json: string;
   insufficient_reasons_json: string;
   unsupported_reasons_json: string;
   source_unavailable_reasons_json: string;
@@ -49,7 +53,13 @@ type MarketCompensationEstimateRow = {
   role_title: string | null;
   normalized_role: string | null;
   company_tier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
-  match_scope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
+  match_scope:
+    | "exact_company_role"
+    | "same_location_role_fallback"
+    | "company_adjacent_role"
+    | "tier_role_fallback"
+    | "market_baseline_fallback"
+    | "none";
 };
 
 type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
@@ -61,6 +71,7 @@ const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
   location_mismatch: "Reported compensation locations did not strongly match the job location.",
   low_sample_count: "Reported compensation sample support is low.",
   reported_compensation_sample: "The estimate uses reported compensation rows for the job company and role.",
+  posted_salary_sample: "The estimate uses employer-posted salary text captured by JobHunter.",
   source_conflict_with_posted_salary: "Reported compensation diverges materially from the posted salary.",
   stale_source_snapshot: "A reported compensation source snapshot is stale under the freshness policy.",
   trimodal_tier_inferred: "The company tier was inferred from reported compensation amounts.",
@@ -85,6 +96,8 @@ const SOURCE_IDS = new Set<MarketCompensationSourceId>([
   "levels_fyi",
   "glassdoor",
   "manual_reported_compensation",
+  "euro_top_tech",
+  "posted_salary_text",
 ]);
 const RECORDED_ESTIMATE_STATES = new Set([
   "unsupported",
@@ -96,7 +109,7 @@ const SOURCE_DEFAULTS: Record<
   MarketCompensationSourceId,
   {
     displayName: string;
-    sourceType: "reported_compensation";
+    sourceType: "reported_compensation" | "posted_salary";
     snapshotVersion: string;
     geographyScope: string;
     aggregateBucket: string;
@@ -127,11 +140,32 @@ const SOURCE_DEFAULTS: Record<
     aggregateBucket: "reported company-role compensation",
     attribution: "Manual reported compensation import",
   },
+  euro_top_tech: {
+    displayName: "Euro Top Tech",
+    sourceType: "reported_compensation",
+    snapshotVersion: "eurotoptech-data-public",
+    geographyScope: "Europe",
+    aggregateBucket: "reported company-role compensation",
+    attribution: "Euro Top Tech public crowdsourced compensation data",
+  },
+  posted_salary_text: {
+    displayName: "Job posting salary text",
+    sourceType: "posted_salary",
+    snapshotVersion: "jobhunter-posted-compensation-v1",
+    geographyScope: "reported",
+    aggregateBucket: "employer-posted company-role compensation",
+    attribution: "Employer-posted salary text captured by JobHunter",
+  },
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([
   ...Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket),
+  "employer-posted same-location role compensation",
+  "employer-posted trimodal tier compensation",
+  "employer-posted trimodal market baseline",
   "reported company adjacent-role compensation",
+  "same-location role compensation fallback",
   "trimodal tier role fallback",
+  "trimodal market baseline fallback",
 ]);
 const SAFE_GEOGRAPHY_SCOPES = new Set(["Europe", "reported"]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
@@ -146,6 +180,9 @@ const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "trimodal_tier",
 ]);
 const DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator.";
+const MAX_FACTOR_REASON_LENGTH = 240;
+const UNSAFE_FACTOR_REASON_PATTERN =
+  /(?:\/users\/|\\users\\|file:\/\/|rawproviderpayload|credential|secret|token|password|api[_ -]?key|\bprivate\b)/i;
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
@@ -163,10 +200,15 @@ export function getMarketCompensationEstimate(
     db,
     `
     SELECT tenant_id, job_url, estimate_state, currency, period, component,
-           minimum_amount, maximum_amount, confidence_band, confidence_score,
+           minimum_amount, maximum_amount,
+           ${columnOrNull(tableColumns, "confidence_interval_minimum_amount")} AS confidence_interval_minimum_amount,
+           ${columnOrNull(tableColumns, "confidence_interval_maximum_amount")} AS confidence_interval_maximum_amount,
+           confidence_band, confidence_score,
            source_count, sample_count, aggregate_bucket, geography_scope,
            occupation_code, occupation_label, seniority_label, source_snapshot_json,
-           factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+           factor_reasons_json,
+           ${columnOrDefault(tableColumns, "selected_evidence_json", "[]")} AS selected_evidence_json,
+           insufficient_reasons_json, unsupported_reasons_json,
            source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
            ${columnOrNull(tableColumns, "company_name")} AS company_name,
            ${columnOrNull(tableColumns, "normalized_company")} AS normalized_company,
@@ -230,6 +272,7 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     matchScope: matchScope(row.match_scope),
     sources,
     factors: parseFactors(row.factor_reasons_json),
+    evidence: parseEvidence(row.selected_evidence_json),
     warnings: parseWarnings(row.warnings_json),
     estimatorVersion: row.estimator_version,
     estimatedAt: row.estimated_at,
@@ -264,6 +307,12 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     component: row.component,
     minimumAmount: nullableNumber(row.minimum_amount) ?? 0,
     maximumAmount: nullableNumber(row.maximum_amount) ?? 0,
+    confidenceInterval: {
+      minimumAmount:
+        nullableNumber(row.confidence_interval_minimum_amount) ?? nullableNumber(row.minimum_amount) ?? 0,
+      maximumAmount:
+        nullableNumber(row.confidence_interval_maximum_amount) ?? nullableNumber(row.maximum_amount) ?? 0,
+    },
   };
 }
 
@@ -288,10 +337,89 @@ function parseFactors(value: string): MarketCompensationFactor[] {
         name: name as MarketCompensationFactorName,
         score: numberValue(entry.score),
         band: confidenceBand(entry.band),
-        reason: DEFAULT_FACTOR_REASON,
+        reason: safeFactorReason(entry.reason),
       };
     })
     .filter((entry): entry is MarketCompensationFactor => entry !== null);
+}
+
+function safeFactorReason(value: unknown): string {
+  if (typeof value !== "string") {
+    return DEFAULT_FACTOR_REASON;
+  }
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return DEFAULT_FACTOR_REASON;
+  }
+  return text.length > MAX_FACTOR_REASON_LENGTH
+    ? `${text.slice(0, MAX_FACTOR_REASON_LENGTH - 3).trimEnd()}...`
+    : text;
+}
+
+function parseEvidence(value: string): MarketCompensationEvidenceRow[] {
+  return parseObjects(value)
+    .map((entry) => {
+      const sourceId = stringValue(entry.source_id);
+      if (!SOURCE_IDS.has(sourceId as MarketCompensationSourceId)) return null;
+      const typedSourceId = sourceId as MarketCompensationSourceId;
+      const minimumAmount = nullableNumber(entry.minimum_amount);
+      const maximumAmount = nullableNumber(entry.maximum_amount);
+      if (minimumAmount === null && maximumAmount === null) return null;
+      return {
+        sourceId: typedSourceId,
+        displayName: SOURCE_DEFAULTS[typedSourceId].displayName,
+        sourceUrl: safeEvidenceUrl(entry.source_url),
+        companyName: safeEvidenceText(entry.company_name) ?? "unknown company",
+        roleTitle: safeEvidenceText(entry.role_title) ?? "unknown role",
+        location: safeEvidenceText(entry.location),
+        levelLabel: safeEvidenceText(entry.level_label),
+        companyTier: companyTier(entry.company_tier),
+        component: component(entry.component),
+        currency: currency(entry.currency),
+        period: period(entry.period),
+        minimumAmount: minimumAmount ?? maximumAmount ?? 0,
+        maximumAmount: maximumAmount ?? minimumAmount ?? 0,
+        sampleCount: nullableNumber(entry.sample_count),
+        releaseYear: nullableNumber(entry.release_year),
+        companyScore: score(entry.company_score),
+        roleScore: score(entry.role_score),
+        levelScore: score(entry.level_score),
+        locationScore: score(entry.location_score),
+        freshnessScore: score(entry.freshness_score),
+      };
+    })
+    .filter((entry): entry is MarketCompensationEvidenceRow => entry !== null);
+}
+
+function safeEvidenceText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return null;
+  }
+  return text.length > 160 ? `${text.slice(0, 157).trimEnd()}...` : text;
+}
+
+function safeEvidenceUrl(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return null;
+  }
+  try {
+    const url = new URL(text);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      return null;
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function parseSources(value: string): MarketCompensationSourceSnapshot[] {
@@ -383,8 +511,38 @@ function companyTier(value: unknown): "tier_1_local" | "tier_2_ambitious" | "tie
     : "unknown";
 }
 
-function matchScope(value: unknown): "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none" {
-  return value === "exact_company_role" || value === "company_adjacent_role" || value === "tier_role_fallback"
+function component(value: unknown): "base_salary" | "total_compensation" {
+  return value === "base_salary" ? "base_salary" : "total_compensation";
+}
+
+function period(value: unknown): "year" | "month" {
+  return value === "month" ? "month" : "year";
+}
+
+function currency(value: unknown): string {
+  const text = typeof value === "string" ? value.trim().toUpperCase() : "EUR";
+  return /^[A-Z]{3}$/.test(text) ? text : "EUR";
+}
+
+function score(value: unknown): number {
+  const numeric = numberValue(value);
+  return Math.round(Math.max(0, Math.min(1, numeric)) * 100) / 100;
+}
+
+function matchScope(
+  value: unknown,
+):
+  | "exact_company_role"
+  | "same_location_role_fallback"
+  | "company_adjacent_role"
+  | "tier_role_fallback"
+  | "market_baseline_fallback"
+  | "none" {
+  return value === "exact_company_role" ||
+    value === "same_location_role_fallback" ||
+    value === "company_adjacent_role" ||
+    value === "tier_role_fallback" ||
+    value === "market_baseline_fallback"
     ? value
     : "none";
 }

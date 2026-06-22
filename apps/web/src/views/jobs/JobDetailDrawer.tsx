@@ -102,6 +102,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             <div className="job-detail-drawer-content">
               <JobAuditTriage detail={detail} />
               <CompensationAuditSection
+                jobId={detail.job.jobKey}
                 summary={detail.job.compensationSummary}
                 audit={detail.compensationAudit}
                 fallbackSalary={detail.job.salary}

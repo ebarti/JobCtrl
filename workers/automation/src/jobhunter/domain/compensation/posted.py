@@ -63,8 +63,16 @@ _AMOUNT_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:(?:[€$£]|[A-Z]{3})\s*)?(\d{1,3}(?:[,.]\d{3})+(?:\.\d+)?|\d+(?:[,.]\d+)?)(?:\s*[kK])?(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+_NON_SALARY_AMOUNT_SCALE_RE = re.compile(
+    r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
+    re.IGNORECASE,
+)
 _CURRENCY_CODES = ("EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK")
 _CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP"}
+_DIRECT_PERIOD_SUFFIX_RE = re.compile(
+    r"^\s*(?:(?:/|\bper\s+)(?:hour|hourly|hr|hrs|h|month|monthly|mo|mos|year|yearly|annum|yr|yrs)\b)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -287,9 +295,9 @@ def _detect_currency(text: str) -> str | None:
 
 
 def _detect_period(lower: str) -> CompensationPeriod:
-    if re.search(r"(/|\b)(hour|hourly|hr|hrs|h)\b", lower):
+    if re.search(r"(?:/(?:h|hr|hrs|hour)|\b(?:hour|hourly|hr|hrs)\b)", lower):
         return "hour"
-    if re.search(r"(/|\b)(month|monthly|mo|mos)\b", lower):
+    if re.search(r"(?:/(?:mo|mos|month)|\b(?:month|monthly)\b)", lower):
         return "month"
     if re.search(r"(/|\b)(year|yearly|annual|annually|annum|yr|yrs)\b", lower):
         return "year"
@@ -361,9 +369,13 @@ def _extract_amounts(text: str) -> list[_Amount]:
     for match in _AMOUNT_PATTERN.finditer(text):
         if text[match.end() :].lstrip().startswith("%"):
             continue
+        if _has_non_salary_amount_scale(text, match.end()):
+            continue
         token = match.group(0)
         parsed = _parse_amount_token(token)
         if parsed is None:
+            continue
+        if _is_small_prose_number(parsed, token, text, match.end()):
             continue
         amounts.append(_Amount(value=parsed, start=match.start(), end=match.end(), explicit_k="k" in token.casefold()))
     if len(amounts) >= 2 and any(amount.explicit_k for amount in amounts):
@@ -374,6 +386,32 @@ def _extract_amounts(text: str) -> list[_Amount]:
             for amount in amounts
         ]
     return amounts
+
+
+def _has_non_salary_amount_scale(text: str, amount_end: int) -> bool:
+    """Reject company metric amounts such as "$250 billion" or "6 million"."""
+
+    suffix = text[amount_end:].lstrip()
+    return bool(_NON_SALARY_AMOUNT_SCALE_RE.match(suffix))
+
+
+def _is_small_prose_number(value: int, token: str, text: str, amount_end: int) -> bool:
+    """Reject local prose counts such as "30 days per year" or "5 teams"."""
+
+    if value >= 10_000:
+        return False
+    if "k" in token.casefold() or _token_has_currency(token):
+        return False
+    if _DIRECT_PERIOD_SUFFIX_RE.match(text[amount_end:]):
+        return False
+    return True
+
+
+def _token_has_currency(token: str) -> bool:
+    if any(symbol in token for symbol in _CURRENCY_SYMBOLS):
+        return True
+    upper = token.upper()
+    return any(re.search(rf"(?<![A-Z]){code}\b", upper) for code in _CURRENCY_CODES)
 
 
 def _parse_amount_token(token: str) -> int | None:

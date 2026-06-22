@@ -30,7 +30,30 @@ function policyResponse(): CompensationSourceRegistryResponse {
           regions: ["Europe"],
           notes: "Coverage follows imported rows.",
         },
-        notes: ["Temporary local import path for reported company-role compensation rows."],
+        notes: ["Explicit local imports are additive with configured licensed sources and Euro Top Tech refresh data."],
+      },
+      {
+        sourceId: "euro_top_tech",
+        displayName: "Euro Top Tech",
+        sourceType: "reported_compensation",
+        accessMode: "public_dataset",
+        availability: "available",
+        licenseStatus: "not_required",
+        termsUrl: "https://www.eurotoptech.com/terms",
+        sourceUrl: "https://www.eurotoptech.com/data",
+        freshnessPolicy: "Uses approved public data-entry rows exposed by Euro Top Tech at refresh time.",
+        attributionRequirement: "Show attribution to Euro Top Tech when its observations contribute to an estimate.",
+        supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
+        disabledReason: null,
+        configured: true,
+        coverage: {
+          geography: "public_dataset",
+          regions: ["Europe"],
+          notes: "Coverage follows Euro Top Tech submitted European data-entry rows.",
+        },
+        notes: [
+          "Public crowdsourced software-engineer compensation rows are imported during compensation refresh.",
+        ],
       },
       {
         sourceId: "levels_fyi",
@@ -52,7 +75,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Europe coverage is not configured.",
         },
         notes: [
-          "Automated access requires a permitted provider mode. Exported or licensed rows can be supplied to jobhunter compensation-refresh --observations-json.",
+          "Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
         ],
       },
       {
@@ -75,7 +98,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Coverage is not configured.",
         },
         notes: [
-          "Automated access requires partner API access or written permission. Exported or permitted rows can be supplied to jobhunter compensation-refresh --observations-json.",
+          "Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
         ],
       },
     ],
@@ -102,6 +125,13 @@ describe("<CompensationSourcePolicyPanel>", () => {
     expect(table).toHaveTextContent("base salary");
     expect(table).toHaveTextContent("total compensation");
     expect(table).toHaveTextContent("Europe");
+    expect(table).toHaveTextContent("Euro Top Tech");
+    expect(table).toHaveTextContent("public dataset");
+    expect(screen.getByRole("link", { name: "Euro Top Tech source" })).toHaveAttribute(
+      "href",
+      "https://www.eurotoptech.com/data",
+    );
+    expect(table).toHaveTextContent("Show attribution to Euro Top Tech");
     expect(table).toHaveTextContent("Levels.fyi");
     expect(table).toHaveTextContent(
       "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
