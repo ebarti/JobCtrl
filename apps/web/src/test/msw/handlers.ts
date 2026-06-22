@@ -77,7 +77,7 @@ const sampleCompensationSourcePolicy = {
         regions: ["Europe"],
         notes: "Coverage follows imported rows.",
       },
-      notes: ["Temporary local import path for reported company-role compensation rows."],
+      notes: ["Explicit local imports are additive with configured licensed sources and Euro Top Tech refresh data."],
     },
     {
       sourceId: "euro_top_tech",
@@ -119,7 +119,7 @@ const sampleCompensationSourcePolicy = {
         regions: [],
         notes: "Europe coverage is not configured.",
       },
-      notes: ["Automated access requires a permitted provider mode. Exported or licensed rows can be supplied to jobhunter compensation-refresh --observations-json."],
+      notes: ["Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted."],
     },
     {
       sourceId: "glassdoor",
@@ -140,7 +140,7 @@ const sampleCompensationSourcePolicy = {
         regions: [],
         notes: "Coverage is not configured.",
       },
-      notes: ["Automated access requires partner API access or written permission. Exported or permitted rows can be supplied to jobhunter compensation-refresh --observations-json."],
+      notes: ["Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted."],
     },
   ],
 };

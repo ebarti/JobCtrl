@@ -212,10 +212,15 @@ uv --project workers/automation run jobhunter compensation-refresh \
 
 The command reparses current `jobs.salary` values plus compensation text found
 in job descriptions into posted-compensation facts, imports local reported
-compensation rows from Levels.fyi, Glassdoor, or manual sources when
-`--observations-json` is supplied, imports public Euro Top Tech
-community-reported rows by default when no observations file is supplied, and
-refreshes local projections. When no external reported evidence matches,
+compensation rows from `--observations-json` when supplied, imports configured
+licensed Levels.fyi and Glassdoor feeds by default when their source-policy
+environment variables and feed path or URL are present, imports public Euro Top
+Tech community-reported rows by default, and refreshes local projections. Set
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` for Levels.fyi feeds and
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL` for Glassdoor feeds; JSON and CSV feeds
+are accepted. When no external reported evidence matches,
 JobHunter derives low-confidence market ranges from employer-posted salary facts
 it already captured.
 It uses the best available grounded tier: same company and role first, then
@@ -225,7 +230,7 @@ supports. The market response stores both the best range and a wider confidence
 interval; weaker tiers get wider intervals. Employer-posted rows are attributed
 as job posting salary text, not Levels.fyi, Glassdoor, Euro Top Tech, or manual
 reported data. Use `--url <job-url>` or `--limit N` to narrow the refresh. Use
-`--no-eurotoptech` to disable the public Euro Top Tech import, or
+`--no-eurotoptech` to disable only the public Euro Top Tech import, or
 `--eurotoptech-max-pages N` to cap its paginated data-entry fetch.
 
 Useful options:

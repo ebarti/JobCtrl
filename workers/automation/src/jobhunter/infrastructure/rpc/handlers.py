@@ -324,8 +324,7 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     from jobhunter.infrastructure.compensation import (
         SqliteMarketCompensationRepository,
         SqlitePostedCompensationRepository,
-        load_euro_top_tech_observations,
-        load_reported_compensation_observations,
+        load_default_reported_compensation_observations,
         posted_compensation_source_from_job,
     )
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
@@ -349,28 +348,27 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     )
     posted_count = 1
 
-    observations_path = params.get("observationsJsonPath")
-    local_observations = ()
-    if observations_path:
-        observation_file = Path(str(observations_path))
-        if not observation_file.is_file():
-            raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
-        local_observations = load_reported_compensation_observations(observation_file)
-
     include_eurotoptech_param = params.get("includeEuroTopTech")
-    include_eurotoptech = (
-        bool(include_eurotoptech_param) if include_eurotoptech_param is not None else observations_path is None
-    )
-    eurotoptech_observations = ()
-    if include_eurotoptech:
-        try:
-            eurotoptech_observations = load_euro_top_tech_observations(
-                max_pages=int(params.get("euroTopTechMaxPages") or 10)
-            )
-        except Exception as exc:  # noqa: BLE001 - manual refresh should degrade to local evidence
-            logger.warning("Euro Top Tech compensation data could not be loaded: %s", exc)
+    include_eurotoptech = bool(include_eurotoptech_param) if include_eurotoptech_param is not None else True
+    observations_path = params.get("observationsJsonPath")
+    observation_file = Path(str(observations_path)) if observations_path else None
+    if observation_file is not None and not observation_file.exists():
+        raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
+    try:
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observation_file,
+            include_eurotoptech=include_eurotoptech,
+            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
+        )
+    except Exception as exc:  # noqa: BLE001 - manual refresh should degrade to local evidence
+        logger.warning("Reported compensation sources could not be fully loaded: %s", exc)
+        source_load = load_default_reported_compensation_observations(
+            local_observations_path=observation_file,
+            include_eurotoptech=False,
+            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
+        )
 
-    observations = (*local_observations, *eurotoptech_observations)
+    observations = source_load.observations
     estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
         observations,
         tenant_id=tenant_id,
@@ -386,8 +384,11 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
         "jobUrl": job_url,
         "postedFactsRefreshed": posted_count,
         "reportedObservationsLoaded": len(observations),
-        "localReportedObservationsLoaded": len(local_observations),
-        "euroTopTechObservationsLoaded": len(eurotoptech_observations),
+        "localReportedObservationsLoaded": source_load.local_count,
+        "licensedReportedObservationsLoaded": source_load.licensed_count,
+        "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
+        "glassdoorObservationsLoaded": source_load.glassdoor_count,
+        "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
         "estimatesRefreshed": estimate_count,
         "marketRefreshSkipped": False,
         "tenantId": tenant_id,

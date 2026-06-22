@@ -423,13 +423,15 @@ before inspection. They are exposed through both the narrow read-only
 inspection API and projection-backed job list/detail compensation summaries.
 Company-role market compensation estimates are persisted in
 `job_market_compensation_estimates` before inspection. Phase 19 estimates are
-deterministic local facts derived from imported or manually supplied reported
-compensation observations for Euro Top Tech, Levels.fyi, Glassdoor, or manual
-sources, or from employer-posted salary facts already captured by JobHunter.
+deterministic local facts derived from configured reported compensation feeds
+for Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from
+employer-posted salary facts already captured by JobHunter.
 Euro Top Tech rows are treated as public community-reported EUR/year total
-compensation observations. Employer-posted market rows are labeled as job
-posting salary text and remain low confidence when they are based on a single
-posting or extrapolated fallback tier. These rows store explicit estimate
+compensation observations; Levels.fyi and Glassdoor rows are loaded only when a
+permitted source-policy mode and feed path or URL are configured.
+Employer-posted market rows are labeled as job posting salary text and remain
+low confidence when they are based on a single posting or extrapolated fallback
+tier. These rows store explicit estimate
 states, normalized company and role, match scope, trimodal company tier,
 confidence factors, confidence interval bounds, safe source snapshots, warnings,
 and reasons. They do not store raw benchmark pages, provider payloads,
@@ -819,9 +821,10 @@ weaker. Employer-posted salary observations can emit low-confidence ranges with
 low-sample warnings. High-value posted base-salary text with an omitted period
 can be treated as annual evidence for market estimation, but bonus-only and
 one-sided rows are rejected. The temporary `jobhunter compensation-refresh`
-command reparses existing posted salary text, imports reported observations when
-provided, writes estimates for existing jobs, and refreshes projections without
-running the job pipeline. It
+command reparses existing posted salary text, imports explicit local
+observations, configured licensed Levels.fyi and Glassdoor feeds, and public
+Euro Top Tech observations additively, writes estimates for existing jobs, and
+refreshes projections without running the job pipeline. It
 does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
 or apply dispatch behavior in Phase 19.
 Operations projections materialize compensation read data from those canonical

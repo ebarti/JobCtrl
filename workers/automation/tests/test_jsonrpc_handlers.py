@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import jobhunter.infrastructure.compensation as compensation_infra
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.domain.compensation import ReportedCompensationObservation
+from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobhunter.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -289,6 +289,7 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
                 "tenantId": "local",
                 "jobUrl": selected_url,
                 "observationsJsonPath": str(observations_path),
+                "includeEuroTopTech": False,
             },
             id=1,
         )
@@ -369,7 +370,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
             ),
         )
 
-    monkeypatch.setattr(compensation_infra, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
+    monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
 
     server = _server()
     response = server.dispatch(
@@ -403,6 +404,115 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     assert estimate["component"] == "total_compensation"
     assert estimate["match_scope"] == "same_location_role_fallback"
     assert "euro_top_tech" in estimate["source_snapshot_json"]
+
+
+def test_refresh_compensation_loads_all_configured_sources_by_default(
+    tmp_db: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/jobs/platform"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            "Senior Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    levels_path = tmp_path / "levels.json"
+    levels_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "totalCompensationMin": 118000,
+                    "totalCompensationMax": 142000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 4,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    glassdoor_path = tmp_path / "glassdoor.json"
+    glassdoor_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "amount": 125000,
+                    "companyTier": "tier_2",
+                    "sampleCount": 3,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_ACCESS_MODE", "licensed_data_feed")
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE", "true")
+    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
+    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_ACCESS_MODE", "written_permission")
+    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
+
+    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+        return (
+            ReportedCompensationObservation(
+                source_id="euro_top_tech",
+                company_name="Acme AI",
+                role_title="Senior Platform Engineer",
+                minimum_amount=160_000,
+                maximum_amount=160_000,
+                component="total_compensation",
+                location="Berlin, Germany",
+                level_label="Senior",
+                company_tier="tier_2_ambitious",
+                sample_count=1,
+                attribution="Euro Top Tech public crowdsourced compensation data",
+            ),
+        )
+
+    monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
+
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={"tenantId": "local", "jobUrl": job_url},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["reportedObservationsLoaded"] == 3
+    assert body["result"]["licensedReportedObservationsLoaded"] == 2
+    assert body["result"]["levelsFyiObservationsLoaded"] == 1
+    assert body["result"]["glassdoorObservationsLoaded"] == 1
+    assert body["result"]["euroTopTechObservationsLoaded"] == 1
+    estimate = conn.execute(
+        """
+        SELECT minimum_amount, maximum_amount, source_snapshot_json
+        FROM job_market_compensation_estimates WHERE job_url = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    assert estimate["minimum_amount"] == 118_000
+    assert estimate["maximum_amount"] == 160_000
+    source_ids = {item["source_id"] for item in json.loads(estimate["source_snapshot_json"])}
+    assert source_ids == {"levels_fyi", "glassdoor", "euro_top_tech"}
 
 
 # ---------------------------------------------------------------------------

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import csv
 import json
+import logging
+import os
 import re
 import sqlite3
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +104,20 @@ EUR_NORMALIZATION_RATES = {
     "PLN": 0.235,
     "CZK": 0.041,
 }
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReportedCompensationSourceLoad:
+    observations: tuple[ReportedCompensationObservation, ...]
+    local_count: int = 0
+    levels_fyi_count: int = 0
+    glassdoor_count: int = 0
+    euro_top_tech_count: int = 0
+
+    @property
+    def licensed_count(self) -> int:
+        return self.levels_fyi_count + self.glassdoor_count
 
 
 class SqliteMarketCompensationRepository:
@@ -434,10 +452,104 @@ class SqliteMarketCompensationRepository:
             return
 
 
-def load_reported_compensation_observations(path: Path | str) -> tuple[ReportedCompensationObservation, ...]:
+def load_reported_compensation_observations(
+    path: Path | str,
+    *,
+    default_source_id: str | None = None,
+) -> tuple[ReportedCompensationObservation, ...]:
     """Load Levels.fyi, Glassdoor, or manual reported compensation observations from JSON."""
 
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _load_reported_compensation_payload(
+        Path(path).read_text(encoding="utf-8"),
+        default_source_id=default_source_id,
+    )
+
+
+def load_default_reported_compensation_observations(
+    *,
+    local_observations_path: Path | str | None = None,
+    include_eurotoptech: bool = True,
+    eurotoptech_max_pages: int = 10,
+    env: dict[str, str] | None = None,
+) -> ReportedCompensationSourceLoad:
+    """Load every configured reported-compensation source for refresh paths."""
+
+    source_env = env if env is not None else os.environ
+    observations: list[ReportedCompensationObservation] = []
+    local = _load_optional_observation_ref(local_observations_path, default_source_id=None)
+    levels_fyi = _load_configured_provider_observations(
+        source_env,
+        provider="levels_fyi",
+        default_source_id="levels_fyi",
+        access_var="JOBHUNTER_LEVELS_FYI_ACCESS_MODE",
+        permitted_access_modes={"licensed_api", "licensed_data_feed", "enterprise_mcp"},
+        required_true_vars=("JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE",),
+        ref_vars=(
+            "JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH",
+            "JOBHUNTER_LEVELS_FYI_OBSERVATIONS_JSON",
+            "JOBHUNTER_LEVELS_FYI_DATA_FEED_PATH",
+            "JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL",
+            "JOBHUNTER_LEVELS_FYI_DATA_FEED_URL",
+        ),
+        auth_token_vars=(
+            "JOBHUNTER_LEVELS_FYI_API_TOKEN",
+            "JOBHUNTER_LEVELS_FYI_API_KEY",
+            "JOBHUNTER_LEVELS_FYI_TOKEN",
+        ),
+        default_paths=(
+            Path.home() / ".jobhunter" / "compensation" / "levels_fyi.json",
+            Path.home() / ".jobhunter" / "compensation" / "levels_fyi.csv",
+            Path.home() / ".jobhunter" / "compensation" / "levels-fyi.json",
+            Path.home() / ".jobhunter" / "compensation" / "levels-fyi.csv",
+        ),
+    )
+    glassdoor = _load_configured_provider_observations(
+        source_env,
+        provider="glassdoor",
+        default_source_id="glassdoor",
+        access_var="JOBHUNTER_GLASSDOOR_ACCESS_MODE",
+        permitted_access_modes={"partner_api", "written_permission"},
+        required_true_vars=(),
+        ref_vars=(
+            "JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH",
+            "JOBHUNTER_GLASSDOOR_OBSERVATIONS_JSON",
+            "JOBHUNTER_GLASSDOOR_DATA_FEED_PATH",
+            "JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL",
+            "JOBHUNTER_GLASSDOOR_DATA_FEED_URL",
+        ),
+        auth_token_vars=(
+            "JOBHUNTER_GLASSDOOR_API_TOKEN",
+            "JOBHUNTER_GLASSDOOR_API_KEY",
+            "JOBHUNTER_GLASSDOOR_TOKEN",
+        ),
+        default_paths=(
+            Path.home() / ".jobhunter" / "compensation" / "glassdoor.json",
+            Path.home() / ".jobhunter" / "compensation" / "glassdoor.csv",
+        ),
+    )
+    eurotoptech = load_euro_top_tech_observations(max_pages=eurotoptech_max_pages) if include_eurotoptech else ()
+    observations.extend(local)
+    observations.extend(levels_fyi)
+    observations.extend(glassdoor)
+    observations.extend(eurotoptech)
+    return ReportedCompensationSourceLoad(
+        observations=tuple(observations),
+        local_count=len(local),
+        levels_fyi_count=len(levels_fyi),
+        glassdoor_count=len(glassdoor),
+        euro_top_tech_count=len(eurotoptech),
+    )
+
+
+def _load_reported_compensation_payload(
+    text: str,
+    *,
+    default_source_id: str | None,
+) -> tuple[ReportedCompensationObservation, ...]:
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return _load_reported_compensation_csv(text, default_source_id=default_source_id)
     items = raw.get("observations", raw) if isinstance(raw, dict) else raw
     if not isinstance(items, list):
         raise ValueError("reported compensation JSON must be a list or an object with an observations list")
@@ -445,10 +557,110 @@ def load_reported_compensation_observations(path: Path | str) -> tuple[ReportedC
     for item in items:
         if not isinstance(item, dict):
             continue
-        observation = _observation_from_dict(item)
+        observation = _observation_from_dict(item, default_source_id=default_source_id)
         if observation is not None:
             observations.append(observation)
     return tuple(observations)
+
+
+def _load_reported_compensation_csv(
+    text: str,
+    *,
+    default_source_id: str | None,
+) -> tuple[ReportedCompensationObservation, ...]:
+    observations: list[ReportedCompensationObservation] = []
+    for item in csv.DictReader(text.splitlines()):
+        observation = _observation_from_dict(item, default_source_id=default_source_id)
+        if observation is not None:
+            observations.append(observation)
+    return tuple(observations)
+
+
+def _load_optional_observation_ref(
+    ref: Path | str | None,
+    *,
+    default_source_id: str | None,
+) -> tuple[ReportedCompensationObservation, ...]:
+    if ref is None or str(ref).strip() == "":
+        return ()
+    return _load_observation_ref(str(ref), default_source_id=default_source_id, auth_token=None)
+
+
+def _load_configured_provider_observations(
+    env: dict[str, str],
+    *,
+    provider: str,
+    default_source_id: str,
+    access_var: str,
+    permitted_access_modes: set[str],
+    required_true_vars: tuple[str, ...],
+    ref_vars: tuple[str, ...],
+    auth_token_vars: tuple[str, ...],
+    default_paths: tuple[Path, ...],
+) -> tuple[ReportedCompensationObservation, ...]:
+    access_mode = str(env.get(access_var) or "").strip().casefold()
+    if access_mode not in permitted_access_modes:
+        return ()
+    if any(not _truthy(env.get(var)) for var in required_true_vars):
+        return ()
+
+    refs: list[str] = []
+    for var in ref_vars:
+        value = str(env.get(var) or "").strip()
+        if value:
+            refs.extend(item.strip() for item in re.split(r"[,;]", value) if item.strip())
+    refs.extend(str(path) for path in default_paths if path.exists())
+    if not refs:
+        return ()
+
+    auth_token = next((str(env.get(var) or "").strip() for var in auth_token_vars if str(env.get(var) or "").strip()), None)
+    observations: list[ReportedCompensationObservation] = []
+    for ref in refs:
+        try:
+            observations.extend(_load_observation_ref(ref, default_source_id=default_source_id, auth_token=auth_token))
+        except Exception as exc:  # noqa: BLE001 - one unavailable licensed feed should not block refresh
+            log.warning("%s reported compensation feed could not be loaded from %s: %s", provider, ref, exc)
+    return tuple(row for row in observations if row.source_id == provider)
+
+
+def _load_observation_ref(
+    ref: str,
+    *,
+    default_source_id: str | None,
+    auth_token: str | None,
+) -> tuple[ReportedCompensationObservation, ...]:
+    if _is_url(ref):
+        return _load_reported_compensation_payload(
+            _fetch_text(ref, timeout_seconds=20.0, auth_token=auth_token),
+            default_source_id=default_source_id,
+        )
+
+    path = Path(ref).expanduser()
+    if path.is_dir():
+        observations: list[ReportedCompensationObservation] = []
+        for child in sorted(path.iterdir()):
+            if child.suffix.casefold() not in {".csv", ".json"}:
+                continue
+            observations.extend(load_reported_compensation_observations(child, default_source_id=default_source_id))
+        return tuple(observations)
+    return load_reported_compensation_observations(path, default_source_id=default_source_id)
+
+
+def _fetch_text(url: str, *, timeout_seconds: float, auth_token: str | None) -> str:
+    headers = {"Accept": "application/json, text/csv;q=0.9, */*;q=0.8", "User-Agent": "JobHunter/0.3"}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return response.read().decode("utf-8")
+
+
+def _is_url(value: str) -> bool:
+    return urllib.parse.urlsplit(value).scheme in {"http", "https"}
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def load_euro_top_tech_observations(
@@ -544,8 +756,12 @@ def _euro_top_tech_snapshot_version(submitted_month: str | None) -> str:
     return f"eurotoptech-data-{text}" if re.fullmatch(r"\d{4}-\d{2}", text) else "eurotoptech-data-public"
 
 
-def _observation_from_dict(data: dict[str, Any]) -> ReportedCompensationObservation | None:
-    source_id = _source_id(_pick(data, "source_id", "sourceId", "source"))
+def _observation_from_dict(
+    data: dict[str, Any],
+    *,
+    default_source_id: str | None = None,
+) -> ReportedCompensationObservation | None:
+    source_id = _source_id(_pick(data, "source_id", "sourceId", "source") or default_source_id)
     company = _text(_pick(data, "company_name", "companyName", "company"))
     role = _text(_pick(data, "role_title", "roleTitle", "title", "role"))
     minimum = _money(

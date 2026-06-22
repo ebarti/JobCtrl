@@ -225,9 +225,12 @@ import as safe policy entries. Levels.fyi automated access remains unavailable u
 `enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
 Glassdoor automated access remains unavailable unless
 `JOBHUNTER_GLASSDOOR_ACCESS_MODE` is `partner_api` or `written_permission`.
-Exported, licensed, or otherwise permitted reported rows can be supplied locally
-to `jobhunter compensation-refresh --observations-json`; the source registry
-does not expose secrets or row contents.
+When available, refresh paths automatically load licensed Levels.fyi rows from
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
+`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
+`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL`. JSON and CSV feeds are accepted. The
+source registry does not expose secrets, row contents, local paths, or feed URLs.
 
 `GET /v1/jobs/:jobKey/compensation/posted` returns the Phase 18 read-only
 inspection contract for canonical posted-compensation facts. The endpoint reads
@@ -285,15 +288,15 @@ confidence factors, and trimodal company-tier context. Raw benchmark pages,
 credentials, private account payloads, local paths, and user compensation
 preferences are not returned.
 
-Temporary write trigger: `jobhunter compensation-refresh --observations-json
-<file>` reparses posted salary facts from existing `jobs.salary` values and
-description compensation text, imports permitted reported compensation
-observations, estimates matching existing jobs, and refreshes projections
-without running discovery, scoring, tailoring, cover, or apply automation. When
-the observations file is omitted, the refresh imports public Euro Top Tech
-community-reported rows by default, then falls back to employer-posted salary
-facts already captured by JobHunter as low-confidence posted-salary evidence. It
-falls back through same company/role,
+Temporary write trigger: `jobhunter compensation-refresh` reparses posted salary
+facts from existing `jobs.salary` values and description compensation text,
+imports all configured reported compensation observations, estimates matching
+existing jobs, and refreshes projections without running discovery, scoring,
+tailoring, cover, or apply automation. Explicit `--observations-json <file>`
+imports are additive with configured Levels.fyi feeds, configured Glassdoor
+feeds, and public Euro Top Tech rows. When reported evidence does not match, the
+estimator falls back to employer-posted salary facts already captured by
+JobHunter as low-confidence posted-salary evidence. It falls back through same company/role,
 same-location role, same-company adjacent-role, trimodal company-tier, and broad
 market-baseline tiers so sparse real evidence still produces a best estimate
 with a wider confidence interval. Fallback matching is seniority-aware, so
@@ -308,10 +311,10 @@ Manual web/API trigger: `POST
 compensation refresh through the local worker for one existing job without
 rerunning discovery, scoring, tailoring, cover, or apply automation. The request
 body may include `{ "observationsJsonPath": "/path/to/export.json" }` to import
-permitted reported-compensation observations before estimating market evidence,
-or `{ "includeEuroTopTech": true, "euroTopTechMaxPages": 10 }` to include the
-public Euro Top Tech import. When both are omitted, Euro Top Tech is included by
-default and the estimator still falls back to the selected job's captured
+additional reported-compensation observations before estimating market evidence,
+or `{ "includeEuroTopTech": false }` to disable only the public Euro Top Tech
+import. Configured Levels.fyi and Glassdoor feeds still load by default. When no
+reported source matches, the estimator still falls back to the selected job's captured
 employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
 bonus-only or one-sided rows. The response is the standard action response with
