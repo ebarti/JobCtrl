@@ -156,6 +156,13 @@ LEGAL_SUFFIX_RE = re.compile(
 )
 SENIORITY_WORDS = frozenset(
     {
+        "ceo",
+        "chief",
+        "cio",
+        "ciso",
+        "coo",
+        "cpo",
+        "cto",
         "junior",
         "jr",
         "mid",
@@ -167,6 +174,9 @@ SENIORITY_WORDS = frozenset(
         "manager",
         "director",
         "head",
+        "president",
+        "vice",
+        "vp",
     }
 )
 ROLE_STOP_WORDS = frozenset({"remote", "full", "time", "the"})
@@ -218,6 +228,17 @@ EUROPE_MARKERS = frozenset(
         "sweden",
         "denmark",
         "norway",
+        "andorra",
+        "austria",
+        "belgium",
+        "czechia",
+        "czech",
+        "finland",
+        "greece",
+        "hungary",
+        "luxembourg",
+        "slovakia",
+        "slovenia",
     }
 )
 
@@ -781,28 +802,32 @@ def _select_rows(
 
     company_rows = [row for row in rows if _company_score(normalized_company, row.company_name) >= 0.95]
     company_tier, _ = _company_tier(company_rows)
+    target_level = _normalize_level(inferred_level)
     if company_tier != "unknown":
         tier_rows = [
             row
             for row in rows
             if row.company_tier == company_tier and _role_score(normalized_role, row.role_title) >= 0.72
+            and _fallback_level_score(target_level, row) >= 0.78
         ]
         if tier_rows:
             return tier_rows, "tier_role_fallback", "company_role_fallback"
 
+    same_location_role_threshold = 0.72 if target_level == "executive" else 0.55
     same_location_role = [
         row
         for row in rows
-        if _role_score(normalized_role, row.role_title) >= 0.55 and _location_score(location, row.location) >= 0.78
+        if _role_score(normalized_role, row.role_title) >= same_location_role_threshold
+        and _fallback_level_score(target_level, row) >= 0.78
+        and _location_score(location, row.location) >= 0.78
     ]
     if same_location_role:
         return same_location_role, "same_location_role_fallback", "company_role_fallback"
 
-    target_level = _normalize_level(inferred_level)
     baseline = [
         row
         for row in rows
-        if _level_score(target_level, row.level_label) >= 0.5 and _location_score(location, row.location) >= 0.5
+        if _fallback_level_score(target_level, row) >= 0.78 and _location_score(location, row.location) >= 0.5
     ]
     if baseline:
         return baseline, "market_baseline_fallback", "company_role_fallback"
@@ -987,6 +1012,8 @@ def _role_families(tokens: set[str]) -> set[str]:
 
 def _level_from_title(title: str | None) -> str:
     tokens = set(_role_tokens(title))
+    if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "president", "vice", "vp"} & tokens:
+        return "executive"
     if {"staff", "principal", "lead", "director", "head"} & tokens:
         return "staff_plus"
     if {"senior", "sr"} & tokens:
@@ -1002,9 +1029,13 @@ def _level_score(expected: str | None, observed: str | None) -> float:
     expected_level = _normalize_level(expected)
     observed_level = _normalize_level(observed)
     if observed_level == "unknown":
-        return 0.75
+        return 0.5 if expected_level == "executive" else 0.75
     if expected_level == observed_level:
         return 0.95
+    if expected_level == "executive" and observed_level in {"staff_plus", "manager"}:
+        return 0.45
+    if observed_level == "executive" and expected_level in {"staff_plus", "manager"}:
+        return 0.45
     if expected_level == "senior" and observed_level == "staff_plus":
         return 0.82
     if expected_level == "staff_plus" and observed_level == "senior":
@@ -1017,6 +1048,8 @@ def _level_score(expected: str | None, observed: str | None) -> float:
 def _normalize_level(value: str | None) -> str:
     text = str(value or "").casefold()
     tokens = set(re.findall(r"[a-z0-9]+", text))
+    if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "executive", "president", "vice", "vp"} & tokens:
+        return "executive"
     if {"staff", "principal", "lead", "director", "head", "l6", "l7", "l8"} & tokens:
         return "staff_plus"
     if {"senior", "sr", "l5"} & tokens:
@@ -1028,6 +1061,13 @@ def _normalize_level(value: str | None) -> str:
     if tokens:
         return "mid"
     return "unknown"
+
+
+def _fallback_level_score(target_level: str, row: ReportedCompensationObservation) -> float:
+    observed_level = _normalize_level(row.level_label)
+    if observed_level == "unknown":
+        observed_level = _level_from_title(row.role_title)
+    return _level_score(target_level, observed_level)
 
 
 def _location_score(job_location: str | None, observed_location: str | None) -> float:

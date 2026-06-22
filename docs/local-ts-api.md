@@ -296,7 +296,9 @@ facts already captured by JobHunter as low-confidence posted-salary evidence. It
 falls back through same company/role,
 same-location role, same-company adjacent-role, trimodal company-tier, and broad
 market-baseline tiers so sparse real evidence still produces a best estimate
-with a wider confidence interval. It does not label those rows as Levels.fyi,
+with a wider confidence interval. Fallback matching is seniority-aware, so
+executive CTO/VP roles do not reuse staff, principal, or director observations
+unless the selected source row is also executive-level. It does not label those rows as Levels.fyi,
 Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
 source actually contributed observations. `--url <job-url>` narrows the refresh
 to one existing job.

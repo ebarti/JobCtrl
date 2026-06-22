@@ -57,6 +57,55 @@ def _glassdoor(
     )
 
 
+def _euro_top_tech(
+    *,
+    company: str = "Euro Top Tech community",
+    role: str = "Chief Product Officer",
+    minimum: int = 315_000,
+    maximum: int = 315_000,
+    level: str = "Executive",
+    location: str = "Amsterdam, Netherlands",
+    sample_count: int = 1,
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="euro_top_tech",
+        company_name=company,
+        role_title=role,
+        level_label=level,
+        company_tier="unknown",
+        location=location,
+        minimum_amount=minimum,
+        maximum_amount=maximum,
+        sample_count=sample_count,
+        attribution="Euro Top Tech public crowdsourced compensation data",
+    )
+
+
+def _posted_salary(
+    *,
+    company: str = "Novartis",
+    role: str = "Director Digital Trust Platforms",
+    minimum: int = 84_400,
+    maximum: int = 156_800,
+    location: str = "Barcelona, Spain",
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="posted_salary_text",
+        company_name=company,
+        role_title=role,
+        level_label=None,
+        company_tier="unknown",
+        location=location,
+        minimum_amount=minimum,
+        maximum_amount=maximum,
+        currency="EUR",
+        period="year",
+        component="base_salary",
+        sample_count=1,
+        attribution="Employer-posted salary text captured by JobHunter",
+    )
+
+
 def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/platform",
@@ -88,6 +137,50 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
     assert {source.source_id for source in estimate.sources} == {"levels_fyi", "glassdoor"}
     assert "reported_compensation_sample" in estimate.warnings
     assert "company_role_fallback" not in estimate.warnings
+
+
+def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/cto",
+        company="Different Company",
+        title="CTO (Chief Technology Officer)",
+        location="Spain (Remote)",
+        observations=(
+            _euro_top_tech(role="Chief Product Officer", minimum=315_000, maximum=315_000),
+            _euro_top_tech(company="US based startup", role="COO", minimum=175_000, maximum=175_000, location="Prague, Czechia"),
+            _euro_top_tech(role="Staff Software Engineer", level="Staff / Engineering Manager", minimum=147_000, maximum=147_000),
+            _euro_top_tech(role="Principal / Director Software Engineer", level="Principal / Director", minimum=350_000, maximum=350_000),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "market_baseline_fallback"
+    assert estimate.seniority_label == "executive"
+    assert estimate.minimum_amount == 175_000
+    assert estimate.maximum_amount == 315_000
+    assert estimate.confidence_band == "low"
+    assert "company_role_fallback" in estimate.warnings
+
+
+def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/cto-posted",
+        company="Different Company",
+        title="Chief Technology Officer (CTO)",
+        location="Spain (Remote)",
+        observations=(
+            _posted_salary(role="Director Digital Trust Platforms", minimum=84_400, maximum=156_800),
+            _posted_salary(role="Principal Engineer", minimum=80_000, maximum=100_000),
+            _posted_salary(role="Staff Software Engineer", minimum=120_000, maximum=120_000),
+        ),
+        component="base_salary",
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
 
 
 def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:
