@@ -306,16 +306,17 @@ Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
 source actually contributed observations. `--url <job-url>` narrows the refresh
 to one existing job.
 
-Manual web/API trigger: `POST
+Manual web/API triggers: `POST
 /v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
-compensation refresh through the local worker for one existing job without
-rerunning discovery, scoring, tailoring, cover, or apply automation. The request
-body may include `{ "observationsJsonPath": "/path/to/export.json" }` to import
-additional reported-compensation observations before estimating market evidence,
-or `{ "includeEuroTopTech": false }` to disable only the public Euro Top Tech
-import. Configured Levels.fyi and Glassdoor feeds still load by default. When no
-reported source matches, the estimator still falls back to the selected job's captured
-employer-posted salary facts when they can be safely annualized or when
+compensation refresh through the local worker for one existing job, while `POST
+/v1/jobs/actions/refresh-compensation` refreshes every existing job. Both paths
+avoid rerunning discovery, scoring, tailoring, cover, or apply automation. The
+request body may include `{ "observationsJsonPath": "/path/to/export.json" }`
+to import additional reported-compensation observations before estimating market
+evidence, or `{ "includeEuroTopTech": false }` to disable only the public Euro
+Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
+default. When no reported source matches, the estimator still falls back to the
+selected job's captured employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
 bonus-only or one-sided rows. The response is the standard action response with
 a synchronous `succeeded` result when the local JSON-RPC handler completes.

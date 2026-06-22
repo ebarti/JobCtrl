@@ -19,6 +19,8 @@ export interface RefreshCompensationVariables extends RefreshCompensationRequest
   readonly jobId: JobId;
 }
 
+export type RefreshAllCompensationVariables = RefreshCompensationRequest;
+
 export function useRefreshCompensationMutation(): UseMutationResult<
   ActionRunResponse,
   Error,
@@ -29,10 +31,8 @@ export function useRefreshCompensationMutation(): UseMutationResult<
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ jobId, observationsJsonPath }) =>
-      api.refreshCompensation(jobId, {
-        ...(observationsJsonPath ? { observationsJsonPath } : {}),
-      }),
+    mutationFn: ({ jobId, ...request }) =>
+      api.refreshCompensation(jobId, toRefreshCompensationRequest(request)),
     onSettled: async (_data, _error, variables) => {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -48,4 +48,39 @@ export function useRefreshCompensationMutation(): UseMutationResult<
       ]);
     },
   });
+}
+
+export function useRefreshAllCompensationMutation(): UseMutationResult<
+  ActionRunResponse,
+  Error,
+  RefreshAllCompensationVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables) => api.refreshAllCompensation(toRefreshCompensationRequest(variables)),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: jobsKeys.all(tenantId) }),
+        queryClient.invalidateQueries({
+          queryKey: enrichmentKeys.all(tenantId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: dashboardKeys.summary(tenantId),
+        }),
+      ]);
+    },
+  });
+}
+
+function toRefreshCompensationRequest(
+  variables: RefreshCompensationRequest,
+): RefreshCompensationRequest {
+  return {
+    ...(variables.observationsJsonPath ? { observationsJsonPath: variables.observationsJsonPath } : {}),
+    ...(variables.includeEuroTopTech !== undefined ? { includeEuroTopTech: variables.includeEuroTopTech } : {}),
+    ...(variables.euroTopTechMaxPages !== undefined ? { euroTopTechMaxPages: variables.euroTopTechMaxPages } : {}),
+  };
 }

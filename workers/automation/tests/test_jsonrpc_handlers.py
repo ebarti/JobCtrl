@@ -330,6 +330,86 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
     assert estimate["maximum_amount"] == 142_000
 
 
+def test_refresh_compensation_updates_all_jobs_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
+    conn = get_connection(tmp_db)
+    first_url = "https://example.com/jobs/platform"
+    second_url = "https://example.com/jobs/other"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            first_url,
+            "Senior Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "",
+            "Synthetic job",
+            "We build platform tooling. The salary range is €100,000-€130,000/year.",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            second_url,
+            "Staff Platform Engineer",
+            "Acme AI",
+            "Remote Europe",
+            "€90,000-€110,000/year",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    observations_path = tmp_path / "empty-reported-comp.json"
+    observations_path.write_text("[]", encoding="utf-8")
+
+    started_workflows: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("unexpected")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "allJobs": True,
+                "observationsJsonPath": str(observations_path),
+                "includeEuroTopTech": False,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert "error" not in body
+    assert body["result"]["status"] == "succeeded"
+    assert body["result"]["jobUrl"] is None
+    assert body["result"]["postedFactsRefreshed"] == 2
+    assert body["result"]["reportedObservationsLoaded"] == 0
+    assert body["result"]["estimatesRefreshed"] == 2
+    assert started_workflows == []
+
+    posted_rows = conn.execute(
+        "SELECT job_url, parse_state FROM job_posted_compensation_facts ORDER BY job_url",
+    ).fetchall()
+    estimate_rows = conn.execute(
+        "SELECT job_url, estimate_state FROM job_market_compensation_estimates ORDER BY job_url",
+    ).fetchall()
+    assert [row["job_url"] for row in posted_rows] == sorted([first_url, second_url])
+    assert [row["parse_state"] for row in posted_rows] == ["parsed_range", "parsed_range"]
+    assert [row["job_url"] for row in estimate_rows] == sorted([first_url, second_url])
+    assert [row["estimate_state"] for row in estimate_rows] == ["estimated_range", "estimated_range"]
+
+
 def test_refresh_compensation_without_observations_uses_euro_top_tech_and_updates_market(
     tmp_db: Path,
     monkeypatch: pytest.MonkeyPatch,

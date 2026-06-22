@@ -367,17 +367,22 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
     };
   }
   if (command.action === "refresh_compensation") {
+    const params: Record<string, unknown> = {
+      tenantId: "local",
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      ...(command.observationsJsonPath ? { observationsJsonPath: command.observationsJsonPath } : {}),
+      ...(command.includeEuroTopTech !== undefined ? { includeEuroTopTech: command.includeEuroTopTech } : {}),
+      ...(command.euroTopTechMaxPages !== undefined ? { euroTopTechMaxPages: command.euroTopTechMaxPages } : {}),
+    };
+    if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+      params.jobUrl = command.jobKey;
+    } else {
+      params.allJobs = true;
+    }
     return {
       method: "refresh_compensation",
-      params: {
-        tenantId: "local",
-        expectedAppDir: context.appDir,
-        expectedDbPath: context.dbPath,
-        jobUrl: command.jobKey,
-        ...(command.observationsJsonPath ? { observationsJsonPath: command.observationsJsonPath } : {}),
-        ...(command.includeEuroTopTech !== undefined ? { includeEuroTopTech: command.includeEuroTopTech } : {}),
-        ...(command.euroTopTechMaxPages ? { euroTopTechMaxPages: command.euroTopTechMaxPages } : {}),
-      },
+      params,
     };
   }
   if (command.action === "generate_materials") return null;

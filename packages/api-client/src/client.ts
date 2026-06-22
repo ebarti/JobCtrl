@@ -194,6 +194,10 @@ export class JobHunterApiClient {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/refresh-compensation`, body);
   }
 
+  refreshAllCompensation(body: RefreshCompensationRequest = {}): Promise<ActionRunResponse> {
+    return this.post("/v1/jobs/actions/refresh-compensation", body);
+  }
+
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {
     return this.get("/v1/discovery/locator-candidates");
   }

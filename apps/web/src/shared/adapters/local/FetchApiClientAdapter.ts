@@ -170,6 +170,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   refreshCompensation(jobKey: string, body: Parameters<JobHunterApiClient["refreshCompensation"]>[1] = {}) {
     return this.client.refreshCompensation(jobKey, body);
   }
+  refreshAllCompensation(body: Parameters<JobHunterApiClient["refreshAllCompensation"]>[0] = {}) {
+    return this.client.refreshAllCompensation(body);
+  }
   rescoreJobsNotOnCurrentScoringPolicy(
     body: Parameters<JobHunterApiClient["rescoreJobsNotOnCurrentScoringPolicy"]>[0],
   ) {

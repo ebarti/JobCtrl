@@ -105,7 +105,14 @@ describe("preparation RPC contracts", () => {
       includeEuroTopTech: true,
       euroTopTechMaxPages: 3,
     });
+    expect(RefreshCompensationParamsSchema.parse({ allJobs: true })).toEqual({
+      tenantId: "local",
+      allJobs: true,
+    });
     expect(() => RefreshCompensationParamsSchema.parse({})).toThrow();
+    expect(() =>
+      RefreshCompensationParamsSchema.parse({ jobUrl: "https://example.test/job/1", allJobs: true }),
+    ).toThrow();
     expect(() => RefreshCompensationParamsSchema.parse({ jobUrl: "", observationsJsonPath: "" })).toThrow();
 
     expect(
@@ -132,6 +139,21 @@ describe("preparation RPC contracts", () => {
       estimatesRefreshed: 1,
       marketRefreshSkipped: false,
       tenantId: "local",
+    });
+    expect(
+      RefreshCompensationResultSchema.parse({
+        ok: true,
+        status: "succeeded",
+        jobUrl: null,
+        postedFactsRefreshed: 2,
+        reportedObservationsLoaded: 0,
+        estimatesRefreshed: 2,
+        tenantId: "local",
+      }),
+    ).toMatchObject({
+      jobUrl: null,
+      postedFactsRefreshed: 2,
+      estimatesRefreshed: 2,
     });
   });
 

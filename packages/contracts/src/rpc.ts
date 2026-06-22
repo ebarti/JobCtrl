@@ -261,19 +261,23 @@ export const RefreshCompensationParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobUrl: z.string().min(1).optional(),
+    allJobs: z.literal(true).optional(),
     observationsJsonPath: z.string().trim().min(1).max(4000).optional(),
     includeEuroTopTech: z.boolean().optional(),
     euroTopTechMaxPages: z.number().int().min(1).max(100).optional(),
   })
-  .strict();
+  .strict()
+  .refine((params) => Boolean(params.jobUrl) !== (params.allJobs === true), {
+    message: "provide exactly one of jobUrl or allJobs",
+  });
 export type RefreshCompensationParams = z.infer<typeof RefreshCompensationParamsSchema>;
 
 export const RefreshCompensationResultSchema = z
   .object({
     ok: z.literal(true),
     status: z.literal("succeeded"),
-    jobUrl: z.string(),
+    jobUrl: z.string().nullable(),
     postedFactsRefreshed: z.number().int().min(0),
     reportedObservationsLoaded: z.number().int().min(0),
     localReportedObservationsLoaded: z.number().int().min(0).default(0),

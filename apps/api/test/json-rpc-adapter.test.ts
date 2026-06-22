@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_PIPELINE_LLM_MODEL, type ActionCommandPayload } from "../src/contracts.js";
+import { DEFAULT_PIPELINE_LLM_MODEL, PIPELINE_ACTION_JOB_KEY, type ActionCommandPayload } from "../src/contracts.js";
 import {
   buildActionResponse,
   createActionDispatcher,
@@ -434,6 +434,53 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(result).toMatchObject({
       status: "succeeded",
       result: expect.objectContaining({ postedFactsRefreshed: 1, estimatesRefreshed: 1 }),
+    });
+  });
+
+  it("maps all-jobs refresh_compensation without a jobUrl", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: true,
+        status: "succeeded",
+        jobUrl: null,
+        postedFactsRefreshed: 12,
+        reportedObservationsLoaded: 4,
+        estimatesRefreshed: 12,
+        marketRefreshSkipped: false,
+        tenantId: "local",
+      },
+    } as JsonRpcResponse);
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      {
+        action: "refresh_compensation",
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        includeEuroTopTech: false,
+        euroTopTechMaxPages: 3,
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "refresh_compensation",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          allJobs: true,
+          includeEuroTopTech: false,
+          euroTopTechMaxPages: 3,
+        },
+      },
+    ]);
+    expect(result).toMatchObject({
+      status: "succeeded",
+      result: expect.objectContaining({ jobUrl: null, postedFactsRefreshed: 12, estimatesRefreshed: 12 }),
     });
   });
 

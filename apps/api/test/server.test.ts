@@ -1000,6 +1000,52 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches an all-jobs compensation refresh without running the full pipeline", async () => {
+    options.actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
+      status: "succeeded",
+      result: {
+        ok: true,
+        status: "succeeded",
+        jobUrl: null,
+        postedFactsRefreshed: 2,
+        reportedObservationsLoaded: 0,
+        estimatesRefreshed: 2,
+        tenantId: "local",
+      },
+    }));
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/actions/refresh-compensation",
+      payload: { includeEuroTopTech: false, euroTopTechMaxPages: 3 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "refresh_compensation",
+      status: "succeeded",
+      jobKey: "pipeline",
+      command: {
+        action: "refresh_compensation",
+        jobKey: "pipeline",
+        includeEuroTopTech: false,
+        euroTopTechMaxPages: 3,
+      },
+    });
+    expect(options.actionDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "refresh_compensation",
+        jobKey: "pipeline",
+        includeEuroTopTech: false,
+        euroTopTechMaxPages: 3,
+      }),
+      expect.objectContaining({ dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
   it("returns a curated per-job audit history without raw debug events", async () => {
     const jobUrl = "https://example.com/jobs/ready";
     const db = new Database(options.dbPath);

@@ -232,6 +232,9 @@ as job posting salary text, not Levels.fyi, Glassdoor, Euro Top Tech, or manual
 reported data. Use `--url <job-url>` or `--limit N` to narrow the refresh. Use
 `--no-eurotoptech` to disable only the public Euro Top Tech import, or
 `--eurotoptech-max-pages N` to cap its paginated data-entry fetch.
+The Jobs toolbar also exposes a `refresh compensation` maintenance action that
+uses the same source-loading path for every existing job without rerunning the
+application pipeline.
 
 Useful options:
 

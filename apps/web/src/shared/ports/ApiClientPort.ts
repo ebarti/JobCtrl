@@ -189,6 +189,7 @@ export interface ApiClientPort {
   ): Promise<ResetStaleScoresForRescoreResponse>;
   rescoreJob(jobKey: string, body?: Partial<RescoreJobRequest>): Promise<ActionRunResponse>;
   refreshCompensation(jobKey: string, body?: RefreshCompensationRequest): Promise<ActionRunResponse>;
+  refreshAllCompensation(body?: RefreshCompensationRequest): Promise<ActionRunResponse>;
   rescoreJobsNotOnCurrentScoringPolicy(
     body: BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   ): Promise<ActionRunResponse>;

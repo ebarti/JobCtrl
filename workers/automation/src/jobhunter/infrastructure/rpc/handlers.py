@@ -317,9 +317,15 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
-    """Refresh compensation facts for one existing job without running a pipeline."""
+    """Refresh compensation facts without running a pipeline."""
     tenant_id = _tenant_id(params)
-    job_url = str(_require(params, "jobUrl"))
+    job_url_param = params.get("jobUrl")
+    all_jobs = params.get("allJobs") is True
+    if job_url_param and all_jobs:
+        raise invalid_params("provide exactly one of jobUrl or allJobs")
+    if not job_url_param and not all_jobs:
+        raise invalid_params("provide exactly one of jobUrl or allJobs")
+    job_url = str(job_url_param) if job_url_param else None
 
     from jobhunter.infrastructure.compensation import (
         SqliteMarketCompensationRepository,
@@ -330,23 +336,29 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 
     conn = get_connection()
-    row = conn.execute(
-        "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
-        (job_url,),
-    ).fetchone()
-    if row is None:
-        raise invalid_params(f"unknown jobUrl: {job_url}")
-
     refreshed_at = datetime.now(timezone.utc).isoformat()
-    source_text, source_field = posted_compensation_source_from_job(row)
-    SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
-        job_url,
-        source_text,
-        tenant_id=tenant_id,
-        source_field=source_field,
-        parsed_at=refreshed_at,
-    )
-    posted_count = 1
+    posted_repository = SqlitePostedCompensationRepository(conn)
+    if job_url:
+        row = conn.execute(
+            "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
+            (job_url,),
+        ).fetchone()
+        if row is None:
+            raise invalid_params(f"unknown jobUrl: {job_url}")
+        source_text, source_field = posted_compensation_source_from_job(row)
+        posted_repository.parse_and_save_job_salary(
+            job_url,
+            source_text,
+            tenant_id=tenant_id,
+            source_field=source_field,
+            parsed_at=refreshed_at,
+        )
+        posted_count = 1
+    else:
+        posted_count = posted_repository.backfill_from_legacy_jobs(
+            tenant_id=tenant_id,
+            parsed_at=refreshed_at,
+        )
 
     include_eurotoptech_param = params.get("includeEuroTopTech")
     include_eurotoptech = bool(include_eurotoptech_param) if include_eurotoptech_param is not None else True
@@ -373,7 +385,7 @@ def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
         observations,
         tenant_id=tenant_id,
         estimated_at=refreshed_at,
-        limit=1,
+        limit=1 if job_url else 0,
         job_url=job_url,
     )
 

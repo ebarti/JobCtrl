@@ -1,7 +1,12 @@
 export { enrichmentKeys } from "./queryKeys.js";
 
 export { useEnrichmentRetryMutation } from "./hooks/useEnrichmentRetryMutation.js";
-export { useRefreshCompensationMutation } from "./hooks/useRefreshCompensationMutation.js";
+export {
+  useRefreshAllCompensationMutation,
+  useRefreshCompensationMutation,
+} from "./hooks/useRefreshCompensationMutation.js";
+
+export { RefreshAllCompensationButton } from "./components/RefreshAllCompensationButton.js";
 
 export {
   CompensationAuditSection,

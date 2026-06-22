@@ -552,6 +552,29 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
+  app.post("/v1/jobs/actions/refresh-compensation", async (request, reply) => {
+    const body = parseBody(reply, RefreshCompensationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    const command: ActionCommandPayload = {
+      action: "refresh_compensation",
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+    };
+    if (body.observationsJsonPath) {
+      command.observationsJsonPath = body.observationsJsonPath;
+    }
+    if (body.includeEuroTopTech !== undefined) {
+      command.includeEuroTopTech = body.includeEuroTopTech;
+    }
+    if (body.euroTopTechMaxPages !== undefined) {
+      command.euroTopTechMaxPages = body.euroTopTechMaxPages;
+    }
+    const dispatch = await actionDispatcher(command, actionContext);
+    void reply.code(dispatch.status === "queued" ? 202 : 200);
+    return buildActionResponse(command, dispatch);
+  });
+
   app.get("/v1/apply/review-queue", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
   );

@@ -1,3 +1,4 @@
+import { RefreshAllCompensationButton } from "../../contexts/enrichment/index.js";
 import { RetailorCurrentPolicyButton } from "../../contexts/materials/components/RetailorCurrentPolicyButton.js";
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
@@ -123,6 +124,7 @@ export function JobBulkActions({
       >
         clear selected
       </button>
+      <RefreshAllCompensationButton onSuccess={onMaintenanceSuccess} />
       {staleCount || selectedStaleKeys.length ? (
         <ResetStaleScoresButton
           jobKeys={selectedStaleKeys}
