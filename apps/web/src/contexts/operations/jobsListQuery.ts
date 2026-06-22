@@ -159,6 +159,8 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
       return postedCompensationSortValue(job);
     case "compensation_market":
       return marketCompensationSortValue(job);
+    case "compensation_confidence":
+      return marketConfidenceSortValue(job);
     case "compensation_warnings":
       return job.compensationSummary?.warningCount ?? 0;
     case "location":
@@ -209,6 +211,22 @@ function marketCompensationSortValue(job: JobSummary): number {
     case "not_requested":
     default:
       return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function marketConfidenceSortValue(job: JobSummary): number {
+  const market = job.compensationSummary?.market;
+  if (!market || market.recordStatus === "not_requested") return Number.NEGATIVE_INFINITY;
+  if (Number.isFinite(market.confidenceScore)) return Number(market.confidenceScore);
+  switch (market.confidenceBand) {
+    case "high":
+      return 0.9;
+    case "medium":
+      return 0.62;
+    case "low":
+      return 0.3;
+    case "none":
+      return 0;
   }
 }
 

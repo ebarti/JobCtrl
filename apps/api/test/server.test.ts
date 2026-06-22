@@ -902,6 +902,7 @@ describe("local TypeScript API", () => {
       "compensation_max_eur",
       "compensation_posted",
       "compensation_market",
+      "compensation_confidence",
       "compensation_warnings",
       "apply_status",
     ]) {

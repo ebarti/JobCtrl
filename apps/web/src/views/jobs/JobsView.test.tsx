@@ -137,15 +137,17 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Source Conflict Role")).toBeInTheDocument();
-    expect(screen.getByText("Salary min")).toBeInTheDocument();
-    expect(screen.getByText("Salary max")).toBeInTheDocument();
-    expect(screen.getByText("Market")).toBeInTheDocument();
+    expect(screen.getByText("Salary min (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Salary max (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Market (€ / year)")).toBeInTheDocument();
+    expect(screen.getByText("Confidence")).toBeInTheDocument();
     expect(screen.getByText("Warnings")).toBeInTheDocument();
     const row = within(rowForTitle("Source Conflict Role"));
-    expect(row.getByText("EUR 70,000/yr")).toBeInTheDocument();
-    expect(row.getByText("EUR 90,000/yr")).toBeInTheDocument();
-    expect(row.getByText("EUR 112000-142000/year")).toBeInTheDocument();
-    expect(row.getByText(/medium confidence/)).toBeInTheDocument();
+    expect(row.getByText("70,000")).toBeInTheDocument();
+    expect(row.getByText("90,000")).toBeInTheDocument();
+    expect(row.getByText("112,000-142,000")).toBeInTheDocument();
+    expect(row.getByText("Medium")).toBeInTheDocument();
+    expect(row.getByText("74%")).toBeInTheDocument();
     expect(row.getByText(/2 sources/)).toBeInTheDocument();
     expect(row.getByText("2 warnings")).toBeInTheDocument();
 
@@ -154,9 +156,10 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       "Title",
       "Company",
       "Sources",
-      "Salary min",
-      "Salary max",
-      "Market",
+      "Salary min (€ / year)",
+      "Salary max (€ / year)",
+      "Market (€ / year)",
+      "Confidence",
       "Warnings",
       "Location",
       "Stage",
@@ -173,7 +176,7 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       dir: "desc",
     });
 
-    await user.click(screen.getByRole("button", { name: "Sort by Salary min" }));
+    await user.click(screen.getByRole("button", { name: "Sort by Salary min (€ / year)" }));
     await waitFor(() =>
       expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_min_eur", dir: "asc" })),
     );
@@ -182,9 +185,14 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       dir: "asc",
     });
 
-    await user.click(screen.getByRole("button", { name: "Sort by Salary max" }));
+    await user.click(screen.getByRole("button", { name: "Sort by Salary max (€ / year)" }));
     await waitFor(() =>
       expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_max_eur", dir: "asc" })),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sort by Confidence" }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "compensation_confidence", dir: "asc" })),
     );
   });
 });

@@ -50,6 +50,18 @@ function confidenceLabel(band: MarketSummary["confidenceBand"]): string {
   return band === "none" ? "no confidence" : `${band} confidence`;
 }
 
+function confidenceDisplayLabel(band: MarketSummary["confidenceBand"]): string {
+  if (band === "none") return "None";
+  return band.charAt(0).toUpperCase() + band.slice(1);
+}
+
+function confidenceValueLabel(market: MarketSummary | null | undefined): string {
+  if (!market || market.recordStatus === "not_requested") return "No confidence";
+  const band = confidenceLabel(market.confidenceBand);
+  if (!Number.isFinite(market.confidenceScore)) return band;
+  return `${band}, ${Math.round(Number(market.confidenceScore) * 100)}%`;
+}
+
 function marketStateLabel(state: MarketSummary["estimateState"]): string {
   switch (state) {
     case "estimated_range":
@@ -98,13 +110,30 @@ function salaryAmountSortValue(row: JobSummary, bound: "min" | "max"): number {
   return salaryAmountEur(row.compensationSummary, bound) ?? Number.NEGATIVE_INFINITY;
 }
 
-function formatEurPerYear(amount: number): string {
-  return `EUR ${EUR_PER_YEAR_FORMATTER.format(amount)}/yr`;
+function formatEurAmount(amount: number): string {
+  return EUR_PER_YEAR_FORMATTER.format(amount);
+}
+
+function formatEurPerYearLabel(amount: number): string {
+  return `${formatEurAmount(amount)} euros per year`;
+}
+
+function formatEurRange(
+  range: CompensationRangeSummary | null | undefined,
+): string | null {
+  const minimum = compensationRangeAmountEur(range, "min");
+  const maximum = compensationRangeAmountEur(range, "max");
+  if (minimum === null && maximum === null) return null;
+  if (minimum !== null && maximum !== null) {
+    if (minimum === maximum) return formatEurAmount(minimum);
+    return `${formatEurAmount(minimum)}-${formatEurAmount(maximum)}`;
+  }
+  return formatEurAmount(minimum ?? maximum ?? 0);
 }
 
 function salaryAmountLabel(summary: CompensationSummary | null, bound: "min" | "max", fallbackSalary = ""): string {
   const amount = salaryAmountEur(summary, bound);
-  if (amount !== null) return formatEurPerYear(amount);
+  if (amount !== null) return formatEurPerYearLabel(amount);
   return postedCompensationLabel(summary, fallbackSalary);
 }
 
@@ -125,8 +154,9 @@ function compensationRangeAmountEur(
 function marketCompensationLabel(summary: CompensationSummary | null): string {
   const market = summary?.market;
   if (!market) return "Market estimate not requested";
-  if (market.estimateState === "estimated_range" && market.displayRange) {
-    return market.displayRange;
+  const range = formatEurRange(market.range);
+  if (market.estimateState === "estimated_range" && range) {
+    return range;
   }
   return marketMissingLabel(market.estimateState);
 }
@@ -147,6 +177,22 @@ function marketCompensationSortValue(row: JobSummary): number {
     case "not_requested":
     default:
       return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function marketConfidenceSortValue(row: JobSummary): number {
+  const market = row.compensationSummary?.market;
+  if (!market || market.recordStatus === "not_requested") return Number.NEGATIVE_INFINITY;
+  if (Number.isFinite(market.confidenceScore)) return Number(market.confidenceScore);
+  switch (market.confidenceBand) {
+    case "high":
+      return 0.9;
+    case "medium":
+      return 0.62;
+    case "low":
+      return 0.3;
+    case "none":
+      return 0;
   }
 }
 
@@ -177,11 +223,10 @@ export function SalaryAmountCell({
   return (
     <span
       className="job-compensation-cell"
-      aria-label={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYear(amount)}`}
-      title={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYear(amount)}`}
+      aria-label={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
+      title={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
     >
-      <span className="job-compensation-primary">{formatEurPerYear(amount)}</span>
-      <span className="job-compensation-meta">EUR/year</span>
+      <span className="job-compensation-primary">{formatEurAmount(amount)}</span>
     </span>
   );
 }
@@ -192,30 +237,48 @@ export function MarketCompensationCell({ summary }: { readonly summary: Compensa
     return <MissingCompensationValue label="Market estimate not requested" />;
   }
 
-  const confidence = confidenceLabel(market.confidenceBand);
   const sourceCount = market.sourceCount > 0 ? pluralize(market.sourceCount, "source") : null;
   const stateLabel = marketStateLabel(market.estimateState);
   const primary =
-    market.estimateState === "estimated_range" && market.displayRange
-      ? market.displayRange
+    market.estimateState === "estimated_range" && formatEurRange(market.range)
+      ? formatEurRange(market.range)
       : stateLabel;
   const interval =
-    market.estimateState === "estimated_range" && market.displayConfidenceInterval
-      ? `CI ${market.displayConfidenceInterval}`
+    market.estimateState === "estimated_range" && formatEurRange(market.confidenceInterval)
+      ? `CI ${formatEurRange(market.confidenceInterval)}`
       : null;
 
   return (
     <span
       className="job-compensation-cell"
-      aria-label={[marketMissingLabel(market.estimateState), primary, interval, confidence, sourceCount]
+      aria-label={[marketMissingLabel(market.estimateState), primary, interval, confidenceValueLabel(market), sourceCount]
         .filter(Boolean)
         .join(", ")}
-      title={[primary, interval, confidence, sourceCount].filter(Boolean).join(", ")}
+      title={[primary, interval, confidenceValueLabel(market), sourceCount].filter(Boolean).join(", ")}
     >
       <span className="job-compensation-primary">{primary}</span>
       {interval ? <span className="job-compensation-meta">{interval}</span> : null}
-      <span className="job-compensation-meta">{confidence}</span>
       {sourceCount ? <span className="job-compensation-meta">{sourceCount}</span> : null}
+    </span>
+  );
+}
+
+export function MarketConfidenceCell({ summary }: { readonly summary: CompensationSummary | null }) {
+  const market = summary?.market;
+  if (!market || market.recordStatus === "not_requested") {
+    return <MissingCompensationValue label="Market confidence not requested" />;
+  }
+  const score = Number.isFinite(market.confidenceScore)
+    ? `${Math.round(Number(market.confidenceScore) * 100)}%`
+    : null;
+  return (
+    <span
+      className={`job-compensation-confidence job-compensation-confidence-${market.confidenceBand}`}
+      aria-label={confidenceValueLabel(market)}
+      title={confidenceValueLabel(market)}
+    >
+      <span className="job-compensation-confidence-label">{confidenceDisplayLabel(market.confidenceBand)}</span>
+      {score ? <span className="job-compensation-confidence-score">{score}</span> : null}
     </span>
   );
 }
@@ -434,45 +497,59 @@ export function jobColumns(
     },
     {
       id: "compensation_min_eur",
-      label: "Salary min",
+      label: "Salary min (€ / year)",
       sortable: true,
       getSortValue: (row) => salaryAmountSortValue(row, "min"),
       className: "job-compensation-column",
       headerClassName: "job-compensation-column",
-      width: 136,
-      minWidth: 124,
-      maxWidth: 180,
+      width: 156,
+      minWidth: 144,
+      maxWidth: 200,
       getFilterValue: (row) => salaryAmountLabel(row.compensationSummary, "min", row.salary),
       getFilterSearchValue: (row) => salaryAmountLabel(row.compensationSummary, "min", row.salary),
       render: (row) => <SalaryAmountCell summary={row.compensationSummary} bound="min" />,
     },
     {
       id: "compensation_max_eur",
-      label: "Salary max",
+      label: "Salary max (€ / year)",
       sortable: true,
       getSortValue: (row) => salaryAmountSortValue(row, "max"),
       className: "job-compensation-column",
       headerClassName: "job-compensation-column",
-      width: 136,
-      minWidth: 124,
-      maxWidth: 180,
+      width: 156,
+      minWidth: 144,
+      maxWidth: 200,
       getFilterValue: (row) => salaryAmountLabel(row.compensationSummary, "max", row.salary),
       getFilterSearchValue: (row) => salaryAmountLabel(row.compensationSummary, "max", row.salary),
       render: (row) => <SalaryAmountCell summary={row.compensationSummary} bound="max" />,
     },
     {
       id: "compensation_market",
-      label: "Market",
+      label: "Market (€ / year)",
       sortable: true,
       getSortValue: marketCompensationSortValue,
       className: "job-compensation-column",
       headerClassName: "job-compensation-column",
-      width: 164,
-      minWidth: 136,
+      width: 176,
+      minWidth: 156,
       maxWidth: 280,
       getFilterValue: (row) => marketCompensationLabel(row.compensationSummary),
       getFilterSearchValue: (row) => marketCompensationLabel(row.compensationSummary),
       render: (row) => <MarketCompensationCell summary={row.compensationSummary} />,
+    },
+    {
+      id: "compensation_confidence",
+      label: "Confidence",
+      sortable: true,
+      getSortValue: marketConfidenceSortValue,
+      className: "job-compensation-confidence-column",
+      headerClassName: "job-compensation-confidence-column",
+      width: 118,
+      minWidth: 104,
+      maxWidth: 160,
+      getFilterValue: (row) => confidenceValueLabel(row.compensationSummary?.market),
+      getFilterSearchValue: (row) => confidenceValueLabel(row.compensationSummary?.market),
+      render: (row) => <MarketConfidenceCell summary={row.compensationSummary} />,
     },
     {
       id: "compensation_warnings",

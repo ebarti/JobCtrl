@@ -42,6 +42,7 @@ const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "compensation_max_eur",
   "compensation_posted",
   "compensation_market",
+  "compensation_confidence",
   "compensation_warnings",
   "location",
   "fit_score",

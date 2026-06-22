@@ -298,6 +298,7 @@ const IN_MEMORY_JOB_SORT_FIELDS = new Set([
   "compensation_max_eur",
   "compensation_posted",
   "compensation_market",
+  "compensation_confidence",
   "compensation_warnings",
   "apply_status",
 ]);
@@ -4076,6 +4077,10 @@ function compareJobs(left: JobSummary, right: JobSummary, field: string, directi
       marketCompensationSortValue(left.compensationSummary),
       marketCompensationSortValue(right.compensationSummary),
     ],
+    compensation_confidence: [
+      marketConfidenceSortValue(left.compensationSummary),
+      marketConfidenceSortValue(right.compensationSummary),
+    ],
     compensation_warnings: [
       left.compensationSummary?.warningCount ?? 0,
       right.compensationSummary?.warningCount ?? 0,
@@ -4134,6 +4139,22 @@ function marketCompensationSortValue(summary: JobCompensationSummary | null): nu
     case "not_requested":
     default:
       return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function marketConfidenceSortValue(summary: JobCompensationSummary | null): number {
+  const market = summary?.market;
+  if (!market || market.recordStatus === "not_requested") return Number.NEGATIVE_INFINITY;
+  if (Number.isFinite(market.confidenceScore)) return Number(market.confidenceScore);
+  switch (market.confidenceBand) {
+    case "high":
+      return 0.9;
+    case "medium":
+      return 0.62;
+    case "low":
+      return 0.3;
+    case "none":
+      return 0;
   }
 }
 

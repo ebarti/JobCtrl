@@ -2146,12 +2146,17 @@ textarea:focus-visible {
 }
 
 .jobs-data-grid-table {
-  min-width: 1910px;
+  min-width: 2040px;
 }
 
 .jobs-data-grid-table .job-compensation-column {
-  width: 136px;
-  min-width: 124px;
+  width: 156px;
+  min-width: 144px;
+}
+
+.jobs-data-grid-table .job-compensation-confidence-column {
+  width: 118px;
+  min-width: 104px;
 }
 
 .jobs-data-grid-table .job-compensation-warnings-column {
@@ -2195,6 +2200,56 @@ textarea:focus-visible {
 
 .job-compensation-warning-count.warn {
   color: var(--status-warning);
+}
+
+.job-compensation-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.job-compensation-confidence-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-compensation-confidence-score {
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.job-compensation-confidence-high {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.job-compensation-confidence-medium {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.job-compensation-confidence-low {
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+}
+
+.job-compensation-confidence-none {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .artifacts-data-grid-table {
