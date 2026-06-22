@@ -6,6 +6,7 @@ import type {
   JobMarketCompensationSummary,
   JobPostedCompensationSummary,
   MarketCompensationEstimate,
+  MarketCompensationEvidenceRow,
   MarketCompensationFactor,
   MarketCompensationReason,
   MarketCompensationSourceSnapshot,
@@ -69,6 +70,33 @@ function optionalCount(value: number | null | undefined): number | null {
 
 function plural(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+const amountFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function formatAmount(value: number): string {
+  return amountFormatter.format(value);
+}
+
+function formatEvidenceRange(row: MarketCompensationEvidenceRow): string {
+  const prefix = row.currency ? `${row.currency} ` : "";
+  const suffix = row.period ? `/${row.period}` : "";
+  if (row.minimumAmount === row.maximumAmount) {
+    return `${prefix}${formatAmount(row.minimumAmount)}${suffix}`;
+  }
+  return `${prefix}${formatAmount(row.minimumAmount)}-${formatAmount(row.maximumAmount)}${suffix}`;
+}
+
+function matchScores(row: MarketCompensationEvidenceRow): string {
+  return [
+    `company ${formatPercent(row.companyScore)}`,
+    `role ${formatPercent(row.roleScore)}`,
+    `level ${formatPercent(row.levelScore)}`,
+    `location ${formatPercent(row.locationScore)}`,
+    `freshness ${formatPercent(row.freshnessScore)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function confidenceTone(confidence: string | null | undefined): TagTone {
@@ -366,6 +394,44 @@ function FactorList({ factors }: { readonly factors: readonly MarketCompensation
   );
 }
 
+function EvidenceRows({ rows }: { readonly rows: readonly MarketCompensationEvidenceRow[] }) {
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <details className="compensation-evidence-rows">
+      <summary>
+        <span>Evidence rows</span>
+        <b>{plural(rows.length, "row")}</b>
+      </summary>
+      <div className="compensation-evidence-row-list">
+        {rows.map((row, index) => (
+          <article
+            key={`${row.sourceId}:${row.companyName}:${row.roleTitle}:${row.minimumAmount}:${row.maximumAmount}:${index}`}
+            className="compensation-evidence-row"
+          >
+            <header>
+              <b>{row.displayName}</b>
+              <span>{formatEvidenceRange(row)}</span>
+            </header>
+            <dl>
+              <DetailRow label="Company" value={row.companyName} />
+              <DetailRow label="Role" value={row.roleTitle} />
+              <DetailRow label="Location" value={row.location} />
+              <DetailRow label="Level" value={row.levelLabel} />
+              <DetailRow label="Tier" value={formatToken(row.companyTier)} />
+              <DetailRow label="Component" value={formatToken(row.component)} />
+              <DetailRow label="Samples" value={row.sampleCount === null ? null : plural(row.sampleCount, "sample")} />
+              <DetailRow label="Release" value={row.releaseYear === null ? null : String(row.releaseYear)} />
+            </dl>
+            <p>{matchScores(row)}</p>
+          </article>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function PostedPanel({
   posted,
   fact,
@@ -427,6 +493,7 @@ function MarketPanel({
       {estimate ? (
         <>
           <SourceTrail sources={estimate.sources} />
+          <EvidenceRows rows={estimate.evidence} />
           <FactorList factors={estimate.factors} />
           <WarningList title="Market warnings" warnings={estimate.warnings} />
           <MarketReasonLists estimate={estimate} />

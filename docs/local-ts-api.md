@@ -284,9 +284,12 @@ evidence keyed by company and role: Euro Top Tech public community-reported
 rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
 estimate includes company name, normalized company, role title, normalized role,
 match scope, total compensation component, source count, sample count,
-confidence factors, and trimodal company-tier context. Raw benchmark pages,
-credentials, private account payloads, local paths, and user compensation
-preferences are not returned.
+confidence factors, selected evidence rows, and trimodal company-tier context.
+Selected evidence rows are the sanitized reported observations used to choose
+the range, including source id/display name, company, role, location, level,
+component, EUR/year range, sample count, release year, and match scores. Raw
+benchmark pages, credentials, private account payloads, local paths, and user
+compensation preferences are not returned.
 
 Temporary write trigger: `jobhunter compensation-refresh` reparses posted salary
 facts from existing `jobs.salary` values and description compensation text,
@@ -325,9 +328,9 @@ Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
 summary carries range, market confidence band/score, source count, sample count,
 and warning count for list surfaces; detail audit carries the source trail,
-confidence factors, warnings, and reasons. The web Jobs table, expanded job
-drawer, and Apply Review render these persisted fields without parsing salary
-text in React. This projection and rendering do not change fit score, apply
+selected evidence rows, confidence factors, warnings, and reasons. The web Jobs
+table, expanded job drawer, and Apply Review render these persisted fields
+without parsing salary text in React. This projection and rendering do not change fit score, apply
 readiness, apply-review handoff, or apply mutation behavior.
 
 When Python compensation repositories save posted facts or market estimates,

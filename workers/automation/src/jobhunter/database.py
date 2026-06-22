@@ -421,6 +421,7 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
             seniority_label                   TEXT,
             source_snapshot_json              TEXT NOT NULL DEFAULT '[]',
             factor_reasons_json               TEXT NOT NULL DEFAULT '[]',
+            selected_evidence_json            TEXT NOT NULL DEFAULT '[]',
             insufficient_reasons_json         TEXT NOT NULL DEFAULT '[]',
             unsupported_reasons_json          TEXT NOT NULL DEFAULT '[]',
             source_unavailable_reasons_json   TEXT NOT NULL DEFAULT '[]',
@@ -464,6 +465,7 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
     for col, dtype in {
         "confidence_interval_minimum_amount": "INTEGER",
         "confidence_interval_maximum_amount": "INTEGER",
+        "selected_evidence_json": "TEXT NOT NULL DEFAULT '[]'",
         "company_name": "TEXT",
         "normalized_company": "TEXT",
         "role_title": "TEXT",

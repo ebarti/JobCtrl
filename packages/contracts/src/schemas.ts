@@ -2674,6 +2674,28 @@ export interface MarketCompensationSourceSnapshot {
   sampleCount: number | null;
 }
 
+export interface MarketCompensationEvidenceRow {
+  sourceId: MarketCompensationSourceId;
+  displayName: string;
+  companyName: string;
+  roleTitle: string;
+  location: string | null;
+  levelLabel: string | null;
+  companyTier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
+  component: MarketCompensationComponent;
+  currency: string;
+  period: MarketCompensationPeriod;
+  minimumAmount: number;
+  maximumAmount: number;
+  sampleCount: number | null;
+  releaseYear: number | null;
+  companyScore: number;
+  roleScore: number;
+  levelScore: number;
+  locationScore: number;
+  freshnessScore: number;
+}
+
 interface MarketCompensationEstimateBase {
   tenantId: string;
   jobKey: string;
@@ -2701,6 +2723,7 @@ interface MarketCompensationEstimateBase {
     | "none";
   sources: MarketCompensationSourceSnapshot[];
   factors: MarketCompensationFactor[];
+  evidence: MarketCompensationEvidenceRow[];
   warnings: MarketCompensationWarning[];
   estimatorVersion: string;
   estimatedAt: string;

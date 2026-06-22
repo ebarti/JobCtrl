@@ -18,6 +18,7 @@ from jobhunter.database import ensure_market_compensation_tables
 from jobhunter.domain.compensation import (
     MarketCompensationEstimate,
     MarketConfidenceFactor,
+    MarketEvidenceRow,
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
@@ -31,6 +32,13 @@ SAFE_CONFIDENCE_BANDS = frozenset({"none", "low", "medium", "high"})
 SAFE_SOURCE_IDS = frozenset(
     {"levels_fyi", "glassdoor", "manual_reported_compensation", "euro_top_tech", "posted_salary_text"}
 )
+SAFE_SOURCE_DISPLAY_NAMES = {
+    "levels_fyi": "Levels.fyi",
+    "glassdoor": "Glassdoor",
+    "manual_reported_compensation": "Manual reported compensation import",
+    "euro_top_tech": "Euro Top Tech",
+    "posted_salary_text": "Job posting salary text",
+}
 SAFE_COMPONENTS = frozenset({"base_salary", "total_compensation"})
 SAFE_COMPANY_TIERS = frozenset({"tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"})
 SAFE_MATCH_SCOPES = frozenset(
@@ -57,6 +65,7 @@ UNSAFE_FACTOR_REASON_TERMS = (
     "api_key",
     "api key",
     "api-key",
+    "private",
 )
 EURO_TOP_TECH_DATA_ENTRIES_URL = "https://www.eurotoptech.com/api/data-entries?sort=submitted&dir=desc"
 EURO_TOP_TECH_ATTRIBUTION = "Euro Top Tech public crowdsourced compensation data (https://www.eurotoptech.com/data)"
@@ -152,10 +161,10 @@ class SqliteMarketCompensationRepository:
                 confidence_interval_maximum_amount, confidence_band, confidence_score,
                 source_count, sample_count, aggregate_bucket, geography_scope,
                 occupation_code, occupation_label, seniority_label, source_snapshot_json,
-                factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+                factor_reasons_json, selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json,
                 source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
                 company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_url) DO UPDATE SET
                 estimate_state                    = excluded.estimate_state,
                 currency                          = excluded.currency,
@@ -176,6 +185,7 @@ class SqliteMarketCompensationRepository:
                 seniority_label                   = excluded.seniority_label,
                 source_snapshot_json              = excluded.source_snapshot_json,
                 factor_reasons_json               = excluded.factor_reasons_json,
+                selected_evidence_json            = excluded.selected_evidence_json,
                 insufficient_reasons_json         = excluded.insufficient_reasons_json,
                 unsupported_reasons_json          = excluded.unsupported_reasons_json,
                 source_unavailable_reasons_json   = excluded.source_unavailable_reasons_json,
@@ -211,6 +221,7 @@ class SqliteMarketCompensationRepository:
                 estimate.seniority_label,
                 json.dumps([_source_to_dict(source) for source in estimate.sources], sort_keys=True),
                 json.dumps([_factor_to_dict(factor) for factor in estimate.factors], sort_keys=True),
+                json.dumps([_evidence_to_dict(row) for row in estimate.evidence], sort_keys=True),
                 json.dumps(list(estimate.insufficient_reasons), sort_keys=True),
                 json.dumps(list(estimate.unsupported_reasons), sort_keys=True),
                 json.dumps(list(estimate.source_unavailable_reasons), sort_keys=True),
@@ -236,7 +247,7 @@ class SqliteMarketCompensationRepository:
                    confidence_interval_maximum_amount, confidence_band, confidence_score,
                    source_count, sample_count, aggregate_bucket, geography_scope,
                    occupation_code, occupation_label, seniority_label, source_snapshot_json,
-                   factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+                   factor_reasons_json, selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json,
                    source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
                    company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
             FROM job_market_compensation_estimates
@@ -858,6 +869,11 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
             for item in _json_list(_row_value(row, "factor_reasons_json"))
             if (factor := _factor_from_dict(item)) is not None
         ),
+        evidence=tuple(
+            evidence
+            for item in _json_list(_row_value(row, "selected_evidence_json"))
+            if (evidence := _evidence_from_dict(item)) is not None
+        ),
         insufficient_reasons=tuple(str(item) for item in _json_list(_row_value(row, "insufficient_reasons_json"))),
         unsupported_reasons=tuple(str(item) for item in _json_list(_row_value(row, "unsupported_reasons_json"))),
         source_unavailable_reasons=tuple(
@@ -907,6 +923,66 @@ def _source_from_dict(value: Any) -> MarketSourceSnapshot | None:
             attribution=str(data.get("attribution") or ""),
             sample_count=_nullable_int(data.get("sample_count")),
         )
+    )
+
+
+def _evidence_to_dict(row: MarketEvidenceRow) -> dict[str, Any]:
+    return {
+        "source_id": row.source_id,
+        "display_name": row.display_name,
+        "company_name": row.company_name,
+        "role_title": row.role_title,
+        "location": row.location,
+        "level_label": row.level_label,
+        "company_tier": row.company_tier,
+        "component": row.component,
+        "currency": row.currency,
+        "period": row.period,
+        "minimum_amount": row.minimum_amount,
+        "maximum_amount": row.maximum_amount,
+        "sample_count": row.sample_count,
+        "release_year": row.release_year,
+        "company_score": row.company_score,
+        "role_score": row.role_score,
+        "level_score": row.level_score,
+        "location_score": row.location_score,
+        "freshness_score": row.freshness_score,
+    }
+
+
+def _evidence_from_dict(value: Any) -> MarketEvidenceRow | None:
+    data = value if isinstance(value, dict) else {}
+    source_id = _source_id(data.get("source_id"))
+    if source_id is None:
+        return None
+    minimum_amount = _nullable_int(data.get("minimum_amount"))
+    maximum_amount = _nullable_int(data.get("maximum_amount"))
+    if minimum_amount is None and maximum_amount is None:
+        return None
+    if minimum_amount is None:
+        minimum_amount = maximum_amount
+    if maximum_amount is None:
+        maximum_amount = minimum_amount
+    return MarketEvidenceRow(
+        source_id=source_id,
+        display_name=_display_name(source_id),
+        company_name=_safe_evidence_text(data.get("company_name")) or "unknown company",
+        role_title=_safe_evidence_text(data.get("role_title")) or "unknown role",
+        location=_safe_evidence_text(data.get("location")),
+        level_label=_safe_evidence_text(data.get("level_label")),
+        company_tier=_company_tier(data.get("company_tier")),
+        component=_component(data.get("component")),
+        currency=_currency(data.get("currency")),
+        period=_period(data.get("period")),
+        minimum_amount=minimum_amount or 0,
+        maximum_amount=maximum_amount or 0,
+        sample_count=_nullable_int(data.get("sample_count")),
+        release_year=_nullable_int(data.get("release_year")),
+        company_score=_score(data.get("company_score")),
+        role_score=_score(data.get("role_score")),
+        level_score=_score(data.get("level_score")),
+        location_score=_score(data.get("location_score")),
+        freshness_score=_score(data.get("freshness_score")),
     )
 
 
@@ -977,6 +1053,23 @@ def _source_id(value: Any) -> Any:
 
 def _source_type(source_id: str) -> Any:
     return "posted_salary" if source_id == "posted_salary_text" else "reported_compensation"
+
+
+def _display_name(source_id: str) -> str:
+    return SAFE_SOURCE_DISPLAY_NAMES.get(source_id, "Manual reported compensation import")
+
+
+def _score(value: Any) -> float:
+    try:
+        score = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(max(0.0, min(1.0, score)), 2)
+
+
+def _currency(value: Any) -> str:
+    text = str(value or "EUR").strip().upper()
+    return text if re.fullmatch(r"[A-Z]{3}", text) else "EUR"
 
 
 def _normalize_annualized_eur(amount: Any, currency: str | None) -> int | None:
@@ -1091,6 +1184,14 @@ def _safe_metadata_text(value: Any) -> str | None:
     return text
 
 
+def _safe_evidence_text(value: Any) -> str | None:
+    text = _safe_metadata_text(value)
+    if text is None:
+        return None
+    compact = " ".join(text.split())
+    return compact[:160] if compact else None
+
+
 def _json_list(value: Any) -> list[Any]:
     try:
         parsed = json.loads(str(value or "[]"))
@@ -1124,6 +1225,7 @@ def _row_value(row: sqlite3.Row | tuple[Any, ...], key: str) -> Any:
         "seniority_label",
         "source_snapshot_json",
         "factor_reasons_json",
+        "selected_evidence_json",
         "insufficient_reasons_json",
         "unsupported_reasons_json",
         "source_unavailable_reasons_json",

@@ -112,6 +112,12 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     assert loaded.match_scope == "exact_company_role"
     assert {source.source_id for source in loaded.sources} == {"levels_fyi", "glassdoor"}
     assert loaded.factors
+    assert len(loaded.evidence) == 2
+    evidence_ranges = {(row.minimum_amount, row.maximum_amount) for row in loaded.evidence}
+    assert evidence_ranges == {(118_000, 142_000), (112_000, 136_000)}
+    assert {row.company_name for row in loaded.evidence} == {"Acme AI"}
+    assert {row.role_title for row in loaded.evidence} == {"Senior Platform Engineer"}
+    assert all(row.company_score == 1 for row in loaded.evidence)
     assert "reported_compensation_sample" in loaded.warnings
 
 
@@ -604,10 +610,10 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             minimum_amount, maximum_amount, confidence_band, confidence_score,
             source_count, sample_count, aggregate_bucket, geography_scope,
             occupation_code, occupation_label, seniority_label, source_snapshot_json,
-            factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+            factor_reasons_json, selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json,
             source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
             company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "local",
@@ -633,6 +639,11 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             '"sample_count":7}]',
             '[{"name":"company","score":1,"band":"high","reason":"private /Users/local credential"},'
             '{"name":"sample","score":0.5,"band":"low","reason":"Reported compensation sample count: 1."}]',
+            '[{"source_id":"levels_fyi","company_name":"private /Users/local credential",'
+            '"role_title":"Senior Platform Engineer","location":"file:///Users/local/private","level_label":"senior",'
+            '"company_tier":"tier_2_ambitious","component":"total_compensation","currency":"EUR","period":"year",'
+            '"minimum_amount":112000,"maximum_amount":142000,"sample_count":4,"release_year":2026,'
+            '"company_score":1,"role_score":0.96,"level_score":0.95,"location_score":0.78,"freshness_score":0.95}]',
             "[]",
             "[]",
             "[]",
@@ -657,6 +668,9 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     assert loaded.sources[0].snapshot_version == "reported-compensation-import-v1"
     assert loaded.factors[0].reason == DEFAULT_FACTOR_REASON
     assert loaded.factors[1].reason == "Reported compensation sample count: 1."
+    assert loaded.evidence[0].company_name == "unknown company"
+    assert loaded.evidence[0].role_title == "Senior Platform Engineer"
+    assert loaded.evidence[0].location is None
     assert "rawproviderpayload" not in serialized
     assert "/users/" not in serialized
     assert "credential" not in serialized

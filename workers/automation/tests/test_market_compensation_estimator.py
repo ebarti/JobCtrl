@@ -135,6 +135,13 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
     assert estimate.source_count == 2
     assert estimate.sample_count == 7
     assert {source.source_id for source in estimate.sources} == {"levels_fyi", "glassdoor"}
+    assert len(estimate.evidence) == 2
+    evidence_ranges = {(row.minimum_amount, row.maximum_amount) for row in estimate.evidence}
+    assert evidence_ranges == {(118_000, 142_000), (112_000, 136_000)}
+    assert {row.company_name for row in estimate.evidence} == {"Acme AI"}
+    assert {row.role_title for row in estimate.evidence} == {"Senior Platform Engineer"}
+    assert all(row.company_score == 1 for row in estimate.evidence)
+    assert all(row.role_score >= 0.95 for row in estimate.evidence)
     assert "reported_compensation_sample" in estimate.warnings
     assert "company_role_fallback" not in estimate.warnings
 

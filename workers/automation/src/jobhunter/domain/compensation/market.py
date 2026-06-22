@@ -87,6 +87,12 @@ MARKET_SOURCE_IDS: tuple[MarketSourceId, ...] = (
     "euro_top_tech",
     "posted_salary_text",
 )
+COMPANY_TIERS: tuple[CompanyCompensationTier, ...] = (
+    "tier_1_local",
+    "tier_2_ambitious",
+    "tier_3_top_of_market",
+    "unknown",
+)
 MARKET_CONFIDENCE_BANDS: tuple[MarketConfidenceBand, ...] = ("none", "low", "medium", "high")
 MARKET_WARNING_CODES: tuple[MarketWarningCode, ...] = (
     "reported_compensation_sample",
@@ -265,6 +271,29 @@ class MarketSourceSnapshot:
 
 
 @dataclass(frozen=True)
+class MarketEvidenceRow:
+    source_id: MarketSourceId
+    display_name: str
+    company_name: str
+    role_title: str
+    location: str | None
+    level_label: str | None
+    company_tier: CompanyCompensationTier
+    component: MarketComponent
+    currency: str
+    period: MarketPeriod
+    minimum_amount: int
+    maximum_amount: int
+    sample_count: int | None
+    release_year: int | None
+    company_score: float
+    role_score: float
+    level_score: float
+    location_score: float
+    freshness_score: float
+
+
+@dataclass(frozen=True)
 class ReportedCompensationObservation:
     source_id: MarketSourceId
     company_name: str
@@ -306,6 +335,7 @@ class MarketCompensationEstimate:
     seniority_label: str | None
     sources: tuple[MarketSourceSnapshot, ...]
     factors: tuple[MarketConfidenceFactor, ...]
+    evidence: tuple[MarketEvidenceRow, ...]
     insufficient_reasons: tuple[MarketReasonCode, ...]
     unsupported_reasons: tuple[MarketReasonCode, ...]
     source_unavailable_reasons: tuple[MarketReasonCode, ...]
@@ -591,6 +621,17 @@ def estimate_market_compensation(
         rows=selected_rows,
         dispersion_insufficient=dispersion_insufficient,
     )
+    evidence = tuple(
+        _evidence_row(
+            row,
+            company_score=company_scores[index],
+            role_score=role_scores[index],
+            level_score=level_scores[index],
+            location_score=location_scores[index],
+            freshness_score=freshness_scores[index],
+        )
+        for index, row in enumerate(selected_rows)
+    )
 
     minimum_score = _minimum_estimate_score(selected_rows, match_scope)
     if confidence_score < minimum_score:
@@ -603,6 +644,7 @@ def estimate_market_compensation(
             insufficient=insufficient_reasons or ["missing_reported_observation"],
             warnings=warnings,
             sources=tuple(_snapshot(row) for row in selected_rows),
+            evidence=evidence,
             source_count=source_count,
             sample_count=sample_count,
             aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
@@ -634,6 +676,7 @@ def estimate_market_compensation(
         factors=factors,
         warnings=warnings,
         sources=tuple(_snapshot(row) for row in selected_rows),
+        evidence=evidence,
         source_count=source_count,
         sample_count=sample_count,
         aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
@@ -718,6 +761,7 @@ def _estimate(
     source_unavailable: list[MarketReasonCode] | None = None,
     warnings: list[MarketWarningCode] | None = None,
     sources: tuple[MarketSourceSnapshot, ...] = (),
+    evidence: tuple[MarketEvidenceRow, ...] = (),
     source_count: int = 0,
     sample_count: int | None = None,
     aggregate_bucket: str | None = None,
@@ -761,6 +805,7 @@ def _estimate(
         seniority_label=seniority_label,
         sources=_dedupe_sources(sources),
         factors=tuple(factors or ()),
+        evidence=evidence,
         insufficient_reasons=_dedupe_reasons(insufficient or []),
         unsupported_reasons=_dedupe_reasons(unsupported or []),
         source_unavailable_reasons=_dedupe_reasons(source_unavailable or []),
@@ -848,6 +893,39 @@ def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
             attribution=row.attribution or SOURCE_DEFAULT_ATTRIBUTION[row.source_id],
             sample_count=row.sample_count,
         )
+    )
+
+
+def _evidence_row(
+    row: ReportedCompensationObservation,
+    *,
+    company_score: float,
+    role_score: float,
+    level_score: float,
+    location_score: float,
+    freshness_score: float,
+) -> MarketEvidenceRow:
+    source_id = row.source_id if row.source_id in MARKET_SOURCE_IDS else "manual_reported_compensation"
+    return MarketEvidenceRow(
+        source_id=source_id,
+        display_name=_display_name(source_id),
+        company_name=_safe_text(row.company_name) or "unknown company",
+        role_title=_safe_text(row.role_title) or "unknown role",
+        location=_safe_text(row.location) or None,
+        level_label=_safe_text(row.level_label) or None,
+        company_tier=row.company_tier if row.company_tier in COMPANY_TIERS else "unknown",
+        component=row.component if row.component in SUPPORTED_COMPONENTS else "total_compensation",
+        currency=_safe_text(row.currency)[:3].upper() or "EUR",
+        period=row.period if row.period in {"year", "month"} else "year",
+        minimum_amount=_row_minimum(row),
+        maximum_amount=_row_maximum(row),
+        sample_count=row.sample_count,
+        release_year=row.release_year,
+        company_score=round(max(0.0, min(1.0, company_score)), 2),
+        role_score=round(max(0.0, min(1.0, role_score)), 2),
+        level_score=round(max(0.0, min(1.0, level_score)), 2),
+        location_score=round(max(0.0, min(1.0, location_score)), 2),
+        freshness_score=round(max(0.0, min(1.0, freshness_score)), 2),
     )
 
 

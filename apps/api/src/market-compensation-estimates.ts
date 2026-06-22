@@ -1,6 +1,7 @@
 import type {
   MarketCompensationEstimate,
   MarketCompensationEstimateResponse,
+  MarketCompensationEvidenceRow,
   MarketCompensationFactor,
   MarketCompensationFactorName,
   MarketCompensationReason,
@@ -40,6 +41,7 @@ type MarketCompensationEstimateRow = {
   seniority_label: string | null;
   source_snapshot_json: string;
   factor_reasons_json: string;
+  selected_evidence_json: string;
   insufficient_reasons_json: string;
   unsupported_reasons_json: string;
   source_unavailable_reasons_json: string;
@@ -180,7 +182,7 @@ const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
 const DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator.";
 const MAX_FACTOR_REASON_LENGTH = 240;
 const UNSAFE_FACTOR_REASON_PATTERN =
-  /(?:\/users\/|\\users\\|file:\/\/|rawproviderpayload|credential|secret|token|password|api[_ -]?key)/i;
+  /(?:\/users\/|\\users\\|file:\/\/|rawproviderpayload|credential|secret|token|password|api[_ -]?key|\bprivate\b)/i;
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
@@ -204,7 +206,9 @@ export function getMarketCompensationEstimate(
            confidence_band, confidence_score,
            source_count, sample_count, aggregate_bucket, geography_scope,
            occupation_code, occupation_label, seniority_label, source_snapshot_json,
-           factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+           factor_reasons_json,
+           ${columnOrDefault(tableColumns, "selected_evidence_json", "[]")} AS selected_evidence_json,
+           insufficient_reasons_json, unsupported_reasons_json,
            source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
            ${columnOrNull(tableColumns, "company_name")} AS company_name,
            ${columnOrNull(tableColumns, "normalized_company")} AS normalized_company,
@@ -268,6 +272,7 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     matchScope: matchScope(row.match_scope),
     sources,
     factors: parseFactors(row.factor_reasons_json),
+    evidence: parseEvidence(row.selected_evidence_json),
     warnings: parseWarnings(row.warnings_json),
     estimatorVersion: row.estimator_version,
     estimatedAt: row.estimated_at,
@@ -349,6 +354,51 @@ function safeFactorReason(value: unknown): string {
   return text.length > MAX_FACTOR_REASON_LENGTH
     ? `${text.slice(0, MAX_FACTOR_REASON_LENGTH - 3).trimEnd()}...`
     : text;
+}
+
+function parseEvidence(value: string): MarketCompensationEvidenceRow[] {
+  return parseObjects(value)
+    .map((entry) => {
+      const sourceId = stringValue(entry.source_id);
+      if (!SOURCE_IDS.has(sourceId as MarketCompensationSourceId)) return null;
+      const typedSourceId = sourceId as MarketCompensationSourceId;
+      const minimumAmount = nullableNumber(entry.minimum_amount);
+      const maximumAmount = nullableNumber(entry.maximum_amount);
+      if (minimumAmount === null && maximumAmount === null) return null;
+      return {
+        sourceId: typedSourceId,
+        displayName: SOURCE_DEFAULTS[typedSourceId].displayName,
+        companyName: safeEvidenceText(entry.company_name) ?? "unknown company",
+        roleTitle: safeEvidenceText(entry.role_title) ?? "unknown role",
+        location: safeEvidenceText(entry.location),
+        levelLabel: safeEvidenceText(entry.level_label),
+        companyTier: companyTier(entry.company_tier),
+        component: component(entry.component),
+        currency: currency(entry.currency),
+        period: period(entry.period),
+        minimumAmount: minimumAmount ?? maximumAmount ?? 0,
+        maximumAmount: maximumAmount ?? minimumAmount ?? 0,
+        sampleCount: nullableNumber(entry.sample_count),
+        releaseYear: nullableNumber(entry.release_year),
+        companyScore: score(entry.company_score),
+        roleScore: score(entry.role_score),
+        levelScore: score(entry.level_score),
+        locationScore: score(entry.location_score),
+        freshnessScore: score(entry.freshness_score),
+      };
+    })
+    .filter((entry): entry is MarketCompensationEvidenceRow => entry !== null);
+}
+
+function safeEvidenceText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return null;
+  }
+  return text.length > 160 ? `${text.slice(0, 157).trimEnd()}...` : text;
 }
 
 function parseSources(value: string): MarketCompensationSourceSnapshot[] {
@@ -438,6 +488,24 @@ function companyTier(value: unknown): "tier_1_local" | "tier_2_ambitious" | "tie
   return value === "tier_1_local" || value === "tier_2_ambitious" || value === "tier_3_top_of_market"
     ? value
     : "unknown";
+}
+
+function component(value: unknown): "base_salary" | "total_compensation" {
+  return value === "base_salary" ? "base_salary" : "total_compensation";
+}
+
+function period(value: unknown): "year" | "month" {
+  return value === "month" ? "month" : "year";
+}
+
+function currency(value: unknown): string {
+  const text = typeof value === "string" ? value.trim().toUpperCase() : "EUR";
+  return /^[A-Z]{3}$/.test(text) ? text : "EUR";
+}
+
+function score(value: unknown): number {
+  const numeric = numberValue(value);
+  return Math.round(Math.max(0, Math.min(1, numeric)) * 100) / 100;
 }
 
 function matchScope(

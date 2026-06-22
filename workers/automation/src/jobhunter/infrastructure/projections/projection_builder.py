@@ -37,6 +37,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -198,6 +199,7 @@ MARKET_UNSAFE_FACTOR_REASON_TERMS = (
     "api_key",
     "api key",
     "api-key",
+    "private",
 )
 
 STAGE_ORDER: tuple[str, ...] = (
@@ -814,6 +816,7 @@ class ProjectionBuilder:
                        sample_count, aggregate_bucket, geography_scope,
                        occupation_code, occupation_label, seniority_label,
                        source_snapshot_json, factor_reasons_json,
+                       selected_evidence_json,
                        insufficient_reasons_json, unsupported_reasons_json,
                        source_unavailable_reasons_json, warnings_json,
                        estimator_version, estimated_at, company_name,
@@ -1768,6 +1771,7 @@ def _market_estimate_from_row(row: object) -> dict[str, Any]:
         "matchScope": _market_match_scope(_row_get(row, "match_scope")),
         "sources": sources,
         "factors": _market_factors(_row_str(row, "factor_reasons_json")),
+        "evidence": _market_evidence(_row_str(row, "selected_evidence_json")),
         "warnings": _warnings(_row_str(row, "warnings_json"), MARKET_COMPENSATION_WARNING_MESSAGES),
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
@@ -2029,6 +2033,73 @@ def _market_sources(value: str) -> list[dict[str, Any]]:
             }
         )
     return sources
+
+
+def _market_evidence(value: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in _json_records(value):
+        source_id = str(item.get("source_id") or "")
+        defaults = MARKET_SOURCE_DEFAULTS.get(source_id)
+        if defaults is None:
+            continue
+        minimum_amount = _nullable_int(item.get("minimum_amount"))
+        maximum_amount = _nullable_int(item.get("maximum_amount"))
+        if minimum_amount is None and maximum_amount is None:
+            continue
+        rows.append(
+            {
+                "sourceId": source_id,
+                "displayName": defaults["displayName"],
+                "companyName": _safe_market_evidence_text(item.get("company_name")) or "unknown company",
+                "roleTitle": _safe_market_evidence_text(item.get("role_title")) or "unknown role",
+                "location": _safe_market_evidence_text(item.get("location")),
+                "levelLabel": _safe_market_evidence_text(item.get("level_label")),
+                "companyTier": _company_tier(item.get("company_tier")),
+                "component": _market_component(item.get("component")),
+                "currency": _market_currency(item.get("currency")),
+                "period": _market_period(item.get("period")),
+                "minimumAmount": minimum_amount if minimum_amount is not None else maximum_amount or 0,
+                "maximumAmount": maximum_amount if maximum_amount is not None else minimum_amount or 0,
+                "sampleCount": _nullable_int(item.get("sample_count")),
+                "releaseYear": _nullable_int(item.get("release_year")),
+                "companyScore": _market_score(item.get("company_score")),
+                "roleScore": _market_score(item.get("role_score")),
+                "levelScore": _market_score(item.get("level_score")),
+                "locationScore": _market_score(item.get("location_score")),
+                "freshnessScore": _market_score(item.get("freshness_score")),
+            }
+        )
+    return rows
+
+
+def _safe_market_evidence_text(value: object) -> str | None:
+    text = _nullable_text(value)
+    if text is None:
+        return None
+    compact = " ".join(text.split())
+    lowered = compact.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return None
+    return compact[:160] if compact else None
+
+
+def _market_component(value: object) -> str:
+    text = _nullable_text(value)
+    return text if text in {"base_salary", "total_compensation"} else "total_compensation"
+
+
+def _market_period(value: object) -> str:
+    text = _nullable_text(value)
+    return text if text in {"year", "month"} else "year"
+
+
+def _market_currency(value: object) -> str:
+    text = str(value or "EUR").strip().upper()
+    return text if re.fullmatch(r"[A-Z]{3}", text) else "EUR"
+
+
+def _market_score(value: object) -> float:
+    return round(max(0.0, min(1.0, _number(value))), 2)
 
 
 def _safe_market_aggregate_bucket(value: object, sources: list[dict[str, Any]]) -> str | None:
