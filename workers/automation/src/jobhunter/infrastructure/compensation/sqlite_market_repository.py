@@ -44,6 +44,20 @@ SAFE_MATCH_SCOPES = frozenset(
     }
 )
 DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+MAX_FACTOR_REASON_LENGTH = 240
+UNSAFE_FACTOR_REASON_TERMS = (
+    "/users/",
+    "\\users\\",
+    "file://",
+    "rawproviderpayload",
+    "credential",
+    "secret",
+    "token",
+    "password",
+    "api_key",
+    "api key",
+    "api-key",
+)
 EURO_TOP_TECH_DATA_ENTRIES_URL = "https://www.eurotoptech.com/api/data-entries?sort=submitted&dir=desc"
 EURO_TOP_TECH_ATTRIBUTION = "Euro Top Tech public crowdsourced compensation data (https://www.eurotoptech.com/data)"
 EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
@@ -914,8 +928,22 @@ def _factor_from_dict(value: Any) -> MarketConfidenceFactor | None:
         name=name,  # type: ignore[arg-type]
         score=float(data.get("score") or 0),
         band=_confidence_band(data.get("band")),  # type: ignore[arg-type]
-        reason=DEFAULT_FACTOR_REASON,
+        reason=_safe_factor_reason(data.get("reason")),
     )
+
+
+def _safe_factor_reason(value: Any) -> str:
+    if not isinstance(value, str):
+        return DEFAULT_FACTOR_REASON
+    text = " ".join(value.split())
+    if not text:
+        return DEFAULT_FACTOR_REASON
+    lowered = text.casefold()
+    if any(term in lowered for term in UNSAFE_FACTOR_REASON_TERMS):
+        return DEFAULT_FACTOR_REASON
+    if len(text) > MAX_FACTOR_REASON_LENGTH:
+        return text[: MAX_FACTOR_REASON_LENGTH - 3].rstrip() + "..."
+    return text
 
 
 def _pick(data: dict[str, Any], *keys: str) -> Any:

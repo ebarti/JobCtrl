@@ -681,7 +681,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           ]),
           JSON.stringify([
             { name: "company", score: 0.62, band: "medium", reason: "/Users/local credential" },
-            { name: "role", score: 1, band: "high", reason: "exact synthetic role" },
+            { name: "role", score: 1, band: "high", reason: "Reported rows matched role Senior Platform Engineer." },
             { name: "trimodal_tier", score: 0.62, band: "medium", reason: "tier inferred" },
           ]),
           JSON.stringify([
@@ -753,6 +753,18 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         });
         expect(audit.market.estimate.factors.map((factor: { name: string }) => factor.name)).toEqual(
           expect.arrayContaining(["company", "role", "trimodal_tier"]),
+        );
+        expect(audit.market.estimate.factors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: "role",
+              reason: "Reported rows matched role Senior Platform Engineer.",
+            }),
+            expect.objectContaining({
+              name: "company",
+              reason: "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
+            }),
+          ]),
         );
         expect(audit.market.estimate.warnings.map((warning: { code: string }) => warning.code)).toEqual(
           expect.arrayContaining([

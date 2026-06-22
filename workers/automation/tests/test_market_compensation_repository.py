@@ -631,7 +631,8 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             '"source_type":"reported_compensation","release_year":2026,"snapshot_version":"rawProviderPayload",'
             '"geography_scope":"/Users/private","aggregate_bucket":"private page","attribution":"credential secret",'
             '"sample_count":7}]',
-            '[{"name":"company","score":1,"band":"high","reason":"private /Users/local credential"}]',
+            '[{"name":"company","score":1,"band":"high","reason":"private /Users/local credential"},'
+            '{"name":"sample","score":0.5,"band":"low","reason":"Reported compensation sample count: 1."}]',
             "[]",
             "[]",
             "[]",
@@ -655,6 +656,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     assert loaded.sources[0].display_name == "Levels.fyi"
     assert loaded.sources[0].snapshot_version == "reported-compensation-import-v1"
     assert loaded.factors[0].reason == DEFAULT_FACTOR_REASON
+    assert loaded.factors[1].reason == "Reported compensation sample count: 1."
     assert "rawproviderpayload" not in serialized
     assert "/users/" not in serialized
     assert "credential" not in serialized

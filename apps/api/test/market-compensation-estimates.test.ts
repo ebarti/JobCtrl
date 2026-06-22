@@ -579,7 +579,10 @@ describe("market compensation estimates API", () => {
       unsupportedReasons: ["unsupported_source", "unknown_reason"],
       aggregateBucket: "private page",
       geographyScope: "/Users/private",
-      factors: [{ name: "company", score: 1, band: "high", reason: "private /Users/local credential" }],
+      factors: [
+        { name: "company", score: 1, band: "high", reason: "private /Users/local credential" },
+        { name: "sample", score: 0.5, band: "low", reason: "Reported compensation sample count: 1." },
+      ],
     });
     try {
       const response = await app.inject({
@@ -608,6 +611,7 @@ describe("market compensation estimates API", () => {
       expect(body.estimate.factors[0]?.reason).toBe(
         "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
       );
+      expect(body.estimate.factors[1]?.reason).toBe("Reported compensation sample count: 1.");
     } finally {
       await app.close();
       cleanup();

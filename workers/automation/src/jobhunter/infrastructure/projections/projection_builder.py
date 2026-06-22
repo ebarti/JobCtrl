@@ -185,6 +185,20 @@ MARKET_SAFE_FACTOR_NAMES = {"agreement", "company", "component", "freshness", "l
 MARKET_CONFIDENCE_BANDS = {"high", "medium", "low", "none"}
 MARKET_RECORDED_STATES = {"unsupported", "source_unavailable", "insufficient_evidence", "estimated_range"}
 MARKET_DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+MARKET_MAX_FACTOR_REASON_LENGTH = 240
+MARKET_UNSAFE_FACTOR_REASON_TERMS = (
+    "/users/",
+    "\\users\\",
+    "file://",
+    "rawproviderpayload",
+    "credential",
+    "secret",
+    "token",
+    "password",
+    "api_key",
+    "api key",
+    "api-key",
+)
 
 STAGE_ORDER: tuple[str, ...] = (
     "discover",
@@ -1973,10 +1987,24 @@ def _market_factors(value: str) -> list[dict[str, Any]]:
                 "name": name,
                 "score": _number(item.get("score")),
                 "band": _confidence_band(item.get("band")),
-                "reason": MARKET_DEFAULT_FACTOR_REASON,
+                "reason": _safe_market_factor_reason(item.get("reason")),
             }
         )
     return factors
+
+
+def _safe_market_factor_reason(value: object) -> str:
+    if not isinstance(value, str):
+        return MARKET_DEFAULT_FACTOR_REASON
+    text = " ".join(value.split())
+    if not text:
+        return MARKET_DEFAULT_FACTOR_REASON
+    lowered = text.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return MARKET_DEFAULT_FACTOR_REASON
+    if len(text) > MARKET_MAX_FACTOR_REASON_LENGTH:
+        return text[: MARKET_MAX_FACTOR_REASON_LENGTH - 3].rstrip() + "..."
+    return text
 
 
 def _market_sources(value: str) -> list[dict[str, Any]]:

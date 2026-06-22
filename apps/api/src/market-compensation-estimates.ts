@@ -178,6 +178,9 @@ const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "trimodal_tier",
 ]);
 const DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator.";
+const MAX_FACTOR_REASON_LENGTH = 240;
+const UNSAFE_FACTOR_REASON_PATTERN =
+  /(?:\/users\/|\\users\\|file:\/\/|rawproviderpayload|credential|secret|token|password|api[_ -]?key)/i;
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
@@ -329,10 +332,23 @@ function parseFactors(value: string): MarketCompensationFactor[] {
         name: name as MarketCompensationFactorName,
         score: numberValue(entry.score),
         band: confidenceBand(entry.band),
-        reason: DEFAULT_FACTOR_REASON,
+        reason: safeFactorReason(entry.reason),
       };
     })
     .filter((entry): entry is MarketCompensationFactor => entry !== null);
+}
+
+function safeFactorReason(value: unknown): string {
+  if (typeof value !== "string") {
+    return DEFAULT_FACTOR_REASON;
+  }
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return DEFAULT_FACTOR_REASON;
+  }
+  return text.length > MAX_FACTOR_REASON_LENGTH
+    ? `${text.slice(0, MAX_FACTOR_REASON_LENGTH - 3).trimEnd()}...`
+    : text;
 }
 
 function parseSources(value: string): MarketCompensationSourceSnapshot[] {
