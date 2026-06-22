@@ -190,6 +190,7 @@ function insertEstimate(
       values.evidence ?? [
         {
           source_id: "levels_fyi",
+          source_url: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
           company_name: values.companyName ?? "Acme AI",
           role_title: values.roleTitle ?? "Senior Platform Engineer",
           location: "Europe",
@@ -357,6 +358,7 @@ describe("market compensation estimates API", () => {
         expect.arrayContaining([
           expect.objectContaining({
             sourceId: "levels_fyi",
+            sourceUrl: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
             companyName: "Trimodal Labs",
             roleTitle: "Senior Platform Engineer",
             minimumAmount: 168_000,
@@ -625,6 +627,7 @@ describe("market compensation estimates API", () => {
       evidence: [
         {
           source_id: "levels_fyi",
+          source_url: "https://levels.example/private?token=secret",
           company_name: "private /Users/local credential",
           role_title: "Senior Platform Engineer",
           location: "file:///Users/local/private",
@@ -674,6 +677,7 @@ describe("market compensation estimates API", () => {
       );
       expect(body.estimate.factors[1]?.reason).toBe("Reported compensation sample count: 1.");
       expect(body.estimate.evidence[0]).toMatchObject({
+        sourceUrl: null,
         companyName: "unknown company",
         roleTitle: "Senior Platform Engineer",
         location: null,

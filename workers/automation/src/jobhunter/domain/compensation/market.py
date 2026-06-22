@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import median
@@ -274,6 +275,7 @@ class MarketSourceSnapshot:
 class MarketEvidenceRow:
     source_id: MarketSourceId
     display_name: str
+    source_url: str | None
     company_name: str
     role_title: str
     location: str | None
@@ -310,6 +312,7 @@ class ReportedCompensationObservation:
     snapshot_version: str = SOURCE_DEFAULT_SNAPSHOT_VERSION
     sample_count: int | None = 1
     attribution: str | None = None
+    source_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -909,6 +912,7 @@ def _evidence_row(
     return MarketEvidenceRow(
         source_id=source_id,
         display_name=_display_name(source_id),
+        source_url=_safe_source_url(row.source_url),
         company_name=_safe_text(row.company_name) or "unknown company",
         role_title=_safe_text(row.role_title) or "unknown role",
         location=_safe_text(row.location) or None,
@@ -927,6 +931,19 @@ def _evidence_row(
         location_score=round(max(0.0, min(1.0, location_score)), 2),
         freshness_score=round(max(0.0, min(1.0, freshness_score)), 2),
     )
+
+
+def _safe_source_url(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    lowered = text.casefold()
+    if any(term in lowered for term in ("/users/", "\\users\\", "file://", "credential", "secret", "token", "password", "api_key", "api key", "api-key", "private")):
+        return None
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
 
 def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourceSnapshot:

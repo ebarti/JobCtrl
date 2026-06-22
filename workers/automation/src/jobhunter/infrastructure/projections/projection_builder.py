@@ -40,6 +40,7 @@ import logging
 import re
 import sqlite3
 import threading
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -2050,6 +2051,7 @@ def _market_evidence(value: str) -> list[dict[str, Any]]:
             {
                 "sourceId": source_id,
                 "displayName": defaults["displayName"],
+                "sourceUrl": _safe_market_evidence_url(item.get("source_url")),
                 "companyName": _safe_market_evidence_text(item.get("company_name")) or "unknown company",
                 "roleTitle": _safe_market_evidence_text(item.get("role_title")) or "unknown role",
                 "location": _safe_market_evidence_text(item.get("location")),
@@ -2081,6 +2083,22 @@ def _safe_market_evidence_text(value: object) -> str | None:
     if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
         return None
     return compact[:160] if compact else None
+
+
+def _safe_market_evidence_url(value: object) -> str | None:
+    text = _nullable_text(value)
+    if text is None:
+        return None
+    compact = text.strip()
+    if not compact:
+        return None
+    lowered = compact.casefold()
+    if any(term in lowered for term in MARKET_UNSAFE_FACTOR_REASON_TERMS):
+        return None
+    parsed = urllib.parse.urlsplit(compact)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
 
 def _market_component(value: object) -> str:

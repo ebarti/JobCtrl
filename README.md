@@ -30,7 +30,8 @@ JobHunter can:
 - convert generated text artifacts to PDFs;
 - show stage state, failures, retries, artifacts, and apply runs in a local UI;
 - show posted and reported company-role compensation ranges with statistical
-  confidence and selected source-row evidence in Jobs triage and Apply Review;
+  confidence and selected source-row evidence, including source links when
+  available, in Jobs triage and Apply Review;
 - optionally drive local browser-based application submission.
 
 Auto-apply is powerful and should be treated as an explicit submission tool. Use
@@ -465,7 +466,8 @@ Its compensation column shows the best available persisted range, whether it
 comes from posted salary text or reported company-role market data, plus
 statistical confidence, source/sample support, and warnings. The expanded job
 drawer keeps posted salary and reported market evidence separate with source
-trail, collapsed selected evidence rows, and confidence factors. Compensation
+trail, collapsed selected evidence rows, source links when available, and
+confidence factors. Compensation
 display is warning-only: it does not change fit score, sorting, filtering, apply
 readiness, Apply Review handoff, or apply mutation behavior.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and

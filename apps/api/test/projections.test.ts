@@ -452,6 +452,7 @@ function insertCompensationRows(dbPath: string): void {
     JSON.stringify([
       {
         source_id: "levels_fyi",
+        source_url: "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
         company_name: "Acme AI",
         role_title: "Senior Platform Engineer",
         location: "Europe",
@@ -711,6 +712,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           JSON.stringify([
             {
               source_id: "levels_fyi",
+              source_url: "https://levels.example/private?token=secret",
               company_name: "private /Users/local credential",
               role_title: "Senior Platform Engineer",
               location: "file:///Users/local/private",
@@ -731,6 +733,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             },
             {
               source_id: "glassdoor",
+              source_url: "https://www.glassdoor.com/Salary/Trimodal-Labs-Senior-Platform-Engineer-Salaries.htm",
               company_name: "Trimodal Labs",
               role_title: "Senior Platform Engineer",
               location: "Europe",
@@ -836,6 +839,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           expect.arrayContaining([
             expect.objectContaining({
               sourceId: "levels_fyi",
+              sourceUrl: null,
               companyName: "unknown company",
               roleTitle: "Senior Platform Engineer",
               location: null,
@@ -844,6 +848,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             }),
             expect.objectContaining({
               sourceId: "glassdoor",
+              sourceUrl: "https://www.glassdoor.com/Salary/Trimodal-Labs-Senior-Platform-Engineer-Salaries.htm",
               companyName: "Trimodal Labs",
               roleTitle: "Senior Platform Engineer",
               minimumAmount: 170000,

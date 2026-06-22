@@ -371,7 +371,7 @@ class SqliteMarketCompensationRepository:
         job_url: str | None,
     ) -> tuple[ReportedCompensationObservation, ...]:
         sql = """
-            SELECT j.title, j.company, j.site, j.location,
+            SELECT f.job_url, j.title, j.company, j.site, j.location,
                    f.currency, f.period, f.minimum_amount, f.maximum_amount,
                    f.annualized_minimum_amount, f.annualized_maximum_amount,
                    f.warnings_json, f.source_text, f.parsed_at
@@ -432,6 +432,7 @@ class SqliteMarketCompensationRepository:
                     snapshot_version="jobhunter-posted-compensation-v1",
                     sample_count=1,
                     attribution="Employer-posted salary text captured by JobHunter",
+                    source_url=_safe_evidence_url(_row_value(row, "job_url")),
                 )
             )
         return tuple(observations)
@@ -760,6 +761,7 @@ def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObse
         snapshot_version=_euro_top_tech_snapshot_version(submitted_month),
         sample_count=1,
         attribution=EURO_TOP_TECH_ATTRIBUTION,
+        source_url="https://www.eurotoptech.com/data",
     )
 
 
@@ -835,6 +837,20 @@ def _observation_from_dict(
         snapshot_version=_text(_pick(data, "snapshot_version", "snapshotVersion"), default="reported-compensation-import-v1"),
         sample_count=_nullable_int(_pick(data, "sample_count", "sampleCount", "samples")) or 1,
         attribution=_text(_pick(data, "attribution"), default=None),
+        source_url=_safe_evidence_url(
+            _pick(
+                data,
+                "source_url",
+                "sourceUrl",
+                "url",
+                "record_url",
+                "recordUrl",
+                "profile_url",
+                "profileUrl",
+                "evidence_url",
+                "evidenceUrl",
+            )
+        ),
     )
 
 
@@ -930,6 +946,7 @@ def _evidence_to_dict(row: MarketEvidenceRow) -> dict[str, Any]:
     return {
         "source_id": row.source_id,
         "display_name": row.display_name,
+        "source_url": _safe_evidence_url(row.source_url),
         "company_name": row.company_name,
         "role_title": row.role_title,
         "location": row.location,
@@ -966,6 +983,7 @@ def _evidence_from_dict(value: Any) -> MarketEvidenceRow | None:
     return MarketEvidenceRow(
         source_id=source_id,
         display_name=_display_name(source_id),
+        source_url=_safe_evidence_url(data.get("source_url")),
         company_name=_safe_evidence_text(data.get("company_name")) or "unknown company",
         role_title=_safe_evidence_text(data.get("role_title")) or "unknown role",
         location=_safe_evidence_text(data.get("location")),
@@ -1190,6 +1208,21 @@ def _safe_evidence_text(value: Any) -> str | None:
         return None
     compact = " ".join(text.split())
     return compact[:160] if compact else None
+
+
+def _safe_evidence_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    lowered = text.casefold()
+    if any(term in lowered for term in UNSAFE_FACTOR_REASON_TERMS):
+        return None
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
 
 def _json_list(value: Any) -> list[Any]:

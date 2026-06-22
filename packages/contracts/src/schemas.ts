@@ -2677,6 +2677,7 @@ export interface MarketCompensationSourceSnapshot {
 export interface MarketCompensationEvidenceRow {
   sourceId: MarketCompensationSourceId;
   displayName: string;
+  sourceUrl: string | null;
   companyName: string;
   roleTitle: string;
   location: string | null;

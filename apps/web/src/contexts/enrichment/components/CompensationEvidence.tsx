@@ -288,6 +288,30 @@ function DetailRow({
   );
 }
 
+function DetailLinkRow({
+  label,
+  href,
+  children,
+}: {
+  readonly label: string;
+  readonly href: string | null | undefined;
+  readonly children: string;
+}) {
+  if (!href) {
+    return null;
+  }
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      </dd>
+    </div>
+  );
+}
+
 function WarningList({
   title,
   warnings,
@@ -423,6 +447,9 @@ function EvidenceRows({ rows }: { readonly rows: readonly MarketCompensationEvid
               <DetailRow label="Component" value={formatToken(row.component)} />
               <DetailRow label="Samples" value={row.sampleCount === null ? null : plural(row.sampleCount, "sample")} />
               <DetailRow label="Release" value={row.releaseYear === null ? null : String(row.releaseYear)} />
+              <DetailLinkRow label="Source" href={row.sourceUrl}>
+                Open source
+              </DetailLinkRow>
             </dl>
             <p>{matchScores(row)}</p>
           </article>

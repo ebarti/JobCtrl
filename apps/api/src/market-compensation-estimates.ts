@@ -368,6 +368,7 @@ function parseEvidence(value: string): MarketCompensationEvidenceRow[] {
       return {
         sourceId: typedSourceId,
         displayName: SOURCE_DEFAULTS[typedSourceId].displayName,
+        sourceUrl: safeEvidenceUrl(entry.source_url),
         companyName: safeEvidenceText(entry.company_name) ?? "unknown company",
         roleTitle: safeEvidenceText(entry.role_title) ?? "unknown role",
         location: safeEvidenceText(entry.location),
@@ -399,6 +400,26 @@ function safeEvidenceText(value: unknown): string | null {
     return null;
   }
   return text.length > 160 ? `${text.slice(0, 157).trimEnd()}...` : text;
+}
+
+function safeEvidenceUrl(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) {
+    return null;
+  }
+  try {
+    const url = new URL(text);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      return null;
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function parseSources(value: string): MarketCompensationSourceSnapshot[] {

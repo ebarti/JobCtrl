@@ -208,6 +208,7 @@ export const sampleCompensationAudit: JobCompensationAudit = {
         {
           sourceId: "levels_fyi",
           displayName: "Levels.fyi",
+          sourceUrl: "https://www.levels.fyi/companies/globex/salaries/software-engineer",
           companyName: "Globex",
           roleTitle: "Principal Platform Engineer",
           location: "Europe",

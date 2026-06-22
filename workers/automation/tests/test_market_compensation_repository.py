@@ -57,6 +57,7 @@ def _levels() -> ReportedCompensationObservation:
         maximum_amount=142_000,
         sample_count=4,
         attribution="Levels.fyi reported compensation data",
+        source_url="https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
     )
 
 
@@ -72,6 +73,7 @@ def _glassdoor() -> ReportedCompensationObservation:
         maximum_amount=136_000,
         sample_count=3,
         attribution="Glassdoor reported compensation data",
+        source_url="https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm",
     )
 
 
@@ -117,6 +119,10 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     assert evidence_ranges == {(118_000, 142_000), (112_000, 136_000)}
     assert {row.company_name for row in loaded.evidence} == {"Acme AI"}
     assert {row.role_title for row in loaded.evidence} == {"Senior Platform Engineer"}
+    assert {row.source_url for row in loaded.evidence} == {
+        "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm",
+        "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+    }
     assert all(row.company_score == 1 for row in loaded.evidence)
     assert "reported_compensation_sample" in loaded.warnings
 
@@ -426,6 +432,7 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
                         "totalCompensationMax": "€142,000",
                         "companyTier": "tier_2",
                         "sampleCount": 4,
+                        "sourceUrl": "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
                     },
                     {
                         "source": "glassdoor",
@@ -433,6 +440,7 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
                         "roleTitle": "Senior Platform Engineer",
                         "amount": 125000,
                         "samples": 3,
+                        "url": "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm",
                     },
                     {"source": "unknown", "company": "Acme AI", "role": "Ignored", "amount": 1},
                 ]
@@ -447,8 +455,10 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
     assert observations[0].minimum_amount == 118_000
     assert observations[0].maximum_amount == 142_000
     assert observations[0].company_tier == "tier_2_ambitious"
+    assert observations[0].source_url == "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer"
     assert observations[1].minimum_amount == 125_000
     assert observations[1].maximum_amount == 125_000
+    assert observations[1].source_url == "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm"
 
 
 def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -509,6 +519,7 @@ def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatc
     assert observations[0].component == "total_compensation"
     assert observations[0].location == "Barcelona, Spain"
     assert observations[0].attribution and "Euro Top Tech" in observations[0].attribution
+    assert observations[0].source_url == "https://www.eurotoptech.com/data"
     assert observations[1].company_name == "Euro Top Tech community"
     assert observations[1].role_title == "Senior Software Engineer"
 
@@ -640,6 +651,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
             '[{"name":"company","score":1,"band":"high","reason":"private /Users/local credential"},'
             '{"name":"sample","score":0.5,"band":"low","reason":"Reported compensation sample count: 1."}]',
             '[{"source_id":"levels_fyi","company_name":"private /Users/local credential",'
+            '"source_url":"https://levels.example/private?token=secret",'
             '"role_title":"Senior Platform Engineer","location":"file:///Users/local/private","level_label":"senior",'
             '"company_tier":"tier_2_ambitious","component":"total_compensation","currency":"EUR","period":"year",'
             '"minimum_amount":112000,"maximum_amount":142000,"sample_count":4,"release_year":2026,'
@@ -671,6 +683,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     assert loaded.evidence[0].company_name == "unknown company"
     assert loaded.evidence[0].role_title == "Senior Platform Engineer"
     assert loaded.evidence[0].location is None
+    assert loaded.evidence[0].source_url is None
     assert "rawproviderpayload" not in serialized
     assert "/users/" not in serialized
     assert "credential" not in serialized

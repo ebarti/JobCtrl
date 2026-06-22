@@ -4025,6 +4025,12 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.compensation-evidence-row dd a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .compensation-evidence-row p {
   margin: 0;
   color: var(--muted-foreground);

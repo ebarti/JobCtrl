@@ -392,6 +392,10 @@ describe("<JobDetailDrawer>", () => {
     expect(within(evidenceDisclosure as HTMLElement).getByText("1 row")).toBeInTheDocument();
     expect(within(evidenceDisclosure as HTMLElement).getByText("Principal Platform Engineer")).toBeInTheDocument();
     expect(within(evidenceDisclosure as HTMLElement).getByText("EUR 112,000-142,000/year")).toBeInTheDocument();
+    expect(within(evidenceDisclosure as HTMLElement).getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "https://www.levels.fyi/companies/globex/salaries/software-engineer",
+    );
   });
 
   it("shows employer requirements beside canonical requirement fit evidence", async () => {

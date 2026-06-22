@@ -819,7 +819,8 @@ estimated range also stores confidence interval bounds that widen as the fallbac
 tier weakens, sample support drops, locations mismatch, or source agreement gets
 weaker. Estimates persist sanitized selected evidence rows for the observations
 that drove the range, including row-level company, role, location, level,
-component, EUR/year range, sample count, release year, and match scores.
+component, EUR/year range, sample count, release year, safe source URL when
+available, and match scores.
 Employer-posted salary observations can emit low-confidence ranges with
 low-sample warnings. High-value posted base-salary text with an omitted period
 can be treated as annual evidence for market estimation, but bonus-only and
