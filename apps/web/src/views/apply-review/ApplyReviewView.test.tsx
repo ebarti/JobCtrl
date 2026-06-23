@@ -390,8 +390,12 @@ describe("<ApplyReviewView>", () => {
     });
     expect(detailButton).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
-    const resumePdf = screen.getByRole("img", { name: "Tailored resume preview" });
-    expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
+    expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "open final file" }).getAttribute("href")).toContain(
+      "/v1/artifacts/resume-pdf-2/preview.pdf",
+    );
+    expect(screen.getAllByLabelText("JobHunter resume comment").length).toBeGreaterThan(0);
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
@@ -457,46 +461,23 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    fireEvent.click(
-      within(pdfReviewSurface).getByRole("button", {
-        name: "Line 3: Owned platform reliability improvements for incident response.",
-      }),
-    );
-    const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
-    const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
-    expect(within(selectedJustification).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedJustification).queryByText("Tailored resume line")).not.toBeInTheDocument();
-    expect(within(selectedJustification).getByText("Built platform services.")).toBeVisible();
-    expect(within(selectedAudit).getByText("Source check")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Source evidence")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Evidence basis")).not.toBeInTheDocument();
+    await screen.findByRole("region", { name: "Tailored resume preview" });
+    expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("JobHunter resume comment").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Profile source field").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Built platform services/)).toBeVisible();
     expect(
-      within(selectedAudit).getByText(/Experience was emphasized because it matches platform reliability/i),
+      screen.getByText(/Experience was emphasized because it matches platform reliability/i),
     ).toBeInTheDocument();
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
-    const pdfAudit = screen.getByRole("region", { name: "Resume audit" });
-    expect(artifactRisk.compareDocumentPosition(pdfAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).not.toContainElement(artifactRisk);
-    expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
+    const resumeAudit = screen.getByRole("region", { name: "Resume audit" });
+    expect(artifactRisk.compareDocumentPosition(resumeAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Tailored resume preview" })).not.toContainElement(artifactRisk);
     expect(screen.queryByText("Annotated resume changes")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
     expect(screen.queryByText("join")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
-    expect(
-      within(pdfReviewSurface).getByRole("button", {
-        name: "Line 3: Owned platform reliability improvements for incident response.",
-      }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(within(selectedAudit).getByText("Job signals reflected")).toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).queryByText("Evidence IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Requirement IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Controls")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Transform")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("ev_platform_reliability")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("evidence_reframing")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Built platform services/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Signals reflected: platform reliability/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("High-fit review").length).toBeGreaterThan(0);
     expect(artifact).toHaveBeenCalledWith("resume-text-2");
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
@@ -525,43 +506,29 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const resumePdf = await screen.findByRole("img", { name: "Tailored resume preview" });
-    const pins = await screen.findByRole("region", { name: "Line-by-line resume audit" });
+    const resumeEditor = await screen.findByRole("region", { name: "Tailored resume preview" });
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
-    expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
     const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    const pdfLineThree = within(pdfReviewSurface).getByRole("button", {
-      name: "Line 3: Owned platform reliability improvements for incident response.",
-    });
-    const initialAudit = screen.getByRole("article", { name: /Selected resume line audit for line 1/i });
-    expect(within(initialAudit).queryByText("claim risk")).not.toBeInTheDocument();
-    fireEvent.click(pdfLineThree);
-    const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
-    expect(within(selectedAudit).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Source check")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Source evidence")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Evidence basis")).not.toBeInTheDocument();
-    const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
-    expect(within(selectedJustification).getByText("Built platform services.")).toBeVisible();
-    expect(within(selectedAudit).getAllByText("Bullet provenance").length).toBeGreaterThan(0);
+    const lineThree = within(pdfReviewSurface).getByText("Owned platform reliability improvements for incident response.");
+    fireEvent.click(lineThree);
+    await waitFor(() => expect(lineThree.closest(".resume-plate-line")?.className).toContain("selected"));
+    expect(within(resumeEditor).getAllByText("Profile source field").length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("Tailored resume line")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Evidence basis")).not.toBeInTheDocument();
+    expect(within(resumeEditor).getByText(/Built platform services/)).toBeVisible();
     expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).getByText("Keywords demonstrated")).toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).queryByText("Achievement Reframed")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("evidence_reframing")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("req-platform")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("ev_platform_reliability")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Evidence IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Requirement IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Controls")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Transform")).not.toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText(/Signals reflected: platform reliability/i).length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("Achievement Reframed")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("evidence_reframing")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("ev_platform_reliability")).not.toBeInTheDocument();
     expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
-    expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
     expect(within(artifactRisk).queryByText("Warnings")).not.toBeInTheDocument();
     expect(within(artifactRisk).getByText("Residual warnings after automated review")).toBeInTheDocument();
     expect(within(artifactRisk).getByText("workflow-selected")).toBeInTheDocument();
@@ -570,7 +537,7 @@ describe("<ApplyReviewView>", () => {
     expect(within(artifactRisk).getAllByText("Keyword repetition: 'architecture' repeated 5 times")).toHaveLength(1);
     expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("req-platform-scale").length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("req-platform-scale")).not.toBeInTheDocument();
     expect(within(artifactRisk).getByText("Warning handling")).toBeInTheDocument();
     expect(
       within(artifactRisk).getByText("retry attempted; selected artifact still has residual warnings"),
@@ -628,39 +595,22 @@ describe("<ApplyReviewView>", () => {
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    const pdfLineThree = within(pdfReviewSurface).getByRole("button", {
-      name: "Line 5: - Led incident response handovers.",
-    });
-    fireEvent.click(pdfLineThree);
-    const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 5/i });
-
-    expect(within(selectedAudit).getByText("profile section")).toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText(/Profile source span/i).length).toBeGreaterThan(0);
+    const resumeEditor = screen.getByRole("region", { name: "Tailored resume preview" });
+    expect(within(resumeEditor).getByText("profile section")).toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText(/Closest recorded Profile source field/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
     expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
     expect(screen.queryByText("No source evidence recorded for this line.")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Line justification")).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Closest recorded Profile source field")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
-    const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
-    expect(within(selectedJustification).getByText("Led incident response handovers.")).toBeVisible();
-    expect(within(selectedAudit).getByText(/No exact Profile source field was recorded/i)).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Job signals reflected")).toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).queryByText("Evidence basis")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText("Profile source span; exact field not recorded").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).queryByText("Source evidence")).not.toBeInTheDocument();
-    const sourceSpanDetails = selectedAudit.querySelector(".resume-pin-source-span-details");
-    expect(sourceSpanDetails).toBeInTheDocument();
-    expect(sourceSpanDetails).not.toHaveAttribute("open");
-    expect(within(selectedAudit).getByText("Built platform services.")).not.toBeVisible();
+    expect(within(resumeEditor).queryByText("Tailored resume line")).not.toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText(/Led incident response handovers/).length).toBeGreaterThan(0);
+    expect(within(resumeEditor).getByText(/No exact Profile source field was recorded/i)).toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText(/Signals reflected: platform reliability/i).length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("Evidence basis")).not.toBeInTheDocument();
     expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Audit metadata gaps")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Audit metadata gaps")).not.toBeInTheDocument();
     expect(
       screen.getAllByText("Tailoring audit metadata incomplete: missing profile evidence mapping").length,
     ).toBeGreaterThan(0);
-    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
   });
 
   it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
@@ -686,39 +636,28 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByRole("img", { name: "Tailored resume preview" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    expect(pdfReviewSurface).toBeInTheDocument();
+    const resumeEditor = screen.getByRole("region", { name: "Tailored resume preview" });
+    expect(screen.getByRole("region", { name: "Resume line review" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();
-    expect(within(pdfReviewSurface).getAllByRole("button")).toHaveLength(4);
-    const pdfLineOne = within(pdfReviewSurface).getByRole("button", {
+    expect(within(resumeEditor).getAllByLabelText("JobHunter resume comment").length).toBeGreaterThan(0);
+    const lineOne = within(resumeEditor).getByRole("heading", {
       name: "Line 1: Principal Platform Engineer",
     });
-    const pdfLineThree = within(pdfReviewSurface).getByRole("button", {
-      name: "Line 3: Owned platform reliability improvements for incident response.",
-    });
-    expect(pdfLineOne).toHaveTextContent("");
-    await waitFor(() => expect(pdfLineOne).toHaveAttribute("aria-pressed", "true"));
-    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
-    expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
+    const lineThree = within(resumeEditor).getByText("Owned platform reliability improvements for incident response.");
+    expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
-    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
-    fireEvent.click(pdfLineThree);
-    await waitFor(() => expect(pdfLineThree).toHaveAttribute("aria-pressed", "true"));
-    expect(pdfLineOne).toHaveAttribute("aria-pressed", "false");
-    const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
+    fireEvent.click(lineThree);
+    await waitFor(() => expect(lineThree.closest(".resume-plate-line")?.className).toContain("selected"));
     expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).getByText("No Profile source field mapping was recorded for this selected resume line.")).toBeInTheDocument();
-    fireEvent.click(pdfLineOne);
-    await waitFor(() => expect(pdfLineOne).toHaveAttribute("aria-pressed", "true"));
-    expect(pdfLineThree).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
+    fireEvent.click(lineOne);
+    await waitFor(() => expect(lineOne.closest(".resume-plate-line")?.className).toContain("selected"));
   });
 
-  it("opens PDF-only skills lines in the same evidence inspector", async () => {
+  it("renders skill provenance as a JobHunter comment in the resume editor", async () => {
     const explanationWithSkillProvenance: ArtifactTailoringExplanation = {
       ...sampleTailoringExplanation,
       bulletProvenance: [
@@ -737,6 +676,25 @@ describe("<ApplyReviewView>", () => {
         },
       ],
     };
+    const queueWithSkillsLine = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: [
+                  item.materialsPreview.resumeText,
+                  "",
+                  "Skills",
+                  "Platform & Cloud: Kubernetes, Docker, GCP, AWS",
+                ].join("\n"),
+              },
+            }
+          : item,
+      ),
+    };
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -753,43 +711,39 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
-          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          applyReviewQueue: vi.fn(async () => queueWithSkillsLine),
           artifact,
         },
       }),
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    const pdfOnlySkillLine = within(pdfReviewSurface).getByRole("button", {
-      name: "PDF page 3 line 15: Platform & Cloud: Kubernetes, Docker, GCP",
-    });
-
-    fireEvent.click(pdfOnlySkillLine);
-
-    await waitFor(() => expect(pdfOnlySkillLine).toHaveAttribute("aria-pressed", "true"));
-    const selectedAudit = await screen.findByRole("article", {
-      name: /Selected resume line audit for PDF page 3 line 15/i,
-    });
-    expect(within(selectedAudit).getByText("Line justification")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Profile source field")).toBeInTheDocument();
-    const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
-    expect(within(selectedJustification).getByText("Platform & Cloud: Kubernetes, Docker, GCP, AWS")).toBeVisible();
-    expect(within(selectedAudit).queryByText("Evidence basis")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getAllByText("PDF page 3 line 15").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).queryByText("missing source")).not.toBeInTheDocument();
-    expect(within(selectedAudit).getByText(/Skill category is preserved/i)).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Keywords demonstrated")).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("kubernetes")).toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Evidence IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Requirement IDs")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Source ID")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Controls")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Transform")).not.toBeInTheDocument();
+    const resumeEditor = screen.getByRole("region", { name: "Tailored resume preview" });
+    expect(within(resumeEditor).getByText("Platform & Cloud: Kubernetes, Docker, GCP, AWS")).toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText("Profile source field").length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("Tailored resume line")).not.toBeInTheDocument();
+    expect(within(resumeEditor).getByText(/Skill category is preserved/i)).toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Evidence IDs")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Requirement IDs")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Controls")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Transform")).not.toBeInTheDocument();
   });
 
-  it("resolves PDF-only profile header rows to Profile source fields", async () => {
+  it("resolves resume header rows to Profile source fields in JobHunter comments", async () => {
+    const queueWithProfileHeader = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: "Jordan Candidate\n\nOwned platform reliability improvements for incident response.",
+              },
+            }
+          : item,
+      ),
+    };
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -806,34 +760,23 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
-          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          applyReviewQueue: vi.fn(async () => queueWithProfileHeader),
           artifact,
         },
       }),
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    const pdfOnlyProfileLine = within(pdfReviewSurface).getByRole("button", {
-      name: "PDF page 1 line 2: Jordan Candidate",
-    });
-
-    fireEvent.click(pdfOnlyProfileLine);
-
-    await waitFor(() => expect(pdfOnlyProfileLine).toHaveAttribute("aria-pressed", "true"));
-    const selectedAudit = await screen.findByRole("article", {
-      name: /Selected resume line audit for PDF page 1 line 2/i,
-    });
-    const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
-    expect(within(selectedAudit).getByText("profile source")).toBeInTheDocument();
-    expect(within(selectedJustification).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedJustification).queryByText("Tailored resume line")).not.toBeInTheDocument();
-    expect(within(selectedJustification).getByText("Profile > Personal information > Full name: Jordan Candidate")).toBeVisible();
-    expect(within(selectedAudit).queryByText("missing source")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Original source line")).not.toBeInTheDocument();
-    expect(within(selectedAudit).queryByText("Rendered resume line")).not.toBeInTheDocument();
+    const resumeEditor = screen.getByRole("region", { name: "Tailored resume preview" });
+    expect(within(resumeEditor).getByRole("heading", { name: "Line 1: Jordan Candidate" })).toBeInTheDocument();
+    expect(within(resumeEditor).getByText("profile source")).toBeInTheDocument();
+    expect(within(resumeEditor).getAllByText("Profile source field").length).toBeGreaterThan(0);
+    expect(within(resumeEditor).queryByText("Tailored resume line")).not.toBeInTheDocument();
+    expect(within(resumeEditor).getByText(/Full name: Jordan Candidate/)).toBeVisible();
+    expect(within(resumeEditor).queryByText("Original source line")).not.toBeInTheDocument();
+    expect(within(resumeEditor).queryByText("Rendered resume line")).not.toBeInTheDocument();
     expect(
-      within(selectedAudit).queryByText("No Profile source field mapping was recorded for this selected resume line."),
+      within(resumeEditor).queryByText("No Profile source field mapping was recorded for this selected resume line."),
     ).not.toBeInTheDocument();
   });
 
@@ -879,32 +822,17 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await screen.findByRole("img", { name: "Tailored resume preview" });
-    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
-    const experienceCompanyButton = within(pdfReviewSurface).getByRole("button", {
-      name: "Line 8: Director of Engineering / Acting CISO | Welltech",
-    });
-    expect(experienceCompanyButton).toHaveTextContent("");
-    expect(
-      within(pdfReviewSurface).getByRole("button", {
-        name: "Line 9: Barcelona, Spain (Remote) | Mar 2024 -- Present",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(pdfReviewSurface).getByRole("button", {
-        name: "Line 13: Master's Degree in Aerospace and Mechanical Engineering",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(pdfReviewSurface).getByRole("button", {
-        name: "Line 17: Platform & Cloud: Kubernetes, Docker, GCP",
-      }),
-    ).toBeInTheDocument();
+    await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const resumeEditor = screen.getByRole("region", { name: "Tailored resume preview" });
+    expect(within(resumeEditor).getByText("Director of Engineering / Acting CISO | Welltech")).toBeInTheDocument();
+    expect(within(resumeEditor).getByText("Barcelona, Spain (Remote) | Mar 2024 -- Present")).toBeInTheDocument();
+    expect(within(resumeEditor).getByText("Master's Degree in Aerospace and Mechanical Engineering")).toBeInTheDocument();
+    expect(within(resumeEditor).getByText("Platform & Cloud: Kubernetes, Docker, GCP")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();
   });
 
-  it("passes generated resume layout boxes into the PDF audit viewer", async () => {
+  it("passes generated resume layout boxes into the HTML editor", async () => {
     const queueWithLayoutBoxes = {
       ...sampleApplyReviewQueue,
       items: sampleApplyReviewQueue.items.map((item, index) =>
@@ -939,7 +867,10 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByTestId("pdf-layout-box-count")).toHaveTextContent("1");
+    expect(await screen.findByRole("region", { name: "Tailored resume preview" })).toHaveAttribute(
+      "data-layout-box-count",
+      "1",
+    );
   });
 
   it("opens job detail as an in-place overlay", async () => {

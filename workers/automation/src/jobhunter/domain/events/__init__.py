@@ -169,6 +169,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ProfileUpdated",
     "ProfileImported",
     "TailoringPolicyUpdated",
+    "CompensationFactsUpdated",
 )
 
 __all__ = [

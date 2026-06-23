@@ -514,8 +514,12 @@ the prior accepted artifact is superseded only after a replacement is approved, 
 a failed regeneration stays as inspectable audit history. Re-tailor controls are
 reserved for jobs that already have tailored artifacts and need current-policy
 regeneration.
-The job detail drawer and Apply review both surface an in-app inspector for the
-tailored resume. The employer-analysis panel shows the reasoned "ideal candidate"
+The job detail drawer surfaces the tailored resume artifact, and Apply review
+uses a Plate-backed HTML/CSS resume editor for line-level review. The editor is
+fed from the generated resume HTML used to create the final PDF, keeps an "open
+final file" link for the approved artifact, and renders JobHunter-authored
+comments directly beside resume lines instead of a separate side-by-side audit
+pane. The employer-analysis panel shows the reasoned "ideal candidate"
 analysis — requirements classified must-have vs nice-to-have with a priority
 weight, and reasoned keywords each tied to a quoted job-description evidence span,
 plus the ensemble audit trail and a degraded-ensemble indicator. When the latest

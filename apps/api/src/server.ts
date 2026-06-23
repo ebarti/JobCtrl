@@ -1416,6 +1416,39 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       .send(fs.createReadStream(detail.artifact.localPath));
   });
 
+  app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/preview.html", async (request, reply) => {
+    const artifactId = decodeRouteParam(request.params.artifactId);
+    const preview = withDb(reply, options.dbPath, (db) => {
+      const detail = getArtifactDetail(db, artifactId);
+      if (!detail) {
+        return null;
+      }
+      const row = db
+        .prepare(
+          `SELECT render_format, metadata_json
+             FROM job_materials_artifacts
+            WHERE artifact_id = ?`,
+        )
+        .get(artifactId) as { render_format?: string | null; metadata_json?: string | null } | undefined;
+      return htmlPreviewForArtifact(detail, row);
+    });
+    if (!preview) {
+      void reply.code(404);
+      return { ok: false, error: "artifact_not_found" };
+    }
+    if ("ok" in preview && preview.ok === false) {
+      const statusCode = "statusCode" in preview ? preview.statusCode : 500;
+      void reply.code(statusCode);
+      return { ok: false, error: preview.error, message: preview.message };
+    }
+
+    return reply
+      .type("text/html; charset=utf-8")
+      .header("cache-control", "no-store")
+      .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'")
+      .send(fs.createReadStream(preview.htmlPath));
+  });
+
   app.get<{ Params: { artifactId: string; pageNumber: string } }>(
     "/v1/artifacts/:artifactId/preview/page/:pageNumber.png",
     async (request, reply) => {
@@ -1663,6 +1696,68 @@ function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolea
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {
   return artifactType.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
+}
+
+type HtmlPreviewArtifactRow = { render_format?: string | null; metadata_json?: string | null } | undefined;
+
+type HtmlPreviewResult =
+  | { ok: true; htmlPath: string }
+  | { ok: false; error: string; message: string; statusCode: number };
+
+function htmlPreviewForArtifact(
+  detail: { artifact: { localPath: string; type: string } },
+  row: HtmlPreviewArtifactRow,
+): HtmlPreviewResult {
+  if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
+    return {
+      ok: false,
+      statusCode: 415,
+      error: "artifact_preview_unsupported",
+      message: "Only HTML-rendered resume PDF artifacts expose an editable HTML preview.",
+    };
+  }
+  if (row?.render_format !== "html_pdf") {
+    return {
+      ok: false,
+      statusCode: 415,
+      error: "artifact_preview_unsupported",
+      message: "This artifact was not rendered through the HTML/CSS resume renderer.",
+    };
+  }
+  const pdfPath = detail.artifact.localPath;
+  const siblingHtmlPath = path.resolve(path.join(path.dirname(pdfPath), `${path.parse(pdfPath).name}.html`));
+  const metadata = safeJsonObject(row.metadata_json);
+  const metadataHtmlPath =
+    typeof metadata?.html_path === "string" && metadata.html_path.trim()
+      ? path.resolve(metadata.html_path)
+      : siblingHtmlPath;
+  if (metadataHtmlPath !== siblingHtmlPath) {
+    return {
+      ok: false,
+      statusCode: 415,
+      error: "artifact_preview_unsupported",
+      message: "The artifact HTML preview metadata does not point to the expected sibling HTML file.",
+    };
+  }
+  if (!fs.existsSync(siblingHtmlPath) || !fs.statSync(siblingHtmlPath).isFile()) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: "artifact_html_missing",
+      message: "The generated HTML preview file is missing.",
+    };
+  }
+  return { ok: true, htmlPath: siblingHtmlPath };
+}
+
+function safeJsonObject(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function defaultArtifactPdfPageRenderer(pdfPath: string, pageNumber: number): Promise<Buffer> {
