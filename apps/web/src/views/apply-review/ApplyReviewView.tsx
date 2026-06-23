@@ -615,19 +615,19 @@ function PdfResumeLineReview({
     );
   }
   return (
-    <section className="apply-review-preview-block apply-review-pdf-line-review" aria-label="PDF resume line review">
-      <h3 className="sr-only">PDF resume line review</h3>
+    <section className="apply-review-preview-block apply-review-pdf-line-review" aria-label="Resume line review">
+      <h3 className="sr-only">Resume line review</h3>
       <PdfAuditPreviewViewer
         cacheKey={`${artifactId}:${item.jobKey}`}
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
-        loadingMessage="The tailored resume PDF is loading into the in-app preview."
+        loadingMessage="The tailored resume is loading into the in-app preview."
         loadingTitle="Rendering tailored resume."
-        openLabel="open PDF"
+        openLabel="open final file"
         selectedLineKey={selectedLine?.lineKey ?? null}
         selectedLineNumber={selectedLine?.lineNumber ?? null}
         pageAltPrefix={`${item.title} tailored resume`}
-        title="Tailored resume PDF"
+        title="Tailored resume preview"
         url={api.artifactPreviewPdfUrl(artifactId, `${artifactId}:${item.jobKey}`)}
         onSelectLine={onSelectLine}
       />
@@ -644,7 +644,7 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
   }, [item.jobKey]);
 
   return (
-    <section className="apply-review-preview-block apply-review-resume-review" aria-label="PDF resume audit">
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Resume audit">
       <div className="apply-review-resume-main">
         <PdfResumeLineReview
           item={item}

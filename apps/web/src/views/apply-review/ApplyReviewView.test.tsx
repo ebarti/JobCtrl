@@ -61,7 +61,7 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
           PDF preview
         </div>
         <span data-testid="pdf-layout-box-count">{layoutBoxes.length}</span>
-        <div aria-label="PDF resume selectable lines">
+        <div aria-label="Resume selectable lines">
           {lineTargets.map((line) => (
             <button
               aria-label={`Line ${line.lineNumber}: ${line.text}`}
@@ -390,7 +390,7 @@ describe("<ApplyReviewView>", () => {
     });
     expect(detailButton).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
-    const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
+    const resumePdf = screen.getByRole("img", { name: "Tailored resume preview" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
@@ -458,7 +458,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     fireEvent.click(
       within(pdfReviewSurface).getByRole("button", {
         name: "Line 3: Owned platform reliability improvements for incident response.",
@@ -476,7 +476,7 @@ describe("<ApplyReviewView>", () => {
       within(selectedAudit).getByText(/Experience was emphasized because it matches platform reliability/i),
     ).toBeInTheDocument();
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
-    const pdfAudit = screen.getByRole("region", { name: "PDF resume audit" });
+    const pdfAudit = screen.getByRole("region", { name: "Resume audit" });
     expect(artifactRisk.compareDocumentPosition(pdfAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).not.toContainElement(artifactRisk);
     expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
@@ -502,7 +502,7 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
   });
 
-  it("uses the PDF preview as the selectable line-level claim surface", async () => {
+  it("uses the resume preview as the selectable line-level claim surface", async () => {
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -525,13 +525,13 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const resumePdf = await screen.findByRole("img", { name: "Tailored resume PDF" });
+    const resumePdf = await screen.findByRole("img", { name: "Tailored resume preview" });
     const pins = await screen.findByRole("region", { name: "Line-by-line resume audit" });
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     const pdfLineThree = within(pdfReviewSurface).getByRole("button", {
       name: "Line 3: Owned platform reliability improvements for incident response.",
     });
@@ -628,7 +628,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     const pdfLineThree = within(pdfReviewSurface).getByRole("button", {
       name: "Line 5: - Led incident response handovers.",
     });
@@ -686,10 +686,10 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "Tailored resume preview" })).toBeInTheDocument();
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     expect(pdfReviewSurface).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();
@@ -711,7 +711,7 @@ describe("<ApplyReviewView>", () => {
     expect(pdfLineOne).toHaveAttribute("aria-pressed", "false");
     const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
     expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).getByText("No Profile source field mapping was recorded for this selected PDF line.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("No Profile source field mapping was recorded for this selected resume line.")).toBeInTheDocument();
     fireEvent.click(pdfLineOne);
     await waitFor(() => expect(pdfLineOne).toHaveAttribute("aria-pressed", "true"));
     expect(pdfLineThree).toHaveAttribute("aria-pressed", "false");
@@ -760,7 +760,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     const pdfOnlySkillLine = within(pdfReviewSurface).getByRole("button", {
       name: "PDF page 3 line 15: Platform & Cloud: Kubernetes, Docker, GCP",
     });
@@ -813,7 +813,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     const pdfOnlyProfileLine = within(pdfReviewSurface).getByRole("button", {
       name: "PDF page 1 line 2: Jordan Candidate",
     });
@@ -833,11 +833,11 @@ describe("<ApplyReviewView>", () => {
     expect(within(selectedAudit).queryByText("Original source line")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Rendered resume line")).not.toBeInTheDocument();
     expect(
-      within(selectedAudit).queryByText("No Profile source field mapping was recorded for this selected PDF line."),
+      within(selectedAudit).queryByText("No Profile source field mapping was recorded for this selected resume line."),
     ).not.toBeInTheDocument();
   });
 
-  it("feeds resume text line targets into the PDF audit viewer", async () => {
+  it("feeds resume text line targets into the resume audit viewer", async () => {
     const queueWithModernCvResumeText = {
       ...sampleApplyReviewQueue,
       items: sampleApplyReviewQueue.items.map((item, index) =>
@@ -879,8 +879,8 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await screen.findByRole("img", { name: "Tailored resume PDF" });
-    const pdfReviewSurface = screen.getByRole("region", { name: "PDF resume line review" });
+    await screen.findByRole("img", { name: "Tailored resume preview" });
+    const pdfReviewSurface = screen.getByRole("region", { name: "Resume line review" });
     const experienceCompanyButton = within(pdfReviewSurface).getByRole("button", {
       name: "Line 8: Director of Engineering / Acting CISO | Welltech",
     });
