@@ -519,7 +519,11 @@ uses a Plate-backed HTML/CSS resume editor for line-level review. The editor is
 fed from the generated resume HTML used to create the final PDF, keeps an "open
 final file" link for the approved artifact, and renders JobHunter-authored
 comments directly beside resume lines instead of a separate side-by-side audit
-pane. The employer-analysis panel shows the reasoned "ideal candidate"
+pane. Existing legacy LaTeX resume PDFs can be moved onto the same HTML/CSS
+source with `uv --project workers/automation run jobhunter migrate-resume-html`
+(`--dry-run`, `--force`, `--job-url`, and `--limit` are available for scoped
+migration or refresh).
+The employer-analysis panel shows the reasoned "ideal candidate"
 analysis — requirements classified must-have vs nice-to-have with a priority
 weight, and reasoned keywords each tied to a quoted job-description evidence span,
 plus the ensemble audit trail and a degraded-ensemble indicator. When the latest

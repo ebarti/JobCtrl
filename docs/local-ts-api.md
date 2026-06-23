@@ -44,9 +44,12 @@ Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
 `GET /v1/artifacts/:artifactId/preview.pdf` for inline access to registered PDF
 artifacts. HTML/CSS-rendered resume PDFs also expose
 `GET /v1/artifacts/:artifactId/preview.html`, which streams the generated
-sibling HTML file used by the Apply Review editor. That route is limited to
-`render_format = 'html_pdf'` resume PDF artifacts and rejects legacy renderer
-rows with `415`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
+sibling HTML file used by the Plate-backed Apply Review editor. That route is
+limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects legacy
+renderer rows with `415`; operators can migrate approved legacy resume PDFs with
+`uv --project workers/automation run jobhunter migrate-resume-html` after
+checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
+with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
 renders a single registered PDF artifact page through local Poppler
 `pdftoppm` for legacy PDF page-image previews. The preview routes serve only
 known PDF artifact files from the local artifact projection; they return `404`
@@ -379,8 +382,8 @@ verification-code MCP server:
   text artifact, selected resume PDF artifact, and `resumePdfLayoutBoxes` for
   generation-time line/page anchoring when the selected final PDF was rendered
   through the HTML/CSS resume renderer. Apply Review uses the selected PDF
-  artifact to fetch the sibling HTML preview for the editor and keeps the PDF as
-  the final file link.
+  artifact to fetch the sibling HTML preview for the Plate editor and keeps the
+  PDF as the final file link.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

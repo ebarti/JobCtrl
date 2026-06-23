@@ -4,11 +4,25 @@ import type {
   BulletProvenanceEntry,
   ResumeLayoutBox,
 } from "@jobhunter/contracts";
-import { BaseBasicBlocksPlugin, BaseBasicMarksPlugin } from "@platejs/basic-nodes";
-import type { Value } from "platejs";
-import type { PlateElementProps } from "platejs/react";
-import { Plate, PlateContent, usePlateEditor } from "platejs/react";
-import { createElement, useCallback, useEffect, useMemo, useState, type Dispatch, type JSX, type SetStateAction } from "react";
+import type { Descendant, TElement, Value } from "platejs";
+import {
+  Plate,
+  PlateContent,
+  createPlatePlugin,
+  usePlateEditor,
+  type PlateElementProps,
+} from "platejs/react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type JSX,
+  type SetStateAction,
+} from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
@@ -54,26 +68,35 @@ interface ResumePlateLine extends ResumeLineEntry {
   readonly tagName: string;
 }
 
-interface ResumePlateElementNode {
-  readonly children: [{ text: string }];
-  readonly className: string;
-  readonly comment: ResumePlateComment | null;
-  readonly kind: ResumeLineEntry["kind"];
-  readonly lineIndex: number;
-  readonly lineNumber: number | null;
-  readonly pageNumber: number;
-  readonly semanticId: string | null;
-  readonly tagName: string;
-  readonly text: string;
-  readonly type: "resume-line";
-}
-
 interface ResumePlateComment {
   readonly sourceLabel: string | null;
   readonly sourceText: string | null;
   readonly status: string;
   readonly tone: "ok" | "info" | "warn";
   readonly why: string | null;
+}
+
+interface ResumePlateDomElement extends TElement {
+  readonly type: "resume_block" | "resume_inline";
+  readonly className?: string | undefined;
+  readonly lineNumber?: number | undefined;
+  readonly pageNumber?: number | undefined;
+  readonly semanticId?: string | null | undefined;
+  readonly tagName: string;
+}
+
+interface ResumePlateLineEntry {
+  readonly index: number;
+  readonly line: ResumePlateLine;
+}
+
+interface ResumePlateRenderContextValue {
+  readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lineEntries: ReadonlyMap<number | undefined, ResumePlateLineEntry>;
+  readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly pins: readonly ResumeAuditPin[];
+  readonly risk: RiskSignals;
+  readonly selectedLine: PdfAuditLineSelection | null | undefined;
 }
 
 interface ResumeAuditPin {
@@ -135,6 +158,34 @@ const RENDERED_RESUME_SECTION_HEADINGS = new Set([
   "summary",
   "technical skills",
 ]);
+
+const RESUME_PLATE_BLOCK_TAGS = new Set([
+  "article",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "header",
+  "li",
+  "main",
+  "p",
+  "section",
+  "ul",
+]);
+
+const RESUME_PLATE_INLINE_TAGS = new Set(["b", "span", "strong"]);
+
+const RESUME_PLATE_BLOCK_PLUGIN = createPlatePlugin({
+  key: "resume_block",
+  node: { isElement: true },
+});
+
+const RESUME_PLATE_INLINE_PLUGIN = createPlatePlugin({
+  key: "resume_inline",
+  node: { isElement: true, isInline: true },
+});
+
+const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN];
 
 function yesNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) return "not recorded";
@@ -343,7 +394,7 @@ function lineTitle(line: ResumeLineEntry): string {
 }
 
 function lineLabelForSelection(selection: PdfAuditLineSelection): string {
-  return `PDF page ${selection.pageNumber} line ${selection.pageLineIndex}`;
+  return `Resume page ${selection.pageNumber} line ${selection.pageLineIndex}`;
 }
 
 function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeAuditPin[] {
@@ -644,17 +695,7 @@ function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineE
   return lines;
 }
 
-const RESUME_HTML_LINE_SELECTOR = [
-  "h1.resume-name",
-  ".resume-contact",
-  ".resume-section h2",
-  ".resume-summary",
-  ".resume-entry-title",
-  ".resume-entry h3",
-  ".resume-meta",
-  ".resume-section li",
-  ".resume-section > p",
-].join(", ");
+const RESUME_HTML_LINE_SELECTOR = "[data-resume-line-number]";
 
 function parsePositiveInteger(value: string | null): number | null {
   if (!value) return null;
@@ -664,6 +705,54 @@ function parsePositiveInteger(value: string | null): number | null {
 
 function cleanRenderedText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function resumePlateTextNode(text: string): Descendant | null {
+  const clean = text.replace(/\s+/g, " ");
+  if (!clean.trim()) return null;
+  return { text: clean };
+}
+
+function resumePlateChildrenFromDom(element: Element): Descendant[] {
+  const children = Array.from(element.childNodes)
+    .map((node) => resumePlateNodeFromDom(node))
+    .filter((node): node is Descendant => Boolean(node));
+  return children.length ? children : [{ text: "" }];
+}
+
+function resumePlateNodeFromDom(node: Node): Descendant | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return resumePlateTextNode(node.textContent ?? "");
+  }
+  if (!(node instanceof HTMLElement)) return null;
+  const tagName = node.tagName.toLowerCase();
+  const isInline = RESUME_PLATE_INLINE_TAGS.has(tagName);
+  if (!isInline && !RESUME_PLATE_BLOCK_TAGS.has(tagName)) {
+    return resumePlateTextNode(cleanRenderedText(node.textContent));
+  }
+  return {
+    children: resumePlateChildrenFromDom(node),
+    className: node.getAttribute("class") || undefined,
+    lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
+    pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
+    semanticId: node.getAttribute("data-resume-layout-target") || null,
+    tagName,
+    type: isInline ? "resume_inline" : "resume_block",
+  };
+}
+
+function resumePlateValueFromHtml(html: string): Value {
+  if (typeof DOMParser === "undefined") {
+    return [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
+  }
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const page = doc.querySelector<HTMLElement>(".resume-page");
+  const nodes = Array.from((page ? [page] : Array.from(doc.body.children)) as Iterable<Element>)
+    .map((node) => resumePlateNodeFromDom(node))
+    .filter((node): node is Descendant => Boolean(node));
+  return nodes.length
+    ? (nodes as Value)
+    : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
 }
 
 function kindForHtmlElement(element: HTMLElement, index: number, text: string): ResumeLineEntry["kind"] {
@@ -805,31 +894,8 @@ function inlineCommentForPin(pin: ResumeAuditPin, risk: RiskSignals): ResumePlat
   };
 }
 
-function plateValueFromLines(
-  lines: readonly ResumePlateLine[],
-  pins: readonly ResumeAuditPin[],
-  risk: RiskSignals,
-): ResumePlateElementNode[] {
-  return lines.map((line, index) => {
-    const pin = pinForPlateLine(line, index, pins);
-    return {
-      children: [{ text: line.text }],
-      className: line.className,
-      comment: pin ? inlineCommentForPin(pin, risk) : null,
-      kind: line.kind,
-      lineIndex: index,
-      lineNumber: line.lineNumber ?? null,
-      pageNumber: line.pageNumber,
-      semanticId: line.semanticId,
-      tagName: line.tagName,
-      text: line.text,
-      type: "resume-line",
-    };
-  });
-}
-
 function selectionFromPlateLine(
-  line: ResumePlateElementNode,
+  line: ResumePlateLine,
   index: number,
   layoutBoxes: readonly ResumeLayoutBox[],
 ): PdfAuditLineSelection {
@@ -1160,25 +1226,33 @@ type ResumeHtmlState =
   | { readonly status: "idle"; readonly html: null; readonly message: null }
   | { readonly status: "loading"; readonly html: null; readonly message: null }
   | { readonly status: "ready"; readonly html: string; readonly message: null }
+  | { readonly status: "legacy"; readonly html: null; readonly message: string }
+  | { readonly status: "missing"; readonly html: null; readonly message: string }
   | { readonly status: "error"; readonly html: null; readonly message: string };
 
 function selectedLineMatchesElement(
   selectedLine: PdfAuditLineSelection | null | undefined,
-  element: ResumePlateElementNode,
+  line: ResumePlateLine,
+  index: number,
 ): boolean {
   if (!selectedLine) return false;
-  if (element.lineNumber !== null && selectedLine.lineNumber === element.lineNumber) {
+  if (line.lineNumber !== undefined && selectedLine.lineNumber === line.lineNumber) {
     return true;
   }
   if (selectedLine.lineNumber !== null) {
     return false;
   }
-  return selectedLine.lineKey === `html:${element.semanticId ?? element.lineIndex}:${normalizeResumeLine(element.text)}`;
+  return selectedLine.lineKey === `html:${line.semanticId ?? index}:${normalizeResumeLine(line.text)}`;
 }
 
 function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateComment }): JSX.Element {
   return (
-    <aside className={`resume-plate-comment ${comment.tone}`} aria-label="JobHunter resume comment" contentEditable={false}>
+    <span
+      aria-label="JobHunter resume comment"
+      className={`resume-plate-comment ${comment.tone}`}
+      contentEditable={false}
+      role="note"
+    >
       <span className="resume-plate-comment-head">
         <b>JobHunter</b>
         <span>{comment.status}</span>
@@ -1189,7 +1263,161 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
         </span>
       ) : null}
       {comment.why ? <span>{comment.why}</span> : null}
-    </aside>
+    </span>
+  );
+}
+
+function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
+  return RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)
+    ? (tagName as keyof HTMLElementTagNameMap)
+    : "div";
+}
+
+const ResumePlateRenderContext = createContext<ResumePlateRenderContextValue | null>(null);
+
+function useResumePlateRenderContext(): ResumePlateRenderContextValue {
+  const value = useContext(ResumePlateRenderContext);
+  if (!value) {
+    throw new Error("ResumePlateDocument must render resume Plate elements inside ResumePlateRenderContext.");
+  }
+  return value;
+}
+
+function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
+  const { layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine } = useResumePlateRenderContext();
+  const element = props.element;
+  const lineEntry = element.lineNumber ? lineEntries.get(element.lineNumber) : undefined;
+  const pin = lineEntry ? pinForPlateLine(lineEntry.line, lineEntry.index, pins) : null;
+  const comment = pin ? inlineCommentForPin(pin, risk) : null;
+  const selected = lineEntry ? selectedLineMatchesElement(selectedLine, lineEntry.line, lineEntry.index) : false;
+  const showComment = Boolean(comment && (selected || comment.tone === "warn"));
+  const className = [
+    element.className,
+    element.lineNumber ? "jobhunter-review-line" : "",
+    comment ? "has-jobhunter-comment" : "",
+    selected ? "jobhunter-selected-line" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const handleSelect = element.lineNumber && lineEntry
+    ? () => onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes))
+    : undefined;
+  return createElement(
+    safeResumePlateTag(element.tagName),
+    {
+      ...props.attributes,
+      className: className || undefined,
+      "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-line-number": element.lineNumber,
+      "data-resume-page": element.pageNumber,
+      onClick: handleSelect,
+      onMouseDown: handleSelect,
+      onPointerDown: handleSelect,
+    },
+    props.children,
+    showComment && comment ? <ResumePlateCommentBubble comment={comment} /> : null,
+  );
+}
+
+function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
+  const element = props.element;
+  return createElement(
+    safeResumePlateTag(element.tagName),
+    {
+      ...props.attributes,
+      className: element.className,
+      "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-line-number": element.lineNumber,
+    },
+    props.children,
+  );
+}
+
+const RESUME_PLATE_COMPONENTS = {
+  resume_block: ResumeBlockElement,
+  resume_inline: ResumeInlineElement,
+};
+
+function ResumePlateDocument({
+  html,
+  layoutBoxes,
+  lines,
+  onSelectLine,
+  pins,
+  risk,
+  selectedLine,
+  title,
+}: {
+  readonly html: string;
+  readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lines: readonly ResumePlateLine[];
+  readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly pins: readonly ResumeAuditPin[];
+  readonly risk: RiskSignals;
+  readonly selectedLine: PdfAuditLineSelection | null | undefined;
+  readonly title: string;
+}): JSX.Element {
+  const value = useMemo(() => resumePlateValueFromHtml(html), [html]);
+  const lineEntries = useMemo<ReadonlyMap<number | undefined, ResumePlateLineEntry>>(
+    () => new Map(lines.map((line, index) => [line.lineNumber, { index, line }])),
+    [lines],
+  );
+  const renderContext = useMemo<ResumePlateRenderContextValue>(
+    () => ({
+      layoutBoxes,
+      lineEntries,
+      onSelectLine,
+      pins,
+      risk,
+      selectedLine,
+    }),
+    [layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine],
+  );
+
+  const editor = usePlateEditor(
+    {
+      components: RESUME_PLATE_COMPONENTS,
+      plugins: RESUME_PLATE_PLUGINS,
+      value,
+    },
+    [value],
+  );
+
+  return (
+    <ResumePlateRenderContext.Provider value={renderContext}>
+      <Plate editor={editor}>
+        <PlateContent
+          aria-label={`${title} editor`}
+          aria-multiline="true"
+          className="resume-plate-document"
+          data-rendered-line-count={lines.length}
+          role="textbox"
+          spellCheck={false}
+        />
+      </Plate>
+    </ResumePlateRenderContext.Provider>
+  );
+}
+
+function ResumeHtmlUnavailable({
+  message,
+  status,
+}: {
+  readonly message: string;
+  readonly status: Exclude<ResumeHtmlState["status"], "idle" | "loading" | "ready">;
+}): JSX.Element {
+  const title =
+    status === "legacy"
+      ? "This resume was rendered before the HTML/CSS renderer."
+      : status === "missing"
+        ? "The generated HTML source is missing."
+        : "The generated HTML source could not be loaded.";
+  return (
+    <div className={`resume-html-unavailable ${status}`} role="status">
+      <b>{title}</b>
+      <span>{message}</span>
+      <span>The printable final file is still available from the open final file link.</span>
+    </div>
   );
 }
 
@@ -1208,6 +1436,7 @@ export function ResumePlateEditor({
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
   const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
+  const provenanceReady = detail.isSuccess || detail.isError;
   const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
     status: htmlUrl ? "loading" : "idle",
     html: null,
@@ -1224,12 +1453,25 @@ export function ResumePlateEditor({
     fetch(htmlUrl, { signal: abortController.signal })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`HTML preview request failed with ${response.status}.`);
+          const errorBody = await response.json().catch(() => null);
+          const message =
+            errorBody && typeof errorBody === "object" && "message" in errorBody && typeof errorBody.message === "string"
+              ? errorBody.message
+              : `HTML preview request failed with ${response.status}.`;
+          if (response.status === 415) {
+            setHtmlState({ status: "legacy", html: null, message });
+            return null;
+          }
+          if (response.status === 404) {
+            setHtmlState({ status: "missing", html: null, message });
+            return null;
+          }
+          throw new Error(message);
         }
         return response.text();
       })
       .then((html) => {
-        if (!abortController.signal.aborted) {
+        if (!abortController.signal.aborted && html !== null) {
           setHtmlState({ status: "ready", html, message: null });
         }
       })
@@ -1245,93 +1487,66 @@ export function ResumePlateEditor({
     () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
     [htmlState, layoutBoxes],
   );
-  const fallbackLines = useMemo(
-    () => resumePlateLinesFromText(resumeText, lineTargets),
-    [lineTargets, resumeText],
-  );
-  const plateLines = htmlLines.length ? htmlLines : fallbackLines;
+  const plateLines = htmlLines;
   const linePins = useMemo(
-    () => (plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
-    [explanation, plateLines, profileSourceFields],
-  );
-  const plateValue = useMemo(
-    () => plateValueFromLines(plateLines, linePins, risk),
-    [linePins, plateLines, risk],
-  );
-  const editor = usePlateEditor(
-    {
-      plugins: [BaseBasicBlocksPlugin, BaseBasicMarksPlugin],
-      value: plateValue as unknown as Value,
-    },
-    [plateValue],
-  );
-  const renderElement = useCallback(
-    (props: PlateElementProps) => {
-      const element = props.element as unknown as ResumePlateElementNode;
-      if (element.type !== "resume-line") {
-        return createElement("p", props.attributes, props.children);
-      }
-      const lineSelection = selectionFromPlateLine(element, element.lineIndex, layoutBoxes);
-      const selected = selectedLineMatchesElement(selectedLine, element);
-      const lineClassName = [
-        "resume-plate-line",
-        `resume-kind-${element.kind}`,
-        element.className,
-        element.comment ? "has-comment" : "",
-        selected ? "selected" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-
-      return createElement(
-        element.tagName,
-        {
-          ...props.attributes,
-          "aria-label": element.lineNumber ? `Line ${element.lineNumber}: ${element.text}` : element.text,
-          "data-resume-layout-target": element.semanticId ?? undefined,
-          "data-resume-line-number": element.lineNumber ?? undefined,
-          className: lineClassName,
-          onClick: () => onSelectLine(lineSelection),
-        },
-        <span className="resume-plate-line-text">{props.children}</span>,
-        element.comment ? <ResumePlateCommentBubble comment={element.comment} /> : null,
-      );
-    },
-    [layoutBoxes, onSelectLine, selectedLine],
+    () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
+    [explanation, plateLines, profileSourceFields, provenanceReady],
   );
 
   useEffect(() => {
-    if (selectedLine || !plateValue.length) return;
-    const firstLine = plateValue[0];
+    if (selectedLine || !plateLines.length) return;
+    const firstLine = plateLines[0];
     if (!firstLine) return;
-    onSelectLine(selectionFromPlateLine(firstLine, firstLine.lineIndex, layoutBoxes));
-  }, [layoutBoxes, onSelectLine, plateValue, selectedLine]);
+    onSelectLine(selectionFromPlateLine(firstLine, 0, layoutBoxes));
+  }, [layoutBoxes, onSelectLine, plateLines, selectedLine]);
+
+  const unavailableMessage =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.message
+      : null;
+  const unavailableStatus =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.status
+      : null;
 
   return (
     <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length}>
       <div className="resume-plate-toolbar">
         <b>{title}</b>
-        <span className="mono">HTML/CSS editor</span>
+        <span className="mono">Plate HTML/CSS editor</span>
         <a href={finalUrl} rel="noreferrer" target="_blank">
           open final file
         </a>
       </div>
-      {htmlState.status === "error" ? (
-        <div className="banner inline">HTML preview unavailable; showing resume text. {htmlState.message}</div>
-      ) : null}
       <div className="resume-plate-scroll">
-        {plateValue.length ? (
+        {htmlState.status === "ready" ? (
           <div className="resume-plate-page" aria-label="Editable resume page">
-            <Plate editor={editor} renderElement={renderElement}>
-              <PlateContent
-                aria-label={`${title} editor`}
-                className="resume-plate-content"
-                spellCheck={false}
-              />
-            </Plate>
+            <ResumePlateDocument
+              html={htmlState.html}
+              layoutBoxes={layoutBoxes}
+              lines={plateLines}
+              pins={linePins}
+              risk={risk}
+              selectedLine={selectedLine}
+              title={title}
+              onSelectLine={onSelectLine}
+            />
           </div>
+        ) : unavailableMessage && unavailableStatus ? (
+          <ResumeHtmlUnavailable
+            message={unavailableMessage}
+            status={unavailableStatus}
+          />
+        ) : htmlState.status === "loading" ? (
+          <Empty title="Loading generated resume HTML." />
         ) : (
-          <Empty title="Resume text is still being prepared." />
+          <Empty
+            title={
+              resumeText || lineTargets.length
+                ? "This resume needs HTML migration before review."
+                : "Resume text is still being prepared."
+            }
+          />
         )}
       </div>
     </section>
@@ -1535,7 +1750,7 @@ function SelectedPinInspector({
           </div>
         ) : pin.lineLabel ? (
           <div>
-            <dt>PDF line</dt>
+            <dt>Resume line</dt>
             <dd>{pin.lineLabel}</dd>
           </div>
         ) : null}

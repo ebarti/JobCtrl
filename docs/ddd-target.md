@@ -260,7 +260,7 @@ policies, and writing style preferences.
 - **SkillCategory** — a named group of skills (e.g., "Programming Languages").
 - **TailoringPolicy** — rules governing what the LLM may modify during tailoring.
 - **WritingStyle** — tone, verbosity, bullet style, and other stylistic constraints.
-- **ResumeTemplate** — the LaTeX (or future alternative) template for PDF rendering.
+- **ResumeTemplate** — the structured HTML/CSS print template for resume PDF rendering.
 - **ApplicationDefaults** — default values for job application form fields.
 
 **Upstream/Downstream:**

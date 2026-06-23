@@ -39,6 +39,165 @@ log = logging.getLogger(__name__)
 
 LayoutBox = dict[str, Any]
 ResumeDocument = dict[str, Any]
+RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
+
+RESUME_HTML_STYLE = """
+@page {
+  size: A4;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  background: #ffffff;
+  color: #111111;
+  font-family: "Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10.35pt;
+  line-height: 1.32;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.resume-page {
+  inline-size: 210mm;
+  min-block-size: 297mm;
+  padding: 16.5mm 17.5mm 18mm;
+  background: #ffffff;
+}
+.resume-header {
+  margin-block-end: 4.5mm;
+  text-align: center;
+}
+.resume-name {
+  color: #111111;
+  font-size: 22pt;
+  font-weight: 400;
+  line-height: 1.08;
+  margin: 0 0 1.8mm;
+}
+.resume-contact {
+  color: #111111;
+  font-size: 8.8pt;
+  line-height: 1.25;
+  margin: 0;
+}
+.resume-section {
+  margin-block-start: 4.1mm;
+}
+.resume-section:first-of-type {
+  margin-block-start: 0;
+}
+.resume-section-title {
+  display: flex;
+  align-items: center;
+  gap: 2.5mm;
+  color: #111111;
+  font-size: 9.5pt;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.15;
+  margin: 0 0 2.2mm;
+  text-transform: uppercase;
+}
+.resume-section-title::after {
+  flex: 1 1 auto;
+  border-block-start: 0.45pt solid #111111;
+  content: "";
+}
+.resume-summary {
+  margin: 0;
+  text-align: justify;
+}
+.resume-entry {
+  margin-block-end: 3.2mm;
+  break-inside: avoid;
+}
+.resume-entry.compact {
+  margin-block-end: 2.2mm;
+}
+.resume-entry-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 5mm;
+  margin: 0 0 0.6mm;
+}
+.resume-entry-main {
+  min-inline-size: 0;
+  font-weight: 700;
+}
+.resume-entry-title {
+  color: #111111;
+}
+.resume-entry-company {
+  color: #111111;
+}
+.resume-entry-date {
+  color: #111111;
+  font-size: 8.9pt;
+  white-space: nowrap;
+}
+.resume-entry-subtitle,
+.resume-meta {
+  color: #111111;
+  font-size: 8.9pt;
+  line-height: 1.22;
+  margin: 0 0 1mm;
+}
+.resume-bullets {
+  list-style: disc outside;
+  margin: 1.1mm 0 0 4.2mm;
+  padding: 0;
+}
+.resume-skills-list {
+  list-style: none;
+  margin: 1.1mm 0 0 0;
+  padding: 0;
+}
+.resume-bullets li {
+  display: list-item;
+  list-style: disc outside;
+  margin-block-end: 0.75mm;
+  padding-inline-start: 0.8mm;
+  text-align: justify;
+  break-inside: avoid;
+}
+.resume-skills-list li {
+  margin-block-end: 0.75mm;
+  padding-inline-start: 0;
+  text-align: justify;
+  break-inside: avoid;
+}
+.resume-skills-list b {
+  color: #111111;
+}
+p {
+  margin: 0 0 1.2mm;
+}
+[data-resume-layout-target] {
+  overflow-wrap: anywhere;
+}
+"""
+
+
+def build_resume_html_document(body: str) -> str:
+    """Wrap trusted resume body markup in the print stylesheet."""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{RESUME_HTML_STYLE}</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
 
 
 def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocument:
@@ -102,6 +261,8 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
                 "id": entry_id,
                 "title": sanitize_text(tailored_experience_title(entry, update, profile)),
                 "company": sanitize_text(str(entry.get("company", ""))),
+                "location": sanitize_text(str(entry.get("location", ""))),
+                "date_range": sanitize_text(str(entry.get("date_range", ""))),
                 "subtitle": sanitize_text(" | ".join(part for part in subtitle_parts if part)),
                 "bullets": [
                     {
@@ -121,6 +282,9 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
             {
                 "id": entry_id,
                 "degree": sanitize_text(str(entry.get("degree", ""))),
+                "institution": sanitize_text(str(entry.get("institution", ""))),
+                "location": sanitize_text(str(entry.get("location", ""))),
+                "date": sanitize_text(str(entry.get("date", ""))),
                 "subtitle": sanitize_text(" | ".join(part for part in subtitle_parts if part)),
                 "details": sanitize_text(str(entry.get("details", ""))),
             }
@@ -165,6 +329,7 @@ def build_resume_html(document: ResumeDocument) -> str:
         *,
         tag: str = "div",
         class_name: str = "resume-line",
+        inner_html: str | None = None,
     ) -> str:
         nonlocal line_number
         if not text.strip():
@@ -172,10 +337,14 @@ def build_resume_html(document: ResumeDocument) -> str:
         line_number += 1
         escaped = html.escape(text)
         escaped_id = html.escape(semantic_id, quote=True)
+        content = inner_html if inner_html is not None else escaped
         return (
             f'<{tag} class="{class_name}" data-resume-layout-target="{escaped_id}" '
-            f'data-resume-line-number="{line_number}">{escaped}</{tag}>'
+            f'data-resume-line-number="{line_number}">{content}</{tag}>'
         )
+
+    def section_title(section_id: str, label: str) -> str:
+        return target(f"section:{section_id}", label, tag="h2", class_name="resume-section-title")
 
     personal = document.get("personal", {})
     body: list[str] = [
@@ -186,136 +355,78 @@ def build_resume_html(document: ResumeDocument) -> str:
     contact = " | ".join(str(part) for part in personal.get("contact", []) if str(part).strip())
     if contact:
         body.append(target("personal:contact", contact, class_name="resume-contact"))
-    body.extend(["</header>", '<section class="resume-section">', "<h2>Executive Profile</h2>"])
+    body.extend(["</header>", '<section class="resume-section">', section_title("executive_profile", "Executive Profile")])
     body.append(target("summary", str(document.get("summary", "")), tag="p", class_name="resume-summary"))
     body.append("</section>")
 
-    body.extend(['<section class="resume-section">', "<h2>Experience</h2>"])
+    body.extend(['<section class="resume-section">', section_title("experience", "Experience")])
     for entry in document.get("experience", []):
         entry_id = str(entry.get("id", "experience"))
         heading = " | ".join(part for part in [entry.get("title", ""), entry.get("company", "")] if part)
+        title = html.escape(str(entry.get("title", "")))
+        company = html.escape(str(entry.get("company", "")))
+        date_range = html.escape(str(entry.get("date_range", "")))
+        location = str(entry.get("location", "")).strip()
+        heading_html = (
+            '<span class="resume-entry-main">'
+            f'<span class="resume-entry-title">{title}</span>'
+            + (f' <span class="resume-entry-company">| {company}</span>' if company else "")
+            + "</span>"
+            + (f'<span class="resume-entry-date">{date_range}</span>' if date_range else "")
+        )
         body.append('<article class="resume-entry">')
-        body.append(target(f"experience:{entry_id}:heading", heading, tag="h3", class_name="resume-entry-title"))
-        body.append(target(f"experience:{entry_id}:subtitle", str(entry.get("subtitle", "")), class_name="resume-meta"))
-        body.append("<ul>")
+        body.append(
+            target(
+                f"experience:{entry_id}:heading",
+                " | ".join(part for part in [heading, entry.get("date_range", "")] if part),
+                class_name="resume-entry-heading",
+                inner_html=heading_html,
+            )
+        )
+        body.append(target(f"experience:{entry_id}:location", location, tag="p", class_name="resume-entry-subtitle"))
+        body.append('<ul class="resume-bullets">')
         for bullet in entry.get("bullets", []):
             body.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
         body.append("</ul>")
         body.append("</article>")
     body.append("</section>")
 
-    body.extend(['<section class="resume-section">', "<h2>Education</h2>"])
+    body.extend(['<section class="resume-section">', section_title("education", "Education")])
     for entry in document.get("education", []):
         entry_id = str(entry.get("id", "education"))
+        degree = html.escape(str(entry.get("degree", "")))
+        date = html.escape(str(entry.get("date", "")))
+        institution = str(entry.get("institution", "")).strip()
+        location = str(entry.get("location", "")).strip()
+        subtitle = " | ".join(part for part in [institution, location] if part)
+        heading_html = (
+            f'<span class="resume-entry-main"><span class="resume-entry-title">{degree}</span></span>'
+            + (f'<span class="resume-entry-date">{date}</span>' if date else "")
+        )
         body.append('<article class="resume-entry compact">')
-        body.append(target(f"education:{entry_id}:degree", str(entry.get("degree", "")), tag="h3"))
-        body.append(target(f"education:{entry_id}:subtitle", str(entry.get("subtitle", "")), class_name="resume-meta"))
+        body.append(
+            target(
+                f"education:{entry_id}:degree",
+                " | ".join(part for part in [entry.get("degree", ""), entry.get("date", "")] if part),
+                class_name="resume-entry-heading",
+                inner_html=heading_html,
+            )
+        )
+        body.append(target(f"education:{entry_id}:subtitle", subtitle, class_name="resume-meta"))
         body.append(target(f"education:{entry_id}:details", str(entry.get("details", "")), class_name="resume-meta"))
         body.append("</article>")
     body.append("</section>")
 
-    body.extend(['<section class="resume-section">', "<h2>Skills</h2>"])
+    body.extend(['<section class="resume-section">', section_title("skills", "Skills"), '<ul class="resume-skills-list">'])
     for category in document.get("skills", []):
         category_id = str(category.get("id", "skills"))
         items = ", ".join(str(item) for item in category.get("items", []) if str(item).strip())
         label = str(category.get("label", "Skills")).strip() or "Skills"
-        body.append(target(f"skills:{category_id}", f"{label}: {items}", tag="p"))
-    body.extend(["</section>", "</main>"])
+        skill_html = f"<b>{html.escape(label)}:</b> {html.escape(items)}"
+        body.append(target(f"skills:{category_id}", f"{label}: {items}", tag="li", inner_html=skill_html))
+    body.extend(["</ul>", "</section>", "</main>"])
 
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-@page {{
-  size: letter;
-  margin: 0;
-}}
-* {{
-  box-sizing: border-box;
-}}
-html,
-body {{
-  margin: 0;
-  padding: 0;
-}}
-body {{
-  background: #ffffff;
-  color: #202124;
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 10.5pt;
-  line-height: 1.34;
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}}
-.resume-page {{
-  inline-size: 8.5in;
-  min-block-size: 11in;
-  padding: 0.58in 0.65in;
-}}
-.resume-header {{
-  border-block-end: 1px solid #2f5597;
-  margin-block-end: 0.16in;
-  padding-block-end: 0.09in;
-}}
-.resume-name {{
-  color: #1f3f73;
-  font-size: 20pt;
-  line-height: 1.05;
-  margin: 0;
-}}
-.resume-contact,
-.resume-meta {{
-  color: #4f5661;
-  font-size: 9pt;
-}}
-.resume-section {{
-  margin-block-start: 0.13in;
-  break-inside: avoid;
-}}
-.resume-section h2 {{
-  color: #1f3f73;
-  font-size: 10pt;
-  letter-spacing: 0;
-  margin: 0 0 0.055in;
-  text-transform: uppercase;
-}}
-.resume-entry {{
-  margin-block-end: 0.09in;
-  break-inside: avoid;
-}}
-.resume-entry.compact {{
-  margin-block-end: 0.05in;
-}}
-.resume-entry-title,
-.resume-entry h3 {{
-  font-size: 10.5pt;
-  margin: 0;
-}}
-.resume-summary {{
-  margin: 0;
-}}
-ul {{
-  margin: 0.04in 0 0.02in 0.18in;
-  padding: 0;
-}}
-li {{
-  margin-block-end: 0.028in;
-  break-inside: avoid;
-}}
-p {{
-  margin: 0 0 0.045in;
-}}
-.resume-line,
-.resume-name {{
-  overflow-wrap: break-word;
-}}
-</style>
-</head>
-<body>
-{''.join(body)}
-</body>
-</html>"""
+    return build_resume_html_document("".join(body))
 
 
 def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[LayoutBox]:
@@ -325,7 +436,7 @@ def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[L
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 816, "height": 1056})
+        page = browser.new_page(viewport=RESUME_PAGE_VIEWPORT)
         try:
             page.set_content(html_content, wait_until="load")
             page.emulate_media(media="print")
@@ -334,8 +445,8 @@ def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[L
   const pageNode = node.closest('[data-resume-page]');
   const pageRect = pageNode.getBoundingClientRect();
   const rect = node.getBoundingClientRect();
-  const pageWidth = pageRect.width || 816;
-  const pageHeight = pageRect.height || 1056;
+  const pageWidth = pageRect.width || 794;
+  const pageHeight = pageRect.height || 1123;
   const relativeTop = rect.top - pageRect.top;
   const pageNumber = Math.max(1, Math.floor(relativeTop / pageHeight) + 1);
   const topOnPage = relativeTop - ((pageNumber - 1) * pageHeight);
@@ -419,7 +530,10 @@ class HtmlResumePdfAdapter:
 
 
 __all__ = [
+    "RESUME_HTML_STYLE",
+    "RESUME_PAGE_VIEWPORT",
     "HtmlResumePdfAdapter",
+    "build_resume_html_document",
     "build_resume_document",
     "build_resume_html",
 ]
