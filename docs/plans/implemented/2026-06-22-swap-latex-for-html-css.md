@@ -1,6 +1,6 @@
 # Swap LaTeX For HTML/CSS Resume Rendering
 
-> **Status:** Implemented in PR #188; pending merge/archive sync.
+> **Status:** Complete in PR #188.
 >
 > **Change ID:** `swap-latex-for-html-css`
 >

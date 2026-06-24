@@ -150,7 +150,7 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
 - Harden HTML/CSS resume pagination with deterministic page containers if
   browser-native print fragmentation proves unstable on dense real resumes.
   The migration record lives in
-  `docs/plans/proposed/2026-06-22-swap-latex-for-html-css.md`.
+  `docs/plans/implemented/2026-06-22-swap-latex-for-html-css.md`.
 - Auto-suggest target roles, target locations, and work-model preferences in
   the Profile preferences editor based on the candidate's experience entries,
   current title, location history, and imported resume text. Keep suggestions
