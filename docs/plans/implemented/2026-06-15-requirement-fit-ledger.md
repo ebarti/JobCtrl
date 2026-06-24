@@ -1,8 +1,8 @@
 # Requirement Fit Ledger Implementation Plan
 
-> **Status:** Proposed. This plan tracks the migration from separate score
-> signals, employer requirements, and artifact coverage into one requirement-led
-> audit chain.
+> **Status:** Implemented. Canonical current behavior is documented in
+> `README.md`, `docs/local-ts-api.md`, `docs/local-reliability-qa.md`, and
+> `docs/architecture.md`.
 
 > **For agentic workers:** Implement task-by-task. Keep the compatibility read
 > model until the requirement fit report is projected everywhere the old score
