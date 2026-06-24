@@ -116,6 +116,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.saveResumeReviewDraftRevision(draftId, body);
   }
+  seedResumeReviewCommentThreads(
+    draftId: string,
+    body: Parameters<JobHunterApiClient["seedResumeReviewCommentThreads"]>[1],
+  ) {
+    return this.client.seedResumeReviewCommentThreads(draftId, body);
+  }
+  renderResumeReviewDraft(
+    draftId: string,
+    body: Parameters<JobHunterApiClient["renderResumeReviewDraft"]>[1] = {},
+  ) {
+    return this.client.renderResumeReviewDraft(draftId, body);
+  }
   replyToResumeReviewComment(
     threadId: string,
     body: Parameters<JobHunterApiClient["replyToResumeReviewComment"]>[1],

@@ -592,6 +592,39 @@ export type ResumeReviewDraftRevisionSaveRequest = z.infer<
   typeof ResumeReviewDraftRevisionSaveRequestSchema
 >;
 
+export const ResumeReviewCommentThreadSeedInputSchema = z
+  .object({
+    threadId: z.string().trim().min(1).max(160).optional(),
+    baseArtifactId: z.string().trim().max(240).nullable().optional(),
+    semanticId: z.string().trim().max(240).nullable().optional(),
+    lineAnchor: ResumeLineAnchorSchema.nullable().optional(),
+    sourcePinId: z.string().trim().max(240).nullable().optional(),
+    riskLabel: z.string().trim().max(160).nullable().optional(),
+    commentBody: z.string().trim().min(1).max(4000),
+  })
+  .strict();
+export type ResumeReviewCommentThreadSeedInput = z.infer<
+  typeof ResumeReviewCommentThreadSeedInputSchema
+>;
+
+export const ResumeReviewCommentThreadSeedRequestSchema = z
+  .object({
+    threads: z.array(ResumeReviewCommentThreadSeedInputSchema).max(100).default([]),
+  })
+  .strict();
+export type ResumeReviewCommentThreadSeedRequest = z.infer<
+  typeof ResumeReviewCommentThreadSeedRequestSchema
+>;
+
+export const ResumeReviewDraftRenderRequestSchema = z
+  .object({
+    draftRevisionId: z.string().trim().min(1).max(160).optional(),
+  })
+  .strict();
+export type ResumeReviewDraftRenderRequest = z.infer<
+  typeof ResumeReviewDraftRenderRequestSchema
+>;
+
 export const ResumeCommentReplyRequestSchema = z
   .object({
     draftRevisionId: z.string().trim().min(1).max(160).optional(),
@@ -613,12 +646,51 @@ export interface ResumeReviewDraftRevisionResponse {
   revision: ResumeReviewDraftRevision;
 }
 
+export interface ResumeReviewCommentThreadSeedResponse {
+  ok: true;
+  draft: ResumeReviewDraft;
+  commentThreads: ResumeCommentThread[];
+  seededCount: number;
+  updatedCount: number;
+}
+
 export interface ResumeCommentReplyResponse {
   ok: true;
   thread: ResumeCommentThread;
   reply: ResumeCommentReply;
   feedbackSignal: TailoringFeedbackSignal;
 }
+
+export interface ResumeReviewDraftValidationResult {
+  passed: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ResumeReviewRenderedArtifact {
+  artifactId: string;
+  artifactType: "tailored_resume" | "resume_pdf";
+  generation: number;
+  renderFormat: "text" | "html_pdf";
+}
+
+export type ResumeReviewDraftRenderResponse =
+  | {
+      ok: true;
+      draft: ResumeReviewDraft;
+      validation: ResumeReviewDraftValidationResult;
+      artifacts: {
+        resumeText: ResumeReviewRenderedArtifact;
+        resumePdf: ResumeReviewRenderedArtifact;
+      };
+      layoutBoxCount: number;
+    }
+  | {
+      ok: false;
+      error: "resume_review_draft_invalid";
+      draft: ResumeReviewDraft;
+      validation: ResumeReviewDraftValidationResult;
+    };
 
 export interface ResumeReviewFeedbackListResponse {
   ok: true;

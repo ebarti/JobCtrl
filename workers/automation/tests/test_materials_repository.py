@@ -305,6 +305,162 @@ def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
     assert loaded.resume_pdf.metadata == {"layout_source": "html_resume_dom"}
 
 
+def test_loads_resume_review_promoted_generation_without_deleting_prior_materials(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    url = _seed_job(conn, "https://example.com/resume-review-promoted")
+    base_resume = tmp_path / "base-resume.txt"
+    base_pdf = tmp_path / "base-resume.pdf"
+    edited_resume = tmp_path / "edited-resume.txt"
+    edited_pdf = tmp_path / "edited-resume.pdf"
+    base_resume.write_text("base resume", encoding="utf-8")
+    base_pdf.write_text("%PDF base", encoding="utf-8")
+    edited_resume.write_text("edited resume", encoding="utf-8")
+    edited_pdf.write_text("%PDF edited", encoding="utf-8")
+    now = "2026-06-24T10:00:00+00:00"
+
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at,
+            last_validation_json, last_verdict_json, metadata_json
+        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')
+        """,
+        (url, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at,
+            last_validation_json, last_verdict_json, metadata_json
+        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?, ?, ?)
+        """,
+        (
+            url,
+            now,
+            now,
+            json.dumps({"passed": True, "errors": [], "warnings": []}),
+            json.dumps({"approved": True, "source": "resume_review_draft"}),
+            json.dumps(
+                {
+                    "source": "resume_review_draft",
+                    "draft_id": "resume-draft-1",
+                    "draft_revision_id": "resume-revision-1",
+                    "base_generation": 1,
+                }
+            ),
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at, superseded_at
+        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+        """,
+        [
+            (
+                url,
+                1,
+                "tailored_resume",
+                "base-resume",
+                str(base_resume),
+                "text",
+                base_resume.stat().st_size,
+                "{}",
+                now,
+            ),
+            (
+                url,
+                1,
+                "resume_pdf",
+                "base-pdf",
+                str(base_pdf),
+                "html_pdf",
+                base_pdf.stat().st_size,
+                "{}",
+                now,
+            ),
+            (
+                url,
+                2,
+                "tailored_resume",
+                "edited-resume",
+                str(edited_resume),
+                "text",
+                edited_resume.stat().st_size,
+                json.dumps({"source": "resume_review_draft", "draft_id": "resume-draft-1"}),
+                now,
+            ),
+            (
+                url,
+                2,
+                "resume_pdf",
+                "edited-pdf",
+                str(edited_pdf),
+                "html_pdf",
+                edited_pdf.stat().st_size,
+                json.dumps(
+                    {
+                        "source": "resume_review_draft",
+                        "draft_id": "resume-draft-1",
+                        "html_path": str(tmp_path / "edited-resume.html"),
+                    }
+                ),
+                now,
+            ),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO job_material_layout_boxes (
+            job_url, generation, artifact_id, box_index, tenant_id,
+            semantic_id, page_number, line_number, text_excerpt,
+            left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
+        ) VALUES (?, 2, 'edited-pdf', 0, 'local',
+                  'edited:line:1', 1, 1, 'edited resume',
+                  10, 8, 80, 1.7, '{}', ?)
+        """,
+        (url, now),
+    )
+    conn.commit()
+
+    repo = SqliteMaterialsRepository(conn)
+    loaded = repo.load(LOCAL_TENANT, JobId(url))
+
+    assert loaded is not None
+    assert loaded.generation == 2
+    assert loaded.tailored_resume is not None
+    assert loaded.resume_pdf is not None
+    assert loaded.tailored_resume.artifact_id == "edited-resume"
+    assert loaded.resume_pdf.metadata["source"] == "resume_review_draft"
+    assert loaded.resume_pdf.metadata["html_path"].endswith("edited-resume.html")
+    prior_statuses = conn.execute(
+        """
+        SELECT status
+        FROM job_materials_artifacts
+        WHERE job_url = ? AND generation = 1
+        ORDER BY artifact_type
+        """,
+        (url,),
+    ).fetchall()
+    assert [row["status"] for row in prior_statuses] == ["approved", "approved"]
+    box = conn.execute(
+        """
+        SELECT semantic_id, line_number, text_excerpt
+        FROM job_material_layout_boxes
+        WHERE job_url = ? AND generation = 2 AND artifact_id = 'edited-pdf'
+        """,
+        (url,),
+    ).fetchone()
+    assert dict(box) == {
+        "semantic_id": "edited:line:1",
+        "line_number": 1,
+        "text_excerpt": "edited resume",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Selectors
 # ---------------------------------------------------------------------------

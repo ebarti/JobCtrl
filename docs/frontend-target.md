@@ -949,9 +949,9 @@ separately in §4.5.
 |---|---|
 | Routes | None top-level; sub-route under jobs for the apply-run timeline drawer (`routes/jobs.$jobId.run.$runId.tsx`). |
 | Queries | None directly — apply-run reads (list, detail) are owned by Operations (`useApplyRunsListQuery`, `useApplyRunQuery`). |
-| Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`. |
+| Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
 | SSE keys consumed | `ApplyRunStarted`, `ApplyRunEventRecorded`, `ApplicationSubmitted`, `ApplicationFailed`. |
-| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`. |
+| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, and Apply Review decision controls composed with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
 | Notes | The timeline component reads via `useApplyRunQuery` (Operations). The invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
 
 #### 4.4.8 Pipeline Orchestration

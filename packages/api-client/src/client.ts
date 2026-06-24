@@ -70,7 +70,11 @@ import type {
   RetailorJobRequest,
   ResumeCommentReplyRequest,
   ResumeCommentReplyResponse,
+  ResumeReviewCommentThreadSeedRequest,
+  ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftRenderRequest,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -303,6 +307,20 @@ export class JobHunterApiClient {
     body: ResumeReviewDraftRevisionSaveRequest,
   ): Promise<ResumeReviewDraftRevisionResponse> {
     return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`, body);
+  }
+
+  seedResumeReviewCommentThreads(
+    draftId: string,
+    body: ResumeReviewCommentThreadSeedRequest,
+  ): Promise<ResumeReviewCommentThreadSeedResponse> {
+    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`, body);
+  }
+
+  renderResumeReviewDraft(
+    draftId: string,
+    body: ResumeReviewDraftRenderRequest = {},
+  ): Promise<ResumeReviewDraftRenderResponse> {
+    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`, body);
   }
 
   replyToResumeReviewComment(

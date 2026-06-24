@@ -2,7 +2,11 @@ import type {
   ApplyReviewProfileSourceField,
   ArtifactTailoringExplanation,
   BulletProvenanceEntry,
+  ResumeCommentReplyDecision,
+  ResumeCommentThread,
   ResumeReviewDraft,
+  ResumeReviewDraftRenderResponse,
+  ResumeReviewCommentThreadSeedInput,
   ResumeLayoutBox,
 } from "@jobhunter/contracts";
 import type { Descendant, TElement, Value } from "platejs";
@@ -19,8 +23,10 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
+  type FormEvent,
   type JSX,
   type SetStateAction,
 } from "react";
@@ -43,6 +49,7 @@ interface ResumeAuditPinsProps {
 
 interface ResumePlateEditorProps {
   readonly artifactId: string;
+  readonly autosaveDelayMs?: number;
   readonly draft: ResumeReviewDraft | null;
   readonly draftError?: string | null;
   readonly draftLoading?: boolean;
@@ -51,13 +58,40 @@ interface ResumePlateEditorProps {
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lineTargets: readonly PdfAuditLineTarget[];
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
+  readonly renderError?: string | null;
+  readonly renderPending?: boolean;
+  readonly renderResult?: ResumeReviewDraftRenderResponse | null;
   readonly resumeText?: string | null;
   readonly saveError?: string | null;
   readonly savePending?: boolean;
+  readonly replyError?: string | null;
+  readonly replyPending?: boolean;
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
-  readonly onSaveDraft?: (input: { readonly editedText: string; readonly plateDocument: Value }) => void;
+  readonly onDraftGateChange?: (state: ResumeDraftGateState) => void;
+  readonly onRenderDraft?: () => void;
+  readonly onReplyToThread?: (
+    thread: ResumeCommentThread,
+    input: {
+      readonly decision: ResumeCommentReplyDecision;
+      readonly body: string;
+    },
+  ) => void;
+  readonly onSaveDraft?: (input: {
+    readonly editedText: string;
+    readonly plateDocument: Value;
+    readonly source: "autosave" | "manual";
+  }) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly onSeedCommentThreads?: (threads: readonly ResumeReviewCommentThreadSeedInput[]) => void;
+}
+
+export interface ResumeDraftGateState {
+  readonly draftId: string | null;
+  readonly dirty: boolean;
+  readonly hasSavedRevision: boolean;
+  readonly rendered: boolean;
+  readonly reason: string | null;
 }
 
 interface ResumeLineEntry {
@@ -943,6 +977,48 @@ function inlineCommentForPin(pin: ResumeAuditPin, risk: RiskSignals): ResumePlat
   };
 }
 
+function seedThreadsFromPins(
+  artifactId: string,
+  pins: readonly ResumeAuditPin[],
+  risk: RiskSignals,
+): ResumeReviewCommentThreadSeedInput[] {
+  return pins
+    .map((pin): ResumeReviewCommentThreadSeedInput | null => {
+      const comment = inlineCommentForPin(pin, risk);
+      if (!comment.why && !comment.sourceText && comment.tone !== "warn") return null;
+      const body = [
+        comment.why,
+        comment.sourceText ? `${comment.sourceLabel ?? "Source"}: ${comment.sourceText}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        baseArtifactId: artifactId,
+        commentBody: body || comment.status,
+        lineAnchor: {
+          lineNumber: pin.lineNumber ?? null,
+          pageNumber: 1,
+          semanticId: pin.sourceId,
+          textHash: null,
+        },
+        riskLabel: comment.status,
+        semanticId: pin.sourceId,
+        sourcePinId: pin.id,
+      };
+    })
+    .filter((thread): thread is ResumeReviewCommentThreadSeedInput => Boolean(thread));
+}
+
+function seedThreadKey(thread: ResumeReviewCommentThreadSeedInput): string {
+  return [
+    thread.sourcePinId ?? "",
+    thread.semanticId ?? "",
+    thread.lineAnchor?.lineNumber ?? "",
+    thread.riskLabel ?? "",
+    thread.commentBody,
+  ].join(":");
+}
+
 function selectionFromPlateLine(
   line: ResumePlateLine,
   index: number,
@@ -1316,6 +1392,121 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
   );
 }
 
+const COMMENT_REPLY_DECISIONS: readonly ResumeCommentReplyDecision[] = [
+  "accepted",
+  "clarified",
+  "rejected",
+  "rewrite_requested",
+];
+
+function commentThreadStateLabel(thread: ResumeCommentThread): string {
+  return formatToken(thread.state.replaceAll("_", " "));
+}
+
+function ResumeCommentReplyForm({
+  disabled,
+  thread,
+  onReply,
+}: {
+  readonly disabled: boolean;
+  readonly thread: ResumeCommentThread;
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element | null {
+  const [body, setBody] = useState("");
+  const [decision, setDecision] = useState<ResumeCommentReplyDecision>("clarified");
+  if (!onReply) return null;
+  const formId = `resume-comment-reply-${thread.threadId}`;
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    onReply(thread, { body: trimmed, decision });
+    setBody("");
+    setDecision("clarified");
+  };
+  return (
+    <form className="resume-comment-reply-form" onSubmit={submit}>
+      <label htmlFor={`${formId}-body`}>Reply</label>
+      <textarea
+        id={`${formId}-body`}
+        maxLength={4000}
+        rows={3}
+        value={body}
+        aria-describedby={`${formId}-decision`}
+        disabled={disabled}
+        onChange={(event) => setBody(event.currentTarget.value)}
+      />
+      <div className="resume-comment-reply-controls">
+        <label htmlFor={`${formId}-decision`}>Decision</label>
+        <select
+          id={`${formId}-decision`}
+          value={decision}
+          disabled={disabled}
+          onChange={(event) => setDecision(event.currentTarget.value as ResumeCommentReplyDecision)}
+        >
+          {COMMENT_REPLY_DECISIONS.map((value) => (
+            <option key={value} value={value}>
+              {formatToken(value)}
+            </option>
+          ))}
+        </select>
+        <button className="tab" type="submit" disabled={disabled || !body.trim()}>
+          reply
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ResumeCommentThreadPanel({
+  error,
+  pending,
+  threads,
+  onReply,
+}: {
+  readonly error?: string | null;
+  readonly pending?: boolean;
+  readonly threads: readonly ResumeCommentThread[];
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element | null {
+  if (!threads.length && !error) return null;
+  return (
+    <aside className="resume-comment-thread-panel" aria-label="JobHunter line comments">
+      <div className="resume-comment-thread-head">
+        <b>JobHunter comments</b>
+        <span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span>
+      </div>
+      {error ? <div className="banner inline">{error}</div> : null}
+      {threads.map((thread) => (
+        <article className={`resume-comment-thread ${thread.state}`} key={thread.threadId}>
+          <div className="resume-comment-thread-meta">
+            <span className="tag info">{commentThreadStateLabel(thread)}</span>
+            {thread.riskLabel ? <span className="tag warn">{thread.riskLabel}</span> : null}
+            {thread.lineAnchor?.lineNumber ? <span className="mono">line {thread.lineAnchor.lineNumber}</span> : null}
+            {!thread.anchorResolved ? <span className="tag warn">anchor unresolved</span> : null}
+          </div>
+          <p>{thread.commentBody}</p>
+          <div className="resume-comment-thread-source">
+            {thread.sourcePinId ? <span>Source pin: {thread.sourcePinId}</span> : null}
+            {thread.semanticId ? <span>Semantic id: {thread.semanticId}</span> : null}
+          </div>
+          {thread.replies.length ? (
+            <ul className="resume-comment-replies" aria-label="Comment replies">
+              {thread.replies.map((reply) => (
+                <li key={reply.replyId}>
+                  <b>{formatToken(reply.decision)}</b>
+                  <span>{reply.body}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <ResumeCommentReplyForm disabled={Boolean(pending)} thread={thread} onReply={onReply} />
+        </article>
+      ))}
+    </aside>
+  );
+}
+
 function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
   return RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)
     ? (tagName as keyof HTMLElementTagNameMap)
@@ -1484,6 +1675,7 @@ function ResumeHtmlUnavailable({
 }
 
 export function ResumePlateEditor({
+  autosaveDelayMs = 1500,
   artifactId,
   draft,
   draftError = null,
@@ -1493,13 +1685,22 @@ export function ResumePlateEditor({
   layoutBoxes,
   lineTargets,
   profileSourceFields = [],
+  renderError = null,
+  renderPending = false,
+  renderResult = null,
   resumeText,
   saveError = null,
   savePending = false,
+  replyError = null,
+  replyPending = false,
   selectedLine,
   title,
+  onDraftGateChange,
+  onRenderDraft,
+  onReplyToThread,
   onSaveDraft,
   onSelectLine,
+  onSeedCommentThreads,
 }: ResumePlateEditorProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
@@ -1560,6 +1761,15 @@ export function ResumePlateEditor({
     () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
     [explanation, plateLines, profileSourceFields, provenanceReady],
   );
+  const seedThreads = useMemo(
+    () => seedThreadsFromPins(artifactId, linePins, risk),
+    [artifactId, linePins, risk],
+  );
+  const seedKey = useMemo(
+    () => (draft && seedThreads.length ? `${draft.draftId}:${seedThreads.map(seedThreadKey).join("|")}` : null),
+    [draft, seedThreads],
+  );
+  const seededKey = useRef<string | null>(null);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -1582,20 +1792,94 @@ export function ResumePlateEditor({
     [currentPlateValue],
   );
   const draftDirty = Boolean(currentPlateValue && currentDraftText !== initialDraftText);
+  const hasSavedRevision = Boolean(draft?.latestRevision);
+  const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
+  const draftGateReason = draft
+    ? draftDirty
+      ? "Save and render the edited resume before approval."
+      : hasSavedRevision && !draftRendered
+        ? "Render the saved resume draft before approval."
+        : renderResult && !renderResult.ok
+          ? "Resolve draft validation errors before approval."
+          : null
+    : null;
   const draftStatus = draftLoading
     ? "loading draft"
+    : renderPending
+      ? "rendering replacement"
     : savePending
       ? "saving draft"
-      : saveError || draftError
+      : saveError || draftError || renderError || (renderResult && !renderResult.ok)
         ? "draft save issue"
-        : draftDirty
-          ? "unsaved changes"
-          : draft?.latestRevision
-            ? `saved revision ${draft.latestRevision.revisionNumber}`
-            : draft
-              ? "draft ready"
-              : "draft unavailable";
+      : draftDirty
+        ? "unsaved changes"
+        : draftRendered
+          ? "replacement rendered"
+        : draft?.latestRevision
+          ? `saved revision ${draft.latestRevision.revisionNumber}`
+          : draft
+            ? "draft ready"
+            : "draft unavailable";
   const saveDisabled = !draft || !currentPlateValue || !draftDirty || savePending || draftLoading || !onSaveDraft;
+  const renderDisabled =
+    !draft ||
+    !draft.latestRevision ||
+    draftDirty ||
+    savePending ||
+    renderPending ||
+    draftLoading ||
+    !onRenderDraft;
+
+  useEffect(() => {
+    onDraftGateChange?.({
+      draftId: draft?.draftId ?? null,
+      dirty: draftDirty,
+      hasSavedRevision,
+      rendered: draftRendered,
+      reason: draftGateReason,
+    });
+  }, [draft?.draftId, draftDirty, draftGateReason, draftRendered, hasSavedRevision, onDraftGateChange]);
+
+  useEffect(() => {
+    if (!seedKey || seededKey.current === seedKey || !seedThreads.length || !onSeedCommentThreads) return;
+    seededKey.current = seedKey;
+    onSeedCommentThreads(seedThreads);
+  }, [onSeedCommentThreads, seedKey, seedThreads]);
+
+  const lastAutosaveText = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !autosaveDelayMs ||
+      !draft ||
+      !currentPlateValue ||
+      !draftDirty ||
+      savePending ||
+      draftLoading ||
+      !onSaveDraft ||
+      lastAutosaveText.current === currentDraftText
+    ) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      if (!currentPlateValue || lastAutosaveText.current === currentDraftText) return;
+      lastAutosaveText.current = currentDraftText;
+      onSaveDraft({
+        editedText: currentDraftText,
+        plateDocument: currentPlateValue,
+        source: "autosave",
+      });
+    }, autosaveDelayMs);
+    return () => window.clearTimeout(handle);
+  }, [
+    autosaveDelayMs,
+    currentDraftText,
+    currentPlateValue,
+    draft,
+    draftDirty,
+    draftLoading,
+    onSaveDraft,
+    savePending,
+  ]);
 
   useEffect(() => {
     if (selectedLine || !plateLines.length) return;
@@ -1627,10 +1911,19 @@ export function ResumePlateEditor({
             onSaveDraft?.({
               editedText: currentDraftText,
               plateDocument: currentPlateValue,
+              source: "manual",
             });
           }}
         >
           save draft
+        </button>
+        <button
+          className="tab"
+          disabled={renderDisabled}
+          type="button"
+          onClick={() => onRenderDraft?.()}
+        >
+          render replacement
         </button>
         <span className={`resume-plate-draft-status${draftDirty ? " dirty" : ""}`} role="status">
           {draftStatus}
@@ -1641,6 +1934,19 @@ export function ResumePlateEditor({
       </div>
       {draftError ? <div className="banner inline">{draftError}</div> : null}
       {saveError ? <div className="banner inline">{saveError}</div> : null}
+      {renderError ? <div className="banner inline">{renderError}</div> : null}
+      {renderResult && !renderResult.ok ? (
+        <div className="banner inline" role="status">
+          {renderResult.validation.errors.join(" ")}
+        </div>
+      ) : null}
+      {renderResult?.validation.warnings.length ? (
+        <div className="resume-render-warnings" role="status">
+          {renderResult.validation.warnings.map((warning) => (
+            <span key={warning}>{warning}</span>
+          ))}
+        </div>
+      ) : null}
       <div className="resume-plate-scroll">
         {htmlState.status === "ready" && currentPlateValue ? (
           <div
@@ -1677,6 +1983,12 @@ export function ResumePlateEditor({
           />
         )}
       </div>
+      <ResumeCommentThreadPanel
+        error={replyError}
+        pending={replyPending}
+        threads={draft?.commentThreads ?? []}
+        onReply={onReplyToThread}
+      />
     </section>
   );
 }

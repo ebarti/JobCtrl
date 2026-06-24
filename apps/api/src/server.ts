@@ -54,7 +54,9 @@ import {
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
   ResumeCommentReplyRequestSchema,
+  ResumeReviewCommentThreadSeedRequestSchema,
   ResumeReviewDraftCreateRequestSchema,
+  ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
@@ -139,7 +141,9 @@ import {
   getResumeReviewDraftForJob,
   listResumeReviewFeedback,
   replyToResumeReviewComment,
+  renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
+  seedResumeReviewCommentThreads,
 } from "./resume-review-drafts.js";
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
@@ -633,6 +637,36 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return withWritableDb(reply, options.dbPath, (db) =>
         saveResumeReviewDraftRevision(db, decodeRouteParam(request.params.draftId), body),
       );
+    },
+  );
+
+  app.post<{ Params: { draftId: string } }>(
+    "/v1/resume-review/drafts/:draftId/comment-threads",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewCommentThreadSeedRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        seedResumeReviewCommentThreads(db, decodeRouteParam(request.params.draftId), body),
+      );
+    },
+  );
+
+  app.post<{ Params: { draftId: string } }>(
+    "/v1/resume-review/drafts/:draftId/render",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewDraftRenderRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body);
+        if (result.ok) {
+          refreshProjections(db);
+        }
+        return result;
+      });
     },
   );
 

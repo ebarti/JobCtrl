@@ -476,6 +476,11 @@ trail, collapsed selected evidence rows, source links when available, and
 confidence factors. Compensation
 display is warning-only: it does not change fit score, sorting, filtering, apply
 readiness, Apply Review handoff, or apply mutation behavior.
+Apply Review renders current HTML/CSS resume artifacts as a live Plate editor.
+Human edits are saved as separate resume-review drafts, JobHunter line comments
+can be replied to in place, and approval controls stay blocked until a saved
+draft validates and renders into replacement resume artifacts. The previously
+accepted materials remain available until that replacement render succeeds.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
 Debug activity, expose resizable column handles in the headers so long local
 data can be inspected without changing code or global density settings.

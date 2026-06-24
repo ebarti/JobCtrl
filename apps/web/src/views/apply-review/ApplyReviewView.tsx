@@ -2,18 +2,27 @@ import type {
   ApplyAuditFact,
   ApplyAuditSource,
   ApplyReviewQueueItem,
+  ResumeCommentThread,
+  ResumeReviewDraft,
 } from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
 import {
   useCreateResumeReviewDraftMutation,
+  useRenderResumeReviewDraftMutation,
+  useReplyToResumeReviewCommentMutation,
   useSaveResumeReviewDraftRevisionMutation,
+  useSeedResumeReviewCommentThreadsMutation,
 } from "../../contexts/apply/hooks/useApplyReviewMutations.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
-import { ArtifactGroundingRiskPanel, ResumePlateEditor } from "../../contexts/materials/components/ResumeAuditPins.js";
+import {
+  ArtifactGroundingRiskPanel,
+  ResumePlateEditor,
+  type ResumeDraftGateState,
+} from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -595,16 +604,21 @@ function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineT
 
 function ResumeLineReview({
   item,
+  onDraftGateChange,
   selectedLine,
   onSelectLine,
 }: {
   readonly item: ApplyReviewQueueItem;
+  readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
   readonly selectedLine: PdfAuditLineSelection | null;
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
   const { api } = usePorts();
   const createDraft = useCreateResumeReviewDraftMutation();
   const saveDraftRevision = useSaveResumeReviewDraftRevisionMutation();
+  const seedCommentThreads = useSeedResumeReviewCommentThreadsMutation();
+  const replyToComment = useReplyToResumeReviewCommentMutation();
+  const renderDraft = useRenderResumeReviewDraftMutation();
   const requestedDraftKey = useRef<string | null>(null);
   const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
@@ -614,9 +628,23 @@ function ResumeLineReview({
     createDraft.data?.draft.jobKey === item.jobKey ? createDraft.data.draft : null;
   const savedDraft =
     saveDraftRevision.data?.draft.jobKey === item.jobKey ? saveDraftRevision.data.draft : null;
-  const draft = savedDraft ?? createdDraft;
+  const seededDraft =
+    seedCommentThreads.data?.draft.jobKey === item.jobKey ? seedCommentThreads.data.draft : null;
+  const renderedDraft =
+    renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data.draft : null;
+  const baseDraft = useMemo(
+    () => selectLatestResumeReviewDraft([renderedDraft, seededDraft, savedDraft, createdDraft]),
+    [createdDraft, renderedDraft, savedDraft, seededDraft],
+  );
+  const draft = useMemo(
+    () => mergeDraftThread(baseDraft, replyToComment.data?.thread ?? null),
+    [baseDraft, replyToComment.data?.thread],
+  );
   const draftError = createDraft.error instanceof Error ? createDraft.error.message : null;
   const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message : null;
+  const seedError = seedCommentThreads.error instanceof Error ? seedCommentThreads.error.message : null;
+  const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
+  const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -654,11 +682,39 @@ function ResumeLineReview({
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
         profileSourceFields={item.materialsPreview.profileSourceFields}
+        renderError={renderError}
+        renderPending={renderDraft.isPending}
+        renderResult={renderDraft.data ?? null}
         resumeText={item.materialsPreview.resumeText}
-        saveError={saveError}
+        saveError={saveError ?? seedError}
         savePending={saveDraftRevision.isPending}
+        replyError={replyError}
+        replyPending={replyToComment.isPending}
         selectedLine={selectedLine}
         title="Tailored resume preview"
+        onDraftGateChange={onDraftGateChange}
+        onRenderDraft={() => {
+          if (!draft?.currentRevisionId) return;
+          renderDraft.mutate({
+            draftId: draft.draftId,
+            jobId: item.jobKey,
+            body: {
+              draftRevisionId: draft.currentRevisionId,
+            },
+          });
+        }}
+        onReplyToThread={(thread, input) => {
+          replyToComment.mutate({
+            jobId: item.jobKey,
+            threadId: thread.threadId,
+            body: {
+              author: "user",
+              body: input.body,
+              decision: input.decision,
+              draftRevisionId: draft?.currentRevisionId ?? undefined,
+            },
+          });
+        }}
         onSaveDraft={({ editedText, plateDocument }) => {
           if (!draft) return;
           saveDraftRevision.mutate({
@@ -672,12 +728,57 @@ function ResumeLineReview({
           });
         }}
         onSelectLine={onSelectLine}
+        onSeedCommentThreads={(threads) => {
+          if (!draft || threads.length === 0) return;
+          seedCommentThreads.mutate({
+            draftId: draft.draftId,
+            jobId: item.jobKey,
+            body: { threads: [...threads] },
+          });
+        }}
       />
     </section>
   );
 }
 
-function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
+function mergeDraftThread(
+  draft: ResumeReviewDraft | null,
+  thread: ResumeCommentThread | null,
+): ResumeReviewDraft | null {
+  if (!draft || !thread || thread.draftId !== draft.draftId) return draft;
+  const seen = new Set<string>();
+  const commentThreads = draft.commentThreads.map((existing) => {
+    if (existing.threadId !== thread.threadId) return existing;
+    seen.add(thread.threadId);
+    return thread;
+  });
+  if (!seen.has(thread.threadId)) {
+    commentThreads.unshift(thread);
+  }
+  return { ...draft, commentThreads };
+}
+
+function selectLatestResumeReviewDraft(
+  drafts: ReadonlyArray<ResumeReviewDraft | null>,
+): ResumeReviewDraft | null {
+  return drafts
+    .filter((draft): draft is ResumeReviewDraft => Boolean(draft))
+    .sort((left, right) => resumeReviewDraftRank(right) - resumeReviewDraftRank(left))[0] ?? null;
+}
+
+function resumeReviewDraftRank(draft: ResumeReviewDraft): number {
+  const stateRank = draft.state === "promoted" ? 3 : draft.state === "rendered" ? 2 : 1;
+  const updatedAt = Date.parse(draft.updatedAt);
+  return draft.latestRevisionNumber * 1_000_000_000_000 + stateRank * 1_000_000_000 + (Number.isFinite(updatedAt) ? updatedAt : 0);
+}
+
+function ResumeReviewSurface({
+  item,
+  onDraftGateChange,
+}: {
+  readonly item: ApplyReviewQueueItem;
+  readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
+}) {
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
 
   useEffect(() => {
@@ -689,6 +790,7 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
       <div className="apply-review-resume-main">
         <ResumeLineReview
           item={item}
+          onDraftGateChange={onDraftGateChange}
           selectedLine={selectedLine}
           onSelectLine={setSelectedLine}
         />
@@ -703,8 +805,33 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
+  const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
+    draftId: null,
+    dirty: false,
+    hasSavedRevision: false,
+    rendered: false,
+    reason: null,
+  });
+  const handleDraftGateChange = useCallback((next: ResumeDraftGateState) => {
+    setDraftGate((previous) =>
+      previous.draftId === next.draftId &&
+      previous.dirty === next.dirty &&
+      previous.hasSavedRevision === next.hasSavedRevision &&
+      previous.rendered === next.rendered &&
+      previous.reason === next.reason
+        ? previous
+        : next,
+    );
+  }, []);
   useEffect(() => {
     setDetailJobKey(null);
+    setDraftGate({
+      draftId: null,
+      dirty: false,
+      hasSavedRevision: false,
+      rendered: false,
+      reason: null,
+    });
   }, [item.jobKey]);
 
   return (
@@ -737,7 +864,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               ariaLabel={`Stop apply run for ${item.title}`}
             />
           ) : null}
-          <ApplyReviewDecisionControls item={item} />
+          <ApplyReviewDecisionControls item={item} approvalDisabledReason={draftGate.reason} />
         </div>
       </header>
 
@@ -792,7 +919,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
-            <ResumeReviewSurface item={item} />
+        <ResumeReviewSurface item={item} onDraftGateChange={handleDraftGateChange} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

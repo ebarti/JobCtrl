@@ -1,5 +1,6 @@
 import type {
   ArtifactTailoringExplanation,
+  ResumeCommentThread,
   ResumeReviewDraft,
   ResumeReviewDraftRevision,
   ResumeReviewEditDelta,
@@ -249,6 +250,30 @@ function makeResumeReviewDraft(
   };
 }
 
+function makeResumeCommentThread(draftId = "draft-job-2"): ResumeCommentThread {
+  return {
+    threadId: "thread-claim-risk",
+    draftId,
+    jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+    baseArtifactId: "resume-text-2",
+    semanticId: "experience:line:3",
+    lineAnchor: {
+      semanticId: "experience:line:3",
+      lineNumber: 3,
+      pageNumber: 1,
+      textHash: null,
+    },
+    sourcePinId: "pin-experience-claim",
+    riskLabel: "claim risk",
+    commentBody: "Check the quantified reliability claim against profile evidence.",
+    state: "open",
+    anchorResolved: true,
+    createdAt: "2026-06-24T10:02:00.000Z",
+    updatedAt: "2026-06-24T10:02:00.000Z",
+    replies: [],
+  };
+}
+
 function jsonResponse(body: unknown) {
   return {
     ok: true,
@@ -285,6 +310,67 @@ beforeEach(() => {
           revisionNumber: 1,
         });
         return jsonResponse({ ok: true, draft, revision: draft.latestRevision });
+      }
+      const seedThreadsRoute = url.match(/\/v1\/resume-review\/drafts\/([^/]+)\/comment-threads/);
+      if (seedThreadsRoute) {
+        const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : { threads: [] };
+        const draft = {
+          ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, null),
+          draftId: decodeURIComponent(seedThreadsRoute[1]!),
+          commentThreads: (body.threads ?? []).map((thread: Record<string, unknown>, index: number) => ({
+            threadId: `thread-${index + 1}`,
+            draftId: decodeURIComponent(seedThreadsRoute[1]!),
+            jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+            baseArtifactId: typeof thread.baseArtifactId === "string" ? thread.baseArtifactId : null,
+            semanticId: typeof thread.semanticId === "string" ? thread.semanticId : null,
+            lineAnchor: thread.lineAnchor ?? null,
+            sourcePinId: typeof thread.sourcePinId === "string" ? thread.sourcePinId : null,
+            riskLabel: typeof thread.riskLabel === "string" ? thread.riskLabel : null,
+            commentBody: typeof thread.commentBody === "string" ? thread.commentBody : "Seeded comment",
+            state: "open",
+            anchorResolved: true,
+            createdAt: "2026-06-24T10:02:00.000Z",
+            updatedAt: "2026-06-24T10:02:00.000Z",
+            replies: [],
+          })),
+        };
+        return jsonResponse({
+          ok: true,
+          draft,
+          commentThreads: draft.commentThreads,
+          seededCount: draft.commentThreads.length,
+          updatedCount: 0,
+        });
+      }
+      const renderRoute = url.match(/\/v1\/resume-review\/drafts\/([^/]+)\/render/);
+      if (renderRoute) {
+        const draft = {
+          ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+            draftId: decodeURIComponent(renderRoute[1]!),
+            revisionId: "draft-revision-saved",
+          }),
+          state: "promoted" as const,
+        };
+        return jsonResponse({
+          ok: true,
+          draft,
+          validation: { passed: true, errors: [], warnings: [] },
+          artifacts: {
+            resumeText: {
+              artifactId: "resume-review-text",
+              artifactType: "tailored_resume",
+              generation: 3,
+              renderFormat: "text",
+            },
+            resumePdf: {
+              artifactId: "resume-review-pdf",
+              artifactType: "resume_pdf",
+              generation: 3,
+              renderFormat: "html_pdf",
+            },
+          },
+          layoutBoxCount: 3,
+        });
       }
       return originalFetch(input, init);
     }),
@@ -714,7 +800,150 @@ describe("<ApplyReviewView>", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("saved revision 1");
+    expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+  });
+
+  it("blocks approval until a saved draft is rendered into replacement artifacts", async () => {
+    const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+      editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+      plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
+    });
+    const promotedDraft: ResumeReviewDraft = {
+      ...draft,
+      state: "promoted",
+      updatedAt: "2026-06-24T10:10:00.000Z",
+    };
+    const renderResumeReviewDraft = vi.fn(async () => ({
+      ok: true as const,
+      draft: promotedDraft,
+      validation: { passed: true, errors: [], warnings: [] },
+      artifacts: {
+        resumeText: {
+          artifactId: "resume-review-text",
+          artifactType: "tailored_resume" as const,
+          generation: 3,
+          renderFormat: "text" as const,
+        },
+        resumePdf: {
+          artifactId: "resume-review-pdf",
+          artifactType: "resume_pdf" as const,
+          generation: 3,
+          renderFormat: "html_pdf" as const,
+        },
+      },
+      layoutBoxCount: 3,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          renderResumeReviewDraft,
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: [],
+            seededCount: 0,
+            updatedCount: 0,
+          })),
+        },
+      }),
+    });
+
+    await findResumeShadowRoot();
+    const approveDryRun = screen.getByRole("button", { name: /Approve dry run/i });
+    await waitFor(() => expect(approveDryRun).toBeDisabled());
+    expect(screen.getByText("Render the saved resume draft before approval.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "render replacement" }));
+
+    await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledWith(draft.draftId, {
+      draftRevisionId: draft.currentRevisionId,
+    }));
+    await waitFor(() => expect(approveDryRun).not.toBeDisabled());
+    expect(screen.queryByText("Render the saved resume draft before approval.")).not.toBeInTheDocument();
+  });
+
+  it("lets the user reply to a persisted JobHunter line comment without hiding source context", async () => {
+    const draft: ResumeReviewDraft = {
+      ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+        editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+        plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
+      }),
+      commentThreads: [makeResumeCommentThread()],
+    };
+    const repliedThread: ResumeCommentThread = {
+      ...draft.commentThreads[0]!,
+      state: "user_replied",
+      replies: [
+        {
+          replyId: "reply-1",
+          threadId: "thread-claim-risk",
+          draftRevisionId: draft.currentRevisionId,
+          author: "user",
+          decision: "clarified",
+          body: "This number is supported by the incident response profile bullet.",
+          createdAt: "2026-06-24T10:12:00.000Z",
+        },
+      ],
+    };
+    const replyToResumeReviewComment = vi.fn(async () => ({
+      ok: true as const,
+      thread: repliedThread,
+      reply: repliedThread.replies[0]!,
+      feedbackSignal: {
+        signalId: "resume-feedback-1",
+        jobKey: draft.jobKey,
+        draftId: draft.draftId,
+        draftRevisionId: draft.currentRevisionId,
+        sourceKind: "comment_reply" as const,
+        sourceId: "reply-1",
+        kind: "factual_correction" as const,
+        status: "candidate" as const,
+        summary: "This number is supported by the incident response profile bullet.",
+        section: null,
+        semanticId: "experience:line:3",
+        createdAt: "2026-06-24T10:12:00.000Z",
+        reviewedAt: null,
+      },
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          replyToResumeReviewComment,
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: draft.commentThreads,
+            seededCount: 0,
+            updatedCount: 1,
+          })),
+        },
+      }),
+    });
+
+    await screen.findByText("Check the quantified reliability claim against profile evidence.");
+    expect(screen.getByText("claim risk")).toBeInTheDocument();
+    expect(screen.getByText("Source pin: pin-experience-claim")).toBeInTheDocument();
+
+    const replyBox = screen.getAllByLabelText("Reply")[0]!;
+    await userEvent.type(replyBox, "This number is supported by the incident response profile bullet.");
+    await userEvent.click(screen.getAllByRole("button", { name: "reply" })[0]!);
+
+    await waitFor(() =>
+      expect(replyToResumeReviewComment).toHaveBeenCalledWith("thread-claim-risk", {
+        author: "user",
+        body: "This number is supported by the incident response profile bullet.",
+        decision: "clarified",
+        draftRevisionId: draft.currentRevisionId,
+      }),
+    );
+    await screen.findByText("This number is supported by the incident response profile bullet.");
+    expect(screen.getByText("Source pin: pin-experience-claim")).toBeInTheDocument();
   });
 
   it("distinguishes pre-tailor profile gaps from accepted-resume coverage gaps", async () => {

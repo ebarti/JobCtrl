@@ -13,7 +13,9 @@ import {
   useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
+  useRenderResumeReviewDraftMutation,
   useSaveResumeReviewDraftRevisionMutation,
+  useSeedResumeReviewCommentThreadsMutation,
 } from "./useApplyReviewMutations.js";
 
 describe("apply review mutations", () => {
@@ -260,6 +262,149 @@ describe("apply review mutations", () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: applyReviewKeys.feedback(LOCAL_TENANT, "job-2"),
+    });
+  });
+
+  it("seeds resume comment threads and renders promoted draft replacements", async () => {
+    const draft = {
+      draftId: "draft-job-2",
+      jobKey: "job-2",
+      baseGeneration: 1,
+      baseResumeTextArtifactId: "resume-text-2",
+      baseResumePdfArtifactId: "resume-pdf-2",
+      rendererFormat: "html_css",
+      state: "active",
+      currentRevisionId: "revision-1",
+      latestRevisionNumber: 1,
+      createdAt: "2026-06-24T09:45:00.000Z",
+      updatedAt: "2026-06-24T10:00:00.000Z",
+      latestRevision: {
+        revisionId: "revision-1",
+        draftId: "draft-job-2",
+        jobKey: "job-2",
+        revisionNumber: 1,
+        editedText: "Edited resume text",
+        plateDocument: null,
+        editDeltas: [],
+        createdAt: "2026-06-24T10:00:00.000Z",
+      },
+      commentThreads: [],
+      feedbackSignals: [],
+    };
+    const seededDraft = {
+      ...draft,
+      commentThreads: [
+        {
+          threadId: "thread-1",
+          draftId: "draft-job-2",
+          jobKey: "job-2",
+          baseArtifactId: "resume-text-2",
+          semanticId: "experience:line:1",
+          lineAnchor: {
+            semanticId: "experience:line:1",
+            lineNumber: 1,
+            pageNumber: 1,
+            textHash: null,
+          },
+          sourcePinId: "pin-1",
+          riskLabel: "claim risk",
+          commentBody: "Check this line.",
+          state: "open",
+          anchorResolved: true,
+          createdAt: "2026-06-24T10:01:00.000Z",
+          updatedAt: "2026-06-24T10:01:00.000Z",
+          replies: [],
+        },
+      ],
+    };
+    const promotedDraft = {
+      ...seededDraft,
+      state: "promoted",
+      updatedAt: "2026-06-24T10:05:00.000Z",
+    };
+    server.use(
+      http.post("*/v1/resume-review/drafts/:draftId/comment-threads", async ({ params, request }) => {
+        expect(String(params["draftId"])).toBe("draft-job-2");
+        expect(await request.json()).toMatchObject({
+          threads: [
+            {
+              sourcePinId: "pin-1",
+              commentBody: "Check this line.",
+            },
+          ],
+        });
+        return HttpResponse.json({
+          ok: true,
+          draft: seededDraft,
+          commentThreads: seededDraft.commentThreads,
+          seededCount: 1,
+          updatedCount: 0,
+        });
+      }),
+      http.post("*/v1/resume-review/drafts/:draftId/render", async ({ params, request }) => {
+        expect(String(params["draftId"])).toBe("draft-job-2");
+        expect(await request.json()).toEqual({ draftRevisionId: "revision-1" });
+        return HttpResponse.json({
+          ok: true,
+          draft: promotedDraft,
+          validation: { passed: true, errors: [], warnings: [] },
+          artifacts: {
+            resumeText: {
+              artifactId: "resume-review-text",
+              artifactType: "tailored_resume",
+              generation: 3,
+              renderFormat: "text",
+            },
+            resumePdf: {
+              artifactId: "resume-review-pdf",
+              artifactType: "resume_pdf",
+              generation: 3,
+              renderFormat: "html_pdf",
+            },
+          },
+          layoutBoxCount: 3,
+        });
+      }),
+    );
+    const { result, queryClient } = renderHookWithProviders(() => ({
+      seed: useSeedResumeReviewCommentThreadsMutation(),
+      render: useRenderResumeReviewDraftMutation(),
+    }));
+
+    await act(async () => {
+      result.current.seed.mutate({
+        jobId: "job-2",
+        draftId: "draft-job-2",
+        body: {
+          threads: [
+            {
+              sourcePinId: "pin-1",
+              semanticId: "experience:line:1",
+              commentBody: "Check this line.",
+            },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => expect(result.current.seed.isSuccess).toBe(true));
+    expect(queryClient.getQueryData(applyReviewKeys.draft(LOCAL_TENANT, "job-2"))).toEqual({
+      ok: true,
+      draft: seededDraft,
+    });
+
+    await act(async () => {
+      result.current.render.mutate({
+        jobId: "job-2",
+        draftId: "draft-job-2",
+        body: { draftRevisionId: "revision-1" },
+      });
+    });
+
+    await waitFor(() => expect(result.current.render.isSuccess).toBe(true));
+    expect(queryClient.getQueryData(applyReviewKeys.draft(LOCAL_TENANT, "job-2"))).toEqual({
+      ok: true,
+      draft: promotedDraft,
     });
   });
 });
