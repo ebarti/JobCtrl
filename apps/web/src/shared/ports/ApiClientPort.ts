@@ -64,6 +64,13 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  ResumeCommentReplyRequest,
+  ResumeCommentReplyResponse,
+  ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftResponse,
+  ResumeReviewDraftRevisionResponse,
+  ResumeReviewDraftRevisionSaveRequest,
+  ResumeReviewFeedbackListResponse,
   TailorJobRequest,
   RetryStageRequest,
   RunJobStageRequest,
@@ -158,6 +165,20 @@ export interface ApiClientPort {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse>;
+  resumeReviewDraft(jobKey: string): Promise<ResumeReviewDraftResponse>;
+  createResumeReviewDraft(
+    jobKey: string,
+    body?: ResumeReviewDraftCreateRequest,
+  ): Promise<ResumeReviewDraftResponse>;
+  saveResumeReviewDraftRevision(
+    draftId: string,
+    body: ResumeReviewDraftRevisionSaveRequest,
+  ): Promise<ResumeReviewDraftRevisionResponse>;
+  replyToResumeReviewComment(
+    threadId: string,
+    body: ResumeCommentReplyRequest,
+  ): Promise<ResumeCommentReplyResponse>;
+  resumeReviewFeedback(jobKey: string): Promise<ResumeReviewFeedbackListResponse>;
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse>;
   jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse>;
   recordManualApplicationOutcome(

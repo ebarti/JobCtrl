@@ -403,6 +403,229 @@ export interface ApplyReviewQueueResponse {
   items: ApplyReviewQueueItem[];
 }
 
+export const RESUME_REVIEW_DRAFT_STATES = [
+  "active",
+  "rendered",
+  "promoted",
+  "abandoned",
+] as const;
+export type ResumeReviewDraftState = (typeof RESUME_REVIEW_DRAFT_STATES)[number];
+
+export const RESUME_REVIEW_EDIT_KINDS = [
+  "replace_text",
+  "insert_text",
+  "delete_text",
+  "structure_change",
+] as const;
+export type ResumeReviewEditKind = (typeof RESUME_REVIEW_EDIT_KINDS)[number];
+
+export const RESUME_COMMENT_THREAD_STATES = [
+  "open",
+  "user_replied",
+  "resolved",
+  "superseded_by_edit",
+  "residual_after_acceptance",
+] as const;
+export type ResumeCommentThreadState = (typeof RESUME_COMMENT_THREAD_STATES)[number];
+
+export const RESUME_COMMENT_REPLY_DECISIONS = [
+  "accepted",
+  "rejected",
+  "clarified",
+  "rewrite_requested",
+] as const;
+export type ResumeCommentReplyDecision = (typeof RESUME_COMMENT_REPLY_DECISIONS)[number];
+
+export const TAILORING_FEEDBACK_SIGNAL_KINDS = [
+  "style_preference",
+  "factual_correction",
+  "claim_policy_correction",
+  "keyword_strategy",
+  "provenance_dispute",
+] as const;
+export type TailoringFeedbackSignalKind = (typeof TAILORING_FEEDBACK_SIGNAL_KINDS)[number];
+
+export const TAILORING_FEEDBACK_SIGNAL_STATUSES = [
+  "candidate",
+  "accepted",
+  "rejected",
+] as const;
+export type TailoringFeedbackSignalStatus = (typeof TAILORING_FEEDBACK_SIGNAL_STATUSES)[number];
+
+export const TAILORING_FEEDBACK_SOURCE_KINDS = ["edit_delta", "comment_reply"] as const;
+export type TailoringFeedbackSourceKind = (typeof TAILORING_FEEDBACK_SOURCE_KINDS)[number];
+
+export interface ResumeLineAnchor {
+  semanticId: string | null;
+  lineNumber: number | null;
+  pageNumber: number | null;
+  textHash: string | null;
+}
+
+export interface ResumeReviewEditDelta {
+  deltaId: string;
+  revisionId: string;
+  kind: ResumeReviewEditKind;
+  section: string | null;
+  semanticId: string | null;
+  lineAnchor: ResumeLineAnchor | null;
+  beforeText: string;
+  afterText: string;
+  createdAt: string;
+}
+
+export interface ResumeReviewDraftRevision {
+  revisionId: string;
+  draftId: string;
+  jobKey: string;
+  revisionNumber: number;
+  editedText: string;
+  plateDocument: unknown | null;
+  editDeltas: ResumeReviewEditDelta[];
+  createdAt: string;
+}
+
+export interface ResumeCommentReply {
+  replyId: string;
+  threadId: string;
+  draftRevisionId: string | null;
+  author: string;
+  decision: ResumeCommentReplyDecision;
+  body: string;
+  createdAt: string;
+}
+
+export interface ResumeCommentThread {
+  threadId: string;
+  draftId: string;
+  jobKey: string;
+  baseArtifactId: string | null;
+  semanticId: string | null;
+  lineAnchor: ResumeLineAnchor | null;
+  sourcePinId: string | null;
+  riskLabel: string | null;
+  commentBody: string;
+  state: ResumeCommentThreadState;
+  anchorResolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+  replies: ResumeCommentReply[];
+}
+
+export interface TailoringFeedbackSignal {
+  signalId: string;
+  jobKey: string;
+  draftId: string;
+  draftRevisionId: string | null;
+  sourceKind: TailoringFeedbackSourceKind;
+  sourceId: string;
+  kind: TailoringFeedbackSignalKind;
+  status: TailoringFeedbackSignalStatus;
+  summary: string;
+  section: string | null;
+  semanticId: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface ResumeReviewDraft {
+  draftId: string;
+  jobKey: string;
+  baseGeneration: number;
+  baseResumeTextArtifactId: string | null;
+  baseResumePdfArtifactId: string | null;
+  rendererFormat: string;
+  state: ResumeReviewDraftState;
+  currentRevisionId: string | null;
+  latestRevisionNumber: number;
+  createdAt: string;
+  updatedAt: string;
+  latestRevision: ResumeReviewDraftRevision | null;
+  commentThreads: ResumeCommentThread[];
+  feedbackSignals: TailoringFeedbackSignal[];
+}
+
+export const ResumeReviewDraftCreateRequestSchema = z
+  .object({
+    generation: z.coerce.number().int().min(0).optional(),
+    resumeTextArtifactId: z.string().trim().min(1).max(240).optional(),
+    resumePdfArtifactId: z.string().trim().min(1).max(240).optional(),
+    rendererFormat: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+export type ResumeReviewDraftCreateRequest = z.infer<
+  typeof ResumeReviewDraftCreateRequestSchema
+>;
+
+const ResumeLineAnchorSchema = z
+  .object({
+    semanticId: z.string().trim().max(240).nullable().optional(),
+    lineNumber: z.coerce.number().int().min(1).max(500).nullable().optional(),
+    pageNumber: z.coerce.number().int().min(1).max(50).nullable().optional(),
+    textHash: z.string().trim().max(128).nullable().optional(),
+  })
+  .strict();
+
+export const ResumeReviewEditDeltaInputSchema = z
+  .object({
+    deltaId: z.string().trim().min(1).max(160).optional(),
+    kind: z.enum(RESUME_REVIEW_EDIT_KINDS).default("replace_text"),
+    section: z.string().trim().max(160).nullable().optional(),
+    semanticId: z.string().trim().max(240).nullable().optional(),
+    lineAnchor: ResumeLineAnchorSchema.nullable().optional(),
+    beforeText: z.string().max(6000).default(""),
+    afterText: z.string().max(6000).default(""),
+  })
+  .strict();
+export type ResumeReviewEditDeltaInput = z.infer<
+  typeof ResumeReviewEditDeltaInputSchema
+>;
+
+export const ResumeReviewDraftRevisionSaveRequestSchema = z
+  .object({
+    editedText: z.string().max(128_000),
+    plateDocument: z.unknown().optional(),
+    editDeltas: z.array(ResumeReviewEditDeltaInputSchema).max(200).default([]),
+  })
+  .strict();
+export type ResumeReviewDraftRevisionSaveRequest = z.infer<
+  typeof ResumeReviewDraftRevisionSaveRequestSchema
+>;
+
+export const ResumeCommentReplyRequestSchema = z
+  .object({
+    draftRevisionId: z.string().trim().min(1).max(160).optional(),
+    author: z.string().trim().min(1).max(120).default("user"),
+    decision: z.enum(RESUME_COMMENT_REPLY_DECISIONS),
+    body: z.string().trim().min(1).max(4000),
+  })
+  .strict();
+export type ResumeCommentReplyRequest = z.infer<typeof ResumeCommentReplyRequestSchema>;
+
+export interface ResumeReviewDraftResponse {
+  ok: true;
+  draft: ResumeReviewDraft;
+}
+
+export interface ResumeReviewDraftRevisionResponse {
+  ok: true;
+  draft: ResumeReviewDraft;
+  revision: ResumeReviewDraftRevision;
+}
+
+export interface ResumeCommentReplyResponse {
+  ok: true;
+  thread: ResumeCommentThread;
+  reply: ResumeCommentReply;
+  feedbackSignal: TailoringFeedbackSignal;
+}
+
+export interface ResumeReviewFeedbackListResponse {
+  ok: true;
+  jobKey: string;
+  feedbackSignals: TailoringFeedbackSignal[];
+}
+
 export const APPLICATION_OUTCOME_KINDS = [
   "applied_confirmation",
   "recruiter_reply",

@@ -2,6 +2,7 @@ import type {
   ApplyReviewProfileSourceField,
   ArtifactTailoringExplanation,
   BulletProvenanceEntry,
+  ResumeReviewDraft,
   ResumeLayoutBox,
 } from "@jobhunter/contracts";
 import type { Descendant, TElement, Value } from "platejs";
@@ -42,14 +43,20 @@ interface ResumeAuditPinsProps {
 
 interface ResumePlateEditorProps {
   readonly artifactId: string;
+  readonly draft: ResumeReviewDraft | null;
+  readonly draftError?: string | null;
+  readonly draftLoading?: boolean;
   readonly finalUrl: string;
   readonly htmlUrl: string | null;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lineTargets: readonly PdfAuditLineTarget[];
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly resumeText?: string | null;
+  readonly saveError?: string | null;
+  readonly savePending?: boolean;
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
+  readonly onSaveDraft?: (input: { readonly editedText: string; readonly plateDocument: Value }) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
 }
 
@@ -763,6 +770,40 @@ function resumePlateValueFromHtml(html: string): Value {
     : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isPlateDescendant(value: unknown): value is Descendant {
+  if (!isRecord(value)) return false;
+  if (typeof value.text === "string") return true;
+  return Array.isArray(value.children) && value.children.every(isPlateDescendant);
+}
+
+function isPlateValue(value: unknown): value is Value {
+  return Array.isArray(value) && value.every(isPlateDescendant);
+}
+
+function resumeTextFromPlateNode(node: Descendant): string {
+  if ("text" in node) {
+    return typeof node.text === "string" ? node.text : "";
+  }
+  const children = "children" in node && Array.isArray(node.children) ? node.children : [];
+  return children
+    .map(resumeTextFromPlateNode)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resumeTextFromPlateValue(value: Value): string {
+  return value
+    .map(resumeTextFromPlateNode)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function kindForHtmlElement(element: HTMLElement, index: number, text: string): ResumeLineEntry["kind"] {
   const className = element.getAttribute("class") ?? "";
   const tagName = element.tagName.toLowerCase();
@@ -1352,25 +1393,26 @@ const RESUME_PLATE_COMPONENTS = {
 };
 
 function ResumePlateDocument({
-  html,
+  initialValue,
   layoutBoxes,
   lines,
+  onValueChange,
   onSelectLine,
   pins,
   risk,
   selectedLine,
   title,
 }: {
-  readonly html: string;
+  readonly initialValue: Value;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lines: readonly ResumePlateLine[];
+  readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
   readonly pins: readonly ResumeAuditPin[];
   readonly risk: RiskSignals;
   readonly selectedLine: PdfAuditLineSelection | null | undefined;
   readonly title: string;
 }): JSX.Element {
-  const value = useMemo(() => resumePlateValueFromHtml(html), [html]);
   const lineEntries = useMemo<ReadonlyMap<number | undefined, ResumePlateLineEntry>>(
     () => new Map(lines.map((line, index) => [line.lineNumber, { index, line }])),
     [lines],
@@ -1391,14 +1433,21 @@ function ResumePlateDocument({
     {
       components: RESUME_PLATE_COMPONENTS,
       plugins: RESUME_PLATE_PLUGINS,
-      value,
+      value: initialValue,
     },
-    [value],
+    [initialValue],
   );
 
   return (
     <ResumePlateRenderContext.Provider value={renderContext}>
-      <Plate editor={editor}>
+      <Plate
+        editor={editor}
+        onValueChange={({ value }) => {
+          if (isPlateValue(value)) {
+            onValueChange(value);
+          }
+        }}
+      >
         <PlateContent
           aria-label={`${title} editor`}
           aria-multiline="true"
@@ -1436,14 +1485,20 @@ function ResumeHtmlUnavailable({
 
 export function ResumePlateEditor({
   artifactId,
+  draft,
+  draftError = null,
+  draftLoading = false,
   finalUrl,
   htmlUrl,
   layoutBoxes,
   lineTargets,
   profileSourceFields = [],
   resumeText,
+  saveError = null,
+  savePending = false,
   selectedLine,
   title,
+  onSaveDraft,
   onSelectLine,
 }: ResumePlateEditorProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
@@ -1505,6 +1560,42 @@ export function ResumePlateEditor({
     () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
     [explanation, plateLines, profileSourceFields, provenanceReady],
   );
+  const initialPlateValue = useMemo<Value | null>(() => {
+    const savedValue = draft?.latestRevision?.plateDocument;
+    if (isPlateValue(savedValue)) {
+      return savedValue;
+    }
+    return htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null;
+  }, [draft?.latestRevision?.plateDocument, htmlState]);
+  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
+
+  useEffect(() => {
+    setCurrentPlateValue(initialPlateValue);
+  }, [initialPlateValue]);
+
+  const initialDraftText = useMemo(
+    () => (initialPlateValue ? resumeTextFromPlateValue(initialPlateValue) : ""),
+    [initialPlateValue],
+  );
+  const currentDraftText = useMemo(
+    () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
+    [currentPlateValue],
+  );
+  const draftDirty = Boolean(currentPlateValue && currentDraftText !== initialDraftText);
+  const draftStatus = draftLoading
+    ? "loading draft"
+    : savePending
+      ? "saving draft"
+      : saveError || draftError
+        ? "draft save issue"
+        : draftDirty
+          ? "unsaved changes"
+          : draft?.latestRevision
+            ? `saved revision ${draft.latestRevision.revisionNumber}`
+            : draft
+              ? "draft ready"
+              : "draft unavailable";
+  const saveDisabled = !draft || !currentPlateValue || !draftDirty || savePending || draftLoading || !onSaveDraft;
 
   useEffect(() => {
     if (selectedLine || !plateLines.length) return;
@@ -1527,17 +1618,41 @@ export function ResumePlateEditor({
       <div className="resume-plate-toolbar">
         <b>{title}</b>
         <span className="mono">Plate HTML/CSS editor</span>
+        <button
+          className="tab"
+          disabled={saveDisabled}
+          type="button"
+          onClick={() => {
+            if (!currentPlateValue) return;
+            onSaveDraft?.({
+              editedText: currentDraftText,
+              plateDocument: currentPlateValue,
+            });
+          }}
+        >
+          save draft
+        </button>
+        <span className={`resume-plate-draft-status${draftDirty ? " dirty" : ""}`} role="status">
+          {draftStatus}
+        </span>
         <a href={finalUrl} rel="noreferrer" target="_blank">
           open final file
         </a>
       </div>
+      {draftError ? <div className="banner inline">{draftError}</div> : null}
+      {saveError ? <div className="banner inline">{saveError}</div> : null}
       <div className="resume-plate-scroll">
-        {htmlState.status === "ready" ? (
-          <div className="resume-plate-page" aria-label="Editable resume page">
+        {htmlState.status === "ready" && currentPlateValue ? (
+          <div
+            className="resume-plate-page"
+            aria-label="Editable resume page"
+            data-draft-dirty={draftDirty ? "true" : "false"}
+          >
             <ResumePlateDocument
-              html={htmlState.html}
+              initialValue={currentPlateValue}
               layoutBoxes={layoutBoxes}
               lines={plateLines}
+              onValueChange={setCurrentPlateValue}
               pins={linePins}
               risk={risk}
               selectedLine={selectedLine}

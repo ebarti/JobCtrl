@@ -41,6 +41,18 @@ export type {
   ProfileConfigResponse,
   QuarantineDecision,
   QuarantineListResponse,
+  ResumeCommentReply,
+  ResumeCommentReplyRequest,
+  ResumeCommentReplyResponse,
+  ResumeCommentThread,
+  ResumeReviewDraft,
+  ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftResponse,
+  ResumeReviewDraftRevision,
+  ResumeReviewDraftRevisionResponse,
+  ResumeReviewDraftRevisionSaveRequest,
+  ResumeReviewEditDelta,
+  ResumeReviewFeedbackListResponse,
   SettingsResponse,
   SourceLocatorListResponse,
   SourceRegistryEntrySummary,
@@ -86,6 +98,7 @@ export { useApplicationOutcomesQuery } from "./hooks/useApplicationOutcomesQuery
 export { useArtifactDetailQuery } from "./hooks/useArtifactDetailQuery.js";
 export { useArtifactsListQuery } from "./hooks/useArtifactsListQuery.js";
 export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
+export { useResumeReviewDraftQuery } from "./hooks/useResumeReviewDraftQuery.js";
 export {
   useDiscoveryQuarantineQuery,
   useManualCaptureQueueQuery,
