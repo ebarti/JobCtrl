@@ -1,81 +1,134 @@
 # Swap LaTeX For HTML/CSS Resume Rendering
 
-> **Status:** Implemented in this PR.
+> **Status:** Implemented in PR #188; pending merge/archive sync.
 >
 > **Change ID:** `swap-latex-for-html-css`
 >
-> This plan replaces the resume rendering path from LaTeX/`pdflatex` to
-> HTML/CSS printed by Playwright while preserving the current Apply Review audit
-> contract.
+> This plan replaces the default resume rendering path from LaTeX/`pdflatex`
+> to HTML/CSS printed by Playwright, and updates Apply Review to use the same
+> generated HTML source through a Plate-backed review surface.
 
-> **For agentic workers:** This is not a request to build a generic document
-> editor. Keep the implementation inside the Materials bounded context, keep PDF
-> as the final submit artifact, and retain LaTeX only as an explicit
-> compatibility renderer.
+> **For agentic workers:** This is not yet the full Google Docs-like resume
+> editor. The current PR intentionally uses Plate as the resume document shell
+> for faithful review rendering, line selection, links, and deterministic
+> JobHunter audit annotations. A persisted, user-editable Plate document model
+> is the next phase.
 
 ## Goal
 
-Swap resume PDF generation to an HTML/CSS print renderer that can produce both
-the final PDF and stable audit layout metadata from the same semantic resume
-document.
+Swap resume PDF generation and Apply Review resume inspection to a single
+HTML/CSS source of truth. The resume must look like the final file when reviewed,
+without using a PDF image/iframe overlay for current HTML-rendered artifacts.
 
-The product invariant is:
+The implemented product invariant is:
 
 ```text
-canonical resume document
-  -> HTML/CSS print layout
-  -> PDF artifact for submission
-  -> generation-time line and claim layout map
-  -> Apply Review highlights the exact final PDF
+TailorResumeUseCase final_payload
+  -> ResumeDocument + ResumeTheme
+  -> sanitized HTML/CSS resume with layout targets
+  -> Playwright prints the final resume_pdf
+  -> sibling generated HTML is stored next to the final PDF
+  -> layout boxes are persisted and projected
+  -> Apply Review fetches the sibling HTML
+  -> Plate renders that same resume source with JobHunter annotations
 ```
+
+The final submit artifact is still a PDF. The important change is that the
+review surface and final PDF now come from the same HTML/CSS render source.
 
 ## Problem
 
-The current resume path produces the final visual artifact through
-`LatexPdfAdapter`, while Apply Review maps audit lines back onto the rendered PDF
-in the browser:
+Before this PR, the final visual artifact came from `LatexPdfAdapter`, while
+Apply Review tried to map audit lines back onto the rendered PDF in the browser:
 
-- The Materials renderer compiles a `moderncv` LaTeX template with `pdflatex`.
-- The accepted text artifact and the PDF artifact are sibling artifacts in the
+- The Materials renderer compiled a `moderncv` LaTeX template with `pdflatex`.
+- The accepted text artifact and the PDF artifact were sibling artifacts in the
   same `MaterialsSet` generation.
-- Apply Review derives line targets from `materialsPreview.resumeText`, asks
-  pdf.js for PDF text geometry, and overlays transparent buttons on PDF page
-  images.
-- Poppler still renders page PNGs for stable PDF-page images in the local API.
+- Apply Review derived line targets from `materialsPreview.resumeText`, asked
+  PDF rendering/text extraction for page geometry, and overlaid controls on PDF
+  page images.
+- Poppler still rendered page PNGs for stable PDF-page images in the local API.
 
-This keeps the user inspecting the final PDF, which is correct, but the line
-highlight layer is inferred from PDF text extraction after rendering. That makes
-auditable line-by-line review depend on fuzzy text matching, PDF text grouping,
-LaTeX wrapping, and browser-side geometry reconciliation.
+That preserved the final PDF visually, but made line-level review depend on
+fuzzy text matching, PDF text grouping, LaTeX wrapping, and browser-side
+geometry reconciliation. It also made a richer resume editing/review experience
+clunky because comments and selections lived beside or above the PDF instead of
+inside the resume document model.
 
 ## Non-Goals
 
-- Do not build a Google Docs-like editor as part of this renderer migration.
-- Do not introduce collaborative editing, comments, suggestion mode, or arbitrary
-  rich-text formatting.
-- Do not make Apply Review show a separate HTML approximation instead of the
-  final PDF.
-- Do not store raw profile payloads, raw prompts, generated PDFs, or local paths
-  in committed fixtures.
-- Do not break existing LaTeX-generated artifacts; historical artifacts remain
-  inspectable.
+- Do not build collaborative editing, suggestion mode, arbitrary rich-text
+  formatting, or persisted user-authored comment threads in this PR.
+- Do not replace the required `resume_pdf` artifact for apply readiness,
+  cover generation, or final submission.
+- Do not show an HTML approximation that is generated separately from the final
+  PDF source. Apply Review must use the generated HTML/CSS that prints the final
+  PDF for current HTML-rendered artifacts.
+- Do not store raw profile payloads, raw prompts, generated PDFs, local paths,
+  or application data in committed fixtures.
+- Do not remove legacy LaTeX compatibility. Historical or explicitly configured
+  LaTeX artifacts remain supported through the legacy renderer path.
 
-## Proposed Change
+## Implemented Change
 
-Use a structured `ResumeDocument` plus tokenized `ResumeTheme` as the renderer
-input, produce paginated HTML/CSS, print that HTML through Playwright, and persist
-layout boxes generated from the same final DOM used for PDF export.
+The PR implements an HTML/CSS resume renderer in the Materials bounded context:
 
-The user-facing contract stays the same:
+- `HtmlResumePdfAdapter` lives beside `LatexPdfAdapter` and is now the default
+  `PdfRendererPort` resume implementation.
+- The renderer consumes the same final tailored payload and profile snapshot as
+  the old LaTeX renderer.
+- It builds a structured resume document, renders sanitized HTML/CSS, prints the
+  final PDF through Playwright, and returns the existing
+  `ArtifactType.RESUME_PDF` with `RenderFormat.HTML_PDF`.
+- The legacy LaTeX path remains opt-in with
+  `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
+- The generated HTML is stored as a sibling file next to the final PDF and is
+  available through `GET /v1/artifacts/:artifactId/preview.html`.
+- Layout boxes are persisted in `job_material_layout_boxes`, projected onto
+  artifact read models as `layout_boxes_json`, and included in Apply Review
+  materials preview data as `resumePdfLayoutBoxes`.
+- A migration command moves existing approved resume artifacts onto the same
+  HTML/CSS source path:
+  `uv --project workers/automation run jobhunter migrate-resume-html`
+  with `--dry-run`, `--force`, `--job-url`, and `--limit`.
 
-- `resume_pdf` remains the artifact required for cover generation and apply
-  readiness.
-- Apply Review still shows the final tailored PDF, not a rendered HTML
-  approximation.
-- Existing LaTeX-rendered artifacts remain readable and selectable through the
-  current legacy PDF text-geometry fallback.
-- `RenderFormat.HTML_PDF` identifies new resume PDFs rendered through the
-  Playwright path.
+The resume visual style was also brought back toward the old LaTeX output:
+
+- A4 page geometry with compact margins.
+- Monochrome black text and rules.
+- A cleaner Avenir/Aptos-oriented font stack.
+- Centered header with phone, email, website, and LinkedIn icons/links.
+- Real hyperlinks for `tel:`, `mailto:`, and `https` contact targets.
+- Moderncv-like experience headings with company/location on the first row and
+  title/date on the second row.
+- Real list bullets without duplicate bullet markers.
+- Section rules and compact entry grids that preserve the resume content layout
+  more closely than a plain-text reconstruction.
+
+## Plate Scope
+
+The current Plate implementation is a review surface, not yet the full editor:
+
+- `ResumePlateEditor` fetches the generated HTML preview for the selected final
+  resume PDF.
+- The generated HTML is parsed into a Plate value using custom resume block and
+  inline elements.
+- Custom Plate renderers preserve safe resume tags, classes, line metadata, and
+  safe links.
+- Selecting a resume line updates the Apply Review selected-line state.
+- JobHunter-authored audit annotations are rendered as non-editable note bubbles
+  inside the Plate-rendered resume surface.
+
+"JobHunter comments" in this PR means deterministic audit annotations derived
+from existing provenance, source fields, grounding, and risk data. They are not
+Plate's collaborative comment plugin, not user-authored comment threads, and not
+persisted rich-text comments.
+
+The next phase can promote this from a review shell into a full Plate editor by
+making the Plate document value the saved editable draft, adding editing
+controls, serializing changes back to a reviewed Materials generation, reprinting
+through the same HTML/CSS renderer, and re-running audit/readiness checks before
+approval.
 
 ## Target Ubiquitous Language
 
@@ -84,185 +137,97 @@ The user-facing contract stays the same:
 - Owner: Materials Generation.
 - Shape: personal header, summary, experience entries, education entries, skill
   groups, and generated bullets with stable semantic IDs.
-- Invariants: Every generated claim-bearing line has provenance, requirement
-  links, or an explicit missing-provenance state.
+- Invariants: Claim-bearing lines should have provenance, requirement links, or
+  an explicit missing-provenance state.
 
 **ResumeTheme** (Value Object)
-- Definition: User-controlled style tokens for resume rendering.
+- Definition: Structured style tokens for resume rendering.
 - Owner: Candidate Profile for defaults; Materials snapshots the values used for
   each generated artifact.
-- Shape: paper size, margins, font family, font sizes, section spacing, accent
-  color, density, header style.
+- Shape: paper size, margins, font family, font sizes, section spacing, header
+  style, and density.
 - Invariants: Theme tokens are data, not arbitrary executable CSS.
 
 **ResumePrintHtml** (Rendered Document)
-- Definition: The trusted HTML/CSS representation produced from a
+- Definition: The trusted generated HTML/CSS representation produced from a
   `ResumeDocument` and `ResumeTheme`.
 - Owner: Materials renderer adapter.
-- Invariants: Generated from structured data only; no raw user-authored HTML.
+- Invariants: Generated from structured data only; sanitized before persistence
+  and browser rendering; used to print the final PDF and to feed Apply Review.
 
-**ResumeLayoutMap** (Read Model / Artifact Companion)
+**ResumeLayoutBox** (Read Model / Artifact Companion)
 - Definition: Generation-time page and bounding-box metadata for selectable
   resume audit targets.
 - Owner: Materials Generation, projected through Operations.
-- Shape: artifact ID, generation, page number, semantic ID, resume line number,
-  text excerpt, left/top/width/height percentages, source/audit target IDs.
-- Invariants: Computed from the same final DOM used to print the PDF, not
-  reverse-engineered from PDF text extraction.
+- Shape: artifact ID, generation, page number, semantic ID, line number, text
+  excerpt, left/top/width/height percentages, and source/audit target metadata.
+- Invariants: Computed from the final HTML/CSS render path, not
+  reverse-engineered from PDF text extraction for current artifacts.
 
-## Target Rendering Flow
+**Plate Resume Review Surface** (Frontend Review Model)
+- Definition: The Apply Review component that renders generated resume HTML as
+  a Plate document and overlays deterministic JobHunter audit annotations.
+- Owner: Materials frontend context, composed by Apply Review.
+- Invariants: The rendered content is the generated resume HTML for the selected
+  final PDF artifact; comments are derived from audit/provenance data.
+
+## Implemented Rendering Flow
 
 ```text
 TailorResumeUseCase
   -> produces final voiced payload
   -> builds ResumeDocument with semantic IDs
   -> writes tailored_resume text for compatibility and plain-text audit
-  -> HtmlResumePdfAdapter renders paginated HTML
-  -> Playwright prints the same HTML to resume_pdf
-  -> renderer records ResumeLayoutMap
+  -> HtmlResumePdfAdapter renders sanitized resume HTML/CSS
+  -> Playwright prints the same HTML source to resume_pdf
+  -> renderer records layout boxes and sibling HTML
   -> MaterialsSet.with_resume_pdf approves the PDF artifact
-  -> PdfRendered and layout-map projection invalidations refresh the UI
+  -> layout boxes project to artifact_list_projections.layout_boxes_json
+  -> API serves preview.pdf, preview.html, and layout boxes
+  -> Apply Review renders preview.html through Plate
+  -> JobHunter audit annotations appear on selected resume lines
 ```
-
-## Current Spec Sync (2026-06-22)
-
-The implementation now exists locally:
-
-- `HtmlResumePdfAdapter` lives beside `LatexPdfAdapter` in the Materials
-  infrastructure package.
-- It consumes the same tailored payload and profile snapshot shape as the LaTeX
-  adapter, builds a structured resume document, renders sanitized print HTML,
-  prints it through Playwright, and returns an `ArtifactType.RESUME_PDF` with
-  `RenderFormat.HTML_PDF`.
-- It is the default tailoring renderer. The legacy LaTeX path remains available
-  with `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
-- Renderer tests cover structured document construction, HTML escaping, layout
-  target attributes, render-format tagging, and layout metadata.
-- Layout boxes are persisted in canonical Materials rows, projected by Python
-  and TypeScript builders, served by API/read-model contracts, and consumed by
-  Apply Review when available.
-
-## Renderer Design
-
-The implementation adds an `HtmlResumePdfAdapter` beside the legacy
-`LatexPdfAdapter`.
-
-The adapter should:
-
-- Consume the same final tailored payload and profile snapshot currently passed
-  to the LaTeX renderer.
-- Build a typed `ResumeDocument` before rendering.
-- Render sanitized HTML from components/templates owned by the worker package.
-- Use fixed page containers in the DOM, not an unconstrained webpage, so the
-  browser layout tree is also the layout source of truth.
-- Use print CSS with explicit `@page` size and zero Playwright margins, then
-  print with `preferCSSPageSize: true` and `printBackground: true`.
-- Use `print-color-adjust: exact` plus the WebKit-prefixed equivalent where the
-  theme relies on subtle backgrounds or accent colors.
-- Return the existing `ArtifactType.RESUME_PDF` with
-  `RenderFormat.HTML_PDF`; do not add a new artifact role for HTML-rendered
-  resume PDFs.
-
-The implementation uses explicit letter page sizing, stable layout targets, and
-page-relative box extraction for audit lines. A future pagination-hardening pass
-can replace browser-native fragmentation with deterministic page containers if
-visual QA exposes unstable page breaks on dense resumes.
-
-Suggested pagination approach:
-
-1. Render semantic blocks into an offscreen Playwright page using print styles.
-2. Measure block heights against the selected page size and margins.
-3. Compose explicit `.resume-page` containers.
-4. Move whole blocks first; split only bullet lists and long bullet text when
-   needed.
-5. Emit layout boxes from the final page DOM using `getBoundingClientRect()`
-   relative to each page container.
-6. Print that final paginated DOM to PDF.
 
 ## Apply Review Changes
 
-Apply Review should keep showing the tailored PDF as the visual resume surface.
-The change is how selectable targets are found:
+Apply Review now uses the selected final resume PDF artifact to locate the
+generated sibling HTML preview:
 
-- Prefer `ResumeLayoutMap` boxes when the selected PDF has them.
-- Fall back to the current pdf.js text-geometry matcher for legacy LaTeX PDFs and
-  old artifacts without a layout map.
-- Keep `resumeTextArtifactId` as the audit artifact for provenance when present.
-- Keep explicit missing-provenance states; do not hide lines that lack audit data.
-- Add UI copy only for lifecycle states, not for implementation details.
-
-This preserves the existing local QA rule that Apply Review uses the tailored
-PDF as the selectable resume audit surface and avoids reintroducing a separate
-HTML approximation.
+- Current HTML-rendered artifacts fetch `/v1/artifacts/:artifactId/preview.html`
+  and render it through `ResumePlateEditor`.
+- The "open final file" link still opens `/preview.pdf` for the final artifact.
+- Line-level review is rendered inside the resume surface, not as a separate
+  side-by-side audit rail.
+- JobHunter annotations show source text, rationale, source precision,
+  grounding/risk labels when provenance exists, and explicit missing-provenance
+  states.
+- Safe resume links remain clickable in the Plate surface.
+- Legacy LaTeX artifacts that have not been migrated are treated as legacy
+  preview states; current HTML-rendered artifacts should not fall back to a PDF
+  image overlay.
 
 ## Data And Persistence
 
-Avoid putting layout-map truth only in `metadata_json`. Use canonical rows or a
-canonical JSON projection source that both Python and TypeScript projection
-builders can reproduce.
+The implementation uses three durable pieces of artifact state:
 
-Candidate table:
+- The final PDF artifact remains the canonical `resume_pdf` apply artifact.
+- The sibling generated HTML file is stored next to the PDF and served only for
+  `render_format = 'html_pdf'` resume artifacts.
+- `job_material_layout_boxes` stores layout targets outside artifact metadata.
+  Python and TypeScript projection builders include those boxes in
+  `artifact_list_projections.layout_boxes_json`.
 
-```sql
-CREATE TABLE job_material_layout_boxes (
-  tenant_id TEXT NOT NULL,
-  job_id TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  artifact_id TEXT NOT NULL,
-  semantic_id TEXT NOT NULL,
-  page_number INTEGER NOT NULL,
-  line_number INTEGER,
-  text_excerpt TEXT NOT NULL,
-  left_pct REAL NOT NULL,
-  top_pct REAL NOT NULL,
-  width_pct REAL NOT NULL,
-  height_pct REAL NOT NULL,
-  audit_target_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, job_id, generation, artifact_id, semantic_id)
-);
-```
+The API exposes:
 
-Projection requirements:
+- `GET /v1/artifacts/:artifactId/preview.pdf` for the final PDF artifact.
+- `GET /v1/artifacts/:artifactId/preview.html` for generated HTML/CSS resume
+  artifacts.
+- `resumePdfLayoutBoxes` on Apply Review materials preview data.
 
-- Artifact detail exposes layout boxes for PDF artifacts when present.
-- Apply Review queue can include a compact layout-map availability flag, but
-  should fetch full boxes through artifact detail or a dedicated route if the
-  payload becomes large.
-- Python and TypeScript projection parity fixtures include one HTML-rendered
-  resume PDF with layout boxes.
-
-## Migration Plan
-
-### PR 1: Renderer Seam And Fixture
-
-- Add `HtmlResumePdfAdapter` behind the existing `PdfRendererPort`.
-- Switch tailoring to default to `HtmlResumePdfAdapter`.
-- Add a synthetic profile/job fixture and a renderer contract test that produces:
-  text artifact, HTML-rendered PDF artifact, and layout boxes.
-- Assert the artifact remains `resume_pdf` and the render format is `html_pdf`.
-
-### PR 2: Layout Map Persistence
-
-- Add canonical layout-map persistence in the Materials context.
-- Project layout boxes through Python and TypeScript projection builders.
-- Add parity coverage using synthetic data only.
-- Keep current Apply Review behavior unchanged.
-
-### PR 3: Apply Review Uses Layout Boxes
-
-- Add frontend/API contract fields for PDF layout boxes.
-- Update `PdfAuditPreviewViewer` to use layout boxes when available.
-- Keep the pdf.js text matcher as a legacy fallback.
-- Add Apply Review tests proving HTML-rendered PDFs do not need fuzzy text
-  matching to highlight a provenance-linked line.
-
-### PR 4: Default HTML Resume Renderer
-
-- Switch the default renderer to `html_pdf`.
-- Keep LaTeX as a compatibility renderer for historical custom-template users
-  through `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
-- Update README, architecture docs, local QA docs, and setup diagnostics.
+Legacy migration writes a temporary refreshed PDF/HTML pair, validates the PDF
+header before replacement, updates the artifact `render_format` to `html_pdf`
+when migrating legacy rows, refreshes layout boxes, and keeps rollback data for
+safe replacement.
 
 ## Acceptance Criteria
 
@@ -271,10 +236,16 @@ Projection requirements:
   `RenderFormat.HTML_PDF`.
 - Apply readiness, cover generation, and auto-apply continue to require a real
   resume PDF artifact.
-- Apply Review uses generated layout boxes for new HTML-rendered resume PDFs and
-  still falls back to the current pdf.js matching path for old LaTeX artifacts.
+- Apply Review uses generated HTML/CSS through Plate for current HTML-rendered
+  resume artifacts.
+- The reviewed resume content and final PDF come from the same generated
+  HTML/CSS source.
+- JobHunter review annotations render inside the resume surface, written by
+  "JobHunter", rather than in a separate side-by-side pane.
 - Generated layout boxes are canonical/projection-backed and covered by Python
-  plus TypeScript projection parity tests.
+  and TypeScript projection tests.
+- Legacy LaTeX artifacts remain readable and can be migrated or refreshed with
+  the scoped migration command.
 - No committed fixture contains real profile data, resumes, generated PDFs, raw
   prompts, local artifact paths, or application data.
 
@@ -282,50 +253,80 @@ Projection requirements:
 
 Required automated coverage:
 
-- Python renderer unit tests for sanitization, pagination, render-format tagging,
-  and layout-map emission.
-- Materials aggregate/use-case tests proving HTML resume PDFs preserve the
-  `resume_pdf` invariant and publish `PdfRendered`.
-- Projection parity tests for layout-map rows.
-- API tests for artifact detail / preview responses with layout boxes.
-- Apply Review component tests for layout-map selection and legacy fallback.
-- Browser smoke on `/apply-review` with a seeded HTML-rendered PDF artifact.
+- Python renderer tests for sanitization, HTML escaping, render-format tagging,
+  layout-target metadata, Playwright PDF output, and layout-map emission.
+- Materials repository tests proving layout boxes are persisted outside artifact
+  metadata.
+- Legacy migration tests for dry-run, force refresh, scoped migration, rollback,
+  PDF validation, and layout-box refresh.
+- Python and TypeScript projection tests for `layout_boxes_json`.
+- API tests for artifact detail, `/preview.html`, and Apply Review materials
+  preview layout boxes.
+- Apply Review component tests for Plate rendering, line selection, JobHunter
+  annotations, safe links, legacy preview states, and no PDF-overlay regression
+  for current artifacts.
+- Browser smoke on `/apply-review` against a real local HTML-rendered resume
+  artifact before relying on tests alone.
 
 Required visual checks:
 
-- Render the same synthetic resume through LaTeX and HTML during rollout and
-  compare high-level layout: one-page fit, section order, heading
-  hierarchy, bullet wrapping, spacing, and contact header.
-- Verify the selected Apply Review line highlights the exact PDF pixels of the
-  selected generated claim.
+- Verify the rendered resume uses the generated HTML/CSS surface, not a PDF page
+  image or iframe.
+- Verify the first page keeps the LaTeX-like content layout: A4 page, centered
+  header, black section rules, compact entry grids, moderncv-like experience
+  rows, and real list bullets.
+- Verify contact icons are present, contact links are real hyperlinks, and all
+  resume colors are monochrome black.
+- Verify selecting a resume line highlights the Plate-rendered line and shows
+  at most one JobHunter annotation beside it.
+- Verify the "open final file" link opens the generated PDF artifact.
 - Verify PDF export opens in common viewers and remains ATS-friendly enough for
   text extraction.
 
+Validation already run for PR #188:
+
+- `git diff --check`
+- `uv --project workers/automation run --extra dev ruff check workers/automation/src/jobhunter/infrastructure/materials/html_resume_pdf.py workers/automation/src/jobhunter/infrastructure/materials/resume_html_migration.py workers/automation/tests/test_pdf_renderer_ports.py workers/automation/tests/test_resume_html_migration.py`
+- `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_pdf_renderer_ports.py workers/automation/tests/test_resume_html_migration.py`
+- `corepack pnpm --filter @jobhunter/web test -- ApplyReviewView.test.tsx resume-preview-style.test.ts`
+- `corepack pnpm web:check`
+- `corepack pnpm api:check`
+- `corepack pnpm test`
+- Live browser verification on `/apply-review`.
+
 ## Risks
 
-- Chromium print layout may not match normal screen layout. The renderer must
-  measure and print the same final paginated DOM.
-- CSS fragmentation can split content in ways that are hard to map back to
-  semantic IDs. Explicit page containers reduce this risk.
+- Chromium print layout can drift from screen layout. The renderer must keep
+  print and review tied to the same generated HTML/CSS source and regression
+  test the CSS used by the review surface.
+- CSS fragmentation can split dense resumes in ways that are hard to map back to
+  semantic IDs. Layout boxes and line targets reduce this risk, but dense resume
+  pagination still needs visual QA.
 - HTML/CSS can become arbitrary styling if theme controls are not tokenized.
   Keep resume style as structured `ResumeTheme` data.
-- PDF text extraction may differ from LaTeX and could affect ATS parsing. Add a
-  synthetic extraction regression before switching defaults.
-- Existing custom LaTeX templates may not have a one-to-one migration path.
-  Treat them as compatibility input, not as the target editing model.
+- PDF text extraction may differ from LaTeX and could affect ATS parsing. Keep
+  extraction checks in renderer QA before removing legacy compatibility.
+- Legacy custom LaTeX templates may not have a one-to-one migration path. Treat
+  them as compatibility input, not as the target editing model.
+- Turning the Plate shell into a full editor creates new product invariants:
+  edits must become a new auditable Materials generation, not an untracked
+  mutation of an approved final artifact.
 
-## Open Questions
+## Follow-Up: Full Plate Editor
 
-- Should `ResumeDocument` be persisted as its own artifact companion, or can it
-  be reconstructed from the accepted tailored payload plus provenance rows?
-- Should layout boxes be served on artifact detail or through a dedicated
-  `/v1/artifacts/:artifactId/layout` endpoint?
-- How much of the current resume style schema maps cleanly to `ResumeTheme`, and
-  which LaTeX-only knobs should be deprecated?
-- Is ATS parsing parity good enough with Chromium PDFs, or do we need a separate
-  text-layer validation step?
-- Should manual user edits be modeled as a new Materials generation immediately,
-  or saved as a draft generation that must pass audit before approval?
+The next implementation step is to turn the Plate review shell into a real
+resume editor:
+
+- Define the canonical Plate document schema for generated resumes.
+- Persist editable drafts separately from approved final artifacts.
+- Add editing controls that preserve resume-theme constraints instead of
+  arbitrary CSS.
+- Serialize edits back through the HTML/CSS renderer.
+- Reprint the PDF from the edited document.
+- Re-run grounding, provenance, keyword coverage, layout, and readiness checks
+  before an edited artifact can replace the accepted one.
+- Decide whether user-authored comments use Plate's comments plugin, a local
+  JobHunter comment model, or both.
 
 ## Reference Notes
 
