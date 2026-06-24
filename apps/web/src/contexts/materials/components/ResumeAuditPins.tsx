@@ -283,6 +283,17 @@ const RESUME_PLATE_BLOCK_TAGS = new Set([
 
 const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "span", "strong"]);
 
+const RESUME_PLATE_BLOCK_CLASS_TOKENS = new Set([
+  "resume-entry-company",
+  "resume-entry-date",
+  "resume-entry-location",
+  "resume-entry-main",
+  "resume-entry-row",
+  "resume-entry-title",
+]);
+
+const RESUME_PLATE_GRID_CONTAINER_CLASS_TOKENS = new Set(["resume-entry-heading", "resume-entry-row"]);
+
 const RESUME_PLATE_BLOCK_PLUGIN = createPlatePlugin({
   key: "resume_block",
   node: { isElement: true },
@@ -821,11 +832,52 @@ function resumePlateTextNode(text: string): Descendant | null {
   return { text: clean };
 }
 
+function hasAnyResumeClass(className: string | null | undefined, tokens: ReadonlySet<string>): boolean {
+  const classes = (className ?? "").split(/\s+/);
+  return classes.some((token) => tokens.has(token));
+}
+
+function shouldRenderResumeElementAsBlock(tagName: string, className: string | null | undefined): boolean {
+  return RESUME_PLATE_BLOCK_TAGS.has(tagName) || hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS);
+}
+
+function normalizeResumePlateChildren(children: readonly Descendant[], parentClassName: string | null | undefined): Descendant[] {
+  const normalized = children.map(normalizeResumePlateDescendant).filter((node): node is Descendant => Boolean(node));
+  if (!hasAnyResumeClass(parentClassName, RESUME_PLATE_GRID_CONTAINER_CLASS_TOKENS)) {
+    return normalized.length ? normalized : [{ text: "" }];
+  }
+  const withoutEmptyGridLeaves = normalized.filter(
+    (node) => !("text" in node) || (typeof node.text === "string" && node.text.trim().length > 0),
+  );
+  return withoutEmptyGridLeaves.length ? withoutEmptyGridLeaves : [{ text: "" }];
+}
+
+function normalizeResumePlateDescendant(node: Descendant): Descendant | null {
+  if ("text" in node) {
+    return node;
+  }
+  const className = typeof node.className === "string" ? node.className : undefined;
+  const tagName = typeof node.tagName === "string" ? node.tagName : "div";
+  const normalizedType = shouldRenderResumeElementAsBlock(tagName, className) ? "resume_block" : "resume_inline";
+  const normalizedTagName = hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName;
+  return {
+    ...node,
+    children: normalizeResumePlateChildren(node.children, className),
+    tagName: normalizedTagName,
+    type: normalizedType,
+  };
+}
+
+function normalizeResumePlateValue(value: Value): Value {
+  const normalized = value.map(normalizeResumePlateDescendant).filter((node): node is Descendant => Boolean(node));
+  return normalized.length ? (normalized as Value) : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
+}
+
 function resumePlateChildrenFromDom(element: Element): Descendant[] {
   const children = Array.from(element.childNodes)
     .map((node) => resumePlateNodeFromDom(node))
     .filter((node): node is Descendant => Boolean(node));
-  return children.length ? children : [{ text: "" }];
+  return normalizeResumePlateChildren(children, element.getAttribute("class"));
 }
 
 function resumePlateNodeFromDom(node: Node): Descendant | null {
@@ -834,18 +886,20 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   }
   if (!(node instanceof HTMLElement)) return null;
   const tagName = node.tagName.toLowerCase();
-  const isInline = RESUME_PLATE_INLINE_TAGS.has(tagName);
-  if (!isInline && !RESUME_PLATE_BLOCK_TAGS.has(tagName)) {
+  const className = node.getAttribute("class") || undefined;
+  const isBlock = shouldRenderResumeElementAsBlock(tagName, className);
+  const isInline = !isBlock && RESUME_PLATE_INLINE_TAGS.has(tagName);
+  if (!isBlock && !isInline) {
     return resumePlateTextNode(cleanRenderedText(node.textContent));
   }
   return {
     children: resumePlateChildrenFromDom(node),
-    className: node.getAttribute("class") || undefined,
+    className,
     href: tagName === "a" ? safeResumeHref(node.getAttribute("href")) : undefined,
     lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
     pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
     semanticId: node.getAttribute("data-resume-layout-target") || null,
-    tagName,
+    tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
 }
@@ -866,7 +920,7 @@ function resumePlateValueFromHtml(html: string): Value {
     .map((node) => resumePlateNodeFromDom(node))
     .filter((node): node is Descendant => Boolean(node));
   return nodes.length
-    ? (nodes as Value)
+    ? normalizeResumePlateValue(nodes as Value)
     : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
 }
 
@@ -1466,7 +1520,9 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
       aria-label="JobHunter resume comment"
       className={`resume-plate-comment ${comment.tone}`}
       contentEditable={false}
+      data-resume-editor-chrome="true"
       role="note"
+      suppressContentEditableWarning
     >
       <span className="resume-plate-comment-head">
         <b>JobHunter</b>
@@ -2062,7 +2118,7 @@ export function ResumePlateEditor({
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
-      return savedValue;
+      return normalizeResumePlateValue(savedValue);
     }
     return htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null;
   }, [draft?.latestRevision?.plateDocument, htmlState]);

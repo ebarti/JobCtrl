@@ -216,6 +216,83 @@ function savedDraftPlateDocument(lineText = "Restored human rewrite for incident
   ];
 }
 
+function savedDraftPlateDocumentWithEntryHeading() {
+  return [
+    {
+      type: "resume_block",
+      tagName: "main",
+      className: "resume-page",
+      pageNumber: 1,
+      semanticId: null,
+      children: [
+        {
+          type: "resume_block",
+          tagName: "section",
+          className: "resume-section",
+          pageNumber: 1,
+          semanticId: null,
+          children: [
+            {
+              type: "resume_block",
+              tagName: "div",
+              className: "resume-entry-heading",
+              lineNumber: 30,
+              pageNumber: 1,
+              semanticId: "experience:entry:datadog:heading",
+              children: [
+                { text: "" },
+                {
+                  type: "resume_inline",
+                  tagName: "span",
+                  className: "resume-entry-row resume-entry-company-row",
+                  children: [
+                    { text: "" },
+                    {
+                      type: "resume_inline",
+                      tagName: "span",
+                      className: "resume-entry-company",
+                      children: [{ text: "Datadog" }],
+                    },
+                    { text: "" },
+                    {
+                      type: "resume_inline",
+                      tagName: "span",
+                      className: "resume-entry-location",
+                      children: [{ text: "Barcelona, Spain" }],
+                    },
+                    { text: "" },
+                  ],
+                },
+                { text: "" },
+                {
+                  type: "resume_inline",
+                  tagName: "span",
+                  className: "resume-entry-row resume-entry-role-row",
+                  children: [
+                    {
+                      type: "resume_inline",
+                      tagName: "span",
+                      className: "resume-entry-title",
+                      children: [{ text: "Security Customer Advisory Board Member" }],
+                    },
+                    {
+                      type: "resume_inline",
+                      tagName: "span",
+                      className: "resume-entry-date",
+                      children: [{ text: "Sep 2022 | Aug 2023" }],
+                    },
+                  ],
+                },
+                { text: "" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 function makeResumeReviewDraft(
   jobKey = sampleApplyReviewQueue.items[0]!.jobKey,
   revision?: Partial<ResumeReviewDraftRevision> | null,
@@ -776,7 +853,12 @@ describe("<ApplyReviewView>", () => {
       "/v1/artifacts/resume-pdf-2/preview.pdf",
     );
     const shadow = await findResumeShadowRoot();
-    expect(shadow.querySelectorAll('[aria-label="JobHunter resume comment"]').length).toBeGreaterThan(0);
+    const comments = shadow.querySelectorAll('[aria-label="JobHunter resume comment"]');
+    expect(comments.length).toBeGreaterThan(0);
+    comments.forEach((comment) => {
+      expect(comment).toHaveAttribute("contenteditable", "false");
+      expect(comment).toHaveAttribute("data-resume-editor-chrome", "true");
+    });
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
@@ -811,6 +893,37 @@ describe("<ApplyReviewView>", () => {
     );
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
     expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+  });
+
+  it("normalizes saved entry heading rows so editing does not add spacer grid tracks", async () => {
+    const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+      editedText:
+        "Datadog Barcelona, Spain\nSecurity Customer Advisory Board Member Sep 2022 | Aug 2023",
+      plateDocument: savedDraftPlateDocumentWithEntryHeading(),
+    });
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const heading = shadowElementWithText(shadow, "Datadog");
+    const rows = Array.from(heading.querySelectorAll<HTMLElement>(".resume-entry-row"));
+
+    expect(rows).toHaveLength(2);
+    rows.forEach((row) => {
+      expect(row.tagName).toBe("DIV");
+      expect(row.querySelectorAll(':scope > [data-slate-node="text"]')).toHaveLength(0);
+    });
+    expect(rows[0]!.children[0]).toHaveClass("resume-entry-company");
+    expect(rows[0]!.children[1]).toHaveClass("resume-entry-location");
+    expect(rows[1]!.children[0]).toHaveClass("resume-entry-title");
+    expect(rows[1]!.children[1]).toHaveClass("resume-entry-date");
   });
 
   it("keeps editor focus while typing multiple characters", async () => {
