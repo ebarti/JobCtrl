@@ -935,7 +935,8 @@ textarea:focus-visible {
   scrollbar-gutter: stable;
 }
 
-.apply-review-pdf-line-review {
+.apply-review-pdf-line-review,
+.apply-review-html-line-review {
   container-type: inline-size;
 }
 
@@ -973,7 +974,8 @@ textarea:focus-visible {
   padding-bottom: 0;
 }
 
-.apply-review-pdf-line-review {
+.apply-review-pdf-line-review,
+.apply-review-html-line-review {
   overflow: hidden;
   background:
     linear-gradient(var(--muted), var(--muted)) padding-box,
@@ -996,13 +998,401 @@ textarea:focus-visible {
 
 @media (min-width: 960px) {
   .apply-review-resume-review {
-    grid-template-columns: minmax(420px, 1fr) minmax(340px, 0.56fr);
     align-items: start;
   }
 
   .apply-review-resume-pins {
     position: sticky;
     top: 0;
+  }
+}
+
+.resume-plate-editor {
+  display: flex;
+  height: min(78dvh, 960px);
+  min-height: 620px;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #242424;
+}
+
+.resume-plate-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #303030;
+  color: #f5f5f5;
+}
+
+.resume-plate-toolbar .mono {
+  color: #c8c8c8;
+}
+
+.resume-plate-toolbar a {
+  margin-left: auto;
+  color: #f5f5f5;
+  text-decoration: none;
+}
+
+.resume-plate-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 18px 260px 18px 18px;
+}
+
+.resume-plate-page {
+  position: relative;
+  inline-size: max-content;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 10px 36px rgb(0 0 0 / 32%);
+}
+
+.resume-plate-document {
+  inline-size: max-content;
+  outline: 0;
+  background: #fff;
+  color: #111;
+  font-family: "Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10.35pt;
+  line-height: 1.32;
+}
+
+.resume-plate-document [data-resume-line-number] {
+  position: relative;
+  cursor: text;
+}
+
+.resume-plate-document [data-resume-line-number].jobhunter-selected-line {
+  outline: 1px solid #111;
+  outline-offset: 1px;
+  background: rgb(0 0 0 / 6%);
+}
+
+.resume-plate-document [data-resume-line-number].has-jobhunter-comment {
+  position: relative;
+}
+
+.resume-plate-document [data-resume-line-number].has-jobhunter-comment::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -5px;
+  inline-size: 2px;
+  background: rgb(0 0 0 / 42%);
+  content: "";
+  pointer-events: none;
+}
+
+.resume-plate-document .resume-page {
+  position: relative;
+  inline-size: 210mm;
+  min-block-size: 297mm;
+  padding: 16.5mm 17.5mm 18mm;
+  background: #fff;
+}
+
+.resume-plate-document .resume-header {
+  margin-block-end: 4.5mm;
+  text-align: center;
+}
+
+.resume-plate-document .resume-name {
+  margin: 0 0 1.8mm;
+  color: #111;
+  font-size: 22pt;
+  font-weight: 400;
+  line-height: 1.08;
+}
+
+.resume-plate-document .resume-contact {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  color: #111;
+  font-size: 8.8pt;
+  line-height: 1.25;
+}
+
+.resume-plate-document .resume-address {
+  margin: 0 0 0.65mm;
+  color: #111;
+  font-size: 8.8pt;
+  line-height: 1.22;
+}
+
+.resume-plate-document .resume-contact-items {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0 2mm;
+}
+
+.resume-plate-document .resume-contact-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1mm;
+  white-space: nowrap;
+}
+
+.resume-plate-document .resume-contact-item::before {
+  display: inline-block;
+  min-inline-size: 3mm;
+  color: #111;
+  font-size: 0.95em;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.resume-plate-document .resume-contact-phone::before {
+  content: "\260E";
+}
+
+.resume-plate-document .resume-contact-email::before {
+  content: "\2709";
+}
+
+.resume-plate-document .resume-contact-website::before {
+  content: "\25C9";
+}
+
+.resume-plate-document .resume-contact-linkedin::before {
+  content: "in";
+  font-size: 0.92em;
+  font-weight: 800;
+}
+
+.resume-plate-document .resume-contact-github::before {
+  content: "gh";
+  font-size: 0.82em;
+  font-weight: 800;
+}
+
+.resume-plate-document .resume-contact-separator {
+  color: #111;
+  font-weight: 700;
+}
+
+.resume-plate-document .resume-contact a {
+  color: #111;
+  text-decoration: none;
+}
+
+.resume-plate-document .resume-section {
+  margin-block-start: 4.1mm;
+}
+
+.resume-plate-document .resume-section:first-of-type {
+  margin-block-start: 0;
+}
+
+.resume-plate-document .resume-section-title {
+  display: flex;
+  align-items: center;
+  gap: 2.5mm;
+  margin: 0 0 2.2mm;
+  color: #111;
+  font-size: 9.5pt;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.resume-plate-document .resume-section-title::after {
+  flex: 1 1 auto;
+  border-block-start: 0.45pt solid #111;
+  content: "";
+}
+
+.resume-plate-document .resume-summary {
+  margin: 0;
+  text-align: justify;
+}
+
+.resume-plate-document .resume-entry {
+  margin-block-end: 3.2mm;
+  break-inside: avoid;
+}
+
+.resume-plate-document .resume-entry.compact {
+  margin-block-end: 2.2mm;
+}
+
+.resume-plate-document .resume-entry-heading {
+  display: grid;
+  gap: 0.2mm;
+  margin: 0 0 0.9mm;
+}
+
+.resume-plate-document .resume-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  column-gap: 5mm;
+}
+
+.resume-plate-document .resume-entry-main,
+.resume-plate-document .resume-entry-company-row {
+  min-inline-size: 0;
+}
+
+.resume-plate-document .resume-entry-company,
+.resume-plate-document .resume-entry-location {
+  font-weight: 700;
+}
+
+.resume-plate-document .resume-entry-title {
+  color: #111;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.resume-plate-document .resume-entry-date {
+  color: #111;
+  font-size: 8.9pt;
+  font-style: italic;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.resume-plate-document .resume-entry-location {
+  color: #111;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.resume-plate-document .resume-entry-subtitle,
+.resume-plate-document .resume-meta {
+  margin: 0 0 1mm;
+  color: #111;
+  font-size: 8.9pt;
+  line-height: 1.22;
+}
+
+.resume-plate-document .resume-bullets {
+  list-style: disc outside;
+  margin: 1.1mm 0 0 4.2mm;
+  padding: 0;
+}
+
+.resume-plate-document .resume-skills-list {
+  list-style: none;
+  margin: 1.1mm 0 0 0;
+  padding: 0;
+}
+
+.resume-plate-document .resume-bullets li {
+  display: list-item;
+  list-style: disc outside;
+  margin-block-end: 0.75mm;
+  padding-inline-start: 0.8mm;
+  text-align: justify;
+  break-inside: avoid;
+}
+
+.resume-plate-document .resume-skills-list li {
+  margin-block-end: 0.75mm;
+  padding-inline-start: 0;
+  text-align: justify;
+  break-inside: avoid;
+}
+
+.resume-plate-document .resume-skills-list b {
+  color: #111;
+}
+
+.resume-plate-document p {
+  margin: 0 0 1.2mm;
+}
+
+.resume-plate-comment {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: -4px;
+  inset-inline-start: calc(100% + 16px);
+  display: grid;
+  inline-size: 204px;
+  gap: 4px;
+  border: 1px solid #111;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 14%);
+  color: #111;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.28;
+  padding: 8px;
+}
+
+.resume-plate-comment::before {
+  position: absolute;
+  inset-block-start: 12px;
+  inset-inline-end: 100%;
+  inline-size: 16px;
+  border-block-start: 1px solid #111;
+  content: "";
+}
+
+.resume-plate-comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resume-plate-comment-head span {
+  color: #111;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.resume-plate-comment.warn {
+  border-color: #111;
+}
+
+.resume-plate-comment.ok {
+  border-color: #111;
+}
+
+.resume-html-unavailable {
+  display: grid;
+  max-width: 680px;
+  gap: 8px;
+  margin: 40px auto;
+  padding: 18px;
+  border: 1px solid color-mix(in oklab, var(--warning) 60%, var(--border));
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+}
+
+.resume-html-unavailable b {
+  color: var(--foreground);
+}
+
+.resume-html-unavailable span {
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 820px) {
+  .resume-plate-scroll {
+    padding-inline-end: 18px;
+  }
+
+  .resume-plate-comment {
+    position: static;
+    inline-size: auto;
+    margin-block-start: 6px;
+  }
+
+  .resume-plate-comment::before {
+    display: none;
   }
 }
 

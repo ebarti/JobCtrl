@@ -305,6 +305,7 @@ export interface ApplyReviewMaterialsPreview {
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
+  resumePdfLayoutBoxes: ResumeLayoutBox[];
   profileSourceFields: ApplyReviewProfileSourceField[];
   coverLetterText: string | null;
 }
@@ -1660,7 +1661,19 @@ export interface JobDetail {
 export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
+  layoutBoxes: ResumeLayoutBox[];
   tailoringExplanation: ArtifactTailoringExplanation | null;
+}
+
+export interface ResumeLayoutBox {
+  semanticId: string;
+  pageNumber: number;
+  lineNumber: number | null;
+  textExcerpt: string;
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
 }
 
 /**

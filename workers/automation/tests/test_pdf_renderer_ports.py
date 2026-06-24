@@ -3,6 +3,7 @@
 Two adapters implement the port:
 
   * :class:`LatexPdfAdapter` for tailored resumes (pdflatex).
+  * :class:`HtmlResumePdfAdapter` for tailored resumes (HTML/CSS + Playwright).
   * :class:`PlaywrightHtmlPdfAdapter` for cover letters (Playwright).
 
 The adapters intentionally raise :class:`NotImplementedError` from the
@@ -26,9 +27,15 @@ from jobhunter.domain.materials import (
     RenderFormat,
 )
 from jobhunter.domain.ports.materials import PdfRendererPort
+from jobhunter.infrastructure.materials import html_resume_pdf
 from jobhunter.infrastructure.materials import (
+    HtmlResumePdfAdapter,
     LatexPdfAdapter,
     PlaywrightHtmlPdfAdapter,
+)
+from jobhunter.infrastructure.materials.html_resume_pdf import (
+    build_resume_document,
+    build_resume_html,
 )
 from jobhunter.infrastructure.materials.latex_pdf import (
     DEFAULT_RESUME_LATEX_TEMPLATE,
@@ -51,6 +58,8 @@ def _profile() -> dict:
             "full_name": "Jane Doe",
             "email": "jane@example.com",
             "phone": "+1-555-0100",
+            "website_url": "https://janedoe.dev",
+            "linkedin_url": "https://www.linkedin.com/in/janedoe",
         },
         "resume": {
             "executive_profile": {"baseline_text": "Engineer."},
@@ -187,6 +196,16 @@ def test_latex_adapter_refuses_cover_letter() -> None:
         )
 
 
+def test_html_resume_adapter_refuses_cover_letter() -> None:
+    adapter = HtmlResumePdfAdapter()
+    with pytest.raises(NotImplementedError):
+        adapter.render_cover_letter_to_pdf(
+            cover_letter_text="Dear Hiring Manager",
+            output_path="/tmp/x.pdf",
+            created_at="2024-01-01T00:00:00+00:00",
+        )
+
+
 def test_playwright_adapter_refuses_resume() -> None:
     adapter = PlaywrightHtmlPdfAdapter()
     with pytest.raises(NotImplementedError):
@@ -243,6 +262,95 @@ def test_build_letter_html_wraps_paragraphs() -> None:
     assert "<p>Dear Hiring Manager,</p>" in html
     assert "<p>First paragraph.</p>" in html
     assert "<p>Second paragraph.</p>" in html
+
+
+# ---------------------------------------------------------------------------
+# HtmlResumePdfAdapter — structured resume HTML/CSS seam
+# ---------------------------------------------------------------------------
+
+
+def test_build_resume_document_reuses_tailoring_policy_helpers() -> None:
+    document = build_resume_document(_payload(), _profile())
+
+    assert document["personal"]["full_name"] == "Jane Doe"
+    assert document["personal"]["contact_items"] == [
+        {"kind": "phone", "label": "+1-555-0100", "href": "tel:+15550100"},
+        {"kind": "email", "label": "jane@example.com", "href": "mailto:jane@example.com"},
+        {"kind": "website", "label": "janedoe.dev", "href": "https://janedoe.dev"},
+        {"kind": "linkedin", "label": "janedoe", "href": "https://www.linkedin.com/in/janedoe"},
+    ]
+    assert document["summary"] == "Tailored summary."
+    assert document["experience"][0]["title"] == "Senior SWE"
+    assert document["experience"][0]["company"] == "Acme"
+    assert document["experience"][0]["bullets"][0]["text"] == "Cut latency."
+    assert document["skills"][0]["items"] == ["Python"]
+
+
+def test_build_resume_html_escapes_text_and_marks_layout_targets() -> None:
+    profile = _profile()
+    profile["personal"]["full_name"] = "Jane <script>alert(1)</script>"
+    html = build_resume_html(build_resume_document(_payload(), profile))
+
+    assert "@page" in html
+    assert "print-color-adjust: exact" in html
+    assert "data-resume-layout-target=\"personal:full_name\"" in html
+    assert "data-resume-line-number=\"1\"" in html
+    assert "Jane &lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<script>alert(1)</script>" not in html
+
+
+def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> None:
+    html = build_resume_html(build_resume_document(_payload(), _profile()))
+
+    assert '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">+1-555-0100</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-email"><a href="mailto:jane@example.com">jane@example.com</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-website"><a href="https://janedoe.dev">janedoe.dev</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>' in html
+    assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
+    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">2020-Present</span></span>' in html
+    assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
+
+
+def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_render(html_content: str, output_path: str) -> list[dict]:
+        assert "data-resume-layout-target" in html_content
+        Path(output_path).write_bytes(b"%PDF-html")
+        return [
+            {
+                "semantic_id": "experience:acme_swe:bullet:1",
+                "page_number": 1,
+                "line_number": 6,
+                "text_excerpt": "Cut latency.",
+                "left_pct": 10.0,
+                "top_pct": 20.0,
+                "width_pct": 50.0,
+                "height_pct": 2.0,
+            }
+        ]
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", fake_render)
+
+    adapter = HtmlResumePdfAdapter()
+    out = tmp_path / "resume.pdf"
+    artifact = adapter.render_resume_to_pdf(
+        tailored_payload=_payload(),
+        profile_dict=_profile(),
+        output_path=str(out),
+        created_at="2024-01-01T00:00:00+00:00",
+    )
+
+    assert out.exists()
+    assert out.with_suffix(".html").exists()
+    assert artifact.type is ArtifactType.RESUME_PDF
+    assert artifact.status is ArtifactStatus.CANDIDATE
+    assert artifact.render_format is RenderFormat.HTML_PDF
+    assert artifact.size_bytes == len(b"%PDF-html")
+    assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
+    assert artifact.metadata["layout_source"] == "html_resume_dom"
+    assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "experience:acme_swe:bullet:1"
 
 
 # ---------------------------------------------------------------------------

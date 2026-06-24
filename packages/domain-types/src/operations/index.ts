@@ -110,6 +110,7 @@ export interface ArtifactListProjection {
   readonly createdAt: string | null;
   readonly generation: number | null;
   readonly metadataJson: string | null;
+  readonly layoutBoxesJson: string | null;
 }
 
 export interface ApplyRunProjection {

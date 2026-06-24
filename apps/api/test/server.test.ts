@@ -2288,6 +2288,87 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns resume layout boxes on artifact detail", async () => {
+    const resumePdfPath = path.join(tempDir, "layout-resume.pdf");
+    fs.writeFileSync(resumePdfPath, "%PDF-layout");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/layout-resume",
+      title: "Layout Resume Engineer",
+      site: "LayoutCo",
+      fitScore: 9,
+      tailoredPath: resumePdfPath,
+      fullDescription: "Platform reliability role.",
+    });
+    seedDb
+      .prepare(
+        `INSERT OR REPLACE INTO job_materials (
+           job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+         ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')`,
+      )
+      .run(
+        "https://example.com/jobs/layout-resume",
+        "2026-05-26T10:00:00+00:00",
+        "2026-05-26T10:00:00+00:00",
+      );
+    seedDb
+      .prepare(
+        `INSERT OR REPLACE INTO job_materials_artifacts (
+           job_url, generation, artifact_type, artifact_id, status, path,
+           render_format, size_bytes, metadata_json, created_at
+         ) VALUES (?, 1, 'resume_pdf', 'artifact-layout-resume-pdf', 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+      )
+      .run(
+        "https://example.com/jobs/layout-resume",
+        resumePdfPath,
+        fs.statSync(resumePdfPath).size,
+        "2026-05-26T10:00:00+00:00",
+      );
+    seedDb
+      .prepare(
+        `INSERT OR REPLACE INTO job_material_layout_boxes (
+           job_url, generation, artifact_id, box_index, tenant_id,
+           semantic_id, page_number, line_number, text_excerpt,
+           left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
+         ) VALUES (?, 1, 'artifact-layout-resume-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+      )
+      .run(
+        "https://example.com/jobs/layout-resume",
+        "experience:acme:bullet:1",
+        "Cut latency.",
+        "2026-05-26T10:00:00+00:00",
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/artifacts/artifact-layout-resume-pdf" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactId: "artifact-layout-resume-pdf",
+        type: "resume_pdf",
+        status: "approved",
+      },
+      layoutBoxes: [
+        {
+          semanticId: "experience:acme:bullet:1",
+          pageNumber: 1,
+          lineNumber: 6,
+          textExcerpt: "Cut latency.",
+          leftPct: 12.5,
+          topPct: 24,
+          widthPct: 62,
+          heightPct: 2.4,
+        },
+      ],
+    });
+
+    await app.close();
+  });
+
   it("returns safe tailoring explanation for tailored resume artifacts", async () => {
     const resumePath = path.join(tempDir, "tailoring-evidence-resume.txt");
     fs.writeFileSync(resumePath, "Senior platform reliability resume.");
@@ -3744,6 +3825,83 @@ describe("local TypeScript API", () => {
       path: artifact.localPath,
     });
     expect(opened).toEqual([artifact.localPath]);
+
+    await app.close();
+  });
+
+  it("serves the sibling HTML preview for an HTML-rendered resume PDF artifact", async () => {
+    const app = buildApp(options);
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+    const artifact = listResponse.json().items[0];
+    fs.writeFileSync(artifact.localPath, "%PDF html-rendered test");
+    const htmlPath = path.join(path.dirname(artifact.localPath), `${path.parse(artifact.localPath).name}.html`);
+    fs.writeFileSync(
+      htmlPath,
+      '<!doctype html><main class="resume-page"><h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">Jordan Candidate</h1></main>',
+    );
+    const now = "2026-06-20T10:00:00+00:00";
+    const db = new Database(options.dbPath);
+    createMaterialsTables(db);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at
+       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+    ).run(artifact.jobKey, now, now);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+    ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
+    db.close();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview.html`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(response.body).toContain("Jordan Candidate");
+    expect(response.body).toContain('data-resume-layout-target="personal:full_name"');
+
+    await app.close();
+  });
+
+  it("rejects HTML preview for a legacy-rendered resume PDF artifact", async () => {
+    const app = buildApp(options);
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+    const artifact = listResponse.json().items[0];
+    fs.writeFileSync(artifact.localPath, "%PDF legacy test");
+    const now = "2026-06-20T10:00:00+00:00";
+    const db = new Database(options.dbPath);
+    createMaterialsTables(db);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at
+       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+    ).run(artifact.jobKey, now, now);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'latex_pdf', ?, '{}', ?)`,
+    ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
+    db.close();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview.html`,
+    });
+
+    expect(response.statusCode, response.body).toBe(415);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "artifact_preview_unsupported",
+      message: "This artifact was not rendered through the HTML/CSS resume renderer.",
+    });
 
     await app.close();
   });
@@ -6557,6 +6715,24 @@ function createMaterialsTables(db: Database.Database): void {
       coverage_json TEXT,
       voice_json TEXT,
       PRIMARY KEY (job_url, generation, bullet_id)
+    );
+    CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_id TEXT NOT NULL,
+      box_index INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      semantic_id TEXT NOT NULL,
+      page_number INTEGER NOT NULL,
+      line_number INTEGER,
+      text_excerpt TEXT NOT NULL,
+      left_pct REAL NOT NULL,
+      top_pct REAL NOT NULL,
+      width_pct REAL NOT NULL,
+      height_pct REAL NOT NULL,
+      audit_target_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, artifact_id, box_index)
     );
   `);
 }

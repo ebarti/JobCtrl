@@ -9,18 +9,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
-import { ArtifactGroundingRiskPanel, ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
+import { ArtifactGroundingRiskPanel, ResumePlateEditor } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
-import {
-  PdfAuditPreviewViewer,
-  type PdfAuditLineSelection,
-  type PdfAuditLineTarget,
-} from "../../shared/ui/PdfPreviewViewer.js";
+import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
 type MaterialStatus = {
@@ -593,7 +589,7 @@ function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineT
     .filter((line) => line.text.trim().length > 0);
 }
 
-function PdfResumeLineReview({
+function ResumeLineReview({
   item,
   selectedLine,
   onSelectLine,
@@ -603,9 +599,10 @@ function PdfResumeLineReview({
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
   const { api } = usePorts();
-  const artifactId = item.materialsPreview.resumePdfArtifactId;
+  const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
+  const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
-  if (!artifactId) {
+  if (!pdfArtifactId || !auditArtifactId) {
     return (
       <TextPreview
         title="Tailored resume"
@@ -615,19 +612,18 @@ function PdfResumeLineReview({
     );
   }
   return (
-    <section className="apply-review-preview-block apply-review-pdf-line-review" aria-label="PDF resume line review">
-      <h3 className="sr-only">PDF resume line review</h3>
-      <PdfAuditPreviewViewer
-        cacheKey={`${artifactId}:${item.jobKey}`}
+    <section className="apply-review-preview-block apply-review-html-line-review" aria-label="Resume line review">
+      <h3 className="sr-only">Resume line review</h3>
+      <ResumePlateEditor
+        artifactId={auditArtifactId}
+        finalUrl={api.artifactPreviewPdfUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
+        htmlUrl={api.artifactPreviewHtmlUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
+        layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
-        loadingMessage="The tailored resume PDF is loading into the in-app preview."
-        loadingTitle="Rendering tailored resume."
-        openLabel="open PDF"
-        selectedLineKey={selectedLine?.lineKey ?? null}
-        selectedLineNumber={selectedLine?.lineNumber ?? null}
-        pageAltPrefix={`${item.title} tailored resume`}
-        title="Tailored resume PDF"
-        url={api.artifactPreviewPdfUrl(artifactId, `${artifactId}:${item.jobKey}`)}
+        profileSourceFields={item.materialsPreview.profileSourceFields}
+        resumeText={item.materialsPreview.resumeText}
+        selectedLine={selectedLine}
+        title="Tailored resume preview"
         onSelectLine={onSelectLine}
       />
     </section>
@@ -635,7 +631,6 @@ function PdfResumeLineReview({
 }
 
 function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
-  const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
 
   useEffect(() => {
@@ -643,28 +638,14 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
   }, [item.jobKey]);
 
   return (
-    <section className="apply-review-preview-block apply-review-resume-review" aria-label="PDF resume audit">
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Resume audit">
       <div className="apply-review-resume-main">
-        <PdfResumeLineReview
+        <ResumeLineReview
           item={item}
           selectedLine={selectedLine}
           onSelectLine={setSelectedLine}
         />
       </div>
-      {auditArtifactId ? (
-        <ResumeAuditPins
-          artifactId={auditArtifactId}
-          profileSourceFields={item.materialsPreview.profileSourceFields}
-          resumeText={item.materialsPreview.resumeText}
-          selectedLine={selectedLine}
-          onSelectedLineChange={setSelectedLine}
-        />
-      ) : (
-        <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">
-          <h3>Line-by-line resume audit</h3>
-          <Empty title="No resume artifact is available for provenance inspection." />
-        </section>
-      )}
     </section>
   );
 }

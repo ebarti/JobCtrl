@@ -304,9 +304,10 @@ against the voiced text.
   stuffing an ungrounded skills line and substring false positives do not count.
 - **Final canonical text** is the single voiced payload: `TailorResumeUseCase`
   assembles the plain-text resume from it, the provenance rows anchor to it, and
-  `scoring/tailor.py` renders the LaTeX/HTML PDF from `TailorOutcome.final_payload`
-  — so the two render paths cannot diverge. A round-trip fixture asserts the
-  audited bullet text equals the rendered text.
+  the active resume PDF renderer consumes `TailorOutcome.final_payload`. Today
+  that default is `HtmlResumePdfAdapter` (HTML/CSS + Playwright); the legacy
+  LaTeX adapter remains available only through explicit local configuration.
+  A round-trip fixture asserts the audited bullet text equals the rendered text.
 - **Persistence + read path**: the generation-time coverage and the voice-pass
   audit ride on the `BulletProvenanceSet` (denormalised onto the
   `job_bullet_provenance` rows as `coverage_json` / `voice_json`). The single

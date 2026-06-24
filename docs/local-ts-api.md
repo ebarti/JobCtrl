@@ -41,15 +41,27 @@ maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
 Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
-`GET /v1/artifacts/:artifactId/preview.pdf` for inline preview of registered
-PDF artifacts. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
+`GET /v1/artifacts/:artifactId/preview.pdf` for inline access to registered PDF
+artifacts. HTML/CSS-rendered resume PDFs also expose
+`GET /v1/artifacts/:artifactId/preview.html`, which streams the generated
+sibling HTML file used by the Plate-backed Apply Review editor. That route is
+limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects legacy
+renderer rows with `415`; operators can migrate approved legacy resume PDFs with
+`uv --project workers/automation run jobhunter migrate-resume-html` after
+checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
+with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
 renders a single registered PDF artifact page through local Poppler
-`pdftoppm`, which the web UI uses for stable PDF-page images while mapping
-selectable text lines in the browser. The preview routes serve only known PDF
-artifact files from the local artifact projection; they return `404` for
-missing metadata/files, `415` for non-PDF artifacts, and `400` for invalid page
-numbers. The separate `POST /v1/artifacts/:artifactId/open` route still
-delegates to the local OS opener.
+`pdftoppm` for legacy PDF page-image previews. The preview routes serve only
+known PDF artifact files from the local artifact projection; they return `404`
+for missing metadata/files, `415` for unsupported artifact/renderer formats,
+and `400` for invalid page numbers. The separate
+`POST /v1/artifacts/:artifactId/open` route still delegates to the local OS
+opener.
+PDF artifact detail responses also include `layoutBoxes` when the Materials
+projection has generated resume layout metadata. Boxes use page-relative
+percent coordinates plus optional resume line numbers. Apply Review passes them
+into the HTML editor for line/page anchoring; legacy PDFs or artifacts without a
+layout map return an empty array.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,
@@ -366,7 +378,12 @@ verification-code MCP server:
   or close enough for human review, plus materials readiness, latest apply-run
   context, blockers, latest review state, `compensationSummary` from the job
   list projection, and `applyAudit`, the canonical readiness/blocker/eligibility
-  DTO used by Apply Review.
+  DTO used by Apply Review. The materials preview includes the selected resume
+  text artifact, selected resume PDF artifact, and `resumePdfLayoutBoxes` for
+  generation-time line/page anchoring when the selected final PDF was rendered
+  through the HTML/CSS resume renderer. Apply Review uses the selected PDF
+  artifact to fetch the sibling HTML preview for the Plate editor and keeps the
+  PDF as the final file link.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

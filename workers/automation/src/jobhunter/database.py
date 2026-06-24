@@ -1481,6 +1481,8 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
       * ``job_materials_artifacts`` — one row per artifact slot per
         aggregate (``tailored_resume``, ``cover_letter``, ``resume_pdf``,
         ``cover_letter_pdf``).
+      * ``job_material_layout_boxes`` — generation-time PDF audit layout boxes
+        for rendered resume PDFs, keyed to the artifact they describe.
 
     The legacy ``jobs.tailored_resume_path`` / ``jobs.cover_letter_path``
     columns remain in the schema as a read-only fallback for historical
@@ -1534,6 +1536,30 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
+            job_url             TEXT NOT NULL,
+            generation          INTEGER NOT NULL,
+            artifact_id         TEXT NOT NULL,
+            box_index           INTEGER NOT NULL,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            semantic_id         TEXT NOT NULL,
+            page_number         INTEGER NOT NULL,
+            line_number         INTEGER,
+            text_excerpt        TEXT NOT NULL,
+            left_pct            REAL NOT NULL,
+            top_pct             REAL NOT NULL,
+            width_pct           REAL NOT NULL,
+            height_pct          REAL NOT NULL,
+            audit_target_json   TEXT NOT NULL DEFAULT '{}',
+            created_at          TEXT NOT NULL,
+            PRIMARY KEY (job_url, generation, artifact_id, box_index),
+            FOREIGN KEY (job_url, generation) REFERENCES job_materials(job_url, generation)
+                ON DELETE CASCADE
+        )
+        """
+    )
     # Indexes for the queue selectors (mirror the §7.2 read fragments).
     conn.execute(
         """
@@ -1545,6 +1571,12 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
         """
         CREATE INDEX IF NOT EXISTS idx_job_materials_artifacts_status
         ON job_materials_artifacts(artifact_type, status, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_material_layout_boxes_artifact
+        ON job_material_layout_boxes(tenant_id, artifact_id, page_number, box_index)
         """
     )
 
@@ -1567,7 +1599,7 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
                 _backfill_one_materials_row(conn, row, now)
 
     conn.commit()
-    return ["job_materials", "job_materials_artifacts"]
+    return ["job_materials", "job_materials_artifacts", "job_material_layout_boxes"]
 
 
 def _backfill_one_materials_row(

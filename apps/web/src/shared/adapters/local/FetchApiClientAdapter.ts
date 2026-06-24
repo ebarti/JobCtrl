@@ -202,6 +202,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string {
     return this.client.artifactPreviewPdfUrl(artifactId, cacheKey);
   }
+  artifactPreviewHtmlUrl(artifactId: string, cacheKey?: number | string): string {
+    return this.client.artifactPreviewHtmlUrl(artifactId, cacheKey);
+  }
   openArtifact(artifactId: string) {
     return this.client.openArtifact(artifactId);
   }

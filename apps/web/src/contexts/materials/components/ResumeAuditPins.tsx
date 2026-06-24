@@ -2,11 +2,30 @@ import type {
   ApplyReviewProfileSourceField,
   ArtifactTailoringExplanation,
   BulletProvenanceEntry,
+  ResumeLayoutBox,
 } from "@jobhunter/contracts";
-import { useEffect, useMemo, useState, type Dispatch, type JSX, type SetStateAction } from "react";
+import type { Descendant, TElement, Value } from "platejs";
+import {
+  Plate,
+  PlateContent,
+  createPlatePlugin,
+  usePlateEditor,
+  type PlateElementProps,
+} from "platejs/react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type JSX,
+  type SetStateAction,
+} from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
-import type { PdfAuditLineSelection } from "../../../shared/ui/PdfPreviewViewer.js";
+import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
 
@@ -21,11 +40,64 @@ interface ResumeAuditPinsProps {
   readonly onSelectedLineChange?: Dispatch<SetStateAction<PdfAuditLineSelection | null>>;
 }
 
+interface ResumePlateEditorProps {
+  readonly artifactId: string;
+  readonly finalUrl: string;
+  readonly htmlUrl: string | null;
+  readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lineTargets: readonly PdfAuditLineTarget[];
+  readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
+  readonly resumeText?: string | null;
+  readonly selectedLine?: PdfAuditLineSelection | null;
+  readonly title: string;
+  readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+}
+
 interface ResumeLineEntry {
   readonly lineLabel?: string | undefined;
   readonly lineNumber?: number | undefined;
   readonly text: string;
   readonly kind: "name" | "contact" | "section" | "metadata" | "bullet" | "body";
+}
+
+interface ResumePlateLine extends ResumeLineEntry {
+  readonly id: string;
+  readonly className: string;
+  readonly pageNumber: number;
+  readonly semanticId: string | null;
+  readonly tagName: string;
+}
+
+interface ResumePlateComment {
+  readonly sourceLabel: string | null;
+  readonly sourceText: string | null;
+  readonly status: string;
+  readonly tone: "ok" | "info" | "warn";
+  readonly why: string | null;
+}
+
+interface ResumePlateDomElement extends TElement {
+  readonly type: "resume_block" | "resume_inline";
+  readonly className?: string | undefined;
+  readonly href?: string | undefined;
+  readonly lineNumber?: number | undefined;
+  readonly pageNumber?: number | undefined;
+  readonly semanticId?: string | null | undefined;
+  readonly tagName: string;
+}
+
+interface ResumePlateLineEntry {
+  readonly index: number;
+  readonly line: ResumePlateLine;
+}
+
+interface ResumePlateRenderContextValue {
+  readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lineEntries: ReadonlyMap<number | undefined, ResumePlateLineEntry>;
+  readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly pins: readonly ResumeAuditPin[];
+  readonly risk: RiskSignals;
+  readonly selectedLine: PdfAuditLineSelection | null | undefined;
 }
 
 interface ResumeAuditPin {
@@ -87,6 +159,34 @@ const RENDERED_RESUME_SECTION_HEADINGS = new Set([
   "summary",
   "technical skills",
 ]);
+
+const RESUME_PLATE_BLOCK_TAGS = new Set([
+  "article",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "header",
+  "li",
+  "main",
+  "p",
+  "section",
+  "ul",
+]);
+
+const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "span", "strong"]);
+
+const RESUME_PLATE_BLOCK_PLUGIN = createPlatePlugin({
+  key: "resume_block",
+  node: { isElement: true },
+});
+
+const RESUME_PLATE_INLINE_PLUGIN = createPlatePlugin({
+  key: "resume_inline",
+  node: { isElement: true, isInline: true },
+});
+
+const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN];
 
 function yesNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) return "not recorded";
@@ -291,11 +391,11 @@ function linePinId(line: ResumeLineEntry): string {
 }
 
 function lineTitle(line: ResumeLineEntry): string {
-  return line.lineNumber ? `Line ${line.lineNumber}` : line.lineLabel ?? "Rendered PDF line";
+  return line.lineNumber ? `Line ${line.lineNumber}` : line.lineLabel ?? "Rendered resume line";
 }
 
 function lineLabelForSelection(selection: PdfAuditLineSelection): string {
-  return `PDF page ${selection.pageNumber} line ${selection.pageLineIndex}`;
+  return `Resume page ${selection.pageNumber} line ${selection.pageLineIndex}`;
 }
 
 function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeAuditPin[] {
@@ -377,8 +477,8 @@ function pinFromProfileSourceLine(
     matchedKeywords: [],
     rationale:
       match.fields.length === 1
-        ? "This selected PDF line is rendered from the Profile field shown above."
-        : "This selected PDF line is rendered from the Profile fields shown above.",
+        ? "This selected resume line is rendered from the Profile field shown above."
+        : "This selected resume line is rendered from the Profile fields shown above.",
   };
 }
 
@@ -412,7 +512,7 @@ function pinFromResumeLine(
       matchedSignals: [],
       matchedKeywords: [],
       rationale:
-        "This selected PDF line is document structure, not a generated claim requiring source attribution.",
+        "This selected resume line is document structure, not a generated claim requiring source attribution.",
     };
   }
 
@@ -504,7 +604,7 @@ function pinFromResumeLine(
       matchedSignals: contextChange.jobSignals,
       matchedKeywords: [],
       rationale:
-        "No exact Profile source field was recorded for this selected PDF line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
+        "No exact Profile source field was recorded for this selected resume line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
     };
   }
 
@@ -594,6 +694,229 @@ function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineE
     });
   });
   return lines;
+}
+
+const RESUME_HTML_LINE_SELECTOR = "[data-resume-line-number]";
+
+function parsePositiveInteger(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function cleanRenderedText(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function resumePlateTextNode(text: string): Descendant | null {
+  const clean = text.replace(/\s+/g, " ");
+  if (!clean.trim()) return null;
+  return { text: clean };
+}
+
+function resumePlateChildrenFromDom(element: Element): Descendant[] {
+  const children = Array.from(element.childNodes)
+    .map((node) => resumePlateNodeFromDom(node))
+    .filter((node): node is Descendant => Boolean(node));
+  return children.length ? children : [{ text: "" }];
+}
+
+function resumePlateNodeFromDom(node: Node): Descendant | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return resumePlateTextNode(node.textContent ?? "");
+  }
+  if (!(node instanceof HTMLElement)) return null;
+  const tagName = node.tagName.toLowerCase();
+  const isInline = RESUME_PLATE_INLINE_TAGS.has(tagName);
+  if (!isInline && !RESUME_PLATE_BLOCK_TAGS.has(tagName)) {
+    return resumePlateTextNode(cleanRenderedText(node.textContent));
+  }
+  return {
+    children: resumePlateChildrenFromDom(node),
+    className: node.getAttribute("class") || undefined,
+    href: tagName === "a" ? safeResumeHref(node.getAttribute("href")) : undefined,
+    lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
+    pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
+    semanticId: node.getAttribute("data-resume-layout-target") || null,
+    tagName,
+    type: isInline ? "resume_inline" : "resume_block",
+  };
+}
+
+function safeResumeHref(value: string | null): string | undefined {
+  const href = value?.trim();
+  if (!href) return undefined;
+  return /^(?:https?:|mailto:|tel:)/i.test(href) ? href : undefined;
+}
+
+function resumePlateValueFromHtml(html: string): Value {
+  if (typeof DOMParser === "undefined") {
+    return [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
+  }
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const page = doc.querySelector<HTMLElement>(".resume-page");
+  const nodes = Array.from((page ? [page] : Array.from(doc.body.children)) as Iterable<Element>)
+    .map((node) => resumePlateNodeFromDom(node))
+    .filter((node): node is Descendant => Boolean(node));
+  return nodes.length
+    ? (nodes as Value)
+    : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
+}
+
+function kindForHtmlElement(element: HTMLElement, index: number, text: string): ResumeLineEntry["kind"] {
+  const className = element.getAttribute("class") ?? "";
+  const tagName = element.tagName.toLowerCase();
+  if (className.includes("resume-name") || tagName === "h1") return "name";
+  if (className.includes("resume-contact")) return "contact";
+  if (tagName === "h2") return "section";
+  if (tagName === "li") return "bullet";
+  if (className.includes("resume-meta") || className.includes("resume-entry-title") || tagName === "h3") {
+    return "metadata";
+  }
+  return lineKindForText(text, index, index === 0);
+}
+
+function plateTagForKind(kind: ResumeLineEntry["kind"]): ResumePlateLine["tagName"] {
+  if (kind === "name") return "h1";
+  if (kind === "section") return "h2";
+  if (kind === "metadata") return "h3";
+  return "div";
+}
+
+function layoutBoxForLine(
+  line: {
+    readonly lineNumber?: number | null | undefined;
+    readonly semanticId?: string | null | undefined;
+    readonly text: string;
+  },
+  layoutBoxes: readonly ResumeLayoutBox[],
+): ResumeLayoutBox | null {
+  if (line.lineNumber) {
+    const byNumber = layoutBoxes.find((box) => box.lineNumber === line.lineNumber);
+    if (byNumber) return byNumber;
+  }
+  if (line.semanticId) {
+    const byId = layoutBoxes.find((box) => box.semanticId === line.semanticId);
+    if (byId) return byId;
+  }
+  const normalizedText = normalizeResumeLine(line.text);
+  return layoutBoxes.find((box) => textsMatchLine(box.textExcerpt, normalizedText)) ?? null;
+}
+
+function resumePlateLinesFromHtml(html: string, layoutBoxes: readonly ResumeLayoutBox[]): ResumePlateLine[] {
+  if (typeof DOMParser === "undefined") return [];
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const page = doc.querySelector<HTMLElement>(".resume-page") ?? doc.body;
+  if (!page) return [];
+  return Array.from(page.querySelectorAll<HTMLElement>(RESUME_HTML_LINE_SELECTOR))
+    .map((element, index): ResumePlateLine | null => {
+      const text = cleanRenderedText(element.textContent);
+      if (!text) return null;
+      const lineNumber = parsePositiveInteger(element.getAttribute("data-resume-line-number")) ?? undefined;
+      const kind = kindForHtmlElement(element, index, text);
+      const semanticId =
+        element.getAttribute("data-resume-layout-target") ||
+        (kind === "section" ? `section:${normalizeResumeLine(text)}` : null);
+      const provisionalLine = { lineNumber, semanticId, text };
+      const layoutBox = layoutBoxForLine(provisionalLine, layoutBoxes);
+      const pageNumber =
+        layoutBox?.pageNumber ??
+        parsePositiveInteger(element.closest<HTMLElement>("[data-resume-page]")?.getAttribute("data-resume-page") ?? null) ??
+        1;
+      const id = lineNumber ? `resume:${lineNumber}` : `html:${semanticId ?? index}:${normalizeResumeLine(text)}`;
+      return {
+        id,
+        className: element.getAttribute("class") ?? "",
+        kind,
+        lineLabel: lineNumber ? undefined : kind === "section" ? `Section: ${text}` : `Rendered line ${index + 1}`,
+        lineNumber,
+        pageNumber,
+        semanticId,
+        tagName: plateTagForKind(kind),
+        text,
+      };
+    })
+    .filter((line): line is ResumePlateLine => Boolean(line));
+}
+
+function resumePlateLinesFromText(
+  resumeText: string | null | undefined,
+  lineTargets: readonly PdfAuditLineTarget[],
+): ResumePlateLine[] {
+  const targets = lineTargets.length ? lineTargets : resumeLineTargetsFromText(resumeText);
+  let firstContentLine = true;
+  return targets.map((target, index) => {
+    const kind = lineKindForText(target.text.trim(), index, firstContentLine);
+    firstContentLine = false;
+    return {
+      id: `resume:${target.lineNumber}`,
+      className: kind === "bullet" ? "resume-line" : "",
+      kind,
+      lineNumber: target.lineNumber,
+      pageNumber: 1,
+      semanticId: null,
+      tagName: plateTagForKind(kind),
+      text: target.text.trim(),
+    };
+  });
+}
+
+function resumeLineTargetsFromText(resumeText: string | null | undefined): PdfAuditLineTarget[] {
+  return (resumeText ?? "")
+    .split(/\r?\n/)
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      text: line.replace(/\t/g, "  ").trimEnd(),
+    }))
+    .filter((line) => line.text.trim().length > 0);
+}
+
+function pinForPlateLine(
+  line: ResumePlateLine,
+  index: number,
+  pins: readonly ResumeAuditPin[],
+): ResumeAuditPin | null {
+  if (pins[index]?.tailoredText.some((text) => textsMatchLine(text, line.text))) {
+    return pins[index] ?? null;
+  }
+  if (line.lineNumber) {
+    const byNumber = pins.find((pin) => pin.lineNumber === line.lineNumber);
+    if (byNumber) return byNumber;
+  }
+  return pins.find((pin) => pin.tailoredText.some((text) => textsMatchLine(text, line.text))) ?? null;
+}
+
+function inlineCommentForPin(pin: ResumeAuditPin, risk: RiskSignals): ResumePlateComment {
+  const signals = pin.matchedSignals.length ? `Signals reflected: ${pin.matchedSignals.join(", ")}.` : "";
+  const sourceText = primarySourceTextForPin(pin)?.[0] ?? null;
+  const why = [pin.rationale, signals].filter(Boolean).join(" ").trim() || null;
+  return {
+    sourceLabel:
+      pin.sourceGranularity === "structure" || pin.sourceGranularity === "missing"
+        ? null
+        : sourceLabelForJustification(pin),
+    sourceText,
+    status: pinStatus(pin, risk),
+    tone: pinTone(pin, risk),
+    why,
+  };
+}
+
+function selectionFromPlateLine(
+  line: ResumePlateLine,
+  index: number,
+  layoutBoxes: readonly ResumeLayoutBox[],
+): PdfAuditLineSelection {
+  const layoutBox = layoutBoxForLine(line, layoutBoxes);
+  const lineNumber = line.lineNumber ?? layoutBox?.lineNumber ?? null;
+  return {
+    lineKey: lineNumber ? `resume:${lineNumber}` : `html:${line.semanticId ?? index}:${normalizeResumeLine(line.text)}`,
+    lineNumber,
+    pageLineIndex: lineNumber ?? index + 1,
+    pageNumber: layoutBox?.pageNumber ?? line.pageNumber,
+    resumeLineText: line.text,
+    text: line.text,
+  };
 }
 
 function resumeLineFromPdfSelection(selection: PdfAuditLineSelection): ResumeLineEntry {
@@ -907,6 +1230,342 @@ export function ArtifactGroundingRiskPanel({
   return <RiskPanel className="apply-review-preview-block apply-review-artifact-risk resume-pin-risk" risk={risk} />;
 }
 
+type ResumeHtmlState =
+  | { readonly status: "idle"; readonly html: null; readonly message: null }
+  | { readonly status: "loading"; readonly html: null; readonly message: null }
+  | { readonly status: "ready"; readonly html: string; readonly message: null }
+  | { readonly status: "legacy"; readonly html: null; readonly message: string }
+  | { readonly status: "missing"; readonly html: null; readonly message: string }
+  | { readonly status: "error"; readonly html: null; readonly message: string };
+
+function selectedLineMatchesElement(
+  selectedLine: PdfAuditLineSelection | null | undefined,
+  line: ResumePlateLine,
+  index: number,
+): boolean {
+  if (!selectedLine) return false;
+  if (line.lineNumber !== undefined && selectedLine.lineNumber === line.lineNumber) {
+    return true;
+  }
+  if (selectedLine.lineNumber !== null) {
+    return false;
+  }
+  return selectedLine.lineKey === `html:${line.semanticId ?? index}:${normalizeResumeLine(line.text)}`;
+}
+
+function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateComment }): JSX.Element {
+  return (
+    <span
+      aria-label="JobHunter resume comment"
+      className={`resume-plate-comment ${comment.tone}`}
+      contentEditable={false}
+      role="note"
+    >
+      <span className="resume-plate-comment-head">
+        <b>JobHunter</b>
+        <span>{comment.status}</span>
+      </span>
+      {comment.sourceText ? (
+        <span>
+          <b>{comment.sourceLabel ?? "Source"}</b>: {comment.sourceText}
+        </span>
+      ) : null}
+      {comment.why ? <span>{comment.why}</span> : null}
+    </span>
+  );
+}
+
+function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
+  return RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)
+    ? (tagName as keyof HTMLElementTagNameMap)
+    : "div";
+}
+
+const ResumePlateRenderContext = createContext<ResumePlateRenderContextValue | null>(null);
+
+function useResumePlateRenderContext(): ResumePlateRenderContextValue {
+  const value = useContext(ResumePlateRenderContext);
+  if (!value) {
+    throw new Error("ResumePlateDocument must render resume Plate elements inside ResumePlateRenderContext.");
+  }
+  return value;
+}
+
+function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
+  const { layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine } = useResumePlateRenderContext();
+  const element = props.element;
+  const lineEntry = element.lineNumber ? lineEntries.get(element.lineNumber) : undefined;
+  const pin = lineEntry ? pinForPlateLine(lineEntry.line, lineEntry.index, pins) : null;
+  const comment = pin ? inlineCommentForPin(pin, risk) : null;
+  const selected = lineEntry ? selectedLineMatchesElement(selectedLine, lineEntry.line, lineEntry.index) : false;
+  const showComment = Boolean(comment && (selected || comment.tone === "warn"));
+  const className = [
+    element.className,
+    element.lineNumber ? "jobhunter-review-line" : "",
+    comment ? "has-jobhunter-comment" : "",
+    selected ? "jobhunter-selected-line" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const handleSelect = element.lineNumber && lineEntry
+    ? () => onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes))
+    : undefined;
+  return createElement(
+    safeResumePlateTag(element.tagName),
+    {
+      ...props.attributes,
+      className: className || undefined,
+      "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-line-number": element.lineNumber,
+      "data-resume-page": element.pageNumber,
+      onClick: handleSelect,
+      onMouseDown: handleSelect,
+      onPointerDown: handleSelect,
+    },
+    props.children,
+    showComment && comment ? <ResumePlateCommentBubble comment={comment} /> : null,
+  );
+}
+
+function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
+  const element = props.element;
+  const isLink = element.tagName === "a" && element.href;
+  const isExternalLink = isLink && /^https?:/i.test(element.href ?? "");
+  return createElement(
+    safeResumePlateTag(element.tagName),
+    {
+      ...props.attributes,
+      className: element.className,
+      "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-line-number": element.lineNumber,
+      href: isLink ? element.href : undefined,
+      rel: isExternalLink ? "noreferrer" : undefined,
+      target: isExternalLink ? "_blank" : undefined,
+    },
+    props.children,
+  );
+}
+
+const RESUME_PLATE_COMPONENTS = {
+  resume_block: ResumeBlockElement,
+  resume_inline: ResumeInlineElement,
+};
+
+function ResumePlateDocument({
+  html,
+  layoutBoxes,
+  lines,
+  onSelectLine,
+  pins,
+  risk,
+  selectedLine,
+  title,
+}: {
+  readonly html: string;
+  readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lines: readonly ResumePlateLine[];
+  readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly pins: readonly ResumeAuditPin[];
+  readonly risk: RiskSignals;
+  readonly selectedLine: PdfAuditLineSelection | null | undefined;
+  readonly title: string;
+}): JSX.Element {
+  const value = useMemo(() => resumePlateValueFromHtml(html), [html]);
+  const lineEntries = useMemo<ReadonlyMap<number | undefined, ResumePlateLineEntry>>(
+    () => new Map(lines.map((line, index) => [line.lineNumber, { index, line }])),
+    [lines],
+  );
+  const renderContext = useMemo<ResumePlateRenderContextValue>(
+    () => ({
+      layoutBoxes,
+      lineEntries,
+      onSelectLine,
+      pins,
+      risk,
+      selectedLine,
+    }),
+    [layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine],
+  );
+
+  const editor = usePlateEditor(
+    {
+      components: RESUME_PLATE_COMPONENTS,
+      plugins: RESUME_PLATE_PLUGINS,
+      value,
+    },
+    [value],
+  );
+
+  return (
+    <ResumePlateRenderContext.Provider value={renderContext}>
+      <Plate editor={editor}>
+        <PlateContent
+          aria-label={`${title} editor`}
+          aria-multiline="true"
+          className="resume-plate-document"
+          data-rendered-line-count={lines.length}
+          role="textbox"
+          spellCheck={false}
+        />
+      </Plate>
+    </ResumePlateRenderContext.Provider>
+  );
+}
+
+function ResumeHtmlUnavailable({
+  message,
+  status,
+}: {
+  readonly message: string;
+  readonly status: Exclude<ResumeHtmlState["status"], "idle" | "loading" | "ready">;
+}): JSX.Element {
+  const title =
+    status === "legacy"
+      ? "This resume was rendered before the HTML/CSS renderer."
+      : status === "missing"
+        ? "The generated HTML source is missing."
+        : "The generated HTML source could not be loaded.";
+  return (
+    <div className={`resume-html-unavailable ${status}`} role="status">
+      <b>{title}</b>
+      <span>{message}</span>
+      <span>The printable final file is still available from the open final file link.</span>
+    </div>
+  );
+}
+
+export function ResumePlateEditor({
+  artifactId,
+  finalUrl,
+  htmlUrl,
+  layoutBoxes,
+  lineTargets,
+  profileSourceFields = [],
+  resumeText,
+  selectedLine,
+  title,
+  onSelectLine,
+}: ResumePlateEditorProps): JSX.Element {
+  const detail = useArtifactDetailQuery(artifactId);
+  const explanation = detail.data?.tailoringExplanation ?? null;
+  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
+  const provenanceReady = detail.isSuccess || detail.isError;
+  const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
+    status: htmlUrl ? "loading" : "idle",
+    html: null,
+    message: null,
+  });
+
+  useEffect(() => {
+    if (!htmlUrl) {
+      setHtmlState({ status: "idle", html: null, message: null });
+      return;
+    }
+    const abortController = new AbortController();
+    setHtmlState({ status: "loading", html: null, message: null });
+    fetch(htmlUrl, { signal: abortController.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => null);
+          const message =
+            errorBody && typeof errorBody === "object" && "message" in errorBody && typeof errorBody.message === "string"
+              ? errorBody.message
+              : `HTML preview request failed with ${response.status}.`;
+          if (response.status === 415) {
+            setHtmlState({ status: "legacy", html: null, message });
+            return null;
+          }
+          if (response.status === 404) {
+            setHtmlState({ status: "missing", html: null, message });
+            return null;
+          }
+          throw new Error(message);
+        }
+        return response.text();
+      })
+      .then((html) => {
+        if (!abortController.signal.aborted && html !== null) {
+          setHtmlState({ status: "ready", html, message: null });
+        }
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) return;
+        const message = error instanceof Error ? error.message : "HTML preview request failed.";
+        setHtmlState({ status: "error", html: null, message });
+      });
+    return () => abortController.abort();
+  }, [htmlUrl]);
+
+  const htmlLines = useMemo(
+    () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
+    [htmlState, layoutBoxes],
+  );
+  const plateLines = htmlLines;
+  const linePins = useMemo(
+    () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
+    [explanation, plateLines, profileSourceFields, provenanceReady],
+  );
+
+  useEffect(() => {
+    if (selectedLine || !plateLines.length) return;
+    const firstLine = plateLines[0];
+    if (!firstLine) return;
+    onSelectLine(selectionFromPlateLine(firstLine, 0, layoutBoxes));
+  }, [layoutBoxes, onSelectLine, plateLines, selectedLine]);
+
+  const unavailableMessage =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.message
+      : null;
+  const unavailableStatus =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.status
+      : null;
+
+  return (
+    <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length}>
+      <div className="resume-plate-toolbar">
+        <b>{title}</b>
+        <span className="mono">Plate HTML/CSS editor</span>
+        <a href={finalUrl} rel="noreferrer" target="_blank">
+          open final file
+        </a>
+      </div>
+      <div className="resume-plate-scroll">
+        {htmlState.status === "ready" ? (
+          <div className="resume-plate-page" aria-label="Editable resume page">
+            <ResumePlateDocument
+              html={htmlState.html}
+              layoutBoxes={layoutBoxes}
+              lines={plateLines}
+              pins={linePins}
+              risk={risk}
+              selectedLine={selectedLine}
+              title={title}
+              onSelectLine={onSelectLine}
+            />
+          </div>
+        ) : unavailableMessage && unavailableStatus ? (
+          <ResumeHtmlUnavailable
+            message={unavailableMessage}
+            status={unavailableStatus}
+          />
+        ) : htmlState.status === "loading" ? (
+          <Empty title="Loading generated resume HTML." />
+        ) : (
+          <Empty
+            title={
+              resumeText || lineTargets.length
+                ? "This resume needs HTML migration before review."
+                : "Resume text is still being prepared."
+            }
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
 function lineagePrecision(pin: ResumeAuditPin): string {
   if (pin.sourceGranularity === "bullet") return "Bullet provenance";
   if (pin.sourceGranularity === "profile_field") return "Profile field match";
@@ -939,7 +1598,7 @@ function SourceEvidencePreview({
     return <span className="resume-pin-source-evidence muted">Resume structure; no Profile source field required.</span>;
   }
   if (pin.sourceGranularity === "missing") {
-    return <span className="resume-pin-source-evidence missing">No Profile source field was recorded for this selected PDF line.</span>;
+    return <span className="resume-pin-source-evidence missing">No Profile source field was recorded for this selected resume line.</span>;
   }
   if (!sourceText?.length) {
     return <span className="resume-pin-source-evidence missing">No Profile source text was resolved for this pointer.</span>;
@@ -1002,7 +1661,7 @@ function sourceLabelForJustification(pin: ResumeAuditPin): string {
 
 function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
   if (pin.sourceGranularity === "missing") {
-    return <p className="muted">No Profile source field mapping was recorded for this selected PDF line.</p>;
+    return <p className="muted">No Profile source field mapping was recorded for this selected resume line.</p>;
   }
   if (pin.sourceGranularity === "structure") {
     return <p className="muted">This resume structure line does not require source attribution.</p>;
@@ -1038,7 +1697,7 @@ function LineJustification({ pin }: { readonly pin: ResumeAuditPin }): JSX.Eleme
             <SourceEvidencePreview expanded pin={pin} text={primarySourceText} />
             {pin.sourcePrecision === "section_span" ? (
               <span className="muted">
-                Exact Profile source-field provenance was not recorded for this selected PDF line.
+                Exact Profile source-field provenance was not recorded for this selected resume line.
               </span>
             ) : null}
           </dd>
@@ -1104,7 +1763,7 @@ function SelectedPinInspector({
           </div>
         ) : pin.lineLabel ? (
           <div>
-            <dt>PDF line</dt>
+            <dt>Resume line</dt>
             <dd>{pin.lineLabel}</dd>
           </div>
         ) : null}

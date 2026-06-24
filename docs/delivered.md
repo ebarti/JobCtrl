@@ -3,6 +3,38 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-06-24: HTML/CSS Resume Rendering And Plate Review Surface
+
+Plan:
+
+- `docs/plans/implemented/2026-06-22-swap-latex-for-html-css.md`
+
+Delivered (PR #188):
+
+- Resume PDF generation defaults to an HTML/CSS + Playwright renderer, with
+  LaTeX retained only as an explicit compatibility renderer through
+  `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
+- Generated resume PDFs keep the existing `resume_pdf` artifact contract and
+  are tagged with `RenderFormat.HTML_PDF`.
+- The renderer stores a generated sibling HTML file and generation-time layout
+  boxes; the API exposes `/preview.html` for HTML-rendered resume artifacts and
+  projects layout boxes into Apply Review materials preview data.
+- Apply Review renders the generated resume HTML through a Plate-backed review
+  surface, keeps the final PDF available through "open final file", and renders
+  deterministic JobHunter audit annotations directly beside resume lines.
+- Legacy approved resume artifacts can be migrated or refreshed onto the same
+  HTML/CSS source path with `jobhunter migrate-resume-html`.
+
+Validation:
+
+- Renderer, migration, persistence, projection, API, and Apply Review tests were
+  updated for the HTML/CSS renderer, sibling HTML preview route, layout boxes,
+  legacy migration, Plate rendering, line selection, safe links, and JobHunter
+  annotations.
+- Local verification for PR #188 included Python renderer/migration tests,
+  targeted web Apply Review tests, web/API typechecks, full `pnpm test`, and a
+  live browser smoke on `/apply-review`.
+
 ## 2026-06-05: Recent Local Product Stack Reconciliation
 
 Plans:

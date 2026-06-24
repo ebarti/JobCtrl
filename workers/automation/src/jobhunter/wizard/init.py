@@ -114,10 +114,10 @@ def _prompt_bullets(label: str) -> list[str]:
 
 
 def _setup_structured_resume(profile: dict) -> None:
-    """Collect the mandatory structured resume block used for tailoring and LaTeX."""
+    """Collect the mandatory structured resume block used for tailoring."""
     console.print("\n[bold cyan]Structured Resume Template[/bold cyan]")
     console.print(
-        "[dim]This is the canonical resume JobHunter tailors and renders with LaTeX. "
+        "[dim]This is the canonical resume JobHunter tailors and renders to PDF. "
         "You can edit the profile later in the local UI.[/dim]"
     )
 

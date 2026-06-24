@@ -504,6 +504,7 @@ class ProjectionBuilder:
         employer_analysis_json = self._load_employer_analysis(job_url)
         requirement_fit_report_json = self._load_requirement_fit_report(job_url)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
+        layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
         apply_run = self._load_latest_apply_run(job_url)
         deleted_at = self._load_deleted_at(job_url)
@@ -663,6 +664,7 @@ class ProjectionBuilder:
                 created_at=a.get("created_at"),
                 generation=a.get("generation"),
                 metadata_json=a.get("metadata_json"),
+                layout_boxes_json=layout_boxes_by_artifact.get(a["artifact_id"]),
                 bullet_provenance_json=provenance_by_artifact.provenance.get(a["artifact_id"]),
                 coverage_audit_json=provenance_by_artifact.coverage.get(a["artifact_id"]),
                 voice_pass_json=provenance_by_artifact.voice.get(a["artifact_id"]),
@@ -1245,6 +1247,40 @@ class ProjectionBuilder:
             pass
         return artifacts
 
+    def _load_layout_boxes_by_artifact(self, job_url: str) -> dict[str, str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT artifact_id, semantic_id, page_number, line_number,
+                       text_excerpt, left_pct, top_pct, width_pct, height_pct
+                FROM job_material_layout_boxes
+                WHERE job_url = ? AND tenant_id = ?
+                ORDER BY artifact_id, page_number, box_index
+                """,
+                (job_url, str(self._tenant_id)),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+
+        by_artifact: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            artifact_id = _row_str(row, "artifact_id")
+            if not artifact_id:
+                continue
+            by_artifact.setdefault(artifact_id, []).append(
+                {
+                    "semanticId": _row_str(row, "semantic_id"),
+                    "pageNumber": _row_int(row, "page_number"),
+                    "lineNumber": _row_nullable_int(row, "line_number"),
+                    "textExcerpt": _row_str(row, "text_excerpt"),
+                    "leftPct": _row_float(row, "left_pct"),
+                    "topPct": _row_float(row, "top_pct"),
+                    "widthPct": _row_float(row, "width_pct"),
+                    "heightPct": _row_float(row, "height_pct"),
+                }
+            )
+        return {artifact_id: json.dumps(boxes, sort_keys=True) for artifact_id, boxes in by_artifact.items()}
+
     # ------------------------------------------------------------- dashboard
 
     def _rebuild_dashboard(self) -> None:
@@ -1693,6 +1729,22 @@ def _row_nullable_int(row: object, key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _row_int(row: object, key: str) -> int:
+    return _row_nullable_int(row, key) or 0
+
+
+def _row_float(row: object, key: str) -> float:
+    value = _row_get(row, key)
+    if value is None or value == "":
+        return 0.0
+    if not isinstance(value, (int, str, float, bytes)):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _posted_fact_from_row(row: object) -> dict[str, Any]:

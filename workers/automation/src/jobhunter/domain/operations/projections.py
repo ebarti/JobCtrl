@@ -173,6 +173,11 @@ class ArtifactListProjection:
     created_at: str | None = None
     generation: int | None = None
     metadata_json: str | None = None
+    # Resume PDF generation-time layout boxes. The renderer records these from
+    # the final print DOM and the Materials repository persists them as canonical
+    # rows, so Apply Review does not need to reverse-engineer HTML-rendered PDFs
+    # through pdf.js text matching.
+    layout_boxes_json: str | None = None
     # Phase 2: the canonical per-bullet provenance read shape (JSON of the
     # generation's ``BulletProvenanceSet.to_read_model()``), or None when no
     # provenance was recorded (e.g. PDF artifacts, or a legacy generation tailored

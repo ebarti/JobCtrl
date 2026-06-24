@@ -24,6 +24,7 @@ import type {
   OutcomeSuggestionStatus,
   RequirementFitAssessment,
   RequirementFitReport,
+  ResumeLayoutBox,
   ScoreBreakdown,
   ScoreTrace,
   ScoringCriteriaSnapshot,
@@ -1401,7 +1402,7 @@ function uniqueProfileSourceFields(fields: readonly ApplyReviewProfileSourceFiel
 
 type ResumeMaterialPreview = Pick<
   ApplyReviewQueueItem["materialsPreview"],
-  "resumeText" | "resumeTextArtifactId" | "resumePdfArtifactId"
+  "resumeText" | "resumeTextArtifactId" | "resumePdfArtifactId" | "resumePdfLayoutBoxes"
 >;
 
 interface MaterialArtifactCandidate {
@@ -1453,6 +1454,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeText: text.preview,
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
+        resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
       };
     }
   }
@@ -1463,6 +1465,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeText: null,
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
+      resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
     };
   }
 
@@ -1472,6 +1475,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeText: text.preview,
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
+      resumePdfLayoutBoxes: [],
     };
   }
 
@@ -1479,7 +1483,63 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     resumeText: null,
     resumeTextArtifactId: null,
     resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,
+    resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
+      ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
+      : [],
   };
+}
+
+function resumeLayoutBoxesForArtifact(db: SqliteDatabase, artifactId: string | null): ResumeLayoutBox[] {
+  if (!artifactId || !tableExists(db, "artifact_list_projections")) return [];
+  const row = getRow<{ layout_boxes_json?: string | null }>(
+    db,
+    "SELECT layout_boxes_json FROM artifact_list_projections WHERE artifact_id = ?",
+    [artifactId],
+  );
+  return parseResumeLayoutBoxes(row?.layout_boxes_json ?? null);
+}
+
+function parseResumeLayoutBoxes(value: string | null): ResumeLayoutBox[] {
+  let parsed: unknown = null;
+  try {
+    parsed = value ? JSON.parse(value) : null;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const boxes: ResumeLayoutBox[] = [];
+  for (const raw of parsed) {
+    if (!isRecord(raw)) continue;
+    const semanticId = cleanLimitedText(raw.semanticId, 160);
+    const textExcerpt = cleanLimitedText(raw.textExcerpt, 500);
+    const pageNumber = positiveInteger(raw.pageNumber);
+    const leftPct = boundedPercent(raw.leftPct);
+    const topPct = boundedPercent(raw.topPct);
+    const widthPct = boundedPercent(raw.widthPct);
+    const heightPct = boundedPercent(raw.heightPct);
+    if (
+      !semanticId ||
+      !textExcerpt ||
+      pageNumber === null ||
+      leftPct === null ||
+      topPct === null ||
+      widthPct === null ||
+      heightPct === null
+    ) {
+      continue;
+    }
+    boxes.push({
+      semanticId,
+      pageNumber,
+      lineNumber: nullableInteger(raw.lineNumber),
+      textExcerpt,
+      leftPct,
+      topPct,
+      widthPct,
+      heightPct,
+    });
+  }
+  return boxes;
 }
 
 function firstReadableTextCandidate(
@@ -1844,4 +1904,25 @@ function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableInteger(value: unknown): number | null {
+  const parsed = nullableNumber(value);
+  if (parsed === null) return null;
+  return Number.isInteger(parsed) ? parsed : Math.trunc(parsed);
+}
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = nullableInteger(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function boundedPercent(value: unknown): number | null {
+  const parsed = nullableNumber(value);
+  if (parsed === null || parsed < 0) return null;
+  return Math.min(100, parsed);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

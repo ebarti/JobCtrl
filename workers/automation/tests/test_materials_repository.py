@@ -67,7 +67,11 @@ def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") 
 
 
 def _make_artifact(
-    artifact_type: ArtifactType, *, path: str, render_format: RenderFormat = RenderFormat.TEXT
+    artifact_type: ArtifactType,
+    *,
+    path: str,
+    render_format: RenderFormat = RenderFormat.TEXT,
+    metadata: dict | None = None,
 ) -> Artifact:
     return Artifact.create(
         type=artifact_type,
@@ -75,6 +79,7 @@ def _make_artifact(
         created_at="2024-01-01T00:00:00+00:00",
         render_format=render_format,
         size_bytes=128,
+        metadata=metadata,
     )
 
 
@@ -225,6 +230,79 @@ def test_save_idempotent_within_same_generation(conn: sqlite3.Connection) -> Non
     assert loaded is not None
     assert loaded.cover_letter is not None
     assert loaded.cover_letter.status is ArtifactStatus.APPROVED
+
+
+def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
+    conn: sqlite3.Connection,
+) -> None:
+    url = _seed_job(conn)
+    repo = SqliteMaterialsRepository(conn)
+    layout_boxes = [
+        {
+            "semantic_id": "experience:acme:bullet:1",
+            "page_number": 1,
+            "line_number": 6,
+            "text_excerpt": "Cut latency.",
+            "left_pct": 12.5,
+            "top_pct": 24.0,
+            "width_pct": 62.0,
+            "height_pct": 2.4,
+            "audit_target": {"bulletId": "experience:acme:bullet:1"},
+        },
+        {
+            "semantic_id": "",
+            "page_number": 0,
+            "text_excerpt": "invalid",
+            "left_pct": 200,
+            "top_pct": -5,
+            "width_pct": 20,
+            "height_pct": 2,
+        },
+    ]
+    pdf = _make_artifact(
+        ArtifactType.RESUME_PDF,
+        path="/tmp/resume.pdf",
+        render_format=RenderFormat.HTML_PDF,
+        metadata={"layout_boxes": layout_boxes, "layout_source": "html_resume_dom"},
+    )
+    repo.save(_approved(url).with_resume_pdf(pdf, updated_at="2024-01-02T01:00:00+00:00"))
+
+    artifact_row = conn.execute(
+        """
+        SELECT metadata_json
+        FROM job_materials_artifacts
+        WHERE job_url = ? AND artifact_id = ?
+        """,
+        (url, pdf.artifact_id),
+    ).fetchone()
+    assert artifact_row is not None
+    assert json.loads(artifact_row["metadata_json"]) == {"layout_source": "html_resume_dom"}
+
+    rows = conn.execute(
+        """
+        SELECT semantic_id, page_number, line_number, text_excerpt,
+               left_pct, top_pct, width_pct, height_pct, audit_target_json
+        FROM job_material_layout_boxes
+        WHERE job_url = ? AND artifact_id = ?
+        """,
+        (url, pdf.artifact_id),
+    ).fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["semantic_id"] == "experience:acme:bullet:1"
+    assert row["page_number"] == 1
+    assert row["line_number"] == 6
+    assert row["text_excerpt"] == "Cut latency."
+    assert row["left_pct"] == 12.5
+    assert row["top_pct"] == 24.0
+    assert row["width_pct"] == 62.0
+    assert row["height_pct"] == 2.4
+    assert json.loads(row["audit_target_json"]) == {"bulletId": "experience:acme:bullet:1"}
+
+    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    assert loaded is not None
+    assert loaded.resume_pdf is not None
+    assert loaded.resume_pdf.metadata == {"layout_source": "html_resume_dom"}
 
 
 # ---------------------------------------------------------------------------

@@ -1520,18 +1520,45 @@ def doctor() -> None:
     else:
         results.append(("resume.txt", fail_mark, "Run 'jobhunter init' to add your resume"))
 
-    # LaTeX is mandatory for tailored resume PDFs.
-    try:
-        from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
+    import os
 
-        results.append(("pdflatex", ok_mark, _find_pdflatex()))
-    except FileNotFoundError:
-        results.append(("pdflatex", fail_mark, "Install TeX Live/MacTeX or set PDFLATEX_PATH"))
+    resume_renderer = os.environ.get("JOBHUNTER_RESUME_RENDERER", "html_pdf").strip().lower()
+    if resume_renderer in {"latex", "latex_pdf", "pdflatex"}:
+        try:
+            from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
+
+            results.append(("resume PDF renderer", ok_mark, f"pdflatex at {_find_pdflatex()}"))
+        except FileNotFoundError:
+            results.append(
+                (
+                    "resume PDF renderer",
+                    fail_mark,
+                    "Install TeX Live/MacTeX, set PDFLATEX_PATH, or unset JOBHUNTER_RESUME_RENDERER",
+                )
+            )
+    else:
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as playwright:
+                chromium_path = str(playwright.chromium.executable_path)
+            if Path(chromium_path).exists():
+                results.append(("resume PDF renderer", ok_mark, f"HTML/CSS via Playwright Chromium at {chromium_path}"))
+            else:
+                results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
+        except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
+            results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
 
     if RESUME_TEMPLATE_PATH.exists():
-        results.append(("resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
+        results.append(("legacy resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
     else:
-        results.append(("resume_template.tex", warn_mark, "Use the local UI profile view to create/edit"))
+        results.append(
+            (
+                "legacy resume_template.tex",
+                "[dim]optional[/dim]",
+                "Only needed with JOBHUNTER_RESUME_RENDERER=latex_pdf",
+            )
+        )
 
     try:
         search_cfg = load_search_config()
@@ -1556,7 +1583,6 @@ def doctor() -> None:
                         "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
 
     # --- Tier 2 checks ---
-    import os
     has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
@@ -1688,6 +1714,50 @@ def doctor() -> None:
         console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
 
     console.print()
+
+
+@app.command("migrate-resume-html")
+def migrate_resume_html(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report matching resume PDFs without writing files or DB rows."),
+    force: bool = typer.Option(False, "--force", help="Refresh already-HTML resume PDFs from their sibling text source."),
+    job_url: Optional[str] = typer.Option(None, "--job-url", help="Limit migration to one job URL."),
+    limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Maximum number of resume PDFs to migrate or refresh."),
+) -> None:
+    """Migrate or refresh approved resume PDFs as HTML/CSS-rendered artifacts."""
+    _bootstrap()
+
+    from jobhunter.database import get_connection
+    from jobhunter.infrastructure.materials.resume_html_migration import migrate_legacy_resume_pdfs
+    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    conn = get_connection()
+    results = migrate_legacy_resume_pdfs(conn, dry_run=dry_run, force=force, job_url=job_url, limit=limit)
+    if not dry_run:
+        ProjectionBuilder(conn_factory=get_connection).refresh()
+
+    table = Table(title="Resume HTML migration")
+    table.add_column("Status")
+    table.add_column("Artifact")
+    table.add_column("Reason")
+    table.add_column("Path")
+    for result in results:
+        table.add_row(result.status, result.artifact_id[:10], result.reason, result.path)
+    console.print(table)
+    migrated = sum(1 for result in results if result.status == "migrated")
+    refreshed = sum(1 for result in results if result.status == "refreshed")
+    ready = sum(1 for result in results if result.status == "would_migrate")
+    ready_refresh = sum(1 for result in results if result.status == "would_refresh")
+    skipped = sum(1 for result in results if result.status == "skipped")
+    if dry_run:
+        console.print(
+            f"[bold]{ready}[/bold] resume PDF(s) ready to migrate; "
+            f"[bold]{ready_refresh}[/bold] ready to refresh; [bold]{skipped}[/bold] skipped."
+        )
+    else:
+        console.print(
+            f"[bold]{migrated}[/bold] resume PDF(s) migrated; "
+            f"[bold]{refreshed}[/bold] refreshed; [bold]{skipped}[/bold] skipped."
+        )
 
 
 @app.command("gmail-auth")
