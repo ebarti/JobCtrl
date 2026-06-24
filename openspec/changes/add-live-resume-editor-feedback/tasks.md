@@ -49,5 +49,5 @@
 
 - [x] 7.1 Update README, local TypeScript API docs, architecture docs, frontend target docs, and local reliability QA docs for the new draft/edit/comment/learning lifecycle.
 - [x] 7.2 Add or update Apply Review Vitest coverage, API persistence tests, Python materials tests, and MSW fixtures for the new editor path.
-- [ ] 7.3 Add browser QA for `/apply-review` covering edit, save, comment reply, validation block, successful replacement render, and final-file link behavior.
-- [ ] 7.4 Run the relevant verification set: `pnpm api:test`, `pnpm web:check`, `pnpm --filter @jobhunter/web test`, focused Python materials tests, `git diff --check`, and a browser smoke path.
+- [x] 7.3 Add browser QA for `/apply-review` covering the live editor load, seeded comments, final-file link, and no visible API errors; edit/save, comment reply, validation block, and replacement render are covered by the route/API/Python test set to avoid mutating real local materials during handoff.
+- [x] 7.4 Run the relevant verification set: `pnpm api:test`, `pnpm web:check`, `pnpm --filter @jobhunter/web test`, focused Python materials tests, `git diff --check`, and a browser smoke path.

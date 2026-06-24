@@ -24,6 +24,7 @@ import {
   type ResumeDraftGateState,
 } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
+import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useResumeReviewDraftQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
@@ -624,6 +625,9 @@ function ResumeLineReview({
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
   const draftSeedKey = pdfArtifactId && auditArtifactId ? `${item.jobKey}:${auditArtifactId}:${pdfArtifactId}` : null;
+  const draftQuery = useResumeReviewDraftQuery(item.jobKey, false);
+  const queriedDraft =
+    draftQuery.data?.draft.jobKey === item.jobKey ? draftQuery.data.draft : null;
   const createdDraft =
     createDraft.data?.draft.jobKey === item.jobKey ? createDraft.data.draft : null;
   const savedDraft =
@@ -633,8 +637,8 @@ function ResumeLineReview({
   const renderedDraft =
     renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data.draft : null;
   const baseDraft = useMemo(
-    () => selectLatestResumeReviewDraft([renderedDraft, seededDraft, savedDraft, createdDraft]),
-    [createdDraft, renderedDraft, savedDraft, seededDraft],
+    () => selectLatestResumeReviewDraft([renderedDraft, seededDraft, savedDraft, createdDraft, queriedDraft]),
+    [createdDraft, queriedDraft, renderedDraft, savedDraft, seededDraft],
   );
   const draft = useMemo(
     () => mergeDraftThread(baseDraft, replyToComment.data?.thread ?? null),
@@ -645,6 +649,7 @@ function ResumeLineReview({
   const seedError = seedCommentThreads.error instanceof Error ? seedCommentThreads.error.message : null;
   const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
   const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
+  const draftLoading = createDraft.isPending && !baseDraft;
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -676,7 +681,7 @@ function ResumeLineReview({
         artifactId={auditArtifactId}
         draft={draft}
         draftError={draftError}
-        draftLoading={createDraft.isPending}
+        draftLoading={draftLoading}
         finalUrl={api.artifactPreviewPdfUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         htmlUrl={api.artifactPreviewHtmlUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}

@@ -1,6 +1,7 @@
 import type {
   ArtifactTailoringExplanation,
   ResumeCommentThread,
+  ResumeReviewCommentThreadSeedRequest,
   ResumeReviewDraft,
   ResumeReviewDraftRevision,
   ResumeReviewEditDelta,
@@ -11,9 +12,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
 import { makeApplyAudit, sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
-import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
+import { buildProviderHarness, createTestQueryClient, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
 
@@ -803,6 +805,35 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("saved revision 1")).toBeInTheDocument();
   });
 
+  it("keeps the cached resume review draft visible while create/load is pending", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const draft = makeResumeReviewDraft(jobKey, {
+      editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+      plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
+    });
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, jobKey), { ok: true, draft });
+    const createResumeReviewDraft = vi.fn(
+      (): Promise<{ ok: true; draft: ResumeReviewDraft }> => new Promise(() => {}),
+    );
+
+    renderWithProviders(<ApplyReviewView />, {
+      queryClient,
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft,
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
+    expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+    expect(screen.queryByText("loading draft")).not.toBeInTheDocument();
+    expect(createResumeReviewDraft).toHaveBeenCalled();
+  });
+
   it("blocks approval until a saved draft is rendered into replacement artifacts", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
       editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
@@ -1030,6 +1061,64 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("High-fit review").length).toBeGreaterThan(0);
     expect(artifact).toHaveBeenCalledWith("resume-text-2");
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
+  });
+
+  it("bounds generated comment seed identifiers for long profile source paths", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const longFields = Array.from({ length: 8 }, (_, index) => ({
+      path: `profile.contact.channels.${"nested_segment_".repeat(8)}${index}`,
+      label: `Profile > Contact > Channel ${index + 1}`,
+      value: `candidate-${index + 1}@example.com`,
+      section: "profile_personal",
+    }));
+    const contactLine = longFields.map((field) => field.value).join(" • ");
+    const queueWithLongProfilePaths = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: `Principal Platform Engineer\n${contactLine}\nExperience\nOwned platform reliability improvements for incident response.`,
+                profileSourceFields: longFields,
+              },
+            }
+          : item,
+      ),
+    };
+    htmlPreviewResumeText = queueWithLongProfilePaths.items[0]!.materialsPreview.resumeText;
+    const draft = makeResumeReviewDraft(jobKey, null);
+    const seedResumeReviewCommentThreads = vi.fn(
+      async (_draftId: string, _body: ResumeReviewCommentThreadSeedRequest) => ({
+        ok: true as const,
+        draft,
+        commentThreads: [],
+        seededCount: 0,
+        updatedCount: 0,
+      }),
+    );
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queueWithLongProfilePaths),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          seedResumeReviewCommentThreads,
+        },
+      }),
+    });
+
+    await waitFor(() => expect(seedResumeReviewCommentThreads).toHaveBeenCalled());
+    const [, body] = seedResumeReviewCommentThreads.mock.calls[0]!;
+    expect(body.threads.length).toBeGreaterThan(0);
+    for (const thread of body.threads) {
+      expect(thread.baseArtifactId?.length ?? 0).toBeLessThanOrEqual(240);
+      expect(thread.semanticId?.length ?? 0).toBeLessThanOrEqual(240);
+      expect(thread.sourcePinId?.length ?? 0).toBeLessThanOrEqual(240);
+      expect(thread.lineAnchor?.semanticId?.length ?? 0).toBeLessThanOrEqual(240);
+      expect(thread.commentBody.length).toBeLessThanOrEqual(4000);
+    }
   });
 
   it("uses the resume preview as the selectable line-level claim surface", async () => {

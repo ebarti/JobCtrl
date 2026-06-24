@@ -993,20 +993,44 @@ function seedThreadsFromPins(
         .filter(Boolean)
         .join("\n");
       return {
-        baseArtifactId: artifactId,
-        commentBody: body || comment.status,
+        baseArtifactId: boundedSeedIdentifier(artifactId, "artifact"),
+        commentBody: boundedSeedText(body || comment.status, 4000),
         lineAnchor: {
           lineNumber: pin.lineNumber ?? null,
           pageNumber: 1,
-          semanticId: pin.sourceId,
+          semanticId: boundedSeedIdentifier(pin.sourceId, "semantic"),
           textHash: null,
         },
         riskLabel: comment.status,
-        semanticId: pin.sourceId,
-        sourcePinId: pin.id,
+        semanticId: boundedSeedIdentifier(pin.sourceId, "semantic"),
+        sourcePinId: boundedSeedIdentifier(pin.id, "pin"),
       };
     })
     .filter((thread): thread is ResumeReviewCommentThreadSeedInput => Boolean(thread));
+}
+
+function boundedSeedIdentifier(value: string | null | undefined, salt: string): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= 240) return trimmed;
+  const suffix = `${salt}:${stableTextHash(trimmed)}`;
+  return `${trimmed.slice(0, 240 - suffix.length - 1).trimEnd()}:${suffix}`;
+}
+
+function boundedSeedText(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const suffix = "\n[truncated]";
+  return `${trimmed.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`;
+}
+
+function stableTextHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function seedThreadKey(thread: ResumeReviewCommentThreadSeedInput): string {
