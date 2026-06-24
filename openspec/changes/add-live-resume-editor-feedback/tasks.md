@@ -36,13 +36,14 @@
 - [ ] 5.4 Promote only validated and rendered edited candidates; keep the last accepted materials visible until replacement approval succeeds.
 - [ ] 5.5 Add Python and API tests for validation failure, render failure, successful promotion, and layout-box projection.
 
-## 6. Feedback Learning
+## 6. Feedback Capture (Machine Learning Deferred)
 
-- [ ] 6.1 Classify saved edit deltas into feedback signal kinds such as style preference, factual correction, claim-policy correction, keyword strategy, and provenance dispute.
-- [ ] 6.2 Classify comment replies into feedback signals while preserving the original JobHunter comment and audit context.
+- [ ] 6.1 Tag saved edit deltas with deterministic/manual feedback signal kinds such as style preference, factual correction, claim-policy correction, keyword strategy, and provenance dispute.
+- [ ] 6.2 Tag comment replies as feedback signals while preserving the original JobHunter comment and audit context.
 - [ ] 6.3 Add a reviewable feedback read model that can later feed writing-style controls, profile correction suggestions, or tailoring policy changes.
-- [ ] 6.4 Ensure feedback signals are append-only and do not silently mutate profile data, tailoring policy, or prompts.
-- [ ] 6.5 Add tests proving feedback projections use safe identifiers and bounded excerpts only.
+- [ ] 6.4 Ensure feedback signals are append-only and do not silently mutate profile data, tailoring policy, prompts, model routing, or model behavior.
+- [ ] 6.5 Document that model training, fine-tuning, machine-learning inference for feedback classification, automatic prompt adaptation, and automatic policy/profile mutation are deferred to a later proposal.
+- [ ] 6.6 Add tests proving feedback projections use safe identifiers and bounded excerpts only, and that extracting feedback does not trigger model/prompt/policy mutation.
 
 ## 7. Documentation And QA
 

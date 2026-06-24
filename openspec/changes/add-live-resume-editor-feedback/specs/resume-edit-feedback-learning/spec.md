@@ -33,6 +33,17 @@ The system SHALL keep feedback signals append-only and reviewable before applyin
 - **WHEN** a feedback signal has been accepted into writing-style or tailoring policy guidance
 - **THEN** future tailoring can consume the accepted guidance while preserving the feedback source in audit history
 
+### Requirement: Machine learning adaptation is deferred
+The system SHALL treat feedback extraction as capture of reviewable structured signals only for this change. The system MUST NOT train models, fine-tune models, update model weights, change model routing, automatically mutate prompts, or automatically alter profile data or tailoring policy based on feedback signals.
+
+#### Scenario: Feedback extraction does not trigger model adaptation
+- **WHEN** feedback is extracted from saved edit deltas or comment replies
+- **THEN** the system stores the feedback for review without triggering model training, fine-tuning, model-routing changes, automatic prompt updates, or automatic policy/profile mutation
+
+#### Scenario: Feedback tags remain deterministic or manual
+- **WHEN** the system assigns a feedback signal kind in this change
+- **THEN** the assignment uses deterministic rules or explicit user/reviewer input rather than machine-learning inference
+
 ### Requirement: Feedback data is safe to project
 The system SHALL expose feedback summaries using bounded excerpts and safe identifiers. Feedback projections MUST NOT include raw generator prompts, raw profile payloads, raw job text, local artifact paths, generated PDFs, browser profiles, logs, or SQLite database contents.
 

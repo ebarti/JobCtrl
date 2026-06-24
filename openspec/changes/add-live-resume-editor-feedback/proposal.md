@@ -11,6 +11,7 @@ This matters now because Apply Review already has the generated HTML, PDF layout
 - Persist user edits as structured edit deltas against the base artifact, including semantic ids, line anchors, before/after text, and draft revisions.
 - Allow users to respond to JobHunter-authored comments on tailored lines without losing the underlying claim-risk and provenance audit.
 - Convert accepted edits and comment replies into append-only feedback signals that can inform future tailoring, writing-style controls, profile evidence corrections, and claim-policy guidance.
+- Defer machine learning, model training, fine-tuning, model-routing changes, and automatic prompt/policy adaptation; this change captures reviewable structured feedback only.
 - Validate and re-render edited resumes as new materials candidates before approval; never mutate the last accepted artifact in place.
 - Keep raw profile payloads, raw job text, local artifact paths, generated PDFs, and sensitive user data out of events, broad projections, telemetry, and PR-facing artifacts.
 
@@ -30,6 +31,6 @@ None. This repository does not yet have checked-in OpenSpec specs to modify.
 
 - Web: `apps/web/src/views/apply-review/`, `apps/web/src/contexts/materials/`, `apps/web/src/contexts/apply/`, Operations hooks/query keys, MSW fixtures, Plate plugin dependencies, and route/browser QA for `/apply-review`.
 - API/contracts: `packages/contracts`, `packages/api-client`, `apps/api/src/application-feedback.ts`, artifact detail/read models, review draft routes, comment reply routes, and feedback-learning DTOs.
-- Python/materials: resume HTML/CSS renderer, materials repository, layout-box persistence, provenance/coverage/voice audit handling, candidate validation, and optional worker-backed feedback classification.
+- Python/materials: resume HTML/CSS renderer, materials repository, layout-box persistence, provenance/coverage/voice audit handling, candidate validation, and deterministic/manual feedback tagging only.
 - Data: new local SQLite tables for review drafts, draft revisions, edit deltas, comment threads/replies, and feedback signals.
 - Documentation/QA: `README.md`, `docs/local-ts-api.md`, `docs/local-reliability-qa.md`, `docs/architecture.md`, and any Apply Review smoke/e2e coverage needed for the new editing lifecycle.

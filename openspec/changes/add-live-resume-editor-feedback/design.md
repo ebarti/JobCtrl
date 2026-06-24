@@ -21,6 +21,7 @@ The existing architecture is local-first, projection-backed, and audit-oriented.
 - Editing already approved PDF files in place.
 - Replacing the HTML/CSS resume renderer or removing legacy migration behavior.
 - Automatically rewriting the user's profile, tailoring policy, or global prompts from unreviewed feedback.
+- Training or fine-tuning models, changing model routing, or automatically adapting prompts, profile data, or tailoring policy from captured feedback.
 - Exposing raw profile payloads, raw job text, local paths, generated PDFs, or logs through events and projections.
 
 ## Decisions
@@ -61,11 +62,17 @@ Edit deltas and comment replies produce `TailoringFeedbackSignal` rows. These si
 
 Alternative considered: immediately mutate profile or tailoring policy from every edit. That is risky because some edits are job-specific, some are copy preferences, and some are corrections to generated material rather than durable profile truth.
 
+### 7. Machine learning is explicitly deferred
+
+This change does not train, fine-tune, reroute, or otherwise adapt models from resume edits or comment replies. The first implementation should capture safe, reviewable feedback signals and may use deterministic/manual tags only. Any machine-learning, model-evaluation, or automatic prompt/policy adaptation workflow requires a later OpenSpec change with its own data-retention, audit, evaluation, and rollback design.
+
+Alternative considered: classify feedback with a worker-backed model and immediately make accepted classes available to generation. That would expand the first editor milestone into model behavior, safety, evaluation, and data-governance work, which should not be coupled to the editing lifecycle.
+
 ## Risks / Trade-offs
 
 - Editor state and renderer state can drift -> require a server-side conversion/validation step before promotion and test PDF output against edited source.
 - Comment anchors can break after edits -> store semantic ids, line anchors, text hashes, and explicit unresolved-anchor states instead of pretending all comments still map cleanly.
-- Feedback classification can overgeneralize job-specific edits -> keep signals append-only and reviewable before applying them globally.
+- Feedback tagging can overgeneralize job-specific edits -> keep signals append-only and reviewable before applying them globally.
 - Plate dependency surface can grow quickly -> add only documented packages needed for editing, comments, history, and serialization; verify exact package names before dependency changes.
 - Autosave can create noisy revisions -> debounce autosave and derive feedback from meaningful saved revisions or explicit user actions.
 - Sensitive data can leak through events -> events and projections must carry safe ids and bounded excerpts only.
@@ -76,7 +83,7 @@ Alternative considered: immediately mutate profile or tailoring policy from ever
 2. Build a server-side draft-to-material conversion path that validates edited content before it can become a replacement candidate.
 3. Upgrade the Apply Review Plate component from generated render surface to controlled editor, including dirty state, save state, comment threads, and approval blocking.
 4. Add promotion flow that renders new HTML/PDF artifacts, regenerates layout boxes, and preserves the last accepted materials until approval.
-5. Add feedback extraction and reviewable learning surfaces.
+5. Add feedback extraction and reviewable learning surfaces without model training, fine-tuning, routing changes, or automatic prompt/policy adaptation.
 6. Update docs and QA gates for the new lifecycle.
 
 Rollback strategy: because drafts and feedback are additive, rollback can hide the editor and ignore draft tables while continuing to serve the existing generated HTML/PDF Apply Review surface. Approved artifacts must remain registered through the existing materials tables.
@@ -84,6 +91,6 @@ Rollback strategy: because drafts and feedback are additive, rollback can hide t
 ## Open Questions
 
 - Should the first implementation persist full Plate value, structured resume document, or both?
-- Which feedback signals should be auto-acceptable as writing-style preferences, if any?
+- Which feedback signal tags should be manually reviewable in the first UI surface?
 - Should edited candidates create a new materials generation immediately, or remain draft candidates until explicit approval?
 - How much comment UI should use Plate's comment plugin versus JobHunter-owned thread components?
