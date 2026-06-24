@@ -9,25 +9,40 @@ import type {
   ResumeReviewCommentThreadSeedInput,
   ResumeLayoutBox,
 } from "@jobhunter/contracts";
+import { BasicMarksPlugin } from "@platejs/basic-nodes/react";
+import {
+  IconAlignCenter,
+  IconAlignLeft,
+  IconAlignRight,
+  IconBold,
+  IconItalic,
+  IconUnderline,
+} from "@tabler/icons-react";
 import type { Descendant, TElement, Value } from "platejs";
 import {
   Plate,
   PlateContent,
   createPlatePlugin,
   usePlateEditor,
+  type PlateEditor,
   type PlateElementProps,
 } from "platejs/react";
 import {
   createContext,
   createElement,
+  useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type CSSProperties,
   type Dispatch,
   type FormEvent,
   type JSX,
+  type MouseEvent,
   type SetStateAction,
 } from "react";
 
@@ -120,11 +135,14 @@ interface ResumePlateComment {
 interface ResumePlateDomElement extends TElement {
   readonly type: "resume_block" | "resume_inline";
   readonly className?: string | undefined;
+  readonly fontFamily?: ResumeEditorFontFamily | null | undefined;
+  readonly fontSize?: ResumeEditorFontSize | null | undefined;
   readonly href?: string | undefined;
   readonly lineNumber?: number | undefined;
   readonly pageNumber?: number | undefined;
   readonly semanticId?: string | null | undefined;
   readonly tagName: string;
+  readonly textAlign?: ResumeEditorTextAlign | null | undefined;
 }
 
 interface ResumePlateLineEntry {
@@ -140,6 +158,54 @@ interface ResumePlateRenderContextValue {
   readonly risk: RiskSignals;
   readonly selectedLine: PdfAuditLineSelection | null | undefined;
 }
+
+type ResumeEditorTextAlign = "left" | "center" | "right";
+type ResumeEditorFontFamily = "resume" | "serif" | "sans" | "mono";
+type ResumeEditorFontSize = "resume" | "small" | "large" | "heading";
+
+interface ResumeEditorFormattingApi {
+  readonly align: (value: ResumeEditorTextAlign) => void;
+  readonly focus: () => void;
+  readonly setFontFamily: (value: ResumeEditorFontFamily) => void;
+  readonly setFontSize: (value: ResumeEditorFontSize) => void;
+  readonly toggleBold: () => void;
+  readonly toggleItalic: () => void;
+  readonly toggleUnderline: () => void;
+}
+
+const RESUME_EDITOR_FONT_FAMILIES: readonly {
+  readonly label: string;
+  readonly value: ResumeEditorFontFamily;
+}[] = [
+  { label: "Resume", value: "resume" },
+  { label: "Serif", value: "serif" },
+  { label: "Sans", value: "sans" },
+  { label: "Mono", value: "mono" },
+];
+
+const RESUME_EDITOR_FONT_SIZES: readonly {
+  readonly label: string;
+  readonly value: ResumeEditorFontSize;
+}[] = [
+  { label: "Resume", value: "resume" },
+  { label: "Small", value: "small" },
+  { label: "Large", value: "large" },
+  { label: "Heading", value: "heading" },
+];
+
+const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<ResumeEditorFontFamily, string | null> = {
+  mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  resume: null,
+  sans: '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+};
+
+const RESUME_EDITOR_FONT_SIZE_STYLES: Record<ResumeEditorFontSize, string | null> = {
+  heading: "14pt",
+  large: "12pt",
+  resume: null,
+  small: "9pt",
+};
 
 interface ResumeAuditPin {
   readonly id: string;
@@ -227,7 +293,7 @@ const RESUME_PLATE_INLINE_PLUGIN = createPlatePlugin({
   node: { isElement: true, isInline: true },
 });
 
-const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN];
+const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN, BasicMarksPlugin];
 
 function yesNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) return "not recorded";
@@ -1537,6 +1603,23 @@ function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
     : "div";
 }
 
+function resumeElementStyle(element: ResumePlateDomElement): CSSProperties | undefined {
+  const style: CSSProperties = {};
+  const textAlign = element.textAlign ?? null;
+  const fontFamily = element.fontFamily ? RESUME_EDITOR_FONT_FAMILY_STYLES[element.fontFamily] : null;
+  const fontSize = element.fontSize ? RESUME_EDITOR_FONT_SIZE_STYLES[element.fontSize] : null;
+  if (textAlign) {
+    style.textAlign = textAlign;
+  }
+  if (fontFamily) {
+    style.fontFamily = fontFamily;
+  }
+  if (fontSize) {
+    style.fontSize = fontSize;
+  }
+  return Object.keys(style).length ? style : undefined;
+}
+
 const ResumePlateRenderContext = createContext<ResumePlateRenderContextValue | null>(null);
 
 function useResumePlateRenderContext(): ResumePlateRenderContextValue {
@@ -1575,8 +1658,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
       "data-resume-line-number": element.lineNumber,
       "data-resume-page": element.pageNumber,
       onClick: handleSelect,
-      onMouseDown: handleSelect,
-      onPointerDown: handleSelect,
+      style: resumeElementStyle(element),
     },
     props.children,
     showComment && comment ? <ResumePlateCommentBubble comment={comment} /> : null,
@@ -1607,10 +1689,175 @@ const RESUME_PLATE_COMPONENTS = {
   resume_inline: ResumeInlineElement,
 };
 
+type ResumeFormattingEditor = PlateEditor & {
+  readonly tf: PlateEditor["tf"] & {
+    readonly bold?: { readonly toggle: () => void };
+    readonly italic?: { readonly toggle: () => void };
+    readonly underline?: { readonly toggle: () => void };
+  };
+};
+
+function formattingEditor(editor: PlateEditor): ResumeFormattingEditor {
+  return editor as ResumeFormattingEditor;
+}
+
+function toggleEditorMark(editor: PlateEditor, mark: "bold" | "italic" | "underline"): void {
+  const typedEditor = formattingEditor(editor);
+  typedEditor.tf.focus();
+  typedEditor.tf[mark]?.toggle();
+}
+
+function applyEditorBlockStyle(
+  editor: PlateEditor,
+  patch: Pick<ResumePlateDomElement, "fontFamily" | "fontSize" | "textAlign">,
+): void {
+  editor.tf.focus();
+  editor.tf.setNodes(patch, {
+    match: (node: unknown) => isRecord(node) && node.type === "resume_block",
+  });
+}
+
+function keepEditorSelection(event: MouseEvent<HTMLButtonElement>): void {
+  event.preventDefault();
+}
+
+function ResumeEditorToolbarControls({
+  disabled,
+  onAlign,
+  onFontFamily,
+  onFontSize,
+  onToggleBold,
+  onToggleItalic,
+  onToggleUnderline,
+}: {
+  readonly disabled: boolean;
+  readonly onAlign: (value: ResumeEditorTextAlign) => void;
+  readonly onFontFamily: (value: ResumeEditorFontFamily) => void;
+  readonly onFontSize: (value: ResumeEditorFontSize) => void;
+  readonly onToggleBold: () => void;
+  readonly onToggleItalic: () => void;
+  readonly onToggleUnderline: () => void;
+}): JSX.Element {
+  const fontFamilyId = useId();
+  const fontSizeId = useId();
+  return (
+    <div className="resume-format-toolbar" aria-label="Resume formatting controls">
+      <div className="resume-format-button-group" aria-label="Text style">
+        <button
+          aria-label="Bold"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Bold"
+          type="button"
+          onClick={onToggleBold}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconBold aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Italic"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Italic"
+          type="button"
+          onClick={onToggleItalic}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconItalic aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Underline"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Underline"
+          type="button"
+          onClick={onToggleUnderline}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconUnderline aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+      </div>
+      <label className="resume-format-select" htmlFor={fontFamilyId}>
+        <span>Font</span>
+        <select
+          aria-label="Font"
+          defaultValue="resume"
+          disabled={disabled}
+          id={fontFamilyId}
+          onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+            onFontFamily(event.currentTarget.value as ResumeEditorFontFamily)
+          }
+        >
+          {RESUME_EDITOR_FONT_FAMILIES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="resume-format-select" htmlFor={fontSizeId}>
+        <span>Size</span>
+        <select
+          aria-label="Size"
+          defaultValue="resume"
+          disabled={disabled}
+          id={fontSizeId}
+          onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+            onFontSize(event.currentTarget.value as ResumeEditorFontSize)
+          }
+        >
+          {RESUME_EDITOR_FONT_SIZES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="resume-format-button-group" aria-label="Alignment">
+        <button
+          aria-label="Align left"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align left"
+          type="button"
+          onClick={() => onAlign("left")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignLeft aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Align center"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align center"
+          type="button"
+          onClick={() => onAlign("center")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignCenter aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Align right"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align right"
+          type="button"
+          onClick={() => onAlign("right")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignRight aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ResumePlateDocument({
+  documentKey,
   initialValue,
   layoutBoxes,
   lines,
+  onFormattingApiChange,
   onValueChange,
   onSelectLine,
   pins,
@@ -1618,9 +1865,11 @@ function ResumePlateDocument({
   selectedLine,
   title,
 }: {
+  readonly documentKey: string;
   readonly initialValue: Value;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lines: readonly ResumePlateLine[];
+  readonly onFormattingApiChange?: (api: ResumeEditorFormattingApi | null) => void;
   readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
   readonly pins: readonly ResumeAuditPin[];
@@ -1650,8 +1899,22 @@ function ResumePlateDocument({
       plugins: RESUME_PLATE_PLUGINS,
       value: initialValue,
     },
-    [initialValue],
+    [documentKey],
   );
+
+  useEffect(() => {
+    onFormattingApiChange?.({
+      align: (value) => applyEditorBlockStyle(editor, { textAlign: value }),
+      focus: () => editor.tf.focus(),
+      setFontFamily: (value) =>
+        applyEditorBlockStyle(editor, { fontFamily: value === "resume" ? null : value }),
+      setFontSize: (value) => applyEditorBlockStyle(editor, { fontSize: value === "resume" ? null : value }),
+      toggleBold: () => toggleEditorMark(editor, "bold"),
+      toggleItalic: () => toggleEditorMark(editor, "italic"),
+      toggleUnderline: () => toggleEditorMark(editor, "underline"),
+    });
+    return () => onFormattingApiChange?.(null);
+  }, [editor, onFormattingApiChange]);
 
   return (
     <ResumePlateRenderContext.Provider value={renderContext}>
@@ -1794,6 +2057,8 @@ export function ResumePlateEditor({
     [draft, seedThreads],
   );
   const seededKey = useRef<string | null>(null);
+  const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
+  const [formattingApiReady, setFormattingApiReady] = useState(false);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -1815,6 +2080,8 @@ export function ResumePlateEditor({
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
     [currentPlateValue],
   );
+  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}`;
+  const canFormat = formattingApiReady && Boolean(currentPlateValue);
   const draftDirty = Boolean(currentPlateValue && currentDraftText !== initialDraftText);
   const hasSavedRevision = Boolean(draft?.latestRevision);
   const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
@@ -1869,6 +2136,20 @@ export function ResumePlateEditor({
     seededKey.current = seedKey;
     onSeedCommentThreads(seedThreads);
   }, [onSeedCommentThreads, seedKey, seedThreads]);
+
+  const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
+    formattingApiRef.current = api;
+    setFormattingApiReady(Boolean(api));
+  }, []);
+  const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
+  const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
+  const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
+  const handleFontFamily = useCallback(
+    (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
+    [],
+  );
+  const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
 
   const lastAutosaveText = useRef<string | null>(null);
   useEffect(() => {
@@ -1926,6 +2207,15 @@ export function ResumePlateEditor({
       <div className="resume-plate-toolbar">
         <b>{title}</b>
         <span className="mono">Plate HTML/CSS editor</span>
+        <ResumeEditorToolbarControls
+          disabled={!canFormat}
+          onAlign={handleAlign}
+          onFontFamily={handleFontFamily}
+          onFontSize={handleFontSize}
+          onToggleBold={handleToggleBold}
+          onToggleItalic={handleToggleItalic}
+          onToggleUnderline={handleToggleUnderline}
+        />
         <button
           className="tab"
           disabled={saveDisabled}
@@ -1972,16 +2262,18 @@ export function ResumePlateEditor({
         </div>
       ) : null}
       <div className="resume-plate-scroll">
-        {htmlState.status === "ready" && currentPlateValue ? (
+        {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
             className="resume-plate-page"
             aria-label="Editable resume page"
             data-draft-dirty={draftDirty ? "true" : "false"}
           >
             <ResumePlateDocument
-              initialValue={currentPlateValue}
+              documentKey={documentKey}
+              initialValue={initialPlateValue}
               layoutBoxes={layoutBoxes}
               lines={plateLines}
+              onFormattingApiChange={handleFormattingApiChange}
               onValueChange={setCurrentPlateValue}
               pins={linePins}
               risk={risk}

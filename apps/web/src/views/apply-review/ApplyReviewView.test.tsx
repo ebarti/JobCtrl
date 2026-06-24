@@ -764,6 +764,14 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Italic" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Underline" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Font")).toBeInTheDocument();
+    expect(screen.getByLabelText("Size")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align left" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align center" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align right" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "open final file" }).getAttribute("href")).toContain(
       "/v1/artifacts/resume-pdf-2/preview.pdf",
     );
@@ -803,6 +811,24 @@ describe("<ApplyReviewView>", () => {
     );
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
     expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+  });
+
+  it("keeps editor focus while typing multiple characters", async () => {
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await userEvent.click(editor);
+    await userEvent.type(editor, "xy");
+
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toBeInTheDocument();
+    expect(editor).toHaveFocus();
   });
 
   it("keeps the cached resume review draft visible while create/load is pending", async () => {

@@ -1028,8 +1028,9 @@ textarea:focus-visible {
 .resume-plate-toolbar {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 10px 12px;
   background: #303030;
   color: #f5f5f5;
@@ -1037,6 +1038,75 @@ textarea:focus-visible {
 
 .resume-plate-toolbar .mono {
   color: #c8c8c8;
+}
+
+.resume-format-toolbar {
+  display: flex;
+  flex: 1 1 520px;
+  min-width: 360px;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-format-button-group {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 5%);
+}
+
+.resume-format-button {
+  display: inline-grid;
+  min-inline-size: 30px;
+  min-block-size: 30px;
+  place-items: center;
+  border: 0;
+  border-inline-end: 1px solid rgb(255 255 255 / 14%);
+  background: transparent;
+  color: #f5f5f5;
+  cursor: pointer;
+}
+
+.resume-format-button:last-child {
+  border-inline-end: 0;
+}
+
+.resume-format-button:hover:not(:disabled),
+.resume-format-button:focus-visible {
+  background: rgb(255 255 255 / 13%);
+}
+
+.resume-format-button:focus-visible,
+.resume-format-select select:focus-visible,
+.resume-plate-toolbar .tab:focus-visible,
+.resume-plate-toolbar a:focus-visible {
+  outline: 2px solid #f5f5f5;
+  outline-offset: 2px;
+}
+
+.resume-format-button:disabled,
+.resume-format-select select:disabled {
+  color: #8e8e8e;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.resume-format-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #d8d8d8;
+  font-size: 11px;
+}
+
+.resume-format-select select {
+  min-block-size: 30px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 5px;
+  background: #242424;
+  color: #f5f5f5;
+  font: inherit;
 }
 
 .resume-plate-toolbar .tab {
@@ -1519,6 +1589,11 @@ textarea:focus-visible {
 }
 
 @media (max-width: 820px) {
+  .resume-format-toolbar {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
   .resume-plate-scroll {
     padding-inline-end: 18px;
   }
