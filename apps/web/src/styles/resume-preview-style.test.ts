@@ -36,4 +36,19 @@ describe("resume preview style contract", () => {
     expect(itemRule).toContain("display: list-item;");
     expect(itemRule).toContain("list-style: disc outside;");
   });
+
+  it("preserves moderncv-style contact and experience layout in the Plate preview", () => {
+    const contactRule = cssRuleContaining(".resume-plate-document .resume-contact-items");
+    const contactItemRule = cssRuleContaining(".resume-plate-document .resume-contact-item");
+    const entryHeadingRule = cssRuleContaining(".resume-plate-document .resume-entry-heading");
+    const entryRowRule = cssRuleContaining(".resume-plate-document .resume-entry-row");
+    const titleRule = cssRuleContaining(".resume-plate-document .resume-entry-title");
+
+    expect(contactRule).toContain("display: inline-flex;");
+    expect(contactItemRule).toContain("display: inline-flex;");
+    expect(entryHeadingRule).toContain("display: grid;");
+    expect(entryRowRule).toContain("grid-template-columns: minmax(0, 1fr) max-content;");
+    expect(titleRule).toContain("font-style: italic;");
+    expect(globalsCss).toContain(".resume-plate-document .resume-entry-location {\n  color: #111;\n  text-align: end;");
+  });
 });

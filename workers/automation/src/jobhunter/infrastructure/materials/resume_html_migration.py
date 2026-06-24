@@ -17,6 +17,9 @@ from typing import Callable, Iterable
 from jobhunter.infrastructure.materials.html_resume_pdf import (
     RESUME_PAGE_VIEWPORT,
     build_resume_html_document,
+    contact_items_from_text,
+    contact_items_html,
+    contact_items_text,
 )
 
 LayoutBox = dict[str, object]
@@ -119,19 +122,21 @@ def build_legacy_resume_html(resume_text: str) -> str:
         location = subtitle_parts[0] if subtitle_parts else subtitle
         date_range = " | ".join(subtitle_parts[1:])
         heading_html = (
-            '<span class="resume-entry-main">'
-            f'<span class="resume-entry-title">{html.escape(title)}</span>'
-            + (f' <span class="resume-entry-company">| {html.escape(company)}</span>' if company else "")
+            '<span class="resume-entry-row resume-entry-company-row">'
+            f'<span class="resume-entry-company">{html.escape(company)}</span>'
+            + (f'<span class="resume-entry-location">{html.escape(location)}</span>' if location else "")
             + "</span>"
+            + '<span class="resume-entry-row resume-entry-role-row">'
+            f'<span class="resume-entry-title">{html.escape(title)}</span>'
             + (f'<span class="resume-entry-date">{html.escape(date_range)}</span>' if date_range else "")
+            + "</span>"
         )
         line(
             f"{section}:entry:{chunk_index}:heading",
-            " | ".join(part for part in [heading, date_range] if part),
+            " | ".join(part for part in [company, location, title, date_range] if part),
             class_name="resume-entry-heading",
             inner_html=heading_html,
         )
-        line(f"{section}:entry:{chunk_index}:location", location, tag="p", class_name="resume-entry-subtitle")
         for extra_index, extra in enumerate(extra_lines, start=1):
             line(f"{section}:entry:{chunk_index}:detail:{extra_index}", extra, tag="p", class_name="resume-meta")
         if bullets:
@@ -194,7 +199,14 @@ def build_legacy_resume_html(resume_text: str) -> str:
         second = content_indexes[1] if len(content_indexes) > 1 and section_key(raw_lines[content_indexes[1]].strip()) is None else None
         start_index = first + 1
         if second is not None:
-            line("personal:contact", raw_lines[second], tag="p", class_name="resume-contact")
+            contact_items = contact_items_from_text(raw_lines[second])
+            line(
+                "personal:contact",
+                contact_items_text(contact_items) or raw_lines[second],
+                tag="p",
+                class_name="resume-contact",
+                inner_html=contact_items_html(contact_items) or None,
+            )
             start_index = second + 1
         body.append("</header>")
         for raw_line in raw_lines[start_index:]:

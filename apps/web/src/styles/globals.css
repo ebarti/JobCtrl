@@ -1109,10 +1109,78 @@ textarea:focus-visible {
 }
 
 .resume-plate-document .resume-contact {
+  display: flex;
+  justify-content: center;
   margin: 0;
   color: #111;
   font-size: 8.8pt;
   line-height: 1.25;
+}
+
+.resume-plate-document .resume-address {
+  margin: 0 0 0.65mm;
+  color: #111;
+  font-size: 8.8pt;
+  line-height: 1.22;
+}
+
+.resume-plate-document .resume-contact-items {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0 2mm;
+}
+
+.resume-plate-document .resume-contact-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1mm;
+  white-space: nowrap;
+}
+
+.resume-plate-document .resume-contact-item::before {
+  display: inline-block;
+  min-inline-size: 3mm;
+  color: #111;
+  font-size: 0.95em;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.resume-plate-document .resume-contact-phone::before {
+  content: "\260E";
+}
+
+.resume-plate-document .resume-contact-email::before {
+  content: "\2709";
+}
+
+.resume-plate-document .resume-contact-website::before {
+  content: "\25C9";
+}
+
+.resume-plate-document .resume-contact-linkedin::before {
+  content: "in";
+  font-size: 0.92em;
+  font-weight: 800;
+}
+
+.resume-plate-document .resume-contact-github::before {
+  content: "gh";
+  font-size: 0.82em;
+  font-weight: 800;
+}
+
+.resume-plate-document .resume-contact-separator {
+  color: #111;
+  font-weight: 700;
+}
+
+.resume-plate-document .resume-contact a {
+  color: #111;
+  text-decoration: none;
 }
 
 .resume-plate-document .resume-section {
@@ -1158,20 +1226,44 @@ textarea:focus-visible {
 
 .resume-plate-document .resume-entry-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: baseline;
-  gap: 5mm;
-  margin: 0 0 0.6mm;
+  gap: 0.2mm;
+  margin: 0 0 0.9mm;
 }
 
-.resume-plate-document .resume-entry-main {
+.resume-plate-document .resume-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  column-gap: 5mm;
+}
+
+.resume-plate-document .resume-entry-main,
+.resume-plate-document .resume-entry-company-row {
   min-inline-size: 0;
+}
+
+.resume-plate-document .resume-entry-company,
+.resume-plate-document .resume-entry-location {
   font-weight: 700;
+}
+
+.resume-plate-document .resume-entry-title {
+  color: #111;
+  font-style: italic;
+  font-weight: 400;
 }
 
 .resume-plate-document .resume-entry-date {
   color: #111;
   font-size: 8.9pt;
+  font-style: italic;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.resume-plate-document .resume-entry-location {
+  color: #111;
+  text-align: end;
   white-space: nowrap;
 }
 

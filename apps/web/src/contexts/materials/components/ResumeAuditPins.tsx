@@ -79,6 +79,7 @@ interface ResumePlateComment {
 interface ResumePlateDomElement extends TElement {
   readonly type: "resume_block" | "resume_inline";
   readonly className?: string | undefined;
+  readonly href?: string | undefined;
   readonly lineNumber?: number | undefined;
   readonly pageNumber?: number | undefined;
   readonly semanticId?: string | null | undefined;
@@ -173,7 +174,7 @@ const RESUME_PLATE_BLOCK_TAGS = new Set([
   "ul",
 ]);
 
-const RESUME_PLATE_INLINE_TAGS = new Set(["b", "span", "strong"]);
+const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "span", "strong"]);
 
 const RESUME_PLATE_BLOCK_PLUGIN = createPlatePlugin({
   key: "resume_block",
@@ -733,12 +734,19 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   return {
     children: resumePlateChildrenFromDom(node),
     className: node.getAttribute("class") || undefined,
+    href: tagName === "a" ? safeResumeHref(node.getAttribute("href")) : undefined,
     lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
     pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
     semanticId: node.getAttribute("data-resume-layout-target") || null,
     tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
+}
+
+function safeResumeHref(value: string | null): string | undefined {
+  const href = value?.trim();
+  if (!href) return undefined;
+  return /^(?:https?:|mailto:|tel:)/i.test(href) ? href : undefined;
 }
 
 function resumePlateValueFromHtml(html: string): Value {
@@ -1321,6 +1329,8 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
 
 function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
   const element = props.element;
+  const isLink = element.tagName === "a" && element.href;
+  const isExternalLink = isLink && /^https?:/i.test(element.href ?? "");
   return createElement(
     safeResumePlateTag(element.tagName),
     {
@@ -1328,6 +1338,9 @@ function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): J
       className: element.className,
       "data-resume-layout-target": element.semanticId ?? undefined,
       "data-resume-line-number": element.lineNumber,
+      href: isLink ? element.href : undefined,
+      rel: isExternalLink ? "noreferrer" : undefined,
+      target: isExternalLink ? "_blank" : undefined,
     },
     props.children,
   );

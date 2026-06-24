@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,9 @@ log = logging.getLogger(__name__)
 
 LayoutBox = dict[str, Any]
 ResumeDocument = dict[str, Any]
+ContactItem = dict[str, str]
 RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
+CONTACT_KIND_ORDER = {"phone": 0, "email": 1, "website": 2, "linkedin": 3, "github": 4}
 
 RESUME_HTML_STYLE = """
 @page {
@@ -81,10 +84,67 @@ body {
   margin: 0 0 1.8mm;
 }
 .resume-contact {
+  display: flex;
+  justify-content: center;
+  margin: 0;
   color: #111111;
   font-size: 8.8pt;
   line-height: 1.25;
-  margin: 0;
+}
+.resume-address {
+  margin: 0 0 0.65mm;
+  color: #111111;
+  font-size: 8.8pt;
+  line-height: 1.22;
+}
+.resume-contact-items {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0 2mm;
+}
+.resume-contact-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1mm;
+  white-space: nowrap;
+}
+.resume-contact-item::before {
+  display: inline-block;
+  min-inline-size: 3mm;
+  color: #111111;
+  font-size: 0.95em;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+.resume-contact-phone::before {
+  content: "\\260E";
+}
+.resume-contact-email::before {
+  content: "\\2709";
+}
+.resume-contact-website::before {
+  content: "\\25C9";
+}
+.resume-contact-linkedin::before {
+  content: "in";
+  font-size: 0.92em;
+  font-weight: 800;
+}
+.resume-contact-github::before {
+  content: "gh";
+  font-size: 0.82em;
+  font-weight: 800;
+}
+.resume-contact-separator {
+  color: #111111;
+  font-weight: 700;
+}
+.resume-contact a {
+  color: #111111;
+  text-decoration: none;
 }
 .resume-section {
   margin-block-start: 4.1mm;
@@ -122,24 +182,38 @@ body {
 }
 .resume-entry-heading {
   display: grid;
+  gap: 0.2mm;
+  margin: 0 0 0.9mm;
+}
+.resume-entry-row {
+  display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: baseline;
-  gap: 5mm;
-  margin: 0 0 0.6mm;
+  column-gap: 5mm;
 }
-.resume-entry-main {
+.resume-entry-main,
+.resume-entry-company-row {
   min-inline-size: 0;
+}
+.resume-entry-company,
+.resume-entry-location {
+  color: #111111;
   font-weight: 700;
 }
 .resume-entry-title {
   color: #111111;
-}
-.resume-entry-company {
-  color: #111111;
+  font-style: italic;
+  font-weight: 400;
 }
 .resume-entry-date {
   color: #111111;
   font-size: 8.9pt;
+  font-style: italic;
+  text-align: end;
+  white-space: nowrap;
+}
+.resume-entry-location {
+  text-align: end;
   white-space: nowrap;
 }
 .resume-entry-subtitle,
@@ -183,6 +257,148 @@ p {
   overflow-wrap: anywhere;
 }
 """
+
+
+def _normalize_url(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    lower = raw.lower()
+    if lower.startswith(("javascript:", "data:", "file:")):
+        return ""
+    if lower.startswith(("http://", "https://")):
+        return raw
+    if "://" in raw:
+        return ""
+    return f"https://{raw}"
+
+
+def _link_label(value: str) -> str:
+    return re.sub(r"^https?://", "", value.strip(), flags=re.IGNORECASE).rstrip("/")
+
+
+def _tel_href(value: str) -> str:
+    normalized = re.sub(r"[^\d+]", "", value.strip())
+    if normalized.count("+") > 1:
+        normalized = normalized.replace("+", "")
+    if "+" in normalized and not normalized.startswith("+"):
+        normalized = normalized.replace("+", "")
+    return f"tel:{normalized}" if normalized else ""
+
+
+def _contact_item(kind: str, label: str, href: str = "") -> ContactItem | None:
+    clean_label = sanitize_text(label)
+    if not clean_label:
+        return None
+    return {"kind": kind, "label": clean_label, "href": href}
+
+
+def _contact_url_item(kind: str, value: str, *, label: str | None = None) -> ContactItem | None:
+    href = _normalize_url(value)
+    if not href:
+        return None
+    return _contact_item(kind, label or _link_label(value), href)
+
+
+def order_contact_items(items: list[ContactItem]) -> list[ContactItem]:
+    return sorted(
+        items,
+        key=lambda item: (
+            CONTACT_KIND_ORDER.get(item.get("kind", ""), len(CONTACT_KIND_ORDER)),
+            item.get("label", ""),
+        ),
+    )
+
+
+def contact_items_from_personal(personal: dict[str, Any]) -> list[ContactItem]:
+    """Build moderncv-style contact fields with safe hyperlink targets."""
+
+    items: list[ContactItem] = []
+    phone = str(personal.get("phone", "")).strip()
+    if phone:
+        item = _contact_item("phone", phone, _tel_href(phone))
+        if item:
+            items.append(item)
+    email = str(personal.get("email", "")).strip()
+    if email:
+        item = _contact_item("email", email, f"mailto:{email}")
+        if item:
+            items.append(item)
+    website = str(personal.get("website_url") or personal.get("portfolio_url") or "").strip()
+    if website:
+        item = _contact_url_item("website", website)
+        if item:
+            items.append(item)
+    linkedin = str(personal.get("linkedin_url", "")).strip()
+    if linkedin:
+        label = _link_label(linkedin).rsplit("/", 1)[-1] or _link_label(linkedin)
+        item = _contact_url_item("linkedin", linkedin, label=label)
+        if item:
+            items.append(item)
+    github = str(personal.get("github_url", "")).strip()
+    if github:
+        label = _link_label(github).rsplit("/", 1)[-1] or _link_label(github)
+        item = _contact_url_item("github", github, label=label)
+        if item:
+            items.append(item)
+    return order_contact_items(items)
+
+
+def address_line_from_personal(personal: dict[str, Any]) -> str:
+    address = sanitize_text(str(personal.get("address", "")))
+    city = sanitize_text(str(personal.get("city", "")))
+    postal_code = sanitize_text(str(personal.get("postal_code", "")))
+    country = sanitize_text(str(personal.get("country", "")))
+    first_line = ", ".join(part for part in [address, city] if part)
+    second_line = " ".join(part for part in [postal_code, country] if part)
+    return " - ".join(part for part in [first_line, second_line] if part)
+
+
+def contact_items_from_text(contact_text: str) -> list[ContactItem]:
+    """Best-effort link/icon reconstruction for legacy text-only resumes."""
+
+    items: list[ContactItem] = []
+    for raw_part in re.split(r"\s+\|\s+|\s+•\s+", contact_text):
+        part = raw_part.strip()
+        if not part:
+            continue
+        lower = part.lower()
+        if "@" in part and not lower.startswith(("http://", "https://")):
+            item = _contact_item("email", part, f"mailto:{part}")
+        elif "linkedin.com" in lower:
+            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
+            item = _contact_url_item("linkedin", part, label=label)
+        elif "github.com" in lower:
+            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
+            item = _contact_url_item("github", part, label=label)
+        elif lower.startswith(("http://", "https://")) or "." in part:
+            item = _contact_url_item("website", part)
+        elif re.search(r"\d", part):
+            item = _contact_item("phone", part, _tel_href(part))
+        else:
+            item = _contact_item("website", part)
+        if item:
+            items.append(item)
+    return order_contact_items(items)
+
+
+def contact_items_text(items: list[ContactItem]) -> str:
+    return " • ".join(item["label"] for item in items if item.get("label"))
+
+
+def contact_items_html(items: list[ContactItem]) -> str:
+    segments: list[str] = []
+    for index, item in enumerate(items):
+        label = html.escape(item.get("label", ""))
+        if not label:
+            continue
+        kind = re.sub(r"[^a-z0-9_-]+", "", item.get("kind", "contact").lower()) or "contact"
+        href = item.get("href", "").strip()
+        content = f'<a href="{html.escape(href, quote=True)}">{label}</a>' if href else label
+        if index > 0:
+            segments.append('<span class="resume-contact-separator" aria-hidden="true">•</span>')
+        segments.append(f'<span class="resume-contact-item resume-contact-{kind}">{content}</span>')
+    return f'<span class="resume-contact-items">{"".join(segments)}</span>' if segments else ""
 
 
 def build_resume_html_document(body: str) -> str:
@@ -240,11 +456,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
         if isinstance(entry, dict) and entry.get("id")
     }
 
-    contact_parts = [
-        str(personal.get(key, "")).strip()
-        for key in ("email", "phone", "website_url", "linkedin_url")
-        if str(personal.get(key, "")).strip()
-    ]
+    contact_items = contact_items_from_personal(personal)
     summary_source = (
         tailored_payload.get("executive_profile", "")
         if tailoring_policy["allow_summary_rewrite"]
@@ -309,7 +521,9 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     return {
         "personal": {
             "full_name": sanitize_text(str(personal.get("full_name", ""))),
-            "contact": [sanitize_text(part) for part in contact_parts],
+            "address": address_line_from_personal(personal),
+            "contact": [item["label"] for item in contact_items],
+            "contact_items": contact_items,
         },
         "summary": sanitize_text(str(summary_source)),
         "experience": experiences,
@@ -352,9 +566,23 @@ def build_resume_html(document: ResumeDocument) -> str:
         '<header class="resume-header">',
         target("personal:full_name", str(personal.get("full_name", "")), tag="h1", class_name="resume-name"),
     ]
-    contact = " | ".join(str(part) for part in personal.get("contact", []) if str(part).strip())
+    address = str(personal.get("address", "")).strip()
+    if address:
+        body.append(target("personal:address", address, tag="p", class_name="resume-address"))
+    contact_items = [
+        item
+        for item in personal.get("contact_items", [])
+        if isinstance(item, dict) and str(item.get("label", "")).strip()
+    ]
+    if not contact_items:
+        contact_items = [
+            {"kind": "contact", "label": str(part).strip(), "href": ""}
+            for part in personal.get("contact", [])
+            if str(part).strip()
+        ]
+    contact = contact_items_text(contact_items)
     if contact:
-        body.append(target("personal:contact", contact, class_name="resume-contact"))
+        body.append(target("personal:contact", contact, tag="p", class_name="resume-contact", inner_html=contact_items_html(contact_items)))
     body.extend(["</header>", '<section class="resume-section">', section_title("executive_profile", "Executive Profile")])
     body.append(target("summary", str(document.get("summary", "")), tag="p", class_name="resume-summary"))
     body.append("</section>")
@@ -362,28 +590,30 @@ def build_resume_html(document: ResumeDocument) -> str:
     body.extend(['<section class="resume-section">', section_title("experience", "Experience")])
     for entry in document.get("experience", []):
         entry_id = str(entry.get("id", "experience"))
-        heading = " | ".join(part for part in [entry.get("title", ""), entry.get("company", "")] if part)
         title = html.escape(str(entry.get("title", "")))
         company = html.escape(str(entry.get("company", "")))
         date_range = html.escape(str(entry.get("date_range", "")))
         location = str(entry.get("location", "")).strip()
+        location_html = html.escape(location)
         heading_html = (
-            '<span class="resume-entry-main">'
-            f'<span class="resume-entry-title">{title}</span>'
-            + (f' <span class="resume-entry-company">| {company}</span>' if company else "")
+            '<span class="resume-entry-row resume-entry-company-row">'
+            f'<span class="resume-entry-company">{company}</span>'
+            + (f'<span class="resume-entry-location">{location_html}</span>' if location_html else "")
             + "</span>"
+            + '<span class="resume-entry-row resume-entry-role-row">'
+            f'<span class="resume-entry-title">{title}</span>'
             + (f'<span class="resume-entry-date">{date_range}</span>' if date_range else "")
+            + "</span>"
         )
         body.append('<article class="resume-entry">')
         body.append(
             target(
                 f"experience:{entry_id}:heading",
-                " | ".join(part for part in [heading, entry.get("date_range", "")] if part),
+                " | ".join(part for part in [entry.get("company", ""), location, entry.get("title", ""), entry.get("date_range", "")] if part),
                 class_name="resume-entry-heading",
                 inner_html=heading_html,
             )
         )
-        body.append(target(f"experience:{entry_id}:location", location, tag="p", class_name="resume-entry-subtitle"))
         body.append('<ul class="resume-bullets">')
         for bullet in entry.get("bullets", []):
             body.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))

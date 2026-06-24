@@ -58,6 +58,8 @@ def _profile() -> dict:
             "full_name": "Jane Doe",
             "email": "jane@example.com",
             "phone": "+1-555-0100",
+            "website_url": "https://janedoe.dev",
+            "linkedin_url": "https://www.linkedin.com/in/janedoe",
         },
         "resume": {
             "executive_profile": {"baseline_text": "Engineer."},
@@ -271,6 +273,12 @@ def test_build_resume_document_reuses_tailoring_policy_helpers() -> None:
     document = build_resume_document(_payload(), _profile())
 
     assert document["personal"]["full_name"] == "Jane Doe"
+    assert document["personal"]["contact_items"] == [
+        {"kind": "phone", "label": "+1-555-0100", "href": "tel:+15550100"},
+        {"kind": "email", "label": "jane@example.com", "href": "mailto:jane@example.com"},
+        {"kind": "website", "label": "janedoe.dev", "href": "https://janedoe.dev"},
+        {"kind": "linkedin", "label": "janedoe", "href": "https://www.linkedin.com/in/janedoe"},
+    ]
     assert document["summary"] == "Tailored summary."
     assert document["experience"][0]["title"] == "Senior SWE"
     assert document["experience"][0]["company"] == "Acme"
@@ -289,6 +297,18 @@ def test_build_resume_html_escapes_text_and_marks_layout_targets() -> None:
     assert "data-resume-line-number=\"1\"" in html
     assert "Jane &lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert "<script>alert(1)</script>" not in html
+
+
+def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> None:
+    html = build_resume_html(build_resume_document(_payload(), _profile()))
+
+    assert '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">+1-555-0100</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-email"><a href="mailto:jane@example.com">jane@example.com</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-website"><a href="https://janedoe.dev">janedoe.dev</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>' in html
+    assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
+    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">2020-Present</span></span>' in html
+    assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
 
 
 def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(

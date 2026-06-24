@@ -18,16 +18,24 @@ def test_build_legacy_resume_html_uses_real_list_items_without_double_bullets() 
         "\n".join(
             [
                 "Jordan Candidate",
-                "jordan@example.com | https://example.com",
+                "jordan@example.com | (+1) 555-0100 | https://www.linkedin.com/in/jordan | https://example.com",
                 "",
                 "EXPERIENCE",
                 "Director of Engineering | Acme",
+                "Remote | 2020-Present",
                 "- Built a platform team.",
             ]
         )
     )
 
     assert '<h1 class="resume-name" data-resume-layout-target="personal:full_name"' in html
+    assert '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">(+1) 555-0100</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-email"><a href="mailto:jordan@example.com">jordan@example.com</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-website"><a href="https://example.com">example.com</a></span>' in html
+    assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/jordan">jordan</a></span>' in html
+    assert html.index("resume-contact-phone") < html.index("resume-contact-email") < html.index("resume-contact-website") < html.index("resume-contact-linkedin")
+    assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
+    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Director of Engineering</span><span class="resume-entry-date">2020-Present</span></span>' in html
     assert '<ul class="resume-bullets">' in html
     assert ">Built a platform team.</li>" in html
     assert ">- Built a platform team.</li>" not in html
