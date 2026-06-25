@@ -476,6 +476,15 @@ trail, collapsed selected evidence rows, source links when available, and
 confidence factors. Compensation
 display is warning-only: it does not change fit score, sorting, filtering, apply
 readiness, Apply Review handoff, or apply mutation behavior.
+Apply Review renders current HTML/CSS resume artifacts as a live Plate editor.
+Human edits are saved as separate resume-review drafts, JobHunter line comments
+can be replied to in place, and approval controls stay blocked until a saved
+draft validates and renders into replacement resume artifacts. The previously
+accepted materials remain available until that replacement render succeeds.
+The Profile page renders the baseline resume through the same Plate HTML/CSS
+editor surface, backed by `GET /v1/profile/preview.html`, so the profile
+baseline matches the generated-materials layout without the old PDF iframe or
+Profile-specific LaTeX render path.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
 Debug activity, expose resizable column handles in the headers so long local
 data can be inspected without changing code or global density settings.
@@ -726,7 +735,7 @@ Common environment variables:
   profile headless. The default is visible Chrome so a throwaway LinkedIn
   account can be logged in and kept fresh.
 - `JOBHUNTER_RESUME_RENDERER`: set to `latex_pdf` to use the legacy LaTeX
-  resume renderer; defaults to `html_pdf`.
+  resume renderer for generated resume materials; defaults to `html_pdf`.
 - `PDFLATEX_PATH`: override LaTeX detection when the legacy renderer is enabled.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout

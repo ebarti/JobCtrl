@@ -70,7 +70,11 @@ import type {
   RetailorJobRequest,
   ResumeCommentReplyRequest,
   ResumeCommentReplyResponse,
+  ResumeReviewCommentThreadSeedRequest,
+  ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftRenderRequest,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -305,6 +309,20 @@ export class JobHunterApiClient {
     return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`, body);
   }
 
+  seedResumeReviewCommentThreads(
+    draftId: string,
+    body: ResumeReviewCommentThreadSeedRequest,
+  ): Promise<ResumeReviewCommentThreadSeedResponse> {
+    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`, body);
+  }
+
+  renderResumeReviewDraft(
+    draftId: string,
+    body: ResumeReviewDraftRenderRequest = {},
+  ): Promise<ResumeReviewDraftRenderResponse> {
+    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`, body);
+  }
+
   replyToResumeReviewComment(
     threadId: string,
     body: ResumeCommentReplyRequest,
@@ -478,6 +496,15 @@ export class JobHunterApiClient {
 
   profilePreviewPdfUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.pdf";
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
+      url.searchParams.set("v", String(cacheKey));
+    }
+    return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
+  }
+
+  profilePreviewHtmlUrl(cacheKey?: QueryValue): string {
+    const path = "/v1/profile/preview.html";
     const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));

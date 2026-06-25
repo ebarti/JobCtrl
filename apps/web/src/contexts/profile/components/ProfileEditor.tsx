@@ -3,10 +3,11 @@ import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointer
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm } from "../forms/profile-form.js";
+import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
-import { ResumePreviewIframe } from "./ResumePreviewIframe.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
 const DEFAULT_EDITOR_WIDTH = 62;
@@ -21,6 +22,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const { storage } = usePorts();
   const profileQuery = useProfileQuery();
   const settingsQuery = useSettingsQuery();
+  const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
   const [editorWidth, setEditorWidth] = useState(() => {
     const saved = storage.get<number>(SPLIT_STORAGE_KEY);
@@ -103,8 +105,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           <button
             className="profile-resizer"
             type="button"
-            aria-label="Resize profile and PDF preview panes"
-            title="Drag to resize profile and PDF preview panes"
+            aria-label="Resize profile and resume editor panes"
+            title="Drag to resize profile and resume editor panes"
             onPointerDown={startResize}
             onKeyDown={(event) => {
               if (event.key === "ArrowLeft") {
@@ -119,8 +121,12 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           >
             <span aria-hidden="true" />
           </button>
-          <aside className="preview pdf-preview">
-            <ResumePreviewIframe />
+          <aside className="preview resume-editor-preview">
+            <ResumeStandalonePlateEditor
+              className="profile-resume-plate-editor"
+              htmlUrl={profileHtmlPreviewUrl}
+              title="Baseline resume editor"
+            />
           </aside>
         </>
       ) : null}

@@ -5,6 +5,7 @@ import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations
 
 export interface ApplyReviewDecisionControlsProps {
   readonly item: ApplyReviewQueueItem;
+  readonly approvalDisabledReason?: string | null;
 }
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
@@ -37,7 +38,10 @@ function hasCompletedDryRun(item: ApplyReviewQueueItem): boolean {
   return status.includes("succeeded") || status.includes("complete");
 }
 
-export function ApplyReviewDecisionControls({ item }: ApplyReviewDecisionControlsProps) {
+export function ApplyReviewDecisionControls({
+  approvalDisabledReason = null,
+  item,
+}: ApplyReviewDecisionControlsProps) {
   const decision = useApplyReviewDecisionMutation();
   const pending = decision.isPending;
   const primaryDecisions = PRIMARY_DECISIONS.filter(
@@ -63,13 +67,19 @@ export function ApplyReviewDecisionControls({ item }: ApplyReviewDecisionControl
           size="sm"
           type="button"
           variant={value === "decline" ? "outline" : value === "defer" ? "secondary" : "default"}
-          disabled={pending}
+          disabled={pending || (approvalDisabledReason !== null && value.startsWith("approve_"))}
           aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
+          title={value.startsWith("approve_") ? approvalDisabledReason ?? undefined : undefined}
           onClick={() => submitDecision(value)}
         >
           {pending ? "Saving" : DECISION_LABELS[value]}
         </Button>
       ))}
+      {approvalDisabledReason ? (
+        <span className="apply-review-approval-block" role="status">
+          {approvalDisabledReason}
+        </span>
+      ) : null}
       {item.review.state !== "pending" ? (
         <Button
           size="sm"

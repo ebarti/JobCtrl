@@ -491,8 +491,9 @@ resume PDF.
   defaults, target preferences, AI tailoring controls, and resume style. The
   route edits the same profile/style payloads but keeps those controls out of
   the Profile view, whose UI is reserved for who the candidate is.
-- Show the live PDF preview by reading a `cacheKey` derived from the
-  profile mutation count (see §4.4.4 for the precise binding pattern).
+- Show the live baseline resume Plate editor by reading generated HTML from a
+  `cacheKey`-versioned Profile preview URL derived from the profile mutation
+  count (see §4.4.4 for the precise binding pattern).
 - Host settings and credentials hooks. Settings and credentials are
   surfaced via peer routes (`/settings`, `/settings/credentials`); their
   hooks and forms live inside `contexts/profile/` because
@@ -919,7 +920,7 @@ separately in §4.5.
 | Queries | `useProfileQuery()` → `profileKeys.profile(tenantId)`; `useSettingsQuery()` → `profileKeys.settings(tenantId)`; `useCredentialsQuery()` → `profileKeys.credentials(tenantId)`. |
 | Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step). All invalidate the corresponding query key. |
 | Forms | TanStack Form with Zod resolvers (§4.6). |
-| PDF preview | `useProfilePdfPreviewUrl()` returns `apiClient.profilePreviewPdfUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The preview component reloads from that URL whenever the cache key changes. (Resolves §6 question 7.) |
+| Baseline resume editor | `useProfileHtmlPreviewUrl()` returns `apiClient.profilePreviewHtmlUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The Profile editor fetches that generated HTML into the Plate editor whenever the cache key changes. (Resolves §6 question 7.) |
 | Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. |
 
 #### 4.4.5 Scoring
@@ -949,9 +950,9 @@ separately in §4.5.
 |---|---|
 | Routes | None top-level; sub-route under jobs for the apply-run timeline drawer (`routes/jobs.$jobId.run.$runId.tsx`). |
 | Queries | None directly — apply-run reads (list, detail) are owned by Operations (`useApplyRunsListQuery`, `useApplyRunQuery`). |
-| Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`. |
+| Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
 | SSE keys consumed | `ApplyRunStarted`, `ApplyRunEventRecorded`, `ApplicationSubmitted`, `ApplicationFailed`. |
-| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`. |
+| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, and Apply Review decision controls composed with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
 | Notes | The timeline component reads via `useApplyRunQuery` (Operations). The invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
 
 #### 4.4.8 Pipeline Orchestration
@@ -2149,8 +2150,9 @@ Critical user flows:
 3. **Soft-delete + restore** → bulk-select 3 jobs → delete → confirm
    removal from active list → switch to "deleted" tab → restore → confirm
    re-appearance.
-4. **Profile edit + PDF preview** → load profile → edit a field → save →
-   PDF preview iframe `src` updates with a new cache key.
+4. **Profile edit + Plate baseline editor** → load profile → edit a field →
+   save → baseline resume HTML is refetched with a new cache key and remains
+   rendered in the Profile Plate editor.
 5. **Resume import wizard** → upload a PDF → preview parsed draft → confirm
    → wizard exits to profile editor; profile reflects imported sections.
 6. **Generate materials** → click "Generate" on a job → drawer shows
@@ -2300,7 +2302,7 @@ apps/web/
 │   │   │   │   ├── useProfileQuery.ts
 │   │   │   │   ├── useUpdateProfileMutation.ts
 │   │   │   │   ├── useImportResumeMutation.ts
-│   │   │   │   ├── useProfilePdfPreviewUrl.ts
+│   │   │   │   ├── useProfileHtmlPreviewUrl.ts
 │   │   │   │   ├── useSettingsQuery.ts
 │   │   │   │   ├── useUpdateSettingsMutation.ts
 │   │   │   │   ├── useCredentialsQuery.ts
@@ -2312,7 +2314,6 @@ apps/web/
 │   │   │   │   └── credential-form.tsx
 │   │   │   ├── components/
 │   │   │   │   ├── ProfileEditor.tsx
-│   │   │   │   ├── ResumePreviewIframe.tsx
 │   │   │   │   ├── ResumeImportWizard.tsx
 │   │   │   │   ├── SettingsPanel.tsx
 │   │   │   │   └── CredentialsPanel.tsx
@@ -2830,7 +2831,7 @@ first's reconciliation.
 | **ApplyRunTimeline** | Frontend (Apply context) | Live-updating timeline of `ApplyRunEvent` rows; updates via SSE `setQueryData` (not `invalidate`) for high-frequency events. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
 | **Bounded Context (Frontend)** | Architecture | A folder under `contexts/` mirroring a backend bounded context (one of the eight: Discovery, Enrichment, Profile, Scoring, Materials, Apply, Pipeline, Operations). Owns its query keys (where applicable), hooks, components, forms, selectors, and event handlers. Imports from `shared/` and from other contexts' *components* only. |
-| **CacheKey (PDF)** | Frontend (Profile) | A monotonically increasing token derived from the profile mutation count, appended as `?v=...` to the PDF preview URL to bust the iframe cache after each profile mutation. |
+| **CacheKey (Profile HTML)** | Frontend (Profile) | A monotonically increasing token derived from the profile mutation count, appended as `?v=...` to the Profile baseline resume HTML preview URL to refresh the Plate editor after each profile mutation. |
 | **ClipboardPort** | Frontend (Hexagonal) | Port abstracting `navigator.clipboard`, exposed so feature code does not depend on `window`. |
 | **CommandPalette** | Frontend (Shared) | A `cmd-k` style palette rendered above all routes, backed by a Zustand store; named-not-built (deferred until needed). |
 | **Composer (View)** | Frontend (Pattern) | A view component (e.g., `JobDetailDrawer`) that imports rendering components from multiple contexts. Composers own layout, never data fetching across contexts (except read hooks from Operations). Lives under `views/`, not under `contexts/`. |
@@ -2904,7 +2905,7 @@ called out in the briefing (§6) with the resolution location:
 | 4 | Query key design: flat vs factory | **Factory pattern**, per-context | §4.1 |
 | 5 | Mutation invalidation strategy | **Hybrid:** optimistic for sync mutations, SSE-driven for async (202) | §8.3 |
 | 6 | Theme/density: context vs Zustand+persist | **Zustand+persist** as source of truth, context as ergonomic surface | §4.10 |
-| 7 | PDF preview pattern | **`<iframe>` keyed on a `cacheKey` derived from the profile mutation count** | §4.4.4 |
+| 7 | Profile preview pattern | **Plate editor fed by `/v1/profile/preview.html` keyed on a `cacheKey` derived from the profile mutation count** | §4.4.4 |
 | 8 | Resume import wizard: TanStack Form / Zustand wizard / nested route | **Nested route** for steps; **Zustand+persist** for draft state | §4.4.4 |
 | 9 | SSE consumer: `setQueryData` vs `invalidateQueries` | **Hybrid:** `invalidateQueries` by default; `setQueryData` only for high-frequency `ApplyRunEventRecorded` | §7.5 |
 | 10 | Tenant-scoping in query keys: now vs later | **Now** (`["tenant", tenantId, ...]`); add `LOCAL_TENANT` constant from `@jobhunter/domain-types` | §4.1 |

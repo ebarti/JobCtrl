@@ -2,26 +2,47 @@ import type {
   ApplyReviewProfileSourceField,
   ArtifactTailoringExplanation,
   BulletProvenanceEntry,
+  ResumeCommentReplyDecision,
+  ResumeCommentThread,
   ResumeReviewDraft,
+  ResumeReviewDraftRenderResponse,
+  ResumeReviewCommentThreadSeedInput,
   ResumeLayoutBox,
 } from "@jobhunter/contracts";
+import { BasicMarksPlugin } from "@platejs/basic-nodes/react";
+import {
+  IconAlignCenter,
+  IconAlignLeft,
+  IconAlignRight,
+  IconBold,
+  IconItalic,
+  IconUnderline,
+} from "@tabler/icons-react";
 import type { Descendant, TElement, Value } from "platejs";
 import {
   Plate,
   PlateContent,
   createPlatePlugin,
   usePlateEditor,
+  type PlateEditor,
   type PlateElementProps,
 } from "platejs/react";
 import {
   createContext,
   createElement,
+  useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
+  type ChangeEvent,
+  type CSSProperties,
   type Dispatch,
+  type FormEvent,
   type JSX,
+  type MouseEvent,
   type SetStateAction,
 } from "react";
 
@@ -43,6 +64,7 @@ interface ResumeAuditPinsProps {
 
 interface ResumePlateEditorProps {
   readonly artifactId: string;
+  readonly autosaveDelayMs?: number;
   readonly draft: ResumeReviewDraft | null;
   readonly draftError?: string | null;
   readonly draftLoading?: boolean;
@@ -51,13 +73,40 @@ interface ResumePlateEditorProps {
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lineTargets: readonly PdfAuditLineTarget[];
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
+  readonly renderError?: string | null;
+  readonly renderPending?: boolean;
+  readonly renderResult?: ResumeReviewDraftRenderResponse | null;
   readonly resumeText?: string | null;
   readonly saveError?: string | null;
   readonly savePending?: boolean;
+  readonly replyError?: string | null;
+  readonly replyPending?: boolean;
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
-  readonly onSaveDraft?: (input: { readonly editedText: string; readonly plateDocument: Value }) => void;
+  readonly onDraftGateChange?: (state: ResumeDraftGateState) => void;
+  readonly onRenderDraft?: () => void;
+  readonly onReplyToThread?: (
+    thread: ResumeCommentThread,
+    input: {
+      readonly decision: ResumeCommentReplyDecision;
+      readonly body: string;
+    },
+  ) => void;
+  readonly onSaveDraft?: (input: {
+    readonly editedText: string;
+    readonly plateDocument: Value;
+    readonly source: "autosave" | "manual";
+  }) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly onSeedCommentThreads?: (threads: readonly ResumeReviewCommentThreadSeedInput[]) => void;
+}
+
+export interface ResumeDraftGateState {
+  readonly draftId: string | null;
+  readonly dirty: boolean;
+  readonly hasSavedRevision: boolean;
+  readonly rendered: boolean;
+  readonly reason: string | null;
 }
 
 interface ResumeLineEntry {
@@ -86,11 +135,14 @@ interface ResumePlateComment {
 interface ResumePlateDomElement extends TElement {
   readonly type: "resume_block" | "resume_inline";
   readonly className?: string | undefined;
+  readonly fontFamily?: ResumeEditorFontFamily | null | undefined;
+  readonly fontSize?: ResumeEditorFontSize | null | undefined;
   readonly href?: string | undefined;
   readonly lineNumber?: number | undefined;
   readonly pageNumber?: number | undefined;
   readonly semanticId?: string | null | undefined;
   readonly tagName: string;
+  readonly textAlign?: ResumeEditorTextAlign | null | undefined;
 }
 
 interface ResumePlateLineEntry {
@@ -106,6 +158,54 @@ interface ResumePlateRenderContextValue {
   readonly risk: RiskSignals;
   readonly selectedLine: PdfAuditLineSelection | null | undefined;
 }
+
+type ResumeEditorTextAlign = "left" | "center" | "right";
+type ResumeEditorFontFamily = "resume" | "serif" | "sans" | "mono";
+type ResumeEditorFontSize = "resume" | "small" | "large" | "heading";
+
+interface ResumeEditorFormattingApi {
+  readonly align: (value: ResumeEditorTextAlign) => void;
+  readonly focus: () => void;
+  readonly setFontFamily: (value: ResumeEditorFontFamily) => void;
+  readonly setFontSize: (value: ResumeEditorFontSize) => void;
+  readonly toggleBold: () => void;
+  readonly toggleItalic: () => void;
+  readonly toggleUnderline: () => void;
+}
+
+const RESUME_EDITOR_FONT_FAMILIES: readonly {
+  readonly label: string;
+  readonly value: ResumeEditorFontFamily;
+}[] = [
+  { label: "Resume", value: "resume" },
+  { label: "Serif", value: "serif" },
+  { label: "Sans", value: "sans" },
+  { label: "Mono", value: "mono" },
+];
+
+const RESUME_EDITOR_FONT_SIZES: readonly {
+  readonly label: string;
+  readonly value: ResumeEditorFontSize;
+}[] = [
+  { label: "Resume", value: "resume" },
+  { label: "Small", value: "small" },
+  { label: "Large", value: "large" },
+  { label: "Heading", value: "heading" },
+];
+
+const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<ResumeEditorFontFamily, string | null> = {
+  mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  resume: null,
+  sans: '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+};
+
+const RESUME_EDITOR_FONT_SIZE_STYLES: Record<ResumeEditorFontSize, string | null> = {
+  heading: "14pt",
+  large: "12pt",
+  resume: null,
+  small: "9pt",
+};
 
 interface ResumeAuditPin {
   readonly id: string;
@@ -183,6 +283,17 @@ const RESUME_PLATE_BLOCK_TAGS = new Set([
 
 const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "span", "strong"]);
 
+const RESUME_PLATE_BLOCK_CLASS_TOKENS = new Set([
+  "resume-entry-company",
+  "resume-entry-date",
+  "resume-entry-location",
+  "resume-entry-main",
+  "resume-entry-row",
+  "resume-entry-title",
+]);
+
+const RESUME_PLATE_GRID_CONTAINER_CLASS_TOKENS = new Set(["resume-entry-heading", "resume-entry-row"]);
+
 const RESUME_PLATE_BLOCK_PLUGIN = createPlatePlugin({
   key: "resume_block",
   node: { isElement: true },
@@ -193,7 +304,7 @@ const RESUME_PLATE_INLINE_PLUGIN = createPlatePlugin({
   node: { isElement: true, isInline: true },
 });
 
-const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN];
+const RESUME_PLATE_PLUGINS = [RESUME_PLATE_BLOCK_PLUGIN, RESUME_PLATE_INLINE_PLUGIN, BasicMarksPlugin];
 
 function yesNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) return "not recorded";
@@ -721,11 +832,52 @@ function resumePlateTextNode(text: string): Descendant | null {
   return { text: clean };
 }
 
+function hasAnyResumeClass(className: string | null | undefined, tokens: ReadonlySet<string>): boolean {
+  const classes = (className ?? "").split(/\s+/);
+  return classes.some((token) => tokens.has(token));
+}
+
+function shouldRenderResumeElementAsBlock(tagName: string, className: string | null | undefined): boolean {
+  return RESUME_PLATE_BLOCK_TAGS.has(tagName) || hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS);
+}
+
+function normalizeResumePlateChildren(children: readonly Descendant[], parentClassName: string | null | undefined): Descendant[] {
+  const normalized = children.map(normalizeResumePlateDescendant).filter((node): node is Descendant => Boolean(node));
+  if (!hasAnyResumeClass(parentClassName, RESUME_PLATE_GRID_CONTAINER_CLASS_TOKENS)) {
+    return normalized.length ? normalized : [{ text: "" }];
+  }
+  const withoutEmptyGridLeaves = normalized.filter(
+    (node) => !("text" in node) || (typeof node.text === "string" && node.text.trim().length > 0),
+  );
+  return withoutEmptyGridLeaves.length ? withoutEmptyGridLeaves : [{ text: "" }];
+}
+
+function normalizeResumePlateDescendant(node: Descendant): Descendant | null {
+  if ("text" in node) {
+    return node;
+  }
+  const className = typeof node.className === "string" ? node.className : undefined;
+  const tagName = typeof node.tagName === "string" ? node.tagName : "div";
+  const normalizedType = shouldRenderResumeElementAsBlock(tagName, className) ? "resume_block" : "resume_inline";
+  const normalizedTagName = hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName;
+  return {
+    ...node,
+    children: normalizeResumePlateChildren(node.children, className),
+    tagName: normalizedTagName,
+    type: normalizedType,
+  };
+}
+
+function normalizeResumePlateValue(value: Value): Value {
+  const normalized = value.map(normalizeResumePlateDescendant).filter((node): node is Descendant => Boolean(node));
+  return normalized.length ? (normalized as Value) : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
+}
+
 function resumePlateChildrenFromDom(element: Element): Descendant[] {
   const children = Array.from(element.childNodes)
     .map((node) => resumePlateNodeFromDom(node))
     .filter((node): node is Descendant => Boolean(node));
-  return children.length ? children : [{ text: "" }];
+  return normalizeResumePlateChildren(children, element.getAttribute("class"));
 }
 
 function resumePlateNodeFromDom(node: Node): Descendant | null {
@@ -734,18 +886,20 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   }
   if (!(node instanceof HTMLElement)) return null;
   const tagName = node.tagName.toLowerCase();
-  const isInline = RESUME_PLATE_INLINE_TAGS.has(tagName);
-  if (!isInline && !RESUME_PLATE_BLOCK_TAGS.has(tagName)) {
+  const className = node.getAttribute("class") || undefined;
+  const isBlock = shouldRenderResumeElementAsBlock(tagName, className);
+  const isInline = !isBlock && RESUME_PLATE_INLINE_TAGS.has(tagName);
+  if (!isBlock && !isInline) {
     return resumePlateTextNode(cleanRenderedText(node.textContent));
   }
   return {
     children: resumePlateChildrenFromDom(node),
-    className: node.getAttribute("class") || undefined,
+    className,
     href: tagName === "a" ? safeResumeHref(node.getAttribute("href")) : undefined,
     lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
     pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
     semanticId: node.getAttribute("data-resume-layout-target") || null,
-    tagName,
+    tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
 }
@@ -766,7 +920,7 @@ function resumePlateValueFromHtml(html: string): Value {
     .map((node) => resumePlateNodeFromDom(node))
     .filter((node): node is Descendant => Boolean(node));
   return nodes.length
-    ? (nodes as Value)
+    ? normalizeResumePlateValue(nodes as Value)
     : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
 }
 
@@ -802,6 +956,10 @@ function resumeTextFromPlateValue(value: Value): string {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function resumePlateValueSignature(value: Value | null): string {
+  return value ? JSON.stringify(value) : "";
 }
 
 function kindForHtmlElement(element: HTMLElement, index: number, text: string): ResumeLineEntry["kind"] {
@@ -941,6 +1099,72 @@ function inlineCommentForPin(pin: ResumeAuditPin, risk: RiskSignals): ResumePlat
     tone: pinTone(pin, risk),
     why,
   };
+}
+
+function seedThreadsFromPins(
+  artifactId: string,
+  pins: readonly ResumeAuditPin[],
+  risk: RiskSignals,
+): ResumeReviewCommentThreadSeedInput[] {
+  return pins
+    .map((pin): ResumeReviewCommentThreadSeedInput | null => {
+      const comment = inlineCommentForPin(pin, risk);
+      if (!comment.why && !comment.sourceText && comment.tone !== "warn") return null;
+      const body = [
+        comment.why,
+        comment.sourceText ? `${comment.sourceLabel ?? "Source"}: ${comment.sourceText}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        baseArtifactId: boundedSeedIdentifier(artifactId, "artifact"),
+        commentBody: boundedSeedText(body || comment.status, 4000),
+        lineAnchor: {
+          lineNumber: pin.lineNumber ?? null,
+          pageNumber: 1,
+          semanticId: boundedSeedIdentifier(pin.sourceId, "semantic"),
+          textHash: null,
+        },
+        riskLabel: comment.status,
+        semanticId: boundedSeedIdentifier(pin.sourceId, "semantic"),
+        sourcePinId: boundedSeedIdentifier(pin.id, "pin"),
+      };
+    })
+    .filter((thread): thread is ResumeReviewCommentThreadSeedInput => Boolean(thread));
+}
+
+function boundedSeedIdentifier(value: string | null | undefined, salt: string): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= 240) return trimmed;
+  const suffix = `${salt}:${stableTextHash(trimmed)}`;
+  return `${trimmed.slice(0, 240 - suffix.length - 1).trimEnd()}:${suffix}`;
+}
+
+function boundedSeedText(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const suffix = "\n[truncated]";
+  return `${trimmed.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`;
+}
+
+function stableTextHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function seedThreadKey(thread: ResumeReviewCommentThreadSeedInput): string {
+  return [
+    thread.sourcePinId ?? "",
+    thread.semanticId ?? "",
+    thread.lineAnchor?.lineNumber ?? "",
+    thread.riskLabel ?? "",
+    thread.commentBody,
+  ].join(":");
 }
 
 function selectionFromPlateLine(
@@ -1300,7 +1524,9 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
       aria-label="JobHunter resume comment"
       className={`resume-plate-comment ${comment.tone}`}
       contentEditable={false}
+      data-resume-editor-chrome="true"
       role="note"
+      suppressContentEditableWarning
     >
       <span className="resume-plate-comment-head">
         <b>JobHunter</b>
@@ -1316,10 +1542,142 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
   );
 }
 
+const COMMENT_REPLY_DECISIONS: readonly ResumeCommentReplyDecision[] = [
+  "accepted",
+  "clarified",
+  "rejected",
+  "rewrite_requested",
+];
+
+function commentThreadStateLabel(thread: ResumeCommentThread): string {
+  return formatToken(thread.state.replaceAll("_", " "));
+}
+
+function ResumeCommentReplyForm({
+  disabled,
+  thread,
+  onReply,
+}: {
+  readonly disabled: boolean;
+  readonly thread: ResumeCommentThread;
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element | null {
+  const [body, setBody] = useState("");
+  const [decision, setDecision] = useState<ResumeCommentReplyDecision>("clarified");
+  if (!onReply) return null;
+  const formId = `resume-comment-reply-${thread.threadId}`;
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    onReply(thread, { body: trimmed, decision });
+    setBody("");
+    setDecision("clarified");
+  };
+  return (
+    <form className="resume-comment-reply-form" onSubmit={submit}>
+      <label htmlFor={`${formId}-body`}>Reply</label>
+      <textarea
+        id={`${formId}-body`}
+        maxLength={4000}
+        rows={3}
+        value={body}
+        aria-describedby={`${formId}-decision`}
+        disabled={disabled}
+        onChange={(event) => setBody(event.currentTarget.value)}
+      />
+      <div className="resume-comment-reply-controls">
+        <label htmlFor={`${formId}-decision`}>Decision</label>
+        <select
+          id={`${formId}-decision`}
+          value={decision}
+          disabled={disabled}
+          onChange={(event) => setDecision(event.currentTarget.value as ResumeCommentReplyDecision)}
+        >
+          {COMMENT_REPLY_DECISIONS.map((value) => (
+            <option key={value} value={value}>
+              {formatToken(value)}
+            </option>
+          ))}
+        </select>
+        <button className="tab" type="submit" disabled={disabled || !body.trim()}>
+          reply
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ResumeCommentThreadPanel({
+  error,
+  pending,
+  threads,
+  onReply,
+}: {
+  readonly error?: string | null;
+  readonly pending?: boolean;
+  readonly threads: readonly ResumeCommentThread[];
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element | null {
+  if (!threads.length && !error) return null;
+  return (
+    <aside className="resume-comment-thread-panel" aria-label="JobHunter line comments">
+      <div className="resume-comment-thread-head">
+        <b>JobHunter comments</b>
+        <span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span>
+      </div>
+      {error ? <div className="banner inline">{error}</div> : null}
+      {threads.map((thread) => (
+        <article className={`resume-comment-thread ${thread.state}`} key={thread.threadId}>
+          <div className="resume-comment-thread-meta">
+            <span className="tag info">{commentThreadStateLabel(thread)}</span>
+            {thread.riskLabel ? <span className="tag warn">{thread.riskLabel}</span> : null}
+            {thread.lineAnchor?.lineNumber ? <span className="mono">line {thread.lineAnchor.lineNumber}</span> : null}
+            {!thread.anchorResolved ? <span className="tag warn">anchor unresolved</span> : null}
+          </div>
+          <p>{thread.commentBody}</p>
+          <div className="resume-comment-thread-source">
+            {thread.sourcePinId ? <span>Source pin: {thread.sourcePinId}</span> : null}
+            {thread.semanticId ? <span>Semantic id: {thread.semanticId}</span> : null}
+          </div>
+          {thread.replies.length ? (
+            <ul className="resume-comment-replies" aria-label="Comment replies">
+              {thread.replies.map((reply) => (
+                <li key={reply.replyId}>
+                  <b>{formatToken(reply.decision)}</b>
+                  <span>{reply.body}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <ResumeCommentReplyForm disabled={Boolean(pending)} thread={thread} onReply={onReply} />
+        </article>
+      ))}
+    </aside>
+  );
+}
+
 function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
   return RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)
     ? (tagName as keyof HTMLElementTagNameMap)
     : "div";
+}
+
+function resumeElementStyle(element: ResumePlateDomElement): CSSProperties | undefined {
+  const style: CSSProperties = {};
+  const textAlign = element.textAlign ?? null;
+  const fontFamily = element.fontFamily ? RESUME_EDITOR_FONT_FAMILY_STYLES[element.fontFamily] : null;
+  const fontSize = element.fontSize ? RESUME_EDITOR_FONT_SIZE_STYLES[element.fontSize] : null;
+  if (textAlign) {
+    style.textAlign = textAlign;
+  }
+  if (fontFamily) {
+    style.fontFamily = fontFamily;
+  }
+  if (fontSize) {
+    style.fontSize = fontSize;
+  }
+  return Object.keys(style).length ? style : undefined;
 }
 
 const ResumePlateRenderContext = createContext<ResumePlateRenderContextValue | null>(null);
@@ -1360,8 +1718,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
       "data-resume-line-number": element.lineNumber,
       "data-resume-page": element.pageNumber,
       onClick: handleSelect,
-      onMouseDown: handleSelect,
-      onPointerDown: handleSelect,
+      style: resumeElementStyle(element),
     },
     props.children,
     showComment && comment ? <ResumePlateCommentBubble comment={comment} /> : null,
@@ -1392,10 +1749,175 @@ const RESUME_PLATE_COMPONENTS = {
   resume_inline: ResumeInlineElement,
 };
 
+type ResumeFormattingEditor = PlateEditor & {
+  readonly tf: PlateEditor["tf"] & {
+    readonly bold?: { readonly toggle: () => void };
+    readonly italic?: { readonly toggle: () => void };
+    readonly underline?: { readonly toggle: () => void };
+  };
+};
+
+function formattingEditor(editor: PlateEditor): ResumeFormattingEditor {
+  return editor as ResumeFormattingEditor;
+}
+
+function toggleEditorMark(editor: PlateEditor, mark: "bold" | "italic" | "underline"): void {
+  const typedEditor = formattingEditor(editor);
+  typedEditor.tf.focus();
+  typedEditor.tf[mark]?.toggle();
+}
+
+function applyEditorBlockStyle(
+  editor: PlateEditor,
+  patch: Pick<ResumePlateDomElement, "fontFamily" | "fontSize" | "textAlign">,
+): void {
+  editor.tf.focus();
+  editor.tf.setNodes(patch, {
+    match: (node: unknown) => isRecord(node) && node.type === "resume_block",
+  });
+}
+
+function keepEditorSelection(event: MouseEvent<HTMLButtonElement>): void {
+  event.preventDefault();
+}
+
+function ResumeEditorToolbarControls({
+  disabled,
+  onAlign,
+  onFontFamily,
+  onFontSize,
+  onToggleBold,
+  onToggleItalic,
+  onToggleUnderline,
+}: {
+  readonly disabled: boolean;
+  readonly onAlign: (value: ResumeEditorTextAlign) => void;
+  readonly onFontFamily: (value: ResumeEditorFontFamily) => void;
+  readonly onFontSize: (value: ResumeEditorFontSize) => void;
+  readonly onToggleBold: () => void;
+  readonly onToggleItalic: () => void;
+  readonly onToggleUnderline: () => void;
+}): JSX.Element {
+  const fontFamilyId = useId();
+  const fontSizeId = useId();
+  return (
+    <div className="resume-format-toolbar" aria-label="Resume formatting controls">
+      <div className="resume-format-button-group" aria-label="Text style">
+        <button
+          aria-label="Bold"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Bold"
+          type="button"
+          onClick={onToggleBold}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconBold aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Italic"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Italic"
+          type="button"
+          onClick={onToggleItalic}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconItalic aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Underline"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Underline"
+          type="button"
+          onClick={onToggleUnderline}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconUnderline aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+      </div>
+      <label className="resume-format-select" htmlFor={fontFamilyId}>
+        <span>Font</span>
+        <select
+          aria-label="Font"
+          defaultValue="resume"
+          disabled={disabled}
+          id={fontFamilyId}
+          onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+            onFontFamily(event.currentTarget.value as ResumeEditorFontFamily)
+          }
+        >
+          {RESUME_EDITOR_FONT_FAMILIES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="resume-format-select" htmlFor={fontSizeId}>
+        <span>Size</span>
+        <select
+          aria-label="Size"
+          defaultValue="resume"
+          disabled={disabled}
+          id={fontSizeId}
+          onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+            onFontSize(event.currentTarget.value as ResumeEditorFontSize)
+          }
+        >
+          {RESUME_EDITOR_FONT_SIZES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="resume-format-button-group" aria-label="Alignment">
+        <button
+          aria-label="Align left"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align left"
+          type="button"
+          onClick={() => onAlign("left")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignLeft aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Align center"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align center"
+          type="button"
+          onClick={() => onAlign("center")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignCenter aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+        <button
+          aria-label="Align right"
+          className="resume-format-button"
+          disabled={disabled}
+          title="Align right"
+          type="button"
+          onClick={() => onAlign("right")}
+          onMouseDown={keepEditorSelection}
+        >
+          <IconAlignRight aria-hidden="true" size={16} stroke={2.2} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ResumePlateDocument({
+  documentKey,
   initialValue,
   layoutBoxes,
   lines,
+  onFormattingApiChange,
   onValueChange,
   onSelectLine,
   pins,
@@ -1403,9 +1925,11 @@ function ResumePlateDocument({
   selectedLine,
   title,
 }: {
+  readonly documentKey: string;
   readonly initialValue: Value;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lines: readonly ResumePlateLine[];
+  readonly onFormattingApiChange?: (api: ResumeEditorFormattingApi | null) => void;
   readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
   readonly pins: readonly ResumeAuditPin[];
@@ -1435,8 +1959,22 @@ function ResumePlateDocument({
       plugins: RESUME_PLATE_PLUGINS,
       value: initialValue,
     },
-    [initialValue],
+    [documentKey],
   );
+
+  useEffect(() => {
+    onFormattingApiChange?.({
+      align: (value) => applyEditorBlockStyle(editor, { textAlign: value }),
+      focus: () => editor.tf.focus(),
+      setFontFamily: (value) =>
+        applyEditorBlockStyle(editor, { fontFamily: value === "resume" ? null : value }),
+      setFontSize: (value) => applyEditorBlockStyle(editor, { fontSize: value === "resume" ? null : value }),
+      toggleBold: () => toggleEditorMark(editor, "bold"),
+      toggleItalic: () => toggleEditorMark(editor, "italic"),
+      toggleUnderline: () => toggleEditorMark(editor, "underline"),
+    });
+    return () => onFormattingApiChange?.(null);
+  }, [editor, onFormattingApiChange]);
 
   return (
     <ResumePlateRenderContext.Provider value={renderContext}>
@@ -1483,28 +2021,7 @@ function ResumeHtmlUnavailable({
   );
 }
 
-export function ResumePlateEditor({
-  artifactId,
-  draft,
-  draftError = null,
-  draftLoading = false,
-  finalUrl,
-  htmlUrl,
-  layoutBoxes,
-  lineTargets,
-  profileSourceFields = [],
-  resumeText,
-  saveError = null,
-  savePending = false,
-  selectedLine,
-  title,
-  onSaveDraft,
-  onSelectLine,
-}: ResumePlateEditorProps): JSX.Element {
-  const detail = useArtifactDetailQuery(artifactId);
-  const explanation = detail.data?.tailoringExplanation ?? null;
-  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
-  const provenanceReady = detail.isSuccess || detail.isError;
+function useResumeHtmlState(htmlUrl: string | null): ResumeHtmlState {
   const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
     status: htmlUrl ? "loading" : "idle",
     html: null,
@@ -1551,6 +2068,172 @@ export function ResumePlateEditor({
     return () => abortController.abort();
   }, [htmlUrl]);
 
+  return htmlState;
+}
+
+export function ResumeStandalonePlateEditor({
+  className,
+  htmlUrl,
+  title,
+}: {
+  readonly className?: string;
+  readonly htmlUrl: string | null;
+  readonly title: string;
+}): JSX.Element {
+  const htmlState = useResumeHtmlState(htmlUrl);
+  const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
+  const risk = useMemo(() => emptyRiskSignals(), []);
+  const htmlLines = useMemo(
+    () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
+    [htmlState, layoutBoxes],
+  );
+  const initialPlateValue = useMemo<Value | null>(
+    () => (htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null),
+    [htmlState],
+  );
+  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
+  const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
+  const [resetVersion, setResetVersion] = useState(0);
+  const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
+  const [formattingApiReady, setFormattingApiReady] = useState(false);
+
+  useEffect(() => {
+    setCurrentPlateValue(initialPlateValue);
+    setSelectedLine(null);
+    setResetVersion((currentVersion) => currentVersion + 1);
+  }, [initialPlateValue]);
+
+  const initialSignature = useMemo(
+    () => resumePlateValueSignature(initialPlateValue),
+    [initialPlateValue],
+  );
+  const currentSignature = useMemo(
+    () => resumePlateValueSignature(currentPlateValue),
+    [currentPlateValue],
+  );
+  const dirty = Boolean(currentPlateValue && currentSignature !== initialSignature);
+  const canFormat = formattingApiReady && Boolean(currentPlateValue);
+  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${resetVersion}`;
+  const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
+    formattingApiRef.current = api;
+    setFormattingApiReady(Boolean(api));
+  }, []);
+  const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
+  const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
+  const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
+  const handleFontFamily = useCallback(
+    (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
+    [],
+  );
+  const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
+  const handleReset = useCallback(() => {
+    setCurrentPlateValue(initialPlateValue);
+    setResetVersion((currentVersion) => currentVersion + 1);
+  }, [initialPlateValue]);
+
+  const unavailableMessage =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.message
+      : null;
+  const unavailableStatus =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.status
+      : null;
+
+  return (
+    <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title}>
+      <div className="resume-plate-toolbar">
+        <b>{title}</b>
+        <span className="mono">Plate HTML/CSS editor</span>
+        <ResumeEditorToolbarControls
+          disabled={!canFormat}
+          onAlign={handleAlign}
+          onFontFamily={handleFontFamily}
+          onFontSize={handleFontSize}
+          onToggleBold={handleToggleBold}
+          onToggleItalic={handleToggleItalic}
+          onToggleUnderline={handleToggleUnderline}
+        />
+        <button
+          className="tab"
+          disabled={!dirty || !initialPlateValue}
+          type="button"
+          onClick={handleReset}
+        >
+          reset
+        </button>
+        <span className={`resume-plate-draft-status${dirty ? " dirty" : ""}`} role="status">
+          {htmlState.status === "loading" ? "loading baseline" : dirty ? "local edits" : "baseline current"}
+        </span>
+      </div>
+      <div className="resume-plate-scroll">
+        {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
+          <div
+            className="resume-plate-page"
+            aria-label="Editable baseline resume page"
+            data-draft-dirty={dirty ? "true" : "false"}
+          >
+            <ResumePlateDocument
+              documentKey={documentKey}
+              initialValue={initialPlateValue}
+              layoutBoxes={layoutBoxes}
+              lines={htmlLines}
+              onFormattingApiChange={handleFormattingApiChange}
+              onSelectLine={setSelectedLine}
+              onValueChange={setCurrentPlateValue}
+              pins={[]}
+              risk={risk}
+              selectedLine={selectedLine}
+              title={title}
+            />
+          </div>
+        ) : unavailableMessage && unavailableStatus ? (
+          <ResumeHtmlUnavailable message={unavailableMessage} status={unavailableStatus} />
+        ) : htmlState.status === "loading" ? (
+          <Empty title="Loading baseline resume HTML." />
+        ) : (
+          <Empty title="Baseline resume HTML is not available." />
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function ResumePlateEditor({
+  autosaveDelayMs = 1500,
+  artifactId,
+  draft,
+  draftError = null,
+  draftLoading = false,
+  finalUrl,
+  htmlUrl,
+  layoutBoxes,
+  lineTargets,
+  profileSourceFields = [],
+  renderError = null,
+  renderPending = false,
+  renderResult = null,
+  resumeText,
+  saveError = null,
+  savePending = false,
+  replyError = null,
+  replyPending = false,
+  selectedLine,
+  title,
+  onDraftGateChange,
+  onRenderDraft,
+  onReplyToThread,
+  onSaveDraft,
+  onSelectLine,
+  onSeedCommentThreads,
+}: ResumePlateEditorProps): JSX.Element {
+  const detail = useArtifactDetailQuery(artifactId);
+  const explanation = detail.data?.tailoringExplanation ?? null;
+  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
+  const provenanceReady = detail.isSuccess || detail.isError;
+  const htmlState = useResumeHtmlState(htmlUrl);
+
   const htmlLines = useMemo(
     () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
     [htmlState, layoutBoxes],
@@ -1560,10 +2243,21 @@ export function ResumePlateEditor({
     () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
     [explanation, plateLines, profileSourceFields, provenanceReady],
   );
+  const seedThreads = useMemo(
+    () => seedThreadsFromPins(artifactId, linePins, risk),
+    [artifactId, linePins, risk],
+  );
+  const seedKey = useMemo(
+    () => (draft && seedThreads.length ? `${draft.draftId}:${seedThreads.map(seedThreadKey).join("|")}` : null),
+    [draft, seedThreads],
+  );
+  const seededKey = useRef<string | null>(null);
+  const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
+  const [formattingApiReady, setFormattingApiReady] = useState(false);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
-      return savedValue;
+      return normalizeResumePlateValue(savedValue);
     }
     return htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null;
   }, [draft?.latestRevision?.plateDocument, htmlState]);
@@ -1573,29 +2267,124 @@ export function ResumePlateEditor({
     setCurrentPlateValue(initialPlateValue);
   }, [initialPlateValue]);
 
-  const initialDraftText = useMemo(
-    () => (initialPlateValue ? resumeTextFromPlateValue(initialPlateValue) : ""),
-    [initialPlateValue],
-  );
   const currentDraftText = useMemo(
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
     [currentPlateValue],
   );
-  const draftDirty = Boolean(currentPlateValue && currentDraftText !== initialDraftText);
+  const initialDraftSignature = useMemo(
+    () => resumePlateValueSignature(initialPlateValue),
+    [initialPlateValue],
+  );
+  const currentDraftSignature = useMemo(
+    () => resumePlateValueSignature(currentPlateValue),
+    [currentPlateValue],
+  );
+  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}`;
+  const canFormat = formattingApiReady && Boolean(currentPlateValue);
+  const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
+  const hasSavedRevision = Boolean(draft?.latestRevision);
+  const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
+  const draftGateReason = draft
+    ? draftDirty
+      ? "Save and render the edited resume before approval."
+      : hasSavedRevision && !draftRendered
+        ? "Render the saved resume draft before approval."
+        : renderResult && !renderResult.ok
+          ? "Resolve draft validation errors before approval."
+          : null
+    : null;
   const draftStatus = draftLoading
     ? "loading draft"
+    : renderPending
+      ? "rendering replacement"
     : savePending
       ? "saving draft"
-      : saveError || draftError
+      : saveError || draftError || renderError || (renderResult && !renderResult.ok)
         ? "draft save issue"
-        : draftDirty
-          ? "unsaved changes"
-          : draft?.latestRevision
-            ? `saved revision ${draft.latestRevision.revisionNumber}`
-            : draft
-              ? "draft ready"
-              : "draft unavailable";
+      : draftDirty
+        ? "unsaved changes"
+        : draftRendered
+          ? "replacement rendered"
+        : draft?.latestRevision
+          ? `saved revision ${draft.latestRevision.revisionNumber}`
+          : draft
+            ? "draft ready"
+            : "draft unavailable";
   const saveDisabled = !draft || !currentPlateValue || !draftDirty || savePending || draftLoading || !onSaveDraft;
+  const renderDisabled =
+    !draft ||
+    !draft.latestRevision ||
+    draftDirty ||
+    savePending ||
+    renderPending ||
+    draftLoading ||
+    !onRenderDraft;
+
+  useEffect(() => {
+    onDraftGateChange?.({
+      draftId: draft?.draftId ?? null,
+      dirty: draftDirty,
+      hasSavedRevision,
+      rendered: draftRendered,
+      reason: draftGateReason,
+    });
+  }, [draft?.draftId, draftDirty, draftGateReason, draftRendered, hasSavedRevision, onDraftGateChange]);
+
+  useEffect(() => {
+    if (!seedKey || seededKey.current === seedKey || !seedThreads.length || !onSeedCommentThreads) return;
+    seededKey.current = seedKey;
+    onSeedCommentThreads(seedThreads);
+  }, [onSeedCommentThreads, seedKey, seedThreads]);
+
+  const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
+    formattingApiRef.current = api;
+    setFormattingApiReady(Boolean(api));
+  }, []);
+  const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
+  const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
+  const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
+  const handleFontFamily = useCallback(
+    (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
+    [],
+  );
+  const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
+
+  const lastAutosaveSignature = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !autosaveDelayMs ||
+      !draft ||
+      !currentPlateValue ||
+      !draftDirty ||
+      savePending ||
+      draftLoading ||
+      !onSaveDraft ||
+      lastAutosaveSignature.current === currentDraftSignature
+    ) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      if (!currentPlateValue || lastAutosaveSignature.current === currentDraftSignature) return;
+      lastAutosaveSignature.current = currentDraftSignature;
+      onSaveDraft({
+        editedText: currentDraftText,
+        plateDocument: currentPlateValue,
+        source: "autosave",
+      });
+    }, autosaveDelayMs);
+    return () => window.clearTimeout(handle);
+  }, [
+    autosaveDelayMs,
+    currentDraftSignature,
+    currentDraftText,
+    currentPlateValue,
+    draft,
+    draftDirty,
+    draftLoading,
+    onSaveDraft,
+    savePending,
+  ]);
 
   useEffect(() => {
     if (selectedLine || !plateLines.length) return;
@@ -1618,6 +2407,15 @@ export function ResumePlateEditor({
       <div className="resume-plate-toolbar">
         <b>{title}</b>
         <span className="mono">Plate HTML/CSS editor</span>
+        <ResumeEditorToolbarControls
+          disabled={!canFormat}
+          onAlign={handleAlign}
+          onFontFamily={handleFontFamily}
+          onFontSize={handleFontSize}
+          onToggleBold={handleToggleBold}
+          onToggleItalic={handleToggleItalic}
+          onToggleUnderline={handleToggleUnderline}
+        />
         <button
           className="tab"
           disabled={saveDisabled}
@@ -1627,10 +2425,19 @@ export function ResumePlateEditor({
             onSaveDraft?.({
               editedText: currentDraftText,
               plateDocument: currentPlateValue,
+              source: "manual",
             });
           }}
         >
           save draft
+        </button>
+        <button
+          className="tab"
+          disabled={renderDisabled}
+          type="button"
+          onClick={() => onRenderDraft?.()}
+        >
+          render replacement
         </button>
         <span className={`resume-plate-draft-status${draftDirty ? " dirty" : ""}`} role="status">
           {draftStatus}
@@ -1641,17 +2448,32 @@ export function ResumePlateEditor({
       </div>
       {draftError ? <div className="banner inline">{draftError}</div> : null}
       {saveError ? <div className="banner inline">{saveError}</div> : null}
+      {renderError ? <div className="banner inline">{renderError}</div> : null}
+      {renderResult && !renderResult.ok ? (
+        <div className="banner inline" role="status">
+          {renderResult.validation.errors.join(" ")}
+        </div>
+      ) : null}
+      {renderResult?.validation.warnings.length ? (
+        <div className="resume-render-warnings" role="status">
+          {renderResult.validation.warnings.map((warning) => (
+            <span key={warning}>{warning}</span>
+          ))}
+        </div>
+      ) : null}
       <div className="resume-plate-scroll">
-        {htmlState.status === "ready" && currentPlateValue ? (
+        {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
             className="resume-plate-page"
             aria-label="Editable resume page"
             data-draft-dirty={draftDirty ? "true" : "false"}
           >
             <ResumePlateDocument
-              initialValue={currentPlateValue}
+              documentKey={documentKey}
+              initialValue={initialPlateValue}
               layoutBoxes={layoutBoxes}
               lines={plateLines}
+              onFormattingApiChange={handleFormattingApiChange}
               onValueChange={setCurrentPlateValue}
               pins={linePins}
               risk={risk}
@@ -1677,6 +2499,12 @@ export function ResumePlateEditor({
           />
         )}
       </div>
+      <ResumeCommentThreadPanel
+        error={replyError}
+        pending={replyPending}
+        threads={draft?.commentThreads ?? []}
+        onReply={onReplyToThread}
+      />
     </section>
   );
 }

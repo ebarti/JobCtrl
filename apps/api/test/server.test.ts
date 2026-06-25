@@ -8,7 +8,7 @@ import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
-import { defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
+import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -5859,8 +5859,18 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("uses the HTML/CSS resume renderer for default profile PDF previews", () => {
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobhunter.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
+    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobhunter.infrastructure.materials.latex_pdf");
+    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("JOBHUNTER_RESUME_RENDERER");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
+  });
+
   it("serves a rendered profile PDF preview", async () => {
-    const renderer = vi.fn(async () => Buffer.from("%PDF-1.7\nmock preview"));
+    const renderer = vi.fn(async () => ({
+      pdfBytes: Buffer.from("%PDF-1.7\nmock preview"),
+      htmlText: "<main>mock profile resume</main>",
+    }));
     const app = buildApp({ ...options, profilePreviewRenderer: renderer });
     const seed = await app.inject({
       method: "PATCH",
@@ -5877,6 +5887,39 @@ describe("local TypeScript API", () => {
     expect(response.headers["content-type"]).toContain("application/pdf");
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.rawPayload.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(renderer).toHaveBeenCalledWith(
+      {
+        profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        templateText: "\\documentclass{article}",
+      },
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("serves a rendered profile HTML preview for the Profile Plate editor", async () => {
+    const renderer = vi.fn(async () => ({
+      pdfBytes: Buffer.from("%PDF-1.7\nmock preview"),
+      htmlText: '<main class="resume-page">mock profile resume</main>',
+    }));
+    const app = buildApp({ ...options, profilePreviewRenderer: renderer });
+    const seed = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: validProfileFixture("Jordan Candidate"),
+        templateText: "\\documentclass{article}",
+      },
+    });
+    expect(seed.statusCode, seed.body).toBe(200);
+
+    const response = await app.inject({ method: "GET", url: "/v1/profile/preview.html" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toContain("mock profile resume");
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),

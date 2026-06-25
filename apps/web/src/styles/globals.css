@@ -829,6 +829,13 @@ textarea:focus-visible {
   justify-content: flex-end;
 }
 
+.apply-review-approval-block {
+  flex-basis: 100%;
+  color: var(--warning-foreground);
+  font-size: 12px;
+  text-align: end;
+}
+
 .apply-review-status-note {
   display: flex;
   flex-wrap: wrap;
@@ -1021,8 +1028,9 @@ textarea:focus-visible {
 .resume-plate-toolbar {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 10px 12px;
   background: #303030;
   color: #f5f5f5;
@@ -1030,6 +1038,75 @@ textarea:focus-visible {
 
 .resume-plate-toolbar .mono {
   color: #c8c8c8;
+}
+
+.resume-format-toolbar {
+  display: flex;
+  flex: 1 1 520px;
+  min-width: 360px;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-format-button-group {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 5%);
+}
+
+.resume-format-button {
+  display: inline-grid;
+  min-inline-size: 30px;
+  min-block-size: 30px;
+  place-items: center;
+  border: 0;
+  border-inline-end: 1px solid rgb(255 255 255 / 14%);
+  background: transparent;
+  color: #f5f5f5;
+  cursor: pointer;
+}
+
+.resume-format-button:last-child {
+  border-inline-end: 0;
+}
+
+.resume-format-button:hover:not(:disabled),
+.resume-format-button:focus-visible {
+  background: rgb(255 255 255 / 13%);
+}
+
+.resume-format-button:focus-visible,
+.resume-format-select select:focus-visible,
+.resume-plate-toolbar .tab:focus-visible,
+.resume-plate-toolbar a:focus-visible {
+  outline: 2px solid #f5f5f5;
+  outline-offset: 2px;
+}
+
+.resume-format-button:disabled,
+.resume-format-select select:disabled {
+  color: #8e8e8e;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.resume-format-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #d8d8d8;
+  font-size: 11px;
+}
+
+.resume-format-select select {
+  min-block-size: 30px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 5px;
+  background: #242424;
+  color: #f5f5f5;
+  font: inherit;
 }
 
 .resume-plate-toolbar .tab {
@@ -1384,6 +1461,113 @@ textarea:focus-visible {
   border-color: #111;
 }
 
+.resume-render-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #303030;
+  color: #f5f5f5;
+  font-size: 12px;
+}
+
+.resume-render-warnings span {
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.resume-comment-thread-panel {
+  display: grid;
+  flex: 0 0 auto;
+  max-height: 34%;
+  gap: 8px;
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgb(255 255 255 / 14%);
+  background: #2b2b2b;
+  color: #f5f5f5;
+}
+
+.resume-comment-thread-head,
+.resume-comment-thread-meta,
+.resume-comment-thread-source,
+.resume-comment-reply-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.resume-comment-thread-head {
+  justify-content: space-between;
+}
+
+.resume-comment-thread-head span,
+.resume-comment-thread-source {
+  color: #c8c8c8;
+  font-size: 12px;
+}
+
+.resume-comment-thread {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 6px;
+  padding: 10px;
+  background: rgb(255 255 255 / 5%);
+}
+
+.resume-comment-thread p {
+  margin: 0;
+  color: #f5f5f5;
+}
+
+.resume-comment-replies {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resume-comment-replies li {
+  display: grid;
+  gap: 2px;
+  color: #d8d8d8;
+  font-size: 12px;
+}
+
+.resume-comment-reply-form {
+  display: grid;
+  gap: 6px;
+}
+
+.resume-comment-reply-form label {
+  color: #f5f5f5;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.resume-comment-reply-form textarea,
+.resume-comment-reply-form select {
+  min-width: 0;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 6px;
+  background: #1f1f1f;
+  color: #f5f5f5;
+}
+
+.resume-comment-reply-form textarea {
+  resize: vertical;
+  padding: 8px;
+}
+
+.resume-comment-reply-form select {
+  min-height: 30px;
+  padding: 4px 6px;
+}
+
 .resume-html-unavailable {
   display: grid;
   max-width: 680px;
@@ -1405,6 +1589,11 @@ textarea:focus-visible {
 }
 
 @media (max-width: 820px) {
+  .resume-format-toolbar {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
   .resume-plate-scroll {
     padding-inline-end: 18px;
   }
@@ -5237,6 +5426,22 @@ textarea:focus-visible {
   height: calc(100vh - 112px);
   min-height: 720px;
   overflow: hidden;
+}
+
+.resume-editor-preview {
+  height: calc(100vh - 112px);
+  min-height: 720px;
+  overflow: hidden;
+}
+
+.resume-editor-preview .resume-plate-editor {
+  height: 100%;
+  min-height: 0;
+  border-radius: inherit;
+}
+
+.profile-resume-plate-editor .resume-plate-scroll {
+  padding: 18px;
 }
 
 .pdf-preview-viewer {

@@ -373,6 +373,17 @@ Apply-review approval is modeled as a recorded decision, not as an automatic
 worker dispatch. Manual outcome notes are stored only in the local outcome
 table.
 
+Apply Review resume edits are modeled as a local feedback/draft layer in the
+TypeScript API, not as direct writes to the Materials aggregate. The generated
+HTML/CSS resume is loaded into a Plate editor; saved revisions, line edit
+deltas, JobHunter comment threads, user replies, and feedback signals are
+persisted in `resume_review_*` / `tailoring_feedback_signals` tables. A render
+promotion validates the saved draft, creates a new `job_materials` generation
+with replacement `tailored_resume` and `resume_pdf` artifacts plus layout boxes,
+then marks unresolved comments as residual after acceptance. The previous
+approved artifacts remain visible until that replacement generation is written,
+so failed validation or render attempts do not destroy reviewable materials.
+
 Gmail outcome feedback is implemented in
 `workers/automation/src/jobhunter/infrastructure/gmail/feedback.py`, separate
 from the verification-only Gmail MCP server. The scanner reuses the readonly

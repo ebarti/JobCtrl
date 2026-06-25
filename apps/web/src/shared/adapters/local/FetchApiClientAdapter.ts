@@ -116,6 +116,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.saveResumeReviewDraftRevision(draftId, body);
   }
+  seedResumeReviewCommentThreads(
+    draftId: string,
+    body: Parameters<JobHunterApiClient["seedResumeReviewCommentThreads"]>[1],
+  ) {
+    return this.client.seedResumeReviewCommentThreads(draftId, body);
+  }
+  renderResumeReviewDraft(
+    draftId: string,
+    body: Parameters<JobHunterApiClient["renderResumeReviewDraft"]>[1] = {},
+  ) {
+    return this.client.renderResumeReviewDraft(draftId, body);
+  }
   replyToResumeReviewComment(
     threadId: string,
     body: Parameters<JobHunterApiClient["replyToResumeReviewComment"]>[1],
@@ -237,6 +249,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   profilePreviewPdfUrl(cacheKey?: number | string): string {
     return this.client.profilePreviewPdfUrl(cacheKey);
+  }
+  profilePreviewHtmlUrl(cacheKey?: number | string): string {
+    return this.client.profilePreviewHtmlUrl(cacheKey);
   }
   updateProfile(body: Parameters<JobHunterApiClient["updateProfile"]>[0]) {
     return this.client.updateProfile(body);

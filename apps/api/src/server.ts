@@ -54,7 +54,9 @@ import {
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
   ResumeCommentReplyRequestSchema,
+  ResumeReviewCommentThreadSeedRequestSchema,
   ResumeReviewDraftCreateRequestSchema,
+  ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
@@ -139,7 +141,9 @@ import {
   getResumeReviewDraftForJob,
   listResumeReviewFeedback,
   replyToResumeReviewComment,
+  renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
+  seedResumeReviewCommentThreads,
 } from "./resume-review-drafts.js";
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
@@ -633,6 +637,36 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return withWritableDb(reply, options.dbPath, (db) =>
         saveResumeReviewDraftRevision(db, decodeRouteParam(request.params.draftId), body),
       );
+    },
+  );
+
+  app.post<{ Params: { draftId: string } }>(
+    "/v1/resume-review/drafts/:draftId/comment-threads",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewCommentThreadSeedRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        seedResumeReviewCommentThreads(db, decodeRouteParam(request.params.draftId), body),
+      );
+    },
+  );
+
+  app.post<{ Params: { draftId: string } }>(
+    "/v1/resume-review/drafts/:draftId/render",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewDraftRenderRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body);
+        if (result.ok) {
+          refreshProjections(db);
+        }
+        return result;
+      });
     },
   );
 
@@ -1596,7 +1630,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if ("ok" in profileConfig && profileConfig.ok === false) {
         return profileConfig;
       }
-      const pdfBytes = await profilePreviewRenderer(
+      const preview = await profilePreviewRenderer(
         {
           profile: profileConfig.profile,
           templateText: profileConfig.templateText,
@@ -1606,7 +1640,35 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return reply
         .header("content-type", "application/pdf")
         .header("cache-control", "no-store")
-        .send(pdfBytes);
+        .send(preview.pdfBytes);
+    } catch (error) {
+      void reply.code(500);
+      return {
+        ok: false,
+        error: "profile_preview_failed",
+        message: error instanceof Error ? error.message : "Unable to render profile preview.",
+      };
+    }
+  });
+
+  app.get("/v1/profile/preview.html", async (_request, reply) => {
+    try {
+      const profileConfig = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+      if ("ok" in profileConfig && profileConfig.ok === false) {
+        return profileConfig;
+      }
+      const preview = await profilePreviewRenderer(
+        {
+          profile: profileConfig.profile,
+          templateText: profileConfig.templateText,
+        },
+        actionContext,
+      );
+      return reply
+        .type("text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'")
+        .send(preview.htmlText);
     } catch (error) {
       void reply.code(500);
       return {

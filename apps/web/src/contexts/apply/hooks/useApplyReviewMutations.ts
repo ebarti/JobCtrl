@@ -7,7 +7,11 @@ import type {
   OutcomeSuggestionDecisionResponse,
   ResumeCommentReplyRequest,
   ResumeCommentReplyResponse,
+  ResumeReviewCommentThreadSeedRequest,
+  ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftRenderRequest,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -53,6 +57,18 @@ export interface SaveResumeReviewDraftRevisionVariables {
   readonly jobId: JobId;
   readonly draftId: string;
   readonly body: ResumeReviewDraftRevisionSaveRequest;
+}
+
+export interface SeedResumeReviewCommentThreadsVariables {
+  readonly jobId: JobId;
+  readonly draftId: string;
+  readonly body: ResumeReviewCommentThreadSeedRequest;
+}
+
+export interface RenderResumeReviewDraftVariables {
+  readonly jobId: JobId;
+  readonly draftId: string;
+  readonly body?: ResumeReviewDraftRenderRequest;
 }
 
 export interface ReplyToResumeReviewCommentVariables {
@@ -155,6 +171,50 @@ export function useSaveResumeReviewDraftRevisionMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ draftId, body }) => api.saveResumeReviewDraftRevision(draftId, body),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(applyReviewKeys.draft(tenantId, variables.jobId), {
+        ok: true,
+        draft: data.draft,
+      });
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useSeedResumeReviewCommentThreadsMutation(): UseMutationResult<
+  ResumeReviewCommentThreadSeedResponse,
+  Error,
+  SeedResumeReviewCommentThreadsVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ draftId, body }) => api.seedResumeReviewCommentThreads(draftId, body),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(applyReviewKeys.draft(tenantId, variables.jobId), {
+        ok: true,
+        draft: data.draft,
+      });
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useRenderResumeReviewDraftMutation(): UseMutationResult<
+  ResumeReviewDraftRenderResponse,
+  Error,
+  RenderResumeReviewDraftVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ draftId, body }) => api.renderResumeReviewDraft(draftId, body ?? {}),
     onSuccess: (data, variables) => {
       queryClient.setQueryData(applyReviewKeys.draft(tenantId, variables.jobId), {
         ok: true,

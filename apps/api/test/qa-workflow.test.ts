@@ -19,7 +19,10 @@ beforeEach(() => {
   options = {
     dbPath: workspace.dbPath,
     settingsPath: workspace.settingsPath,
-    profilePreviewRenderer: async () => Buffer.from("%PDF-1.4\n% QA preview\n"),
+    profilePreviewRenderer: async () => ({
+      pdfBytes: Buffer.from("%PDF-1.4\n% QA preview\n"),
+      htmlText: '<main class="resume-page">QA preview</main>',
+    }),
   };
 });
 
@@ -211,6 +214,9 @@ describe("seeded local QA workflow", () => {
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);
     expect(preview.headers["content-type"]).toContain("application/pdf");
+    const htmlPreview = await app.inject({ method: "GET", url: "/v1/profile/preview.html" });
+    expect(htmlPreview.statusCode, htmlPreview.body).toBe(200);
+    expect(htmlPreview.headers["content-type"]).toContain("text/html");
 
     const initialCredentials = await app.inject({ method: "GET", url: "/v1/credentials" });
     expect(initialCredentials.statusCode, initialCredentials.body).toBe(200);

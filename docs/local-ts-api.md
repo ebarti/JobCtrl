@@ -369,6 +369,13 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
+`GET /v1/profile/preview.html` renders the baseline Candidate Profile resume
+HTML used by the Profile page Plate editor. The renderer is the same HTML/CSS
+resume renderer used for generated materials. `GET /v1/profile/preview.pdf`
+remains a compatibility endpoint for callers that need a baseline PDF, but the
+Profile web route no longer uses a PDF iframe and no longer has a Profile-level
+LaTeX render override.
+
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
 ingestion is Gmail-only and runs through the Python worker, not through the
@@ -384,6 +391,23 @@ verification-code MCP server:
   through the HTML/CSS resume renderer. Apply Review uses the selected PDF
   artifact to fetch the sibling HTML preview for the Plate editor and keeps the
   PDF as the final file link.
+- `GET` / `POST /v1/jobs/:jobKey/resume-review/draft` loads or creates the
+  separate editable draft for the selected resume artifact generation. Draft
+  revisions, structured edit deltas, comment threads, comment replies, and
+  feedback signals are stored append-only in the TypeScript API tables and do
+  not mutate approved materials in place.
+- `POST /v1/resume-review/drafts/:draftId/revisions` saves manual or autosaved
+  Plate document revisions and extracts bounded feedback signals from changed
+  lines. `POST /v1/resume-review/drafts/:draftId/comment-threads` seeds
+  deterministic JobHunter line-comment threads from audit pins, and
+  `POST /v1/resume-review/comment-threads/:threadId/replies` records the user's
+  reply without suppressing the original source pointer or risk label.
+- `POST /v1/resume-review/drafts/:draftId/render` validates the latest saved
+  draft, writes a new `job_materials` generation with `tailored_resume` and
+  `resume_pdf` artifacts plus layout boxes, and marks the draft promoted. It
+  returns structured validation errors instead of replacing materials when the
+  edited resume is empty, too short, renderer-incompatible, or carries explicit
+  unsupported-claim markers.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

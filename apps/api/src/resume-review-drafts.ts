@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 import type {
   ResumeCommentReply,
@@ -9,8 +10,13 @@ import type {
   ResumeCommentThread,
   ResumeCommentThreadState,
   ResumeLineAnchor,
+  ResumeReviewCommentThreadSeedInput,
+  ResumeReviewCommentThreadSeedRequest,
+  ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraft,
   ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftRenderRequest,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevision,
   ResumeReviewDraftRevisionResponse,
@@ -23,12 +29,13 @@ import type {
   TailoringFeedbackSignalKind,
   TailoringFeedbackSourceKind,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase } from "./db.js";
+import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const TEXT_PREVIEW_BYTE_LIMIT = 128_000;
 const FEEDBACK_SUMMARY_LIMIT = 500;
+const DRAFT_RENDERER_METADATA_SOURCE = "resume_review_draft";
 
 interface ResumeReviewDraftRow extends Record<string, unknown> {
   draft_id: string;
@@ -124,6 +131,30 @@ interface BaseResumeMaterial {
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
   rendererFormat: string;
+}
+
+interface ResumeReviewDraftValidation {
+  passed: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+interface RenderedResumeArtifacts {
+  generation: number;
+  resumeTextArtifactId: string;
+  resumePdfArtifactId: string;
+  layoutBoxCount: number;
+}
+
+interface ResumeLayoutBoxDraft {
+  semanticId: string;
+  pageNumber: number;
+  lineNumber: number;
+  textExcerpt: string;
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
 }
 
 export function ensureResumeReviewTables(db: SqliteDatabase): void {
@@ -383,10 +414,13 @@ export function saveResumeReviewDraftRevision(
       });
     }
 
+    markCommentThreadsSupersededByDeltas(db, draft.draft_id, deltas, now);
+
     db.prepare(
       `UPDATE resume_review_drafts
           SET current_revision_id = ?,
               latest_revision_number = ?,
+              state = 'active',
               updated_at = ?
         WHERE tenant_id = ? AND draft_id = ?`,
     ).run(revisionId, revisionNumber, now, DEFAULT_TENANT, draft.draft_id);
@@ -400,6 +434,158 @@ export function saveResumeReviewDraftRevision(
       ok: true as const,
       draft: draftFromRow(db, nextDraft),
       revision: revisionFromRow(db, revision),
+    };
+  });
+  return tx();
+}
+
+export function seedResumeReviewCommentThreads(
+  db: SqliteDatabase,
+  draftId: string,
+  request: ResumeReviewCommentThreadSeedRequest,
+): ResumeReviewCommentThreadSeedResponse {
+  ensureResumeReviewTables(db);
+  const tx = db.transaction(() => {
+    const draft = getDraftRow(db, draftId);
+    if (!draft) {
+      throw new InputError(`Resume review draft not found: ${draftId}`);
+    }
+
+    const now = new Date().toISOString();
+    let seededCount = 0;
+    let updatedCount = 0;
+    for (const input of request.threads) {
+      const normalized = normalizeSeedThread(draft, input);
+      if (!normalized.commentBody) continue;
+      const existing = getThreadRow(db, normalized.threadId);
+      if (existing) {
+        db.prepare(
+          `UPDATE resume_review_comment_threads
+              SET base_artifact_id = ?,
+                  semantic_id = ?,
+                  line_anchor_json = ?,
+                  source_pin_id = ?,
+                  risk_label = ?,
+                  comment_body = ?,
+                  updated_at = ?
+            WHERE tenant_id = ? AND thread_id = ?`,
+        ).run(
+          normalized.baseArtifactId,
+          normalized.semanticId,
+          normalized.lineAnchor ? JSON.stringify(normalized.lineAnchor) : null,
+          normalized.sourcePinId,
+          normalized.riskLabel,
+          normalized.commentBody,
+          now,
+          DEFAULT_TENANT,
+          normalized.threadId,
+        );
+        updatedCount += 1;
+        continue;
+      }
+      db.prepare(
+        `INSERT INTO resume_review_comment_threads (
+           tenant_id, thread_id, draft_id, job_key, base_artifact_id, semantic_id,
+           line_anchor_json, source_pin_id, risk_label, comment_body,
+           lifecycle_state, anchor_resolved, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`,
+      ).run(
+        DEFAULT_TENANT,
+        normalized.threadId,
+        draft.draft_id,
+        draft.job_key,
+        normalized.baseArtifactId,
+        normalized.semanticId,
+        normalized.lineAnchor ? JSON.stringify(normalized.lineAnchor) : null,
+        normalized.sourcePinId,
+        normalized.riskLabel,
+        normalized.commentBody,
+        normalized.lineAnchor ? 1 : 0,
+        now,
+        now,
+      );
+      seededCount += 1;
+    }
+
+    db.prepare(
+      `UPDATE resume_review_drafts
+          SET updated_at = ?
+        WHERE tenant_id = ? AND draft_id = ?`,
+    ).run(now, DEFAULT_TENANT, draft.draft_id);
+
+    const nextDraft = getDraftRow(db, draft.draft_id);
+    if (!nextDraft) {
+      throw new Error("Resume review draft was not persisted.");
+    }
+    const commentThreads = commentThreadsForDraft(db, draft.draft_id);
+    return {
+      ok: true as const,
+      draft: draftFromRow(db, nextDraft),
+      commentThreads,
+      seededCount,
+      updatedCount,
+    };
+  });
+  return tx();
+}
+
+export function renderResumeReviewDraft(
+  db: SqliteDatabase,
+  draftId: string,
+  request: ResumeReviewDraftRenderRequest = {},
+): ResumeReviewDraftRenderResponse {
+  ensureResumeReviewTables(db);
+  const tx = db.transaction(() => {
+    const draft = getDraftRow(db, draftId);
+    if (!draft) {
+      throw new InputError(`Resume review draft not found: ${draftId}`);
+    }
+    const revisionId = request.draftRevisionId ?? draft.current_revision_id;
+    const revision = revisionId ? getRevisionRow(db, revisionId) : undefined;
+    const validation = validateDraftRevisionForRender(revision);
+    if (!validation.passed || !revision) {
+      return {
+        ok: false as const,
+        error: "resume_review_draft_invalid" as const,
+        draft: draftFromRow(db, draft),
+        validation,
+      };
+    }
+
+    ensureMaterialStorageTables(db);
+    const artifacts = persistRenderedDraftArtifacts(db, draft, revision, validation);
+    const now = new Date().toISOString();
+    markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
+    db.prepare(
+      `UPDATE resume_review_drafts
+          SET state = 'promoted',
+              updated_at = ?
+        WHERE tenant_id = ? AND draft_id = ?`,
+    ).run(now, DEFAULT_TENANT, draft.draft_id);
+
+    const promotedDraft = getDraftRow(db, draft.draft_id);
+    if (!promotedDraft) {
+      throw new Error("Resume review draft was not promoted.");
+    }
+    return {
+      ok: true as const,
+      draft: draftFromRow(db, promotedDraft),
+      validation,
+      artifacts: {
+        resumeText: {
+          artifactId: artifacts.resumeTextArtifactId,
+          artifactType: "tailored_resume" as const,
+          generation: artifacts.generation,
+          renderFormat: "text" as const,
+        },
+        resumePdf: {
+          artifactId: artifacts.resumePdfArtifactId,
+          artifactType: "resume_pdf" as const,
+          generation: artifacts.generation,
+          renderFormat: "html_pdf" as const,
+        },
+      },
+      layoutBoxCount: artifacts.layoutBoxCount,
     };
   });
   return tx();
@@ -479,6 +665,512 @@ export function listResumeReviewFeedback(
     jobKey,
     feedbackSignals: feedbackSignalsForJob(db, jobKey),
   };
+}
+
+function normalizeSeedThread(
+  draft: ResumeReviewDraftRow,
+  input: ResumeReviewCommentThreadSeedInput,
+): {
+  threadId: string;
+  baseArtifactId: string | null;
+  semanticId: string | null;
+  lineAnchor: ResumeLineAnchor | null;
+  sourcePinId: string | null;
+  riskLabel: string | null;
+  commentBody: string;
+} {
+  const lineAnchor = normalizeLineAnchor(input.lineAnchor ?? null);
+  const semanticId = emptyToNull(input.semanticId) ?? lineAnchor?.semanticId ?? null;
+  const sourcePinId = emptyToNull(input.sourcePinId);
+  const baseArtifactId =
+    emptyToNull(input.baseArtifactId) ??
+    draft.base_resume_text_artifact_id ??
+    draft.base_resume_pdf_artifact_id;
+  const commentBody = boundedText(input.commentBody.trim(), 4000);
+  return {
+    threadId:
+      emptyToNull(input.threadId) ??
+      stableId("resume_thread", [
+        draft.draft_id,
+        sourcePinId,
+        semanticId,
+        lineAnchor?.lineNumber ?? null,
+        emptyToNull(input.riskLabel),
+        commentBody,
+      ]),
+    baseArtifactId,
+    semanticId,
+    lineAnchor,
+    sourcePinId,
+    riskLabel: emptyToNull(input.riskLabel),
+    commentBody,
+  };
+}
+
+function markCommentThreadsSupersededByDeltas(
+  db: SqliteDatabase,
+  draftId: string,
+  deltas: readonly ResumeReviewEditDelta[],
+  updatedAt: string,
+): void {
+  if (!deltas.length) return;
+  const threads = allRows<ResumeCommentThreadRow>(
+    db,
+    `SELECT * FROM resume_review_comment_threads
+     WHERE tenant_id = ? AND draft_id = ?
+       AND lifecycle_state IN ('open', 'user_replied', 'residual_after_acceptance')`,
+    [DEFAULT_TENANT, draftId],
+  );
+  for (const thread of threads) {
+    const threadAnchor = parseLineAnchor(thread.line_anchor_json);
+    const matchedDelta = deltas.find((delta) => commentThreadMatchesDelta(thread, threadAnchor, delta));
+    if (!matchedDelta) continue;
+    db.prepare(
+      `UPDATE resume_review_comment_threads
+          SET lifecycle_state = 'superseded_by_edit',
+              anchor_resolved = ?,
+              updated_at = ?
+        WHERE tenant_id = ? AND thread_id = ?`,
+    ).run(matchedDelta.afterText.trim() ? 1 : 0, updatedAt, DEFAULT_TENANT, thread.thread_id);
+  }
+}
+
+function commentThreadMatchesDelta(
+  thread: ResumeCommentThreadRow,
+  threadAnchor: ResumeLineAnchor | null,
+  delta: ResumeReviewEditDelta,
+): boolean {
+  if (thread.semantic_id && delta.semanticId && thread.semantic_id === delta.semanticId) {
+    return true;
+  }
+  if (
+    threadAnchor?.semanticId &&
+    delta.lineAnchor?.semanticId &&
+    threadAnchor.semanticId === delta.lineAnchor.semanticId
+  ) {
+    return true;
+  }
+  return Boolean(
+    threadAnchor?.lineNumber &&
+      delta.lineAnchor?.lineNumber &&
+      threadAnchor.lineNumber === delta.lineAnchor.lineNumber,
+  );
+}
+
+function markResidualCommentThreadsAfterAcceptance(
+  db: SqliteDatabase,
+  draftId: string,
+  updatedAt: string,
+): void {
+  db.prepare(
+    `UPDATE resume_review_comment_threads
+        SET lifecycle_state = 'residual_after_acceptance',
+            updated_at = ?
+      WHERE tenant_id = ?
+        AND draft_id = ?
+        AND lifecycle_state IN ('open', 'user_replied')`,
+  ).run(updatedAt, DEFAULT_TENANT, draftId);
+}
+
+function validateDraftRevisionForRender(
+  revision: ResumeReviewDraftRevisionRow | undefined,
+): ResumeReviewDraftValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (!revision) {
+    errors.push("Save a draft revision before rendering replacement materials.");
+    return { passed: false, errors, warnings };
+  }
+  const editedText = revision.edited_text.replace(/\r\n/g, "\n");
+  const nonEmptyLines = editedText.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!editedText.trim()) {
+    errors.push("Edited resume text is empty.");
+  }
+  if (nonEmptyLines.length < 3) {
+    errors.push("Edited resume text needs at least three non-empty lines before rendering.");
+  }
+  if (editedText.length > TEXT_PREVIEW_BYTE_LIMIT) {
+    errors.push("Edited resume text is too large for the local renderer.");
+  }
+  if (/<\s*script\b|javascript:/i.test(editedText)) {
+    errors.push("Edited resume text contains unsupported executable markup.");
+  }
+  if (/\/Users\/|\/private\/|\.sqlite\b|\.db\b|BEGIN\s+(?:RSA\s+)?PRIVATE KEY/i.test(editedText)) {
+    errors.push("Edited resume text appears to contain local paths, database names, or private key material.");
+  }
+  if (/\b(?:fabricated|unsupported claim|invented metric)\b/i.test(editedText)) {
+    errors.push("Edited resume text still contains explicit unsupported-claim markers.");
+  }
+  if (!nonEmptyLines.some((line) => /^[-•*]\s+/.test(line))) {
+    warnings.push("No bullet lines were detected in the edited resume.");
+  }
+  if (!nonEmptyLines.some((line) => /experience|education|skills|summary|profile/i.test(line))) {
+    warnings.push("No recognizable resume section heading was detected.");
+  }
+  for (const line of nonEmptyLines) {
+    if (line.length > 220) {
+      warnings.push("One or more lines are long enough to risk PDF layout overflow.");
+      break;
+    }
+  }
+  for (const word of ["guru", "ninja", "rockstar"]) {
+    if (new RegExp(`\\b${word}\\b`, "i").test(editedText)) {
+      warnings.push(`Banned or discouraged resume wording detected: ${word}.`);
+    }
+  }
+  return { passed: errors.length === 0, errors, warnings };
+}
+
+function persistRenderedDraftArtifacts(
+  db: SqliteDatabase,
+  draft: ResumeReviewDraftRow,
+  revision: ResumeReviewDraftRevisionRow,
+  validation: ResumeReviewDraftValidation,
+): RenderedResumeArtifacts {
+  const outputDir = renderOutputDirectory(db, draft);
+  if (!outputDir) {
+    throw new InputError("No base resume artifact path is available for rendering the edited draft.");
+  }
+  fs.mkdirSync(outputDir, { recursive: true });
+  const generation = nextMaterialGeneration(db, draft.job_key);
+  const artifactSuffix = stableHash([draft.draft_id, revision.revision_id, generation]).slice(0, 16);
+  const resumeTextArtifactId = `resume_review_text_${artifactSuffix}`;
+  const resumePdfArtifactId = `resume_review_pdf_${artifactSuffix}`;
+  const baseName = `resume-review-${artifactSuffix}`;
+  const textPath = path.join(outputDir, `${baseName}.txt`);
+  const htmlPath = path.join(outputDir, `${baseName}.html`);
+  const pdfPath = path.join(outputDir, `${baseName}.pdf`);
+  const editedText = revision.edited_text.replace(/\r\n/g, "\n");
+  const layoutBoxes = layoutBoxesForEditedText(editedText);
+  const now = new Date().toISOString();
+
+  fs.writeFileSync(textPath, editedText, "utf8");
+  fs.writeFileSync(htmlPath, htmlForEditedResume(editedText), "utf8");
+  fs.writeFileSync(pdfPath, pdfBufferForEditedResume(editedText));
+
+  insertDynamicRow(db, "job_materials", {
+    job_url: draft.job_key,
+    generation,
+    tenant_id: DEFAULT_TENANT,
+    status: "resume_approved",
+    created_at: now,
+    updated_at: now,
+    last_validation_json: JSON.stringify(validation),
+    last_verdict_json: JSON.stringify({ approved: true, source: DRAFT_RENDERER_METADATA_SOURCE }),
+    metadata_json: JSON.stringify({
+      source: DRAFT_RENDERER_METADATA_SOURCE,
+      draft_id: draft.draft_id,
+      draft_revision_id: revision.revision_id,
+      base_generation: draft.base_generation,
+    }),
+  });
+  insertDynamicRow(db, "job_materials_artifacts", {
+    job_url: draft.job_key,
+    generation,
+    artifact_type: "tailored_resume",
+    artifact_id: resumeTextArtifactId,
+    status: "approved",
+    path: textPath,
+    render_format: "text",
+    size_bytes: fs.statSync(textPath).size,
+    metadata_json: JSON.stringify({
+      source: DRAFT_RENDERER_METADATA_SOURCE,
+      draft_id: draft.draft_id,
+      draft_revision_id: revision.revision_id,
+      base_resume_text_artifact_id: draft.base_resume_text_artifact_id,
+    }),
+    created_at: now,
+    superseded_at: null,
+  });
+  insertDynamicRow(db, "job_materials_artifacts", {
+    job_url: draft.job_key,
+    generation,
+    artifact_type: "resume_pdf",
+    artifact_id: resumePdfArtifactId,
+    status: "approved",
+    path: pdfPath,
+    render_format: "html_pdf",
+    size_bytes: fs.statSync(pdfPath).size,
+    metadata_json: JSON.stringify({
+      source: DRAFT_RENDERER_METADATA_SOURCE,
+      draft_id: draft.draft_id,
+      draft_revision_id: revision.revision_id,
+      html_path: htmlPath,
+      base_resume_pdf_artifact_id: draft.base_resume_pdf_artifact_id,
+      layout_box_count: layoutBoxes.length,
+    }),
+    created_at: now,
+    superseded_at: null,
+  });
+  replaceLayoutBoxes(db, draft.job_key, generation, resumePdfArtifactId, layoutBoxes, now);
+
+  return {
+    generation,
+    resumeTextArtifactId,
+    resumePdfArtifactId,
+    layoutBoxCount: layoutBoxes.length,
+  };
+}
+
+function renderOutputDirectory(db: SqliteDatabase, draft: ResumeReviewDraftRow): string | null {
+  const pdfPath = materialArtifactPath(db, draft.job_key, draft.base_generation, draft.base_resume_pdf_artifact_id);
+  const textPath = materialArtifactPath(db, draft.job_key, draft.base_generation, draft.base_resume_text_artifact_id);
+  const basePath = pdfPath ?? textPath;
+  if (!basePath) return null;
+  return path.dirname(basePath);
+}
+
+function materialArtifactPath(
+  db: SqliteDatabase,
+  jobKey: string,
+  generation: number,
+  artifactId: string | null,
+): string | null {
+  if (!artifactId || !tableExists(db, "job_materials_artifacts")) return null;
+  const row = getRow<{ path: string | null }>(
+    db,
+    `SELECT path FROM job_materials_artifacts
+     WHERE job_url = ?
+       AND generation = ?
+       AND artifact_id = ?
+     LIMIT 1`,
+    [jobKey, generation, artifactId],
+  );
+  return row?.path?.trim() || null;
+}
+
+function nextMaterialGeneration(db: SqliteDatabase, jobKey: string): number {
+  const generations: number[] = [];
+  if (tableExists(db, "job_materials")) {
+    const row = getRow<{ max_generation: number | null }>(
+      db,
+      "SELECT MAX(generation) AS max_generation FROM job_materials WHERE job_url = ?",
+      [jobKey],
+    );
+    if (row?.max_generation !== null && row?.max_generation !== undefined) {
+      generations.push(Number(row.max_generation));
+    }
+  }
+  if (tableExists(db, "job_materials_artifacts")) {
+    const row = getRow<{ max_generation: number | null }>(
+      db,
+      "SELECT MAX(generation) AS max_generation FROM job_materials_artifacts WHERE job_url = ?",
+      [jobKey],
+    );
+    if (row?.max_generation !== null && row?.max_generation !== undefined) {
+      generations.push(Number(row.max_generation));
+    }
+  }
+  return Math.max(0, ...generations.filter(Number.isFinite)) + 1;
+}
+
+function layoutBoxesForEditedText(editedText: string): ResumeLayoutBoxDraft[] {
+  const lines = editedText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.slice(0, 80).map((line, index) => ({
+    semanticId: `edited:line:${index + 1}`,
+    pageNumber: Math.floor(index / 42) + 1,
+    lineNumber: index + 1,
+    textExcerpt: boundedText(line, 240),
+    leftPct: 10,
+    topPct: 8 + (index % 42) * 2.1,
+    widthPct: 80,
+    heightPct: 1.7,
+  }));
+}
+
+function replaceLayoutBoxes(
+  db: SqliteDatabase,
+  jobKey: string,
+  generation: number,
+  artifactId: string,
+  boxes: readonly ResumeLayoutBoxDraft[],
+  createdAt: string,
+): void {
+  if (!tableExists(db, "job_material_layout_boxes")) return;
+  db.prepare(
+    "DELETE FROM job_material_layout_boxes WHERE job_url = ? AND generation = ? AND artifact_id = ?",
+  ).run(jobKey, generation, artifactId);
+  for (const [index, box] of boxes.entries()) {
+    insertDynamicRow(db, "job_material_layout_boxes", {
+      job_url: jobKey,
+      generation,
+      artifact_id: artifactId,
+      box_index: index,
+      tenant_id: DEFAULT_TENANT,
+      semantic_id: box.semanticId,
+      page_number: box.pageNumber,
+      line_number: box.lineNumber,
+      text_excerpt: box.textExcerpt,
+      left_pct: box.leftPct,
+      top_pct: box.topPct,
+      width_pct: box.widthPct,
+      height_pct: box.heightPct,
+      audit_target_json: JSON.stringify({
+        source: DRAFT_RENDERER_METADATA_SOURCE,
+        semanticId: box.semanticId,
+        lineNumber: box.lineNumber,
+      }),
+      created_at: createdAt,
+    });
+  }
+}
+
+function ensureMaterialStorageTables(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_materials (
+      job_url             TEXT NOT NULL,
+      generation          INTEGER NOT NULL,
+      tenant_id           TEXT NOT NULL DEFAULT 'local',
+      status              TEXT NOT NULL,
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL,
+      last_validation_json TEXT,
+      last_verdict_json    TEXT,
+      metadata_json       TEXT,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE IF NOT EXISTS job_materials_artifacts (
+      job_url             TEXT NOT NULL,
+      generation          INTEGER NOT NULL,
+      artifact_type       TEXT NOT NULL,
+      artifact_id         TEXT NOT NULL,
+      status              TEXT NOT NULL,
+      path                TEXT NOT NULL,
+      render_format       TEXT NOT NULL,
+      size_bytes          INTEGER,
+      metadata_json       TEXT,
+      created_at          TEXT NOT NULL,
+      superseded_at       TEXT,
+      PRIMARY KEY (job_url, generation, artifact_type)
+    );
+    CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
+      job_url             TEXT NOT NULL,
+      generation          INTEGER NOT NULL,
+      artifact_id         TEXT NOT NULL,
+      box_index           INTEGER NOT NULL,
+      tenant_id           TEXT NOT NULL DEFAULT 'local',
+      semantic_id         TEXT NOT NULL,
+      page_number         INTEGER NOT NULL,
+      line_number         INTEGER,
+      text_excerpt        TEXT NOT NULL,
+      left_pct            REAL NOT NULL,
+      top_pct             REAL NOT NULL,
+      width_pct           REAL NOT NULL,
+      height_pct          REAL NOT NULL,
+      audit_target_json   TEXT NOT NULL DEFAULT '{}',
+      created_at          TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, artifact_id, box_index)
+    );
+  `);
+}
+
+function insertDynamicRow(
+  db: SqliteDatabase,
+  tableName: string,
+  values: Record<string, SqliteValue>,
+): void {
+  const columns = tableColumnSet(db, tableName).filter((column) => Object.hasOwn(values, column));
+  if (!columns.length) return;
+  const placeholders = columns.map(() => "?").join(", ");
+  db.prepare(
+    `INSERT OR REPLACE INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`,
+  ).run(...columns.map((column) => values[column] ?? null));
+}
+
+function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {
+  return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name);
+}
+
+function htmlForEditedResume(editedText: string): string {
+  const paragraphs = editedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const tag = index === 0 ? "h1" : /^[-•*]\s+/.test(line) ? "li" : sectionHeadingLine(line) ? "h2" : "p";
+      const clean = escapeHtml(line.replace(/^[-•*]\s+/, ""));
+      return `<${tag} data-resume-line-number="${index + 1}" data-resume-page="${Math.floor(index / 42) + 1}" data-resume-layout-target="edited:line:${index + 1}">${clean}</${tag}>`;
+    })
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Edited Resume</title>
+    <style>
+      body { margin: 0; font: 12px Arial, sans-serif; color: #111827; background: white; }
+      .resume-document { box-sizing: border-box; width: 8.5in; min-height: 11in; padding: 0.65in; }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0; }
+      p, li { font-size: 11px; line-height: 1.35; margin: 0 0 5px; }
+      li { margin-left: 18px; }
+    </style>
+  </head>
+  <body><main class="resume-document">${paragraphs}</main></body>
+</html>
+`;
+}
+
+function sectionHeadingLine(line: string): boolean {
+  return /^(?:summary|profile|experience|education|skills|projects|certifications|languages)$/i.test(line.trim());
+}
+
+function pdfBufferForEditedResume(editedText: string): Buffer {
+  const lines = editedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 58)
+    .map((line) => line.slice(0, 110));
+  const content = [
+    "BT",
+    "/F1 10 Tf",
+    "14 TL",
+    "72 750 Td",
+    ...lines.flatMap((line) => [`(${escapePdfText(line)}) Tj`, "T*"]),
+    "ET",
+  ].join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf, "utf8"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, "utf8");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "utf8");
+}
+
+function escapePdfText(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function stableId(prefix: string, parts: readonly unknown[]): string {
+  return `${prefix}_${stableHash(parts).slice(0, 32)}`;
+}
+
+function stableHash(parts: readonly unknown[]): string {
+  return crypto.createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
 function resolveBaseResumeMaterial(

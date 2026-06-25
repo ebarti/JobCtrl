@@ -6,8 +6,10 @@ export {
   useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
+  useRenderResumeReviewDraftMutation,
   useReplyToResumeReviewCommentMutation,
   useSaveResumeReviewDraftRevisionMutation,
+  useSeedResumeReviewCommentThreadsMutation,
 } from "./hooks/useApplyReviewMutations.js";
 export { useCancelApplyMutation } from "./hooks/useCancelApplyMutation.js";
 export { useDryRunApplyMutation } from "./hooks/useDryRunApplyMutation.js";

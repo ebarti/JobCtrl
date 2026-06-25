@@ -241,6 +241,273 @@ describe("resume review draft API", () => {
 
     await app.close();
   });
+
+  it("seeds comment threads idempotently and marks edited anchors as superseded", async () => {
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+
+    const seedPayload = {
+      threads: [
+        {
+          baseArtifactId: "resume-text-v2",
+          semanticId: "experience:acme:bullet:1",
+          lineAnchor: {
+            semanticId: "experience:acme:bullet:1",
+            lineNumber: 6,
+            pageNumber: 1,
+            textHash: "hash-before",
+          },
+          sourcePinId: "pin-experience-1",
+          riskLabel: "claim risk",
+          commentBody: "Check the quantified reliability claim against profile evidence.",
+        },
+      ],
+    };
+    const seedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`,
+      payload: seedPayload,
+    });
+    expect(seedResponse.statusCode, seedResponse.body).toBe(200);
+    expect(seedResponse.json()).toMatchObject({
+      seededCount: 1,
+      updatedCount: 0,
+      commentThreads: [
+        {
+          state: "open",
+          riskLabel: "claim risk",
+          sourcePinId: "pin-experience-1",
+          anchorResolved: true,
+        },
+      ],
+    });
+
+    const repeatSeedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`,
+      payload: seedPayload,
+    });
+    expect(repeatSeedResponse.statusCode, repeatSeedResponse.body).toBe(200);
+    expect(repeatSeedResponse.json()).toMatchObject({
+      seededCount: 0,
+      updatedCount: 1,
+    });
+
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: "Led platform reliability work across 3 critical services.",
+        editDeltas: [
+          {
+            kind: "replace_text",
+            section: "experience",
+            semanticId: "experience:acme:bullet:1",
+            lineAnchor: {
+              semanticId: "experience:acme:bullet:1",
+              lineNumber: 6,
+              pageNumber: 1,
+              textHash: "hash-before",
+            },
+            beforeText: "Led platform reliability work.",
+            afterText: "Led platform reliability work across 3 critical services.",
+          },
+        ],
+      },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+    expect(saveResponse.json().draft.commentThreads).toMatchObject([
+      {
+        state: "superseded_by_edit",
+        anchorResolved: true,
+        semanticId: "experience:acme:bullet:1",
+      },
+    ]);
+    expect(JSON.stringify(saveResponse.json())).not.toContain(tempDir);
+
+    await app.close();
+  });
+
+  it("rejects invalid edited drafts without creating replacement artifacts", async () => {
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: "One line only",
+        editDeltas: [],
+      },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+
+    const renderResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: {},
+    });
+    expect(renderResponse.statusCode, renderResponse.body).toBe(200);
+    expect(renderResponse.json()).toMatchObject({
+      ok: false,
+      error: "resume_review_draft_invalid",
+      validation: {
+        passed: false,
+      },
+      draft: {
+        state: "active",
+      },
+    });
+    expect(renderResponse.json().validation.errors).toContain(
+      "Edited resume text needs at least three non-empty lines before rendering.",
+    );
+
+    const db = new Database(options.dbPath);
+    try {
+      const artifactCount = db
+        .prepare("SELECT COUNT(*) AS count FROM job_materials_artifacts")
+        .get() as { count: number };
+      expect(artifactCount.count).toBe(4);
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("renders valid edited drafts into a promoted replacement generation with layout boxes", async () => {
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: [
+          "Eloi Example",
+          "Experience",
+          "- Led platform reliability work across 3 critical services.",
+          "Skills",
+          "- TypeScript, Python, Temporal",
+        ].join("\n"),
+        plateDocument: [{ type: "p", children: [{ text: "Eloi Example" }] }],
+        editDeltas: [
+          {
+            kind: "replace_text",
+            section: "experience",
+            beforeText: "Led platform reliability work.",
+            afterText: "Led platform reliability work across 3 critical services.",
+          },
+        ],
+      },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const renderResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(renderResponse.statusCode, renderResponse.body).toBe(200);
+    const body = renderResponse.json();
+    expect(body).toMatchObject({
+      ok: true,
+      draft: {
+        state: "promoted",
+      },
+      artifacts: {
+        resumeText: {
+          artifactType: "tailored_resume",
+          generation: 3,
+          renderFormat: "text",
+        },
+        resumePdf: {
+          artifactType: "resume_pdf",
+          generation: 3,
+          renderFormat: "html_pdf",
+        },
+      },
+      validation: {
+        passed: true,
+      },
+      layoutBoxCount: 5,
+    });
+    expect(JSON.stringify(body)).not.toContain(tempDir);
+
+    const db = new Database(options.dbPath);
+    try {
+      const artifacts = db
+        .prepare(
+          `SELECT generation, artifact_id, artifact_type, status, path, render_format, metadata_json
+             FROM job_materials_artifacts
+            WHERE job_url = ?
+            ORDER BY generation, artifact_type`,
+        )
+        .all(JOB_KEY) as Array<{
+        artifact_id: string;
+        artifact_type: string;
+        generation: number;
+        metadata_json: string | null;
+        path: string;
+        render_format: string;
+        status: string;
+      }>;
+      expect(artifacts.filter((artifact) => artifact.generation < 3).every((artifact) => artifact.status === "approved")).toBe(
+        true,
+      );
+      const replacementPdf = artifacts.find((artifact) => artifact.artifact_id === body.artifacts.resumePdf.artifactId);
+      const replacementText = artifacts.find((artifact) => artifact.artifact_id === body.artifacts.resumeText.artifactId);
+      expect(replacementPdf).toMatchObject({
+        artifact_type: "resume_pdf",
+        generation: 3,
+        render_format: "html_pdf",
+        status: "approved",
+      });
+      expect(replacementText).toMatchObject({
+        artifact_type: "tailored_resume",
+        generation: 3,
+        render_format: "text",
+        status: "approved",
+      });
+      expect(replacementPdf?.metadata_json).toContain("html_path");
+      expect(replacementPdf?.path.endsWith(".pdf")).toBe(true);
+      expect(replacementText?.path.endsWith(".txt")).toBe(true);
+      expect(fs.existsSync(replacementPdf?.path ?? "")).toBe(true);
+      expect(fs.existsSync(replacementText?.path ?? "")).toBe(true);
+
+      const boxes = db
+        .prepare("SELECT semantic_id, line_number, text_excerpt FROM job_material_layout_boxes WHERE artifact_id = ?")
+        .all(body.artifacts.resumePdf.artifactId) as Array<{
+        line_number: number;
+        semantic_id: string;
+        text_excerpt: string;
+      }>;
+      expect(boxes).toHaveLength(5);
+      expect(boxes[2]).toMatchObject({
+        semantic_id: "edited:line:3",
+        line_number: 3,
+        text_excerpt: "- Led platform reliability work across 3 critical services.",
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
 });
 
 function seedDatabase(dbPath: string): void {
@@ -256,6 +523,18 @@ function seedDatabase(dbPath: string): void {
   const db = new Database(dbPath);
   try {
     db.exec(`
+      CREATE TABLE job_materials (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_validation_json TEXT,
+        last_verdict_json TEXT,
+        metadata_json TEXT,
+        PRIMARY KEY (job_url, generation)
+      );
       CREATE TABLE job_materials_artifacts (
         job_url TEXT NOT NULL,
         generation INTEGER NOT NULL,
@@ -266,14 +545,46 @@ function seedDatabase(dbPath: string): void {
         render_format TEXT,
         created_at TEXT NOT NULL,
         size_bytes INTEGER,
-        metadata_json TEXT
+        metadata_json TEXT,
+        superseded_at TEXT,
+        PRIMARY KEY (job_url, generation, artifact_type)
+      );
+      CREATE TABLE job_material_layout_boxes (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        artifact_id TEXT NOT NULL,
+        box_index INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        semantic_id TEXT NOT NULL,
+        page_number INTEGER NOT NULL,
+        line_number INTEGER,
+        text_excerpt TEXT NOT NULL,
+        left_pct REAL NOT NULL,
+        top_pct REAL NOT NULL,
+        width_pct REAL NOT NULL,
+        height_pct REAL NOT NULL,
+        audit_target_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, generation, artifact_id, box_index)
       );
     `);
+    db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at,
+         last_validation_json, last_verdict_json, metadata_json
+       ) VALUES (?, ?, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')`,
+    ).run(JOB_KEY, 1, NOW, NOW);
+    db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at,
+         last_validation_json, last_verdict_json, metadata_json
+       ) VALUES (?, ?, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')`,
+    ).run(JOB_KEY, 2, NOW, NOW);
     const insert = db.prepare(
       `INSERT INTO job_materials_artifacts (
          job_url, generation, artifact_id, artifact_type, status, path,
-         render_format, created_at, size_bytes, metadata_json
-       ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, '{}')`,
+         render_format, created_at, size_bytes, metadata_json, superseded_at
+       ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, '{}', NULL)`,
     );
     insert.run(JOB_KEY, 1, "resume-text-v1", "tailored_resume", resumeV1Path, "text", NOW, 25);
     insert.run(JOB_KEY, 1, "resume-pdf-v1", "resume_pdf", pdfV1Path, "legacy_pdf", NOW, 7);

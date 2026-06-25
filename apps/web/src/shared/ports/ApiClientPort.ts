@@ -66,7 +66,11 @@ import type {
   RetailorJobRequest,
   ResumeCommentReplyRequest,
   ResumeCommentReplyResponse,
+  ResumeReviewCommentThreadSeedRequest,
+  ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftRenderRequest,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -174,6 +178,14 @@ export interface ApiClientPort {
     draftId: string,
     body: ResumeReviewDraftRevisionSaveRequest,
   ): Promise<ResumeReviewDraftRevisionResponse>;
+  seedResumeReviewCommentThreads(
+    draftId: string,
+    body: ResumeReviewCommentThreadSeedRequest,
+  ): Promise<ResumeReviewCommentThreadSeedResponse>;
+  renderResumeReviewDraft(
+    draftId: string,
+    body?: ResumeReviewDraftRenderRequest,
+  ): Promise<ResumeReviewDraftRenderResponse>;
   replyToResumeReviewComment(
     threadId: string,
     body: ResumeCommentReplyRequest,
@@ -229,6 +241,7 @@ export interface ApiClientPort {
 
   profile(): Promise<ProfileConfigResponse>;
   profilePreviewPdfUrl(cacheKey?: number | string): string;
+  profilePreviewHtmlUrl(cacheKey?: number | string): string;
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse>;
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 
