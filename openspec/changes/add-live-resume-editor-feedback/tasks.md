@@ -51,3 +51,11 @@
 - [x] 7.2 Add or update Apply Review Vitest coverage, API persistence tests, Python materials tests, and MSW fixtures for the new editor path.
 - [x] 7.3 Add browser QA for `/apply-review` covering the live editor load, seeded comments, final-file link, and no visible API errors; edit/save, comment reply, validation block, and replacement render are covered by the route/API/Python test set to avoid mutating real local materials during handoff.
 - [x] 7.4 Run the relevant verification set: `pnpm api:test`, `pnpm web:check`, `pnpm --filter @jobhunter/web test`, focused Python materials tests, `git diff --check`, and a browser smoke path.
+
+## 8. Post-QA Regression Fixes
+
+- [x] 8.1 Stabilize the live Plate editor so typing does not remount the editor, drop focus, or stop after each character.
+- [x] 8.2 Add accessible resume formatting controls for bold, italic, underline, font family, font size, and left, center, and right alignment.
+- [x] 8.3 Preserve resume entry layout and indentation when editing experience/company lines, and keep Ctrl+Z/Cmd+Z undo history functional for text and formatting edits.
+- [x] 8.4 Render the Profile baseline resume preview through the default HTML/CSS resume renderer and relabel the preview as baseline rather than an Apply Review draft.
+- [x] 8.5 Add regression coverage and documentation/QA notes for the editor typing controls, entry-layout preservation, and profile preview renderer alignment.

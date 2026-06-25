@@ -22,6 +22,26 @@ The system SHALL allow the user to edit the resume through a Plate editor while 
 - **WHEN** the user edits structure such as a section heading or contact line
 - **THEN** the system records the edit as a draft change and distinguishes it from generated claim text that requires source provenance
 
+#### Scenario: Typing remains stable
+- **WHEN** the user types continuously inside an editable resume line
+- **THEN** the editor keeps focus and selection across keystrokes, does not reparse the generated HTML or recreate the editor document after each character, and still updates draft dirty state from the live editor value
+
+#### Scenario: Formatting controls are available
+- **WHEN** an editable resume draft is loaded
+- **THEN** the editor exposes accessible controls for bold, italic, underline, font family, font size, and left, center, and right alignment
+- **AND** applying those controls updates the selected text or block without hiding source pins, risk labels, comment anchors, or final-file access
+
+### Requirement: Editor preserves resume layout and undo history
+The system SHALL preserve the resume's structural layout and native Plate undo history while the user edits and saves drafts. The editor MUST normalize imported and saved resume nodes so text-only edits do not corrupt experience-entry indentation, heading rows, bullet grouping, or page layout.
+
+#### Scenario: Editing an experience heading preserves indentation
+- **WHEN** the user edits text inside an experience entry heading such as a company or role name
+- **THEN** the saved editor document preserves the entry heading layout and indentation instead of introducing extra spacer rows, malformed grid tracks, or detached heading fragments
+
+#### Scenario: Undo restores recent editor changes
+- **WHEN** the user presses Ctrl+Z or Cmd+Z after a text or formatting change in the resume editor
+- **THEN** the editor restores the previous content or formatting from local history without requiring a server reload and without corrupting the surrounding resume structure
+
 ### Requirement: Draft revisions persist structured edit deltas
 The system SHALL persist each saved draft revision with structured edit deltas against the base material. Each delta MUST include enough safe metadata to classify the edit, including before text, after text, section or semantic id when known, line anchor when known, and draft revision id.
 
@@ -54,3 +74,14 @@ The system SHALL prevent Apply Review approval for submit or dry run from treati
 #### Scenario: Approved replacement is current
 - **WHEN** an edited draft has been validated, rendered, and approved as replacement materials
 - **THEN** Apply Review uses the replacement artifacts for readiness and final-file access
+
+### Requirement: Profile baseline preview uses the current resume renderer
+The system SHALL render the Profile page baseline resume preview with the same default HTML/CSS resume renderer used for generated resume materials. The legacy LaTeX renderer MAY remain available only through an explicit compatibility configuration and MUST NOT be the default profile preview path.
+
+#### Scenario: Opening the Profile baseline preview
+- **WHEN** the user opens the Profile page and the baseline resume preview loads with default configuration
+- **THEN** the preview PDF is rendered through the HTML/CSS resume renderer and the toolbar identifies it as the baseline resume preview rather than an Apply Review draft
+
+#### Scenario: Explicit legacy renderer override
+- **WHEN** `JOBHUNTER_RESUME_RENDERER=latex_pdf` is configured
+- **THEN** the Profile page preview may use the legacy LaTeX renderer as an explicit compatibility path while the default remains the HTML/CSS renderer
