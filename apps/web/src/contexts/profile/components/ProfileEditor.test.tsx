@@ -90,6 +90,7 @@ describe("<ProfileEditor>", () => {
     expect(within(fontSelects[0]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
     expect(within(fontSelects[1]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
     expect(within(fontSelects[1]!).getByRole("option", { name: "Resume" })).toHaveValue("resume");
+    expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
   });
 });

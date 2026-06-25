@@ -985,6 +985,42 @@ describe("<ApplyReviewView>", () => {
     expect(editor).toHaveFocus();
   });
 
+  it("scopes resume editor font and size formatting to all lines or the selected line", async () => {
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const nameLine = shadowElementWithText(shadow, "Principal Platform Engineer");
+    const bodyLine = shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.");
+
+    await waitFor(() => expect(nameLine.className).toContain("jobhunter-selected-line"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(nameLine.className).not.toContain("jobhunter-selected-line"));
+
+    await userEvent.selectOptions(screen.getByLabelText("Font"), "garamond");
+    await waitFor(() => expect(nameLine.style.fontFamily).toContain("Garamond"));
+    expect(bodyLine.style.fontFamily).toContain("Garamond");
+
+    await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
+    await userEvent.selectOptions(screen.getByLabelText("Font"), "helvetica");
+    await waitFor(() => expect(bodyLine.style.fontFamily).toContain("Helvetica"));
+    expect(nameLine.style.fontFamily).toContain("Garamond");
+
+    const sizeInput = screen.getByLabelText("Size");
+    await userEvent.clear(sizeInput);
+    await userEvent.type(sizeInput, "1.1");
+    await waitFor(() => expect(bodyLine.style.fontSize).toBe("1.1em"));
+    expect(nameLine.style.fontSize).toBe("");
+
+    await userEvent.click(document.body);
+    await waitFor(() => expect(bodyLine.className).not.toContain("jobhunter-selected-line"));
+  });
+
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const draft = makeResumeReviewDraft(jobKey, {

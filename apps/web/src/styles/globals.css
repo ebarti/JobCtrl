@@ -1096,6 +1096,7 @@ textarea:focus-visible {
 
 .resume-format-button:focus-visible,
 .resume-format-select select:focus-visible,
+.resume-format-select input:focus-visible,
 .resume-plate-toolbar .tab:focus-visible,
 .resume-plate-toolbar a:focus-visible {
   outline: 2px solid #f5f5f5;
@@ -1103,7 +1104,8 @@ textarea:focus-visible {
 }
 
 .resume-format-button:disabled,
-.resume-format-select select:disabled {
+.resume-format-select select:disabled,
+.resume-format-select input:disabled {
   color: #8e8e8e;
   cursor: not-allowed;
   opacity: 0.65;
@@ -1117,13 +1119,18 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.resume-format-select select {
+.resume-format-select select,
+.resume-format-select input {
   min-block-size: 30px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 5px;
   background: #242424;
   color: #f5f5f5;
   font: inherit;
+}
+
+.resume-format-select input {
+  inline-size: 64px;
 }
 
 .resume-plate-toolbar .tab {
