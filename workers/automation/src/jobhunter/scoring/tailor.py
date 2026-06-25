@@ -379,11 +379,23 @@ def _tailor_one_job(
             try:
                 text_path = Path(outcome.materials.tailored_resume.path)
                 pdf_out = text_path.with_suffix(".pdf")
+                template_resolver = getattr(use_case._repository, "resolve_effective_resume_template", None)  # noqa: SLF001
+                try:
+                    resume_template = (
+                        template_resolver(outcome.materials.job_id)
+                        if callable(template_resolver)
+                        else None
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Failed to resolve effective resume template for %s", outcome.materials.job_id)
+                    resume_template = None
                 pdf_artifact = pdf_renderer.render_resume_to_pdf(
                     tailored_payload=parsed_payload,
                     profile_dict=snapshot.as_dict(),
                     output_path=str(pdf_out),
                     created_at=utc_now(),
+                    resume_theme=resume_template.get("theme") if isinstance(resume_template, dict) else None,
+                    resume_template=resume_template.get("metadata") if isinstance(resume_template, dict) else None,
                 )
                 # Append the PDF onto the existing aggregate so the
                 # repository persists it under the same generation.

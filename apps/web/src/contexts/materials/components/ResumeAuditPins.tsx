@@ -2021,7 +2021,11 @@ function ResumeHtmlUnavailable({
   );
 }
 
-function useResumeHtmlState(htmlUrl: string | null): ResumeHtmlState {
+function useResumeHtmlState(
+  htmlUrl: string | null,
+  htmlTransform?: (html: string) => string,
+  transformKey?: string,
+): ResumeHtmlState {
   const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
     status: htmlUrl ? "loading" : "idle",
     html: null,
@@ -2057,7 +2061,7 @@ function useResumeHtmlState(htmlUrl: string | null): ResumeHtmlState {
       })
       .then((html) => {
         if (!abortController.signal.aborted && html !== null) {
-          setHtmlState({ status: "ready", html, message: null });
+          setHtmlState({ status: "ready", html: htmlTransform ? htmlTransform(html) : html, message: null });
         }
       })
       .catch((error: unknown) => {
@@ -2066,21 +2070,27 @@ function useResumeHtmlState(htmlUrl: string | null): ResumeHtmlState {
         setHtmlState({ status: "error", html: null, message });
       });
     return () => abortController.abort();
-  }, [htmlUrl]);
+  }, [htmlTransform, htmlUrl, transformKey]);
 
   return htmlState;
 }
 
 export function ResumeStandalonePlateEditor({
   className,
+  htmlTransform,
   htmlUrl,
+  previewStyle,
   title,
+  transformKey,
 }: {
   readonly className?: string;
+  readonly htmlTransform?: ((html: string) => string) | undefined;
   readonly htmlUrl: string | null;
+  readonly previewStyle?: CSSProperties | undefined;
   readonly title: string;
+  readonly transformKey?: string;
 }): JSX.Element {
-  const htmlState = useResumeHtmlState(htmlUrl);
+  const htmlState = useResumeHtmlState(htmlUrl, htmlTransform, transformKey);
   const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
   const risk = useMemo(() => emptyRiskSignals(), []);
   const htmlLines = useMemo(
@@ -2113,7 +2123,7 @@ export function ResumeStandalonePlateEditor({
   );
   const dirty = Boolean(currentPlateValue && currentSignature !== initialSignature);
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
-  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${resetVersion}`;
+  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${transformKey ?? "base"}:${resetVersion}`;
   const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
     formattingApiRef.current = api;
     setFormattingApiReady(Boolean(api));
@@ -2142,7 +2152,7 @@ export function ResumeStandalonePlateEditor({
       : null;
 
   return (
-    <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title}>
+    <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title} style={previewStyle}>
       <div className="resume-plate-toolbar">
         <b>{title}</b>
         <span className="mono">Plate HTML/CSS editor</span>

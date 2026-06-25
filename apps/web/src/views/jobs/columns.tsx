@@ -4,6 +4,7 @@ import { STAGE_STATES } from "@jobhunter/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
+import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
@@ -599,6 +600,14 @@ export function jobColumns(
           secondary={`${row.currentSubstage} stage`}
         />
       ),
+    },
+    {
+      id: "resume_template",
+      label: "Template",
+      sortable: true,
+      getFilterValue: (row) => row.resumeTemplate?.state ?? "no template",
+      getFilterSearchValue: (row) => row.resumeTemplate?.effective.templateName ?? "no template",
+      render: (row) => <ResumeTemplateStatusBadge state={row.resumeTemplate} />,
     },
     {
       id: "discovered_at",

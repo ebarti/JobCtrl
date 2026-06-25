@@ -34,6 +34,8 @@ import {
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
   GmailOutcomeScanRequestSchema,
+  EnsureCurrentResumeMaterialsRequestSchema,
+  JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
@@ -53,6 +55,8 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
+  ResumeTemplateDefaultSelectionRequestSchema,
+  ResumeTemplateVersionSaveRequestSchema,
   ResumeCommentReplyRequestSchema,
   ResumeReviewCommentThreadSeedRequestSchema,
   ResumeReviewDraftCreateRequestSchema,
@@ -145,6 +149,16 @@ import {
   saveResumeReviewDraftRevision,
   seedResumeReviewCommentThreads,
 } from "./resume-review-drafts.js";
+import {
+  createResumeTemplateVersion,
+  ensureCurrentResumeTemplateMaterials,
+  getResumeTemplateDetail,
+  listResumeTemplates,
+  ResumeTemplateInputError,
+  resolveCurrentResumeArtifactIdForOpen,
+  setDefaultResumeTemplate,
+  setJobResumeTemplateAssignment,
+} from "./resume-templates.js";
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
   ProfileInputError,
@@ -591,6 +605,60 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+  );
+
+  app.get("/v1/resume-templates", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listResumeTemplates(db)),
+  );
+
+  app.get<{ Params: { templateId: string } }>("/v1/resume-templates/:templateId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const detail = getResumeTemplateDetail(db, decodeRouteParam(request.params.templateId));
+      if (!detail) {
+        void reply.code(404);
+        return { ok: false, error: "resume_template_not_found" };
+      }
+      return detail;
+    }),
+  );
+
+  app.post("/v1/resume-templates", async (request, reply) => {
+    const body = parseBody(reply, ResumeTemplateVersionSaveRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => createResumeTemplateVersion(db, body));
+  });
+
+  app.patch("/v1/resume-templates/default", async (request, reply) => {
+    const body = parseBody(reply, ResumeTemplateDefaultSelectionRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => setDefaultResumeTemplate(db, body));
+  });
+
+  app.patch<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/resume-template", async (request, reply) => {
+    const body = parseBody(reply, JobResumeTemplateAssignmentRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) =>
+      setJobResumeTemplateAssignment(db, decodeRouteParam(request.params.jobKey), body),
+    );
+  });
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/resume-template/ensure-current",
+    async (request, reply) => {
+      const body = parseBody(reply, EnsureCurrentResumeMaterialsRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        ensureCurrentResumeTemplateMaterials(db, decodeRouteParam(request.params.jobKey), body),
+      );
+    },
   );
 
   app.get<{ Params: { jobKey: string } }>(
@@ -1527,14 +1595,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!detail) {
         return null;
       }
-      const row = db
-        .prepare(
-          `SELECT render_format, metadata_json
-             FROM job_materials_artifacts
-            WHERE artifact_id = ?`,
-        )
-        .get(artifactId) as { render_format?: string | null; metadata_json?: string | null } | undefined;
-      return htmlPreviewForArtifact(detail, row);
+      return htmlPreviewForArtifact(detail, artifactPreviewRow(db, artifactId));
     });
     if (!preview) {
       void reply.code(404);
@@ -1599,7 +1660,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.post<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/open", async (request, reply) => {
-    const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
+    const resolvedArtifactId = await withWritableDb(reply, options.dbPath, (db) =>
+      resolveCurrentResumeArtifactIdForOpen(db, decodeRouteParam(request.params.artifactId)),
+    );
+    if (typeof resolvedArtifactId !== "string") {
+      return resolvedArtifactId;
+    }
+    const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, resolvedArtifactId));
     if (!detail) {
       void reply.code(404);
       return { ok: false, error: "artifact_not_found" };
@@ -1848,7 +1915,12 @@ function htmlPreviewForArtifact(
       message: "Only HTML-rendered resume PDF artifacts expose an editable HTML preview.",
     };
   }
-  if (row?.render_format !== "html_pdf") {
+  const pdfPath = detail.artifact.localPath;
+  const siblingHtmlPath = path.resolve(path.join(path.dirname(pdfPath), `${path.parse(pdfPath).name}.html`));
+  const metadata = safeJsonObject(row?.metadata_json);
+  const hasMetadataHtmlPath = typeof metadata?.html_path === "string" && metadata.html_path.trim().length > 0;
+  const hasLegacySiblingHtml = fs.existsSync(siblingHtmlPath);
+  if (row?.render_format && row.render_format !== "html_pdf") {
     return {
       ok: false,
       statusCode: 415,
@@ -1856,9 +1928,14 @@ function htmlPreviewForArtifact(
       message: "This artifact was not rendered through the HTML/CSS resume renderer.",
     };
   }
-  const pdfPath = detail.artifact.localPath;
-  const siblingHtmlPath = path.resolve(path.join(path.dirname(pdfPath), `${path.parse(pdfPath).name}.html`));
-  const metadata = safeJsonObject(row.metadata_json);
+  if (!row?.render_format && !hasMetadataHtmlPath && !hasLegacySiblingHtml) {
+    return {
+      ok: false,
+      statusCode: 415,
+      error: "artifact_preview_unsupported",
+      message: "This artifact does not expose an HTML/CSS resume preview.",
+    };
+  }
   const metadataHtmlPath =
     typeof metadata?.html_path === "string" && metadata.html_path.trim()
       ? path.resolve(metadata.html_path)
@@ -1880,6 +1957,20 @@ function htmlPreviewForArtifact(
     };
   }
   return { ok: true, htmlPath: siblingHtmlPath };
+}
+
+function artifactPreviewRow(db: ApiDb, artifactId: string): HtmlPreviewArtifactRow {
+  if (!tableExists(db, "job_materials_artifacts")) return undefined;
+  const columns = columnNames(db, "job_materials_artifacts");
+  const renderFormatSelect = columns.has("render_format") ? "render_format" : "NULL AS render_format";
+  const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
+  return db
+    .prepare(
+      `SELECT ${renderFormatSelect}, ${metadataSelect}
+         FROM job_materials_artifacts
+        WHERE artifact_id = ?`,
+    )
+    .get(artifactId) as HtmlPreviewArtifactRow;
 }
 
 function safeJsonObject(value: string | null | undefined): Record<string, unknown> | null {
@@ -2315,6 +2406,14 @@ function withDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof ResumeTemplateInputError) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "invalid_resume_template",
+        message: error.message,
+      };
+    }
     const opened = db !== null;
     void reply.code(opened ? 500 : 503);
     return {
@@ -2342,6 +2441,10 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof ResumeTemplateInputError) {
+      void reply.code(400);
+      return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
     if (error instanceof InputError) {
       void reply.code(404);
       return { ok: false, error: "not_found", message: error.message };

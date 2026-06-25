@@ -346,11 +346,16 @@ class PdfRendererPort(Protocol):
         profile_dict: dict,
         output_path: str,
         created_at: str,
+        resume_theme: dict | None = None,
+        resume_template: dict | None = None,
     ) -> Artifact:
         """Compile a tailored-resume payload to PDF at ``output_path``.
 
         ``tailored_payload`` is the JSON the tailor LLM returned (after
         sanitisation). ``profile_dict`` is the augmented snapshot dict.
+        ``resume_theme`` is optional normalized template style data; omitted
+        callers get the built-in HTML/CSS renderer style. ``resume_template``
+        is safe audit metadata snapshotted into the generated artifact.
         """
         ...
 

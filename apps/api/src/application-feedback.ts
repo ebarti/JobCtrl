@@ -41,6 +41,7 @@ import {
 import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
+import { resumeTemplateStateForJob } from "./resume-templates.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
@@ -1402,7 +1403,11 @@ function uniqueProfileSourceFields(fields: readonly ApplyReviewProfileSourceFiel
 
 type ResumeMaterialPreview = Pick<
   ApplyReviewQueueItem["materialsPreview"],
-  "resumeText" | "resumeTextArtifactId" | "resumePdfArtifactId" | "resumePdfLayoutBoxes"
+  | "resumeText"
+  | "resumeTextArtifactId"
+  | "resumePdfArtifactId"
+  | "resumePdfLayoutBoxes"
+  | "resumeTemplate"
 >;
 
 interface MaterialArtifactCandidate {
@@ -1455,6 +1460,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
         resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
+        resumeTemplate: resumeTemplateStateForJob(db, jobKey),
       };
     }
   }
@@ -1466,6 +1472,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
       resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
+      resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
 
@@ -1476,6 +1483,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
       resumePdfLayoutBoxes: [],
+      resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
 
@@ -1486,6 +1494,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
       ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
       : [],
+    resumeTemplate: resumeTemplateStateForJob(db, jobKey),
   };
 }
 

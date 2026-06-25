@@ -14,6 +14,7 @@ import {
   sampleDiscoverySettingsResponse,
   sampleHealthResponse,
   sampleProfileResponse,
+  sampleResumeTemplateListResponse,
   sampleSettingsResponse,
 } from "../fixtures/projections.js";
 
@@ -648,6 +649,55 @@ export const handlers = [
         headers: { "Content-Type": "text/html" },
       },
     ),
+  ),
+
+  http.get("*/v1/resume-templates", () => HttpResponse.json(sampleResumeTemplateListResponse)),
+  http.get("*/v1/resume-templates/:templateId", ({ params }) => {
+    const template =
+      sampleResumeTemplateListResponse.templates.find((item) => item.templateId === String(params["templateId"])) ??
+      sampleResumeTemplateListResponse.templates[0]!;
+    return HttpResponse.json({ ok: true, template });
+  }),
+  http.post("*/v1/resume-templates", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { displayName?: string; templateId?: string };
+    return HttpResponse.json({
+      ok: true,
+      template: {
+        ...sampleResumeTemplateListResponse.templates[0]!,
+        templateId: body.templateId ?? "custom-template-1",
+        displayName: body.displayName ?? "Custom template",
+        builtIn: false,
+      },
+    });
+  }),
+  http.patch("*/v1/resume-templates/default", () =>
+    HttpResponse.json({
+      ok: true,
+      defaultTemplate: {
+        ...sampleResumeTemplateListResponse.builtInDefault,
+        assignmentSource: "profile_default",
+      },
+    }),
+  ),
+  http.patch("*/v1/jobs/:jobKey/resume-template", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      jobKey: String(params["jobKey"]),
+      effectiveTemplate: sampleResumeTemplateListResponse.builtInDefault,
+      overrideTemplate: null,
+      templateState: null,
+    }),
+  ),
+  http.post("*/v1/jobs/:jobKey/resume-template/ensure-current", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      jobKey: String(params["jobKey"]),
+      status: "not_required",
+      templateState: null,
+      attempt: null,
+      generation: null,
+      message: "Resume materials already use the effective template.",
+    }),
   ),
 
   http.get("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),

@@ -3870,6 +3870,64 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("serves sibling HTML preview for legacy artifact tables without render_format", async () => {
+    const app = buildApp(options);
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+    const artifact = listResponse.json().items[0];
+    fs.writeFileSync(artifact.localPath, "%PDF legacy html-rendered test");
+    const htmlPath = path.join(path.dirname(artifact.localPath), `${path.parse(artifact.localPath).name}.html`);
+    fs.writeFileSync(htmlPath, '<!doctype html><main class="resume-page">Legacy HTML preview</main>');
+    const now = "2026-06-20T10:00:00+00:00";
+    const db = new Database(options.dbPath);
+    createMaterialsTables(db);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at
+       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+    ).run(artifact.jobKey, now, now);
+    db.prepare(
+      `INSERT OR REPLACE INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+    ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
+    db.exec(`
+      ALTER TABLE job_materials_artifacts RENAME TO job_materials_artifacts_with_render_format;
+      CREATE TABLE job_materials_artifacts (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        artifact_type TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size_bytes INTEGER,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        superseded_at TEXT,
+        PRIMARY KEY (job_url, generation, artifact_id)
+      );
+      INSERT INTO job_materials_artifacts (
+        job_url, generation, artifact_type, artifact_id, status, path,
+        size_bytes, metadata_json, created_at, superseded_at
+      )
+      SELECT job_url, generation, artifact_type, artifact_id, status, path,
+             size_bytes, metadata_json, created_at, superseded_at
+        FROM job_materials_artifacts_with_render_format;
+      DROP TABLE job_materials_artifacts_with_render_format;
+    `);
+    db.close();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview.html`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.body).toContain("Legacy HTML preview");
+
+    await app.close();
+  });
+
   it("rejects HTML preview for a legacy-rendered resume PDF artifact", async () => {
     const app = buildApp(options);
     const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });

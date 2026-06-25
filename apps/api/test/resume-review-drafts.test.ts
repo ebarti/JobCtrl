@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureResumeReviewTables,
 } from "../src/resume-review-drafts.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
 
@@ -69,6 +70,122 @@ describe("resume review draft API", () => {
       ]);
     } finally {
       db.close();
+    }
+
+    await app.close();
+  });
+
+  it("creates a draft from legacy artifact tables without render_format", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.exec(`
+        ALTER TABLE job_materials_artifacts RENAME TO job_materials_artifacts_with_render_format;
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_id TEXT NOT NULL,
+          artifact_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_id, artifact_type, status, path,
+          created_at, size_bytes, metadata_json, superseded_at
+        )
+        SELECT job_url, generation, artifact_id, artifact_type, status, path,
+               created_at, size_bytes, metadata_json, superseded_at
+          FROM job_materials_artifacts_with_render_format;
+        DROP TABLE job_materials_artifacts_with_render_format;
+      `);
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().draft).toMatchObject({
+      jobKey: JOB_KEY,
+      baseGeneration: 2,
+      baseResumeTextArtifactId: "resume-text-v2",
+      baseResumePdfArtifactId: "resume-pdf-v2",
+      rendererFormat: "unknown",
+    });
+
+    await app.close();
+  });
+
+  it("does not create a current draft when lazy template refresh is unavailable", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare("DELETE FROM job_materials_artifacts WHERE artifact_type = 'tailored_resume'").run();
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const saveTemplateResponse = await app.inject({
+      method: "POST",
+      url: "/v1/resume-templates",
+      payload: {
+        displayName: "Style-only refresh gate",
+        theme: {
+          ...BUILT_IN_RESUME_TEMPLATE_THEME,
+          fontFamily: "serif",
+        },
+        layout: {},
+      },
+    });
+    expect(saveTemplateResponse.statusCode, saveTemplateResponse.body).toBe(200);
+    const savedTemplate = saveTemplateResponse.json().template;
+    const defaultResponse = await app.inject({
+      method: "PATCH",
+      url: "/v1/resume-templates/default",
+      payload: {
+        templateId: savedTemplate.templateId,
+        versionId: savedTemplate.activeVersion.versionId,
+      },
+    });
+    expect(defaultResponse.statusCode, defaultResponse.body).toBe(200);
+
+    const draftResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+
+    expect(draftResponse.statusCode, draftResponse.body).toBe(404);
+    expect(draftResponse.json()).toMatchObject({
+      ok: false,
+      error: "not_found",
+      message: "Latest accepted resume has no reusable text source for render-only refresh.",
+    });
+
+    const verifyDb = new Database(options.dbPath);
+    try {
+      const draftCount = verifyDb
+        .prepare("SELECT COUNT(*) AS count FROM resume_review_drafts")
+        .get() as { count: number };
+      const artifactRows = verifyDb
+        .prepare("SELECT artifact_id, status FROM job_materials_artifacts ORDER BY artifact_id")
+        .all() as Array<{ artifact_id: string; status: string }>;
+      expect(draftCount.count).toBe(0);
+      expect(artifactRows).toEqual([
+        { artifact_id: "resume-pdf-v1", status: "approved" },
+        { artifact_id: "resume-pdf-v2", status: "approved" },
+      ]);
+    } finally {
+      verifyDb.close();
     }
 
     await app.close();

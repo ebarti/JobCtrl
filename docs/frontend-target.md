@@ -463,8 +463,8 @@ home.
 ### 3.4 Candidate Profile
 
 **Purpose:** Read, edit, and import the candidate profile; manage
-application preferences, settings, and credentials; preview the rendered
-resume PDF.
+application preferences, settings, credentials, and resume template defaults;
+preview the rendered resume PDF.
 
 **Ubiquitous language** (matches Candidate Profile):
 - **Profile** — the candidate document.
@@ -475,6 +475,9 @@ resume PDF.
   entities.
 - **TailoringPolicy**, **WritingStyle**, **ResumeConstraints** — value
   objects.
+- **ResumeTemplate** — versioned style/layout configuration for resume PDF
+  rendering. Template preview may use profile data for display, but saved
+  template payloads contain style/layout only.
 - **ResumeImportWizard** — the multi-step flow for importing a profile
   from a resume PDF (frontend-only presentation term; the underlying
   backend use case is `ImportProfileUseCase`).
@@ -491,6 +494,9 @@ resume PDF.
   defaults, target preferences, AI tailoring controls, and resume style. The
   route edits the same profile/style payloads but keeps those controls out of
   the Profile view, whose UI is reserved for who the candidate is.
+- Render the resume-template editor in Preferences, backed by the same Plate
+  HTML/CSS profile preview surface and Profile-owned query/mutation hooks for
+  template list, version save, and default selection.
 - Show the live baseline resume Plate editor by reading generated HTML from a
   `cacheKey`-versioned Profile preview URL derived from the profile mutation
   count (see §4.4.4 for the precise binding pattern).
@@ -917,8 +923,8 @@ separately in §4.5.
 | Aspect | Pattern |
 |---|---|
 | Routes | `routes/profile.tsx` (layout), `routes/profile.index.tsx` (editor), `routes/preferences.tsx` (application preferences), `routes/profile.import.{upload,preview,confirm}.tsx` (wizard steps); `routes/settings.tsx` (layout), `routes/settings.index.tsx` (general), `routes/settings.credentials.tsx` (credentials). |
-| Queries | `useProfileQuery()` → `profileKeys.profile(tenantId)`; `useSettingsQuery()` → `profileKeys.settings(tenantId)`; `useCredentialsQuery()` → `profileKeys.credentials(tenantId)`. |
-| Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step). All invalidate the corresponding query key. |
+| Queries | `useProfileQuery()` → `profileKeys.profile(tenantId)`; `useSettingsQuery()` → `profileKeys.settings(tenantId)`; `useCredentialsQuery()` → `profileKeys.credentials(tenantId)`; `useResumeTemplatesQuery()` → `profileKeys.resumeTemplates(tenantId)`. |
+| Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step), `useSaveResumeTemplateMutation()`, and `useSetDefaultResumeTemplateMutation()`. All invalidate the corresponding query key. |
 | Forms | TanStack Form with Zod resolvers (§4.6). |
 | Baseline resume editor | `useProfileHtmlPreviewUrl()` returns `apiClient.profilePreviewHtmlUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The Profile editor fetches that generated HTML into the Plate editor whenever the cache key changes. (Resolves §6 question 7.) |
 | Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. |
@@ -939,8 +945,8 @@ separately in §4.5.
 |---|---|
 | Routes | None (mutation-only context; affordances surface in `views/jobs/` and `views/artifacts/`). |
 | Queries | None. |
-| Mutations | `useGenerateMaterialsMutation({ jobId })` — calls `POST /v1/jobs/:jobKey/actions/generate-materials`, which dispatches a `run_stage` command over the canonical material stages (tailor → cover) and returns 202 (queued) once the worker is ready. Per the §8.2 async-mutation pattern it applies an optimistic queued patch (marks the first material stage `running` on the cached job detail, with rollback on request failure) plus a small immediate invalidation on settle; the real terminal result arrives via the SSE stream when `ResumeApproved` / `CoverLetterGenerated` / `PdfRendered` invalidations fan out. It never removes the last accepted artifact — that is superseded by the worker only when a replacement is approved (INSPECT-06). `useOpenArtifactMutation({ artifactId })` — no cache invalidation; calls the local `OpenInOsPort`. |
-| SSE keys consumed | `ResumeApproved`, `ResumeFailed`, `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`. |
+| Mutations | `useGenerateMaterialsMutation({ jobId })` — calls `POST /v1/jobs/:jobKey/actions/generate-materials`, which dispatches a `run_stage` command over the canonical material stages (tailor → cover) and returns 202 (queued) once the worker is ready. Per the §8.2 async-mutation pattern it applies an optimistic queued patch (marks the first material stage `running` on the cached job detail, with rollback on request failure) plus a small immediate invalidation on settle; the real terminal result arrives via the SSE stream when `ResumeApproved` / `CoverLetterGenerated` / `PdfRendered` invalidations fan out. It never removes the last accepted artifact — that is superseded by the worker only when a replacement is approved (INSPECT-06). `useSetJobResumeTemplateMutation({ jobKey, body })` sets/clears the per-job template override; `useEnsureCurrentResumeMaterialsMutation({ jobKey })` performs lazy render-only refresh when a selected/default template makes accepted resume materials stale. `useOpenArtifactMutation({ artifactId })` calls the local `OpenInOsPort`; the API may first refresh stale resume-template materials and open the newest same-type artifact. |
+| SSE keys consumed | `ResumeApproved`, `ResumeFailed`, `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`, `JobResumeTemplateAssigned`, `ResumeTemplateRefreshCompleted`, `ResumeTemplateRefreshFailed`. |
 | Components | `<GenerateMaterialsButton jobId={...} />`, `<OpenArtifactButton artifactId={...} />`, and the tailoring inspector: `<EmployerAnalysisPanel analysis={...} />` (requirements + reasoned keywords with quoted JD evidence spans), `<BulletProvenanceList provenance={...} annotatedChanges={...} />` (per-bullet evidence × requirement × transform × control × rationale + original→tailored diff), `<TailoringExplanationSection explanation={...} />` (rationale, coverage, voice pass, composes `<BulletProvenanceList>`), and `<ArtifactTailoringInspector artifactId={...} />` (fetches artifact detail via the Operations read hook and renders the explanation; composed by `views/jobs/JobDetailDrawer` and `views/apply-review`). All render explicit missing/empty/covered/unmet states (INSPECT-05) — never a blank or a fabricated value. |
 | Notes | This is the canonical example of the **mutation invalidation strategy** decision (§6 question 5, resolved in §8.3): for *async* actions returning 202, apply the optimistic "queued" patch + a small immediate settle invalidation, then let the event stream invalidate again when the work is actually complete (the authoritative terminal refresh). The artifact-open mutation is materials-context surface (artifacts are owned by `MaterialsSet`) even though it's surfaced from the Artifacts view. |
 
@@ -1850,6 +1856,11 @@ via SSE):
 | `CoverLetterGenerated` | jobs (lists, detail), artifacts (lists), dashboard |
 | `PdfRendered` | jobs (lists, detail), artifacts (lists), dashboard |
 | `MaterialsExhausted` | jobs (lists, detail), dashboard |
+| `ResumeTemplateVersionSaved` | profile (resume templates), jobs (lists), artifacts (lists) |
+| `ResumeTemplateDefaultChanged` | profile (resume templates), jobs (lists), artifacts (lists), apply review |
+| `JobResumeTemplateAssigned` | jobs (lists, detail), artifacts (lists), apply review |
+| `ResumeTemplateRefreshCompleted` | jobs (lists, detail), artifacts (lists), apply review, dashboard |
+| `ResumeTemplateRefreshFailed` | jobs (lists, detail), apply review |
 | `ApplyRunStarted` | apply-runs (lists), jobs (lists, detail), dashboard |
 | `ApplyRunEventRecorded` | apply-runs (detail) — patched via `setQueryData`, not invalidated |
 | `ApplicationSubmitted` | jobs (lists, detail), apply-runs (lists, detail), dashboard |

@@ -55,13 +55,26 @@ renders a single registered PDF artifact page through local Poppler
 known PDF artifact files from the local artifact projection; they return `404`
 for missing metadata/files, `415` for unsupported artifact/renderer formats,
 and `400` for invalid page numbers. The separate
-`POST /v1/artifacts/:artifactId/open` route still delegates to the local OS
-opener.
+`POST /v1/artifacts/:artifactId/open` route delegates to the local OS opener;
+for resume text/PDF artifacts it first runs the resume-template ensure-current
+path and opens the newest approved same-type artifact when a render-only
+template refresh succeeds.
 PDF artifact detail responses also include `layoutBoxes` when the Materials
 projection has generated resume layout metadata. Boxes use page-relative
 percent coordinates plus optional resume line numbers. Apply Review passes them
 into the HTML editor for line/page anchoring; legacy PDFs or artifacts without a
 layout map return an empty array.
+
+Resume template editing is exposed through local JSON endpoints:
+`GET /v1/resume-templates` lists the built-in and saved templates plus the
+current default, `POST /v1/resume-templates` saves a style/layout-only template
+version, `PATCH /v1/resume-templates/default` selects the default template, and
+`PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
+`POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
+render-only materials generation when the latest accepted resume text exists
+but was rendered with an older effective template. The endpoint preserves the
+previous accepted artifacts and records refresh status instead of modifying
+profile data or replacing reviewable output in place.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,

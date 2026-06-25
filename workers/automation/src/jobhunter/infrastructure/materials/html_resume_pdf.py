@@ -258,6 +258,97 @@ p {
 }
 """
 
+FONT_STACKS = {
+    "sans": '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "system": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    "aptos": '"Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "avenir": '"Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "serif": 'Georgia, "Times New Roman", Times, serif',
+}
+
+DENSITY_SCALE = {
+    "compact": {"section": 3.2, "entry": 2.4, "bullet": 0.45, "line": 1.24},
+    "balanced": {"section": 4.1, "entry": 3.2, "bullet": 0.75, "line": 1.32},
+    "spacious": {"section": 5.2, "entry": 4.1, "bullet": 1.05, "line": 1.42},
+}
+
+
+def resume_theme_css(theme: dict[str, Any] | None) -> str:
+    """Convert normalized template tokens into safe print CSS overrides."""
+
+    if not isinstance(theme, dict):
+        return ""
+    font_family = FONT_STACKS.get(str(theme.get("fontFamily", "sans")), FONT_STACKS["sans"])
+    density = DENSITY_SCALE.get(str(theme.get("density", "balanced")), DENSITY_SCALE["balanced"])
+    font_scale = _bounded_float(theme.get("fontScale"), 0.85, 1.2, 1.0)
+    margins = theme.get("marginMm") if isinstance(theme.get("marginMm"), dict) else {}
+    margin_top = _bounded_float(margins.get("top"), 8, 28, 16.5)
+    margin_right = _bounded_float(margins.get("right"), 8, 28, 17.5)
+    margin_bottom = _bounded_float(margins.get("bottom"), 8, 28, 18)
+    margin_left = _bounded_float(margins.get("left"), 8, 28, 17.5)
+    alignment = "left" if theme.get("alignment") == "left" else "justify"
+    header_align = {
+        "left": "left",
+        "split": "left",
+        "centered": "center",
+    }.get(str(theme.get("headerLayout", "centered")), "center")
+    accent = str(theme.get("accentColor", "#111111"))
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+        accent = "#111111"
+    heading_style = str(theme.get("sectionHeadingStyle", "rule"))
+    heading_after = "none" if heading_style in {"plain", "boxed"} else f"0.45pt solid {accent}"
+    heading_border = f"0.45pt solid {accent}" if heading_style == "boxed" else "0"
+
+    return f"""
+body {{
+  color: {accent};
+  font-family: {font_family};
+  font-size: {10.35 * font_scale:.3f}pt;
+  line-height: {density["line"]:.3f};
+}}
+.resume-page {{
+  padding: {margin_top:.2f}mm {margin_right:.2f}mm {margin_bottom:.2f}mm {margin_left:.2f}mm;
+}}
+.resume-header {{
+  text-align: {header_align};
+}}
+.resume-summary,
+.resume-bullets li,
+.resume-skills-list li {{
+  text-align: {alignment};
+}}
+.resume-section {{
+  margin-block-start: {density["section"]:.2f}mm;
+}}
+.resume-entry {{
+  margin-block-end: {density["entry"]:.2f}mm;
+}}
+.resume-bullets li,
+.resume-skills-list li {{
+  margin-block-end: {density["bullet"]:.2f}mm;
+}}
+.resume-section-title {{
+  color: {accent};
+  border: {heading_border};
+  padding: {"0.8mm 1.2mm" if heading_style == "boxed" else "0"};
+}}
+.resume-section-title::after {{
+  border-block-start: {heading_after};
+}}
+"""
+
+
+def _bounded_float(value: Any, minimum: float, maximum: float, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
 
 def _normalize_url(value: str) -> str:
     raw = value.strip()
@@ -401,14 +492,14 @@ def contact_items_html(items: list[ContactItem]) -> str:
     return f'<span class="resume-contact-items">{"".join(segments)}</span>' if segments else ""
 
 
-def build_resume_html_document(body: str) -> str:
+def build_resume_html_document(body: str, resume_theme: dict[str, Any] | None = None) -> str:
     """Wrap trusted resume body markup in the print stylesheet."""
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<style>{RESUME_HTML_STYLE}</style>
+<style>{RESUME_HTML_STYLE}{resume_theme_css(resume_theme)}</style>
 </head>
 <body>
 {body}
@@ -532,7 +623,10 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     }
 
 
-def build_resume_html(document: ResumeDocument) -> str:
+def build_resume_html(
+    document: ResumeDocument,
+    resume_theme: dict[str, Any] | None = None,
+) -> str:
     """Render a trusted resume document to print-oriented HTML."""
 
     line_number = 0
@@ -656,7 +750,7 @@ def build_resume_html(document: ResumeDocument) -> str:
         body.append(target(f"skills:{category_id}", f"{label}: {items}", tag="li", inner_html=skill_html))
     body.extend(["</ul>", "</section>", "</main>"])
 
-    return build_resume_html_document("".join(body))
+    return build_resume_html_document("".join(body), resume_theme=resume_theme)
 
 
 def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[LayoutBox]:
@@ -716,9 +810,11 @@ class HtmlResumePdfAdapter:
         profile_dict: dict,
         output_path: str,
         created_at: str,
+        resume_theme: dict | None = None,
+        resume_template: dict | None = None,
     ) -> Artifact:
         document = build_resume_document(tailored_payload, profile_dict)
-        html_content = build_resume_html(document)
+        html_content = build_resume_html(document, resume_theme=resume_theme)
         html_path = Path(output_path).with_suffix(".html")
         html_path.write_text(html_content, encoding="utf-8")
 
@@ -743,6 +839,7 @@ class HtmlResumePdfAdapter:
                 "html_path": str(html_path),
                 "layout_boxes": layout_boxes,
                 "layout_source": "html_resume_dom",
+                **({"resume_template": resume_template} if resume_template else {}),
             },
             superseded_at=None,
         )
@@ -763,6 +860,7 @@ __all__ = [
     "RESUME_HTML_STYLE",
     "RESUME_PAGE_VIEWPORT",
     "HtmlResumePdfAdapter",
+    "resume_theme_css",
     "build_resume_html_document",
     "build_resume_document",
     "build_resume_html",

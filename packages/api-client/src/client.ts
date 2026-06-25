@@ -37,6 +37,10 @@ import type {
   GenerateMaterialsRequest,
   GmailOutcomeScanRequest,
   GmailOutcomeScanResponse,
+  EnsureCurrentResumeMaterialsRequest,
+  EnsureCurrentResumeMaterialsResponse,
+  JobResumeTemplateAssignmentRequest,
+  JobResumeTemplateAssignmentResponse,
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
@@ -68,6 +72,12 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  ResumeTemplateDefaultSelectionRequest,
+  ResumeTemplateDefaultSelectionResponse,
+  ResumeTemplateDetailResponse,
+  ResumeTemplateListResponse,
+  ResumeTemplateVersionSaveRequest,
+  ResumeTemplateVersionSaveResponse,
   ResumeCommentReplyRequest,
   ResumeCommentReplyResponse,
   ResumeReviewCommentThreadSeedRequest,
@@ -332,6 +342,40 @@ export class JobHunterApiClient {
 
   resumeReviewFeedback(jobKey: string): Promise<ResumeReviewFeedbackListResponse> {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/feedback`);
+  }
+
+  resumeTemplates(): Promise<ResumeTemplateListResponse> {
+    return this.get("/v1/resume-templates");
+  }
+
+  resumeTemplate(templateId: string): Promise<ResumeTemplateDetailResponse> {
+    return this.get(`/v1/resume-templates/${encodeURIComponent(templateId)}`);
+  }
+
+  saveResumeTemplate(
+    body: ResumeTemplateVersionSaveRequest,
+  ): Promise<ResumeTemplateVersionSaveResponse> {
+    return this.post("/v1/resume-templates", body);
+  }
+
+  setDefaultResumeTemplate(
+    body: ResumeTemplateDefaultSelectionRequest,
+  ): Promise<ResumeTemplateDefaultSelectionResponse> {
+    return this.patch("/v1/resume-templates/default", body);
+  }
+
+  setJobResumeTemplate(
+    jobKey: string,
+    body: JobResumeTemplateAssignmentRequest,
+  ): Promise<JobResumeTemplateAssignmentResponse> {
+    return this.patch(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-template`, body);
+  }
+
+  ensureCurrentResumeMaterials(
+    jobKey: string,
+    body: Partial<EnsureCurrentResumeMaterialsRequest> = {},
+  ): Promise<EnsureCurrentResumeMaterialsResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-template/ensure-current`, body);
   }
 
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {

@@ -149,6 +149,56 @@ class SqliteMaterialsRepository:
             return None
         return self._row_to_materials(row, tenant_id)
 
+    def resolve_effective_resume_template(self, job_id: JobId) -> dict[str, Any]:
+        """Return the effective resume template for ``job_id``.
+
+        This is an infrastructure convenience used by local render wiring. It
+        mirrors the TypeScript API resolution order: per-job override, profile
+        default, built-in default.
+        """
+        from jobhunter.database import ensure_resume_template_tables
+
+        ensure_resume_template_tables(self._conn)
+        assignment = self._conn.execute(
+            """
+            SELECT template_id, version_id
+              FROM job_resume_template_assignments
+             WHERE tenant_id = 'local' AND job_url = ?
+            """,
+            (str(job_id),),
+        ).fetchone()
+        if assignment is not None:
+            resolved = self._template_by_id(
+                str(assignment["template_id"]),
+                str(assignment["version_id"]),
+                "job_override",
+            )
+            if resolved:
+                return resolved
+        default = self._conn.execute(
+            """
+            SELECT template_id, version_id
+              FROM resume_template_defaults
+             WHERE tenant_id = 'local' AND profile_id = 'default'
+            """
+        ).fetchone()
+        if default is not None:
+            resolved = self._template_by_id(
+                str(default["template_id"]),
+                str(default["version_id"]),
+                "profile_default",
+            )
+            if resolved:
+                return resolved
+        resolved = self._template_by_id(
+            "built_in:modern-html",
+            "built_in:modern-html:v1",
+            "built_in",
+        )
+        if resolved:
+            return resolved
+        raise RuntimeError("Built-in resume template seed is missing.")
+
     def list_pending_tailor(
         self,
         tenant_id: TenantId,
@@ -535,6 +585,44 @@ class SqliteMaterialsRepository:
             """,
             rows,
         )
+
+    def _template_by_id(
+        self,
+        template_id: str,
+        version_id: str,
+        assignment_source: str,
+    ) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT t.template_id, t.display_name AS template_name,
+                   v.version_id, v.version_number, v.display_name,
+                   v.theme_json, v.layout_json, v.content_hash
+              FROM resume_templates t
+              JOIN resume_template_versions v
+                ON v.tenant_id = t.tenant_id
+               AND v.template_id = t.template_id
+             WHERE t.tenant_id = 'local'
+               AND t.template_id = ?
+               AND v.version_id = ?
+             LIMIT 1
+            """,
+            (template_id, version_id),
+        ).fetchone()
+        if row is None:
+            return None
+        metadata = {
+            "templateId": str(row["template_id"]),
+            "templateVersionId": str(row["version_id"]),
+            "templateVersionNumber": int(row["version_number"]),
+            "templateName": str(row["display_name"] or row["template_name"]),
+            "templateHash": str(row["content_hash"]),
+            "assignmentSource": assignment_source,
+        }
+        return {
+            "metadata": metadata,
+            "theme": _loads(row["theme_json"]) or {},
+            "layout": _loads(row["layout_json"]) or {},
+        }
 
     def _row_to_materials(self, row: Any, tenant_id: TenantId) -> MaterialsSet:
         if isinstance(row, sqlite3.Row):

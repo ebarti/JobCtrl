@@ -14,7 +14,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
-import { makeApplyAudit, sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
+import {
+  makeApplyAudit,
+  sampleApplyReviewQueue,
+  sampleArtifact,
+  sampleResumeTemplateListResponse,
+} from "../../test/fixtures/projections.js";
 import { buildProviderHarness, createTestQueryClient, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -860,6 +865,42 @@ describe("<ApplyReviewView>", () => {
       expect(comment).toHaveAttribute("data-resume-editor-chrome", "true");
     });
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("assigns a resume template override for the selected job", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const setJobResumeTemplate = vi.fn(async (_jobKey: string, body: { templateId?: string | null }) => ({
+      ok: true as const,
+      jobKey,
+      effectiveTemplate: {
+        ...sampleResumeTemplateListResponse.builtInDefault,
+        templateId: body.templateId ?? sampleResumeTemplateListResponse.builtInDefault.templateId,
+        assignmentSource: body.templateId ? ("job_override" as const) : ("built_in" as const),
+      },
+      overrideTemplate: body.templateId
+        ? {
+            ...sampleResumeTemplateListResponse.builtInDefault,
+            templateId: body.templateId,
+            assignmentSource: "job_override" as const,
+          }
+        : null,
+      templateState: null,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: { setJobResumeTemplate },
+      }),
+    });
+
+    await userEvent.selectOptions(await screen.findByLabelText("Resume template"), "built_in:modern-html");
+
+    await waitFor(() =>
+      expect(setJobResumeTemplate).toHaveBeenCalledWith(jobKey, {
+        templateId: "built_in:modern-html",
+        versionId: null,
+      }),
+    );
   });
 
   it("restores the latest saved resume review draft in the Plate editor", async () => {

@@ -5,4 +5,6 @@ export const profileKeys = {
   profile: (tenantId: TenantId) => [...profileKeys.all(tenantId), "profile"] as const,
   settings: (tenantId: TenantId) => [...profileKeys.all(tenantId), "settings"] as const,
   credentials: (tenantId: TenantId) => [...profileKeys.all(tenantId), "credentials"] as const,
+  resumeTemplates: (tenantId: TenantId) =>
+    [...profileKeys.all(tenantId), "resume-templates"] as const,
 };

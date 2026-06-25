@@ -119,6 +119,8 @@ class _FakeRenderer:
         profile_dict: dict,
         output_path: str,
         created_at: str,
+        resume_theme: dict | None = None,
+        resume_template: dict | None = None,
     ) -> Artifact:
         self.resume_calls.append(
             {
@@ -126,6 +128,8 @@ class _FakeRenderer:
                 "profile_dict": profile_dict,
                 "output_path": output_path,
                 "created_at": created_at,
+                "resume_theme": resume_theme,
+                "resume_template": resume_template,
             }
         )
         Path(output_path).write_bytes(b"%PDF-fake")
@@ -351,6 +355,69 @@ def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
     assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
     assert artifact.metadata["layout_source"] == "html_resume_dom"
     assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "experience:acme_swe:bullet:1"
+
+
+def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured_html: list[str] = []
+
+    def fake_render(html_content: str, output_path: str) -> list[dict]:
+        captured_html.append(html_content)
+        Path(output_path).write_bytes(b"%PDF-html")
+        return [
+            {
+                "semantic_id": "section:experience",
+                "page_number": 1,
+                "line_number": 3,
+                "text_excerpt": "Experience",
+                "left_pct": 9.0,
+                "top_pct": 18.0,
+                "width_pct": 80.0,
+                "height_pct": 2.5,
+            }
+        ]
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", fake_render)
+
+    template = {
+        "templateId": "template_custom",
+        "templateVersionId": "template_custom:v2",
+        "templateVersionNumber": 2,
+        "templateName": "Custom serif",
+        "templateHash": "sha256:test",
+        "assignmentSource": "job_override",
+    }
+    adapter = HtmlResumePdfAdapter()
+    out = tmp_path / "templated-resume.pdf"
+    artifact = adapter.render_resume_to_pdf(
+        tailored_payload=_payload(),
+        profile_dict=_profile(),
+        output_path=str(out),
+        created_at="2024-01-01T00:00:00+00:00",
+        resume_theme={
+            "fontFamily": "serif",
+            "density": "compact",
+            "fontScale": 1.1,
+            "accentColor": "#123456",
+            "marginMm": {"top": 12, "right": 13, "bottom": 14, "left": 15},
+            "alignment": "left",
+            "headerLayout": "left",
+            "sectionHeadingStyle": "boxed",
+        },
+        resume_template=template,
+    )
+
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+    assert captured_html == [html]
+    assert "Georgia" in html
+    assert "color: #123456" in html
+    assert "padding: 12.00mm 13.00mm 14.00mm 15.00mm" in html
+    assert "text-align: left" in html
+    assert artifact.metadata["resume_template"] == template
+    assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
+    assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "section:experience"
 
 
 # ---------------------------------------------------------------------------

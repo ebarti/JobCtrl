@@ -23,8 +23,14 @@ import {
   ResumePlateEditor,
   type ResumeDraftGateState,
 } from "../../contexts/materials/components/ResumeAuditPins.js";
+import { JobResumeTemplateSelect } from "../../contexts/materials/components/JobResumeTemplateSelect.js";
+import {
+  useEnsureCurrentResumeMaterialsMutation,
+  useSetJobResumeTemplateMutation,
+} from "../../contexts/materials/hooks/useResumeTemplateMaterialMutations.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useResumeReviewDraftQuery.js";
+import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
@@ -809,6 +815,9 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
+  const templatesQuery = useResumeTemplatesQuery();
+  const setJobTemplate = useSetJobResumeTemplateMutation();
+  const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
@@ -838,6 +847,24 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       reason: null,
     });
   }, [item.jobKey]);
+  const templateMutationError =
+    setJobTemplate.error instanceof Error
+      ? setJobTemplate.error.message
+      : ensureCurrentMaterials.error instanceof Error
+        ? ensureCurrentMaterials.error.message
+        : null;
+  const handleTemplateChange = useCallback(
+    (templateId: string | null) => {
+      setJobTemplate.mutate({
+        jobKey: item.jobKey,
+        body: { templateId, versionId: null },
+      });
+    },
+    [item.jobKey, setJobTemplate],
+  );
+  const handleEnsureCurrent = useCallback(() => {
+    ensureCurrentMaterials.mutate({ jobKey: item.jobKey, body: { force: true } });
+  }, [ensureCurrentMaterials, item.jobKey]);
 
   return (
     <main className="apply-review-selected">
@@ -888,6 +915,15 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           label="Compensation"
         />
         <ApplyAuditFacts item={item} />
+        <JobResumeTemplateSelect
+          current={item.materialsPreview.resumeTemplate}
+          disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+          onEnsureCurrent={handleEnsureCurrent}
+          onTemplateChange={handleTemplateChange}
+          refreshing={ensureCurrentMaterials.isPending}
+          templates={templatesQuery.data?.templates ?? []}
+        />
+        {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
       </div>
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>

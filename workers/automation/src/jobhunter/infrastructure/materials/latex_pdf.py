@@ -564,6 +564,8 @@ class LatexPdfAdapter:
         profile_dict: dict,
         output_path: str,
         created_at: str,
+        resume_theme: dict | None = None,
+        resume_template: dict | None = None,
     ) -> Artifact:
         latex_source = build_latex(tailored_payload, profile_dict)
 

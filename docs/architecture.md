@@ -854,8 +854,12 @@ those projection columns only; it does not parse raw salary text on read.
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and
 `job_materials_artifacts` and surfaced via `artifact_list_projections`. Profile
-data, rendering settings, and template text live in SQLite after explicit
-profile saves or resume imports.
+data and rendering settings live in SQLite after explicit profile saves or
+resume imports. Resume templates are Profile-owned style/layout configuration
+with versioned rows and default selection, while per-job template overrides and
+render-only refresh attempts are Materials-owned because they affect generated
+artifact generations. Template edits use profile data only for preview styling;
+they do not persist candidate facts into template payloads.
 The apply launcher records each per-worker agent log
 (`LOG_DIR/worker-{worker_id}.log`, written by `ClaudeCodeCliAdapter`) as a
 `job_artifacts` row of kind `apply_log` in the same transaction as the

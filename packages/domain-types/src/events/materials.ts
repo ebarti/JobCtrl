@@ -183,3 +183,111 @@ export function createTailoredArtifactsSuppressed(
 ): TailoredArtifactsSuppressed {
   return createDomainEvent("TailoredArtifactsSuppressed", tenantId, payload);
 }
+
+// -- ResumeTemplateVersionSaved --------------------------------------------
+
+export interface ResumeTemplateVersionSavedPayload {
+  readonly templateId: string;
+  readonly templateVersionId: string;
+  readonly versionNumber: number;
+  readonly displayName: string;
+  readonly savedAt: string;
+}
+
+export type ResumeTemplateVersionSaved = DomainEvent<
+  "ResumeTemplateVersionSaved",
+  ResumeTemplateVersionSavedPayload
+>;
+
+export function createResumeTemplateVersionSaved(
+  tenantId: TenantId,
+  payload: ResumeTemplateVersionSavedPayload,
+): ResumeTemplateVersionSaved {
+  return createDomainEvent("ResumeTemplateVersionSaved", tenantId, payload);
+}
+
+// -- ResumeTemplateDefaultChanged ------------------------------------------
+
+export interface ResumeTemplateDefaultChangedPayload {
+  readonly templateId: string;
+  readonly templateVersionId: string;
+  readonly changedAt: string;
+}
+
+export type ResumeTemplateDefaultChanged = DomainEvent<
+  "ResumeTemplateDefaultChanged",
+  ResumeTemplateDefaultChangedPayload
+>;
+
+export function createResumeTemplateDefaultChanged(
+  tenantId: TenantId,
+  payload: ResumeTemplateDefaultChangedPayload,
+): ResumeTemplateDefaultChanged {
+  return createDomainEvent("ResumeTemplateDefaultChanged", tenantId, payload);
+}
+
+// -- JobResumeTemplateAssigned ---------------------------------------------
+
+export interface JobResumeTemplateAssignedPayload {
+  readonly jobId: string;
+  readonly templateId: string | null;
+  readonly templateVersionId: string | null;
+  readonly assignedAt: string;
+}
+
+export type JobResumeTemplateAssigned = DomainEvent<
+  "JobResumeTemplateAssigned",
+  JobResumeTemplateAssignedPayload
+>;
+
+export function createJobResumeTemplateAssigned(
+  tenantId: TenantId,
+  payload: JobResumeTemplateAssignedPayload,
+): JobResumeTemplateAssigned {
+  return createDomainEvent("JobResumeTemplateAssigned", tenantId, payload);
+}
+
+// -- ResumeTemplateRefreshCompleted ----------------------------------------
+
+export interface ResumeTemplateRefreshCompletedPayload {
+  readonly jobId: string;
+  readonly attemptId: string;
+  readonly generation: number;
+  readonly templateId: string;
+  readonly templateVersionId: string;
+  readonly completedAt: string;
+}
+
+export type ResumeTemplateRefreshCompleted = DomainEvent<
+  "ResumeTemplateRefreshCompleted",
+  ResumeTemplateRefreshCompletedPayload
+>;
+
+export function createResumeTemplateRefreshCompleted(
+  tenantId: TenantId,
+  payload: ResumeTemplateRefreshCompletedPayload,
+): ResumeTemplateRefreshCompleted {
+  return createDomainEvent("ResumeTemplateRefreshCompleted", tenantId, payload);
+}
+
+// -- ResumeTemplateRefreshFailed -------------------------------------------
+
+export interface ResumeTemplateRefreshFailedPayload {
+  readonly jobId: string;
+  readonly attemptId: string;
+  readonly status: "failed" | "unavailable";
+  readonly errorMessage: string;
+  readonly failedAt: string;
+}
+
+export type ResumeTemplateRefreshFailed = DomainEvent<
+  "ResumeTemplateRefreshFailed",
+  ResumeTemplateRefreshFailedPayload
+>;
+
+export function createResumeTemplateRefreshFailed(
+  tenantId: TenantId,
+  payload: ResumeTemplateRefreshFailedPayload,
+): ResumeTemplateRefreshFailed {
+  return createDomainEvent("ResumeTemplateRefreshFailed", tenantId, payload);
+}

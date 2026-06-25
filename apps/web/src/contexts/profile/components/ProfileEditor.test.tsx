@@ -52,6 +52,23 @@ describe("<ProfileEditor>", () => {
   });
 
   it("renders preferences without the PDF preview pane", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          `
+            <main class="resume-page">
+              <section class="resume-section">
+                <h1 data-resume-layout-target="profile-name">QA Candidate</h1>
+                <p>Platform engineering leader.</p>
+              </section>
+            </main>
+          `,
+          { headers: { "content-type": "text/html" } },
+        ),
+      ),
+    );
+
     renderWithProviders(<ProfileEditor section="preferences" />, {
       ports: buildTestPorts({
         api: {
@@ -67,6 +84,7 @@ describe("<ProfileEditor>", () => {
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
     expect(screen.queryByText("Baseline resume editor")).not.toBeInTheDocument();
+    expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
   });
 });
