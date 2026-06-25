@@ -348,12 +348,29 @@ export const RESUME_TEMPLATE_SECTIONS = [
 ] as const;
 export type ResumeTemplateSection = (typeof RESUME_TEMPLATE_SECTIONS)[number];
 
+export const RESUME_TEMPLATE_FONT_FAMILIES = [
+  "sans",
+  "serif",
+  "system",
+  "aptos",
+  "avenir",
+  "helvetica",
+  "inter",
+  "source_sans",
+  "calibri",
+  "georgia",
+  "garamond",
+  "charter",
+  "source_serif",
+  "times",
+  "cambria",
+] as const;
+export type ResumeTemplateFontFamily = (typeof RESUME_TEMPLATE_FONT_FAMILIES)[number];
+
 export const ResumeTemplateThemeSchema = z
   .object({
     pageSize: z.enum(["a4", "letter"]).default("a4"),
-    fontFamily: z
-      .enum(["sans", "serif", "system", "aptos", "avenir"])
-      .default("sans"),
+    fontFamily: z.enum(RESUME_TEMPLATE_FONT_FAMILIES).default("sans"),
     fontScale: z.coerce.number().min(0.85).max(1.2).default(1),
     density: z.enum(["compact", "balanced", "spacious"]).default("balanced"),
     marginMm: z

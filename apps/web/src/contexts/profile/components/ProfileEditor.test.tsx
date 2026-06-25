@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -85,6 +85,11 @@ describe("<ProfileEditor>", () => {
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
     expect(screen.queryByText("Baseline resume editor")).not.toBeInTheDocument();
     expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
+    const fontSelects = screen.getAllByLabelText("Font");
+    expect(fontSelects).toHaveLength(2);
+    expect(within(fontSelects[0]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
+    expect(within(fontSelects[1]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
+    expect(within(fontSelects[1]!).getByRole("option", { name: "Resume" })).toHaveValue("resume");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
   });
 });

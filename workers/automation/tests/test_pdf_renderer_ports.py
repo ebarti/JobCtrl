@@ -385,7 +385,7 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
         "templateId": "template_custom",
         "templateVersionId": "template_custom:v2",
         "templateVersionNumber": 2,
-        "templateName": "Custom serif",
+        "templateName": "Custom Garamond",
         "templateHash": "sha256:test",
         "assignmentSource": "job_override",
     }
@@ -397,7 +397,7 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
         output_path=str(out),
         created_at="2024-01-01T00:00:00+00:00",
         resume_theme={
-            "fontFamily": "serif",
+            "fontFamily": "garamond",
             "density": "compact",
             "fontScale": 1.1,
             "accentColor": "#123456",
@@ -411,7 +411,7 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
 
     html = out.with_suffix(".html").read_text(encoding="utf-8")
     assert captured_html == [html]
-    assert "Georgia" in html
+    assert "Garamond" in html
     assert "color: #123456" in html
     assert "padding: 12.00mm 13.00mm 14.00mm 15.00mm" in html
     assert "text-align: left" in html

@@ -8,6 +8,7 @@ import type {
   ResumeReviewDraftRenderResponse,
   ResumeReviewCommentThreadSeedInput,
   ResumeLayoutBox,
+  ResumeTemplateTheme,
 } from "@jobhunter/contracts";
 import { BasicMarksPlugin } from "@platejs/basic-nodes/react";
 import {
@@ -160,7 +161,7 @@ interface ResumePlateRenderContextValue {
 }
 
 type ResumeEditorTextAlign = "left" | "center" | "right";
-type ResumeEditorFontFamily = "resume" | "serif" | "sans" | "mono";
+type ResumeEditorFontFamily = ResumeTemplateTheme["fontFamily"] | "resume" | "mono";
 type ResumeEditorFontSize = "resume" | "small" | "large" | "heading";
 
 interface ResumeEditorFormattingApi {
@@ -178,8 +179,21 @@ const RESUME_EDITOR_FONT_FAMILIES: readonly {
   readonly value: ResumeEditorFontFamily;
 }[] = [
   { label: "Resume", value: "resume" },
-  { label: "Serif", value: "serif" },
   { label: "Sans", value: "sans" },
+  { label: "Serif", value: "serif" },
+  { label: "System", value: "system" },
+  { label: "Aptos", value: "aptos" },
+  { label: "Avenir", value: "avenir" },
+  { label: "Helvetica", value: "helvetica" },
+  { label: "Inter", value: "inter" },
+  { label: "Source Sans", value: "source_sans" },
+  { label: "Calibri", value: "calibri" },
+  { label: "Georgia", value: "georgia" },
+  { label: "Garamond", value: "garamond" },
+  { label: "Charter", value: "charter" },
+  { label: "Source Serif", value: "source_serif" },
+  { label: "Times New Roman", value: "times" },
+  { label: "Cambria", value: "cambria" },
   { label: "Mono", value: "mono" },
 ];
 
@@ -194,10 +208,23 @@ const RESUME_EDITOR_FONT_SIZES: readonly {
 ];
 
 const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<ResumeEditorFontFamily, string | null> = {
+  avenir: '"Avenir Next", "Avenir", "Nunito Sans", sans-serif',
+  aptos: '"Aptos", "Aptos Display", "Arial", sans-serif',
+  calibri: '"Calibri", "Aptos", "Arial", sans-serif',
+  cambria: '"Cambria", "Georgia", "Times New Roman", serif',
+  charter: '"Charter", "Bitstream Charter", "Georgia", serif',
+  garamond: '"EB Garamond", "Garamond", "Georgia", serif',
+  georgia: '"Georgia", "Times New Roman", serif',
+  helvetica: '"Helvetica Neue", "Helvetica", "Arial", sans-serif',
+  inter: '"Inter", "Aptos", "Arial", sans-serif',
   mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   resume: null,
-  sans: '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
-  serif: 'Georgia, "Times New Roman", serif',
+  sans: '"Aptos", "Inter", "Arial", sans-serif',
+  serif: '"Charter", "Georgia", serif',
+  source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
+  source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',
+  system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  times: '"Times New Roman", "Times", serif',
 };
 
 const RESUME_EDITOR_FONT_SIZE_STYLES: Record<ResumeEditorFontSize, string | null> = {

@@ -259,11 +259,21 @@ p {
 """
 
 FONT_STACKS = {
-    "sans": '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
-    "system": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    "aptos": '"Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
     "avenir": '"Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "aptos": '"Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "calibri": '"Calibri", "Aptos", Arial, sans-serif',
+    "cambria": '"Cambria", Georgia, "Times New Roman", serif',
+    "charter": '"Charter", "Bitstream Charter", Georgia, serif',
+    "garamond": '"EB Garamond", "Garamond", Georgia, serif',
+    "georgia": 'Georgia, "Times New Roman", Times, serif',
+    "helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
+    "inter": '"Inter", "Aptos", Arial, sans-serif',
+    "sans": '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
     "serif": 'Georgia, "Times New Roman", Times, serif',
+    "source_sans": '"Source Sans 3", "Source Sans Pro", "Aptos", Arial, sans-serif',
+    "source_serif": '"Source Serif 4", "Source Serif Pro", Georgia, serif',
+    "system": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    "times": '"Times New Roman", Times, serif',
 }
 
 DENSITY_SCALE = {

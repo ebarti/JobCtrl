@@ -42,16 +42,16 @@ describe("resume template service", () => {
     expect(initial.templates[0]).toMatchObject({ builtIn: true, displayName: "Modern HTML" });
 
     const saved = createResumeTemplateVersion(db, {
-      displayName: "Compact serif",
+      displayName: "Compact Garamond",
       theme: {
         ...BUILT_IN_RESUME_TEMPLATE_THEME,
-        fontFamily: "serif",
+        fontFamily: "garamond",
         density: "compact",
         accentColor: "#222222",
       },
       layout: {},
     });
-    expect(saved.template).toMatchObject({ displayName: "Compact serif", builtIn: false });
+    expect(saved.template).toMatchObject({ displayName: "Compact Garamond", builtIn: false });
     expect(getResumeTemplateDetail(db, saved.template.templateId)?.template.activeVersion.versionId).toBe(
       saved.template.activeVersion.versionId,
     );

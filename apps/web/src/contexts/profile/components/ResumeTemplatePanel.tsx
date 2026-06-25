@@ -20,12 +20,42 @@ interface ResumeTemplatePanelProps {
 type TemplatePreviewStyle = CSSProperties & Record<`--${string}`, string | number>;
 
 const FONT_STACKS: Record<ResumeTemplateTheme["fontFamily"], string> = {
+  avenir: '"Avenir Next", "Avenir", "Nunito Sans", sans-serif',
+  aptos: '"Aptos", "Aptos Display", "Arial", sans-serif',
+  calibri: '"Calibri", "Aptos", "Arial", sans-serif',
+  cambria: '"Cambria", "Georgia", "Times New Roman", serif',
+  charter: '"Charter", "Bitstream Charter", "Georgia", serif',
+  garamond: '"EB Garamond", "Garamond", "Georgia", serif',
+  georgia: '"Georgia", "Times New Roman", serif',
+  helvetica: '"Helvetica Neue", "Helvetica", "Arial", sans-serif',
+  inter: '"Inter", "Aptos", "Arial", sans-serif',
   sans: '"Aptos", "Inter", "Arial", sans-serif',
   serif: '"Charter", "Georgia", serif',
+  source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
+  source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',
   system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  aptos: '"Aptos", "Aptos Display", "Arial", sans-serif',
-  avenir: '"Avenir Next", "Avenir", "Nunito Sans", sans-serif',
+  times: '"Times New Roman", "Times", serif',
 };
+
+const FONT_LABELS: Record<ResumeTemplateTheme["fontFamily"], string> = {
+  sans: "Sans",
+  serif: "Serif",
+  system: "System",
+  aptos: "Aptos",
+  avenir: "Avenir",
+  helvetica: "Helvetica",
+  inter: "Inter",
+  source_sans: "Source Sans",
+  calibri: "Calibri",
+  georgia: "Georgia",
+  garamond: "Garamond",
+  charter: "Charter",
+  source_serif: "Source Serif",
+  times: "Times New Roman",
+  cambria: "Cambria",
+};
+
+const FONT_OPTIONS = Object.entries(FONT_LABELS) as Array<[ResumeTemplateTheme["fontFamily"], string]>;
 
 const DENSITY_SCALE: Record<ResumeTemplateTheme["density"], number> = {
   compact: 0.82,
@@ -148,11 +178,11 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
                 value={theme?.fontFamily ?? "sans"}
                 onChange={(event) => updateTheme("fontFamily", event.target.value as ResumeTemplateTheme["fontFamily"])}
               >
-                <option value="sans">Sans</option>
-                <option value="serif">Serif</option>
-                <option value="system">System</option>
-                <option value="aptos">Aptos</option>
-                <option value="avenir">Avenir</option>
+                {FONT_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">
