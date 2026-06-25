@@ -250,6 +250,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   profilePreviewPdfUrl(cacheKey?: number | string): string {
     return this.client.profilePreviewPdfUrl(cacheKey);
   }
+  profilePreviewHtmlUrl(cacheKey?: number | string): string {
+    return this.client.profilePreviewHtmlUrl(cacheKey);
+  }
   updateProfile(body: Parameters<JobHunterApiClient["updateProfile"]>[0]) {
     return this.client.updateProfile(body);
   }

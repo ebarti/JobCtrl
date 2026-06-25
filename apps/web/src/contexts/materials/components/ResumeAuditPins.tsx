@@ -958,6 +958,10 @@ function resumeTextFromPlateValue(value: Value): string {
     .join("\n");
 }
 
+function resumePlateValueSignature(value: Value | null): string {
+  return value ? JSON.stringify(value) : "";
+}
+
 function kindForHtmlElement(element: HTMLElement, index: number, text: string): ResumeLineEntry["kind"] {
   const className = element.getAttribute("class") ?? "";
   const tagName = element.tagName.toLowerCase();
@@ -2017,38 +2021,7 @@ function ResumeHtmlUnavailable({
   );
 }
 
-export function ResumePlateEditor({
-  autosaveDelayMs = 1500,
-  artifactId,
-  draft,
-  draftError = null,
-  draftLoading = false,
-  finalUrl,
-  htmlUrl,
-  layoutBoxes,
-  lineTargets,
-  profileSourceFields = [],
-  renderError = null,
-  renderPending = false,
-  renderResult = null,
-  resumeText,
-  saveError = null,
-  savePending = false,
-  replyError = null,
-  replyPending = false,
-  selectedLine,
-  title,
-  onDraftGateChange,
-  onRenderDraft,
-  onReplyToThread,
-  onSaveDraft,
-  onSelectLine,
-  onSeedCommentThreads,
-}: ResumePlateEditorProps): JSX.Element {
-  const detail = useArtifactDetailQuery(artifactId);
-  const explanation = detail.data?.tailoringExplanation ?? null;
-  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
-  const provenanceReady = detail.isSuccess || detail.isError;
+function useResumeHtmlState(htmlUrl: string | null): ResumeHtmlState {
   const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
     status: htmlUrl ? "loading" : "idle",
     html: null,
@@ -2095,6 +2068,172 @@ export function ResumePlateEditor({
     return () => abortController.abort();
   }, [htmlUrl]);
 
+  return htmlState;
+}
+
+export function ResumeStandalonePlateEditor({
+  className,
+  htmlUrl,
+  title,
+}: {
+  readonly className?: string;
+  readonly htmlUrl: string | null;
+  readonly title: string;
+}): JSX.Element {
+  const htmlState = useResumeHtmlState(htmlUrl);
+  const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
+  const risk = useMemo(() => emptyRiskSignals(), []);
+  const htmlLines = useMemo(
+    () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
+    [htmlState, layoutBoxes],
+  );
+  const initialPlateValue = useMemo<Value | null>(
+    () => (htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null),
+    [htmlState],
+  );
+  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
+  const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
+  const [resetVersion, setResetVersion] = useState(0);
+  const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
+  const [formattingApiReady, setFormattingApiReady] = useState(false);
+
+  useEffect(() => {
+    setCurrentPlateValue(initialPlateValue);
+    setSelectedLine(null);
+    setResetVersion((currentVersion) => currentVersion + 1);
+  }, [initialPlateValue]);
+
+  const initialSignature = useMemo(
+    () => resumePlateValueSignature(initialPlateValue),
+    [initialPlateValue],
+  );
+  const currentSignature = useMemo(
+    () => resumePlateValueSignature(currentPlateValue),
+    [currentPlateValue],
+  );
+  const dirty = Boolean(currentPlateValue && currentSignature !== initialSignature);
+  const canFormat = formattingApiReady && Boolean(currentPlateValue);
+  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${resetVersion}`;
+  const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
+    formattingApiRef.current = api;
+    setFormattingApiReady(Boolean(api));
+  }, []);
+  const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
+  const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
+  const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
+  const handleFontFamily = useCallback(
+    (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
+    [],
+  );
+  const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
+  const handleReset = useCallback(() => {
+    setCurrentPlateValue(initialPlateValue);
+    setResetVersion((currentVersion) => currentVersion + 1);
+  }, [initialPlateValue]);
+
+  const unavailableMessage =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.message
+      : null;
+  const unavailableStatus =
+    htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
+      ? htmlState.status
+      : null;
+
+  return (
+    <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title}>
+      <div className="resume-plate-toolbar">
+        <b>{title}</b>
+        <span className="mono">Plate HTML/CSS editor</span>
+        <ResumeEditorToolbarControls
+          disabled={!canFormat}
+          onAlign={handleAlign}
+          onFontFamily={handleFontFamily}
+          onFontSize={handleFontSize}
+          onToggleBold={handleToggleBold}
+          onToggleItalic={handleToggleItalic}
+          onToggleUnderline={handleToggleUnderline}
+        />
+        <button
+          className="tab"
+          disabled={!dirty || !initialPlateValue}
+          type="button"
+          onClick={handleReset}
+        >
+          reset
+        </button>
+        <span className={`resume-plate-draft-status${dirty ? " dirty" : ""}`} role="status">
+          {htmlState.status === "loading" ? "loading baseline" : dirty ? "local edits" : "baseline current"}
+        </span>
+      </div>
+      <div className="resume-plate-scroll">
+        {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
+          <div
+            className="resume-plate-page"
+            aria-label="Editable baseline resume page"
+            data-draft-dirty={dirty ? "true" : "false"}
+          >
+            <ResumePlateDocument
+              documentKey={documentKey}
+              initialValue={initialPlateValue}
+              layoutBoxes={layoutBoxes}
+              lines={htmlLines}
+              onFormattingApiChange={handleFormattingApiChange}
+              onSelectLine={setSelectedLine}
+              onValueChange={setCurrentPlateValue}
+              pins={[]}
+              risk={risk}
+              selectedLine={selectedLine}
+              title={title}
+            />
+          </div>
+        ) : unavailableMessage && unavailableStatus ? (
+          <ResumeHtmlUnavailable message={unavailableMessage} status={unavailableStatus} />
+        ) : htmlState.status === "loading" ? (
+          <Empty title="Loading baseline resume HTML." />
+        ) : (
+          <Empty title="Baseline resume HTML is not available." />
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function ResumePlateEditor({
+  autosaveDelayMs = 1500,
+  artifactId,
+  draft,
+  draftError = null,
+  draftLoading = false,
+  finalUrl,
+  htmlUrl,
+  layoutBoxes,
+  lineTargets,
+  profileSourceFields = [],
+  renderError = null,
+  renderPending = false,
+  renderResult = null,
+  resumeText,
+  saveError = null,
+  savePending = false,
+  replyError = null,
+  replyPending = false,
+  selectedLine,
+  title,
+  onDraftGateChange,
+  onRenderDraft,
+  onReplyToThread,
+  onSaveDraft,
+  onSelectLine,
+  onSeedCommentThreads,
+}: ResumePlateEditorProps): JSX.Element {
+  const detail = useArtifactDetailQuery(artifactId);
+  const explanation = detail.data?.tailoringExplanation ?? null;
+  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
+  const provenanceReady = detail.isSuccess || detail.isError;
+  const htmlState = useResumeHtmlState(htmlUrl);
+
   const htmlLines = useMemo(
     () => (htmlState.status === "ready" ? resumePlateLinesFromHtml(htmlState.html, layoutBoxes) : []),
     [htmlState, layoutBoxes],
@@ -2128,17 +2267,21 @@ export function ResumePlateEditor({
     setCurrentPlateValue(initialPlateValue);
   }, [initialPlateValue]);
 
-  const initialDraftText = useMemo(
-    () => (initialPlateValue ? resumeTextFromPlateValue(initialPlateValue) : ""),
-    [initialPlateValue],
-  );
   const currentDraftText = useMemo(
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
     [currentPlateValue],
   );
+  const initialDraftSignature = useMemo(
+    () => resumePlateValueSignature(initialPlateValue),
+    [initialPlateValue],
+  );
+  const currentDraftSignature = useMemo(
+    () => resumePlateValueSignature(currentPlateValue),
+    [currentPlateValue],
+  );
   const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}`;
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
-  const draftDirty = Boolean(currentPlateValue && currentDraftText !== initialDraftText);
+  const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
   const hasSavedRevision = Boolean(draft?.latestRevision);
   const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
   const draftGateReason = draft
@@ -2207,7 +2350,7 @@ export function ResumePlateEditor({
   );
   const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
 
-  const lastAutosaveText = useRef<string | null>(null);
+  const lastAutosaveSignature = useRef<string | null>(null);
   useEffect(() => {
     if (
       !autosaveDelayMs ||
@@ -2217,13 +2360,13 @@ export function ResumePlateEditor({
       savePending ||
       draftLoading ||
       !onSaveDraft ||
-      lastAutosaveText.current === currentDraftText
+      lastAutosaveSignature.current === currentDraftSignature
     ) {
       return;
     }
     const handle = window.setTimeout(() => {
-      if (!currentPlateValue || lastAutosaveText.current === currentDraftText) return;
-      lastAutosaveText.current = currentDraftText;
+      if (!currentPlateValue || lastAutosaveSignature.current === currentDraftSignature) return;
+      lastAutosaveSignature.current = currentDraftSignature;
       onSaveDraft({
         editedText: currentDraftText,
         plateDocument: currentPlateValue,
@@ -2233,6 +2376,7 @@ export function ResumePlateEditor({
     return () => window.clearTimeout(handle);
   }, [
     autosaveDelayMs,
+    currentDraftSignature,
     currentDraftText,
     currentPlateValue,
     draft,

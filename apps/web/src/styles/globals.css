@@ -5428,6 +5428,22 @@ textarea:focus-visible {
   overflow: hidden;
 }
 
+.resume-editor-preview {
+  height: calc(100vh - 112px);
+  min-height: 720px;
+  overflow: hidden;
+}
+
+.resume-editor-preview .resume-plate-editor {
+  height: 100%;
+  min-height: 0;
+  border-radius: inherit;
+}
+
+.profile-resume-plate-editor .resume-plate-scroll {
+  padding: 18px;
+}
+
 .pdf-preview-viewer {
   display: flex;
   height: 100%;

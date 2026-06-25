@@ -1,17 +1,26 @@
 import { test, expect } from "@playwright/test";
 
-test("Profile edit + PDF preview: edit a field, save, preview URL updates with a new cache key", async ({
+test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
 }) => {
+  const previewRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("/v1/profile/preview.html")) {
+      previewRequests.push(url);
+    }
+  });
+
   await page.goto("/profile");
 
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
 
-  const previewLink = page.getByRole("link", { name: /open PDF/i });
-  await expect(page.getByText("Resume preview", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(previewLink).toBeVisible({ timeout: 30_000 });
-  const initialHref = await previewLink.getAttribute("href");
-  expect(initialHref).toContain("/v1/profile/preview.pdf");
+  await expect(page.getByText("Baseline resume editor", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Plate HTML/CSS editor", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Bold" })).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=0")), {
+    timeout: 30_000,
+  }).toBe(true);
 
   const fullNameLabel = page.getByText(/Full name/i).first();
   const fullNameInput = fullNameLabel.locator("xpath=following-sibling::input").first();
@@ -24,7 +33,7 @@ test("Profile edit + PDF preview: edit a field, save, preview URL updates with a
 
   await expect(saveButton).toBeDisabled({ timeout: 30_000 });
 
-  await expect
-    .poll(async () => previewLink.getAttribute("href"), { timeout: 30_000 })
-    .not.toBe(initialHref);
+  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=1")), {
+    timeout: 30_000,
+  }).toBe(true);
 });

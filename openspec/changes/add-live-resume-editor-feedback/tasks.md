@@ -57,5 +57,5 @@
 - [x] 8.1 Stabilize the live Plate editor so typing does not remount the editor, drop focus, or stop after each character.
 - [x] 8.2 Add accessible resume formatting controls for bold, italic, underline, font family, font size, and left, center, and right alignment.
 - [x] 8.3 Preserve resume entry layout and indentation when editing experience/company lines, and keep Ctrl+Z/Cmd+Z undo history functional for text and formatting edits.
-- [x] 8.4 Render the Profile baseline resume preview through the default HTML/CSS resume renderer and relabel the preview as baseline rather than an Apply Review draft.
-- [x] 8.5 Add regression coverage and documentation/QA notes for the editor typing controls, entry-layout preservation, and profile preview renderer alignment.
+- [x] 8.4 Render the Profile baseline resume through the Plate HTML/CSS editor, remove the Profile PDF iframe path, and remove the Profile-level LaTeX renderer branch.
+- [x] 8.5 Add regression coverage and documentation/QA notes for the editor typing controls, entry-layout preservation, Profile Plate editor, and profile preview renderer alignment.

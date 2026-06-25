@@ -503,6 +503,15 @@ export class JobHunterApiClient {
     return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
   }
 
+  profilePreviewHtmlUrl(cacheKey?: QueryValue): string {
+    const path = "/v1/profile/preview.html";
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
+      url.searchParams.set("v", String(cacheKey));
+    }
+    return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
+  }
+
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse> {
     return this.patch("/v1/profile", body);
   }

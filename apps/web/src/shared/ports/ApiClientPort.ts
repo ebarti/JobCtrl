@@ -241,6 +241,7 @@ export interface ApiClientPort {
 
   profile(): Promise<ProfileConfigResponse>;
   profilePreviewPdfUrl(cacheKey?: number | string): string;
+  profilePreviewHtmlUrl(cacheKey?: number | string): string;
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse>;
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 

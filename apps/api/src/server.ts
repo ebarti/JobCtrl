@@ -1630,7 +1630,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if ("ok" in profileConfig && profileConfig.ok === false) {
         return profileConfig;
       }
-      const pdfBytes = await profilePreviewRenderer(
+      const preview = await profilePreviewRenderer(
         {
           profile: profileConfig.profile,
           templateText: profileConfig.templateText,
@@ -1640,7 +1640,35 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return reply
         .header("content-type", "application/pdf")
         .header("cache-control", "no-store")
-        .send(pdfBytes);
+        .send(preview.pdfBytes);
+    } catch (error) {
+      void reply.code(500);
+      return {
+        ok: false,
+        error: "profile_preview_failed",
+        message: error instanceof Error ? error.message : "Unable to render profile preview.",
+      };
+    }
+  });
+
+  app.get("/v1/profile/preview.html", async (_request, reply) => {
+    try {
+      const profileConfig = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+      if ("ok" in profileConfig && profileConfig.ok === false) {
+        return profileConfig;
+      }
+      const preview = await profilePreviewRenderer(
+        {
+          profile: profileConfig.profile,
+          templateText: profileConfig.templateText,
+        },
+        actionContext,
+      );
+      return reply
+        .type("text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'")
+        .send(preview.htmlText);
     } catch (error) {
       void reply.code(500);
       return {

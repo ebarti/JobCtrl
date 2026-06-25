@@ -633,11 +633,21 @@ export const handlers = [
   http.post("*/v1/profile/import-resume", () =>
     HttpResponse.json({ ok: true, profile: sampleProfileResponse.profile }),
   ),
-  http.get("*/v1/profile/preview.pdf", () =>
-    new HttpResponse(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
-      status: 200,
-      headers: { "Content-Type": "application/pdf" },
-    }),
+  http.get("*/v1/profile/preview.html", () =>
+    new HttpResponse(
+      `
+        <main class="resume-page">
+          <section class="resume-section">
+            <h1 data-resume-layout-target="profile-name">Eloi Barti Tremoleda</h1>
+            <p>Engineering leader with platform, security, and infrastructure experience.</p>
+          </section>
+        </main>
+      `,
+      {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      },
+    ),
   ),
 
   http.get("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),

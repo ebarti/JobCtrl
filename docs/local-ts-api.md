@@ -369,10 +369,12 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
-`GET /v1/profile/preview.pdf` renders the baseline Candidate Profile resume
-through the same HTML/CSS resume renderer used for generated materials by
-default. Set `JOBHUNTER_RESUME_RENDERER=latex_pdf` only when an explicit legacy
-LaTeX profile preview is required.
+`GET /v1/profile/preview.html` renders the baseline Candidate Profile resume
+HTML used by the Profile page Plate editor. The renderer is the same HTML/CSS
+resume renderer used for generated materials. `GET /v1/profile/preview.pdf`
+remains a compatibility endpoint for callers that need a baseline PDF, but the
+Profile web route no longer uses a PDF iframe and no longer has a Profile-level
+LaTeX render override.
 
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
