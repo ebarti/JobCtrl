@@ -53,6 +53,9 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
+  ResumeCommentReplyRequestSchema,
+  ResumeReviewDraftCreateRequestSchema,
+  ResumeReviewDraftRevisionSaveRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   SourceLocatorDecisionSchema,
@@ -131,6 +134,13 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { refreshProjections } from "./projections.js";
+import {
+  createOrLoadResumeReviewDraft,
+  getResumeReviewDraftForJob,
+  listResumeReviewFeedback,
+  replyToResumeReviewComment,
+  saveResumeReviewDraftRevision,
+} from "./resume-review-drafts.js";
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
   ProfileInputError,
@@ -577,6 +587,66 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+  );
+
+  app.get<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/resume-review/draft",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) => {
+        const response = getResumeReviewDraftForJob(db, decodeRouteParam(request.params.jobKey));
+        if (!response) {
+          void reply.code(404);
+          return { ok: false, error: "resume_review_draft_not_found" };
+        }
+        return response;
+      }),
+  );
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/resume-review/draft",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewDraftCreateRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        createOrLoadResumeReviewDraft(db, decodeRouteParam(request.params.jobKey), body),
+      );
+    },
+  );
+
+  app.get<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/resume-review/feedback",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) =>
+        listResumeReviewFeedback(db, decodeRouteParam(request.params.jobKey)),
+      ),
+  );
+
+  app.post<{ Params: { draftId: string } }>(
+    "/v1/resume-review/drafts/:draftId/revisions",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeReviewDraftRevisionSaveRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        saveResumeReviewDraftRevision(db, decodeRouteParam(request.params.draftId), body),
+      );
+    },
+  );
+
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/resume-review/comment-threads/:threadId/replies",
+    async (request, reply) => {
+      const body = parseBody(reply, ResumeCommentReplyRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        replyToResumeReviewComment(db, decodeRouteParam(request.params.threadId), body),
+      );
+    },
   );
 
   app.get("/v1/outcomes", async (_request, reply) =>

@@ -3,8 +3,11 @@ export { applyKeys } from "./queryKeys.js";
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {
   useApplyReviewDecisionMutation,
+  useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
+  useReplyToResumeReviewCommentMutation,
+  useSaveResumeReviewDraftRevisionMutation,
 } from "./hooks/useApplyReviewMutations.js";
 export { useCancelApplyMutation } from "./hooks/useCancelApplyMutation.js";
 export { useDryRunApplyMutation } from "./hooks/useDryRunApplyMutation.js";

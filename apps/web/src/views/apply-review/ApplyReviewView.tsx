@@ -4,10 +4,14 @@ import type {
   ApplyReviewQueueItem,
 } from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
+import {
+  useCreateResumeReviewDraftMutation,
+  useSaveResumeReviewDraftRevisionMutation,
+} from "../../contexts/apply/hooks/useApplyReviewMutations.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactGroundingRiskPanel, ResumePlateEditor } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
@@ -599,9 +603,35 @@ function ResumeLineReview({
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
   const { api } = usePorts();
+  const createDraft = useCreateResumeReviewDraftMutation();
+  const saveDraftRevision = useSaveResumeReviewDraftRevisionMutation();
+  const requestedDraftKey = useRef<string | null>(null);
   const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
+  const draftSeedKey = pdfArtifactId && auditArtifactId ? `${item.jobKey}:${auditArtifactId}:${pdfArtifactId}` : null;
+  const createdDraft =
+    createDraft.data?.draft.jobKey === item.jobKey ? createDraft.data.draft : null;
+  const savedDraft =
+    saveDraftRevision.data?.draft.jobKey === item.jobKey ? saveDraftRevision.data.draft : null;
+  const draft = savedDraft ?? createdDraft;
+  const draftError = createDraft.error instanceof Error ? createDraft.error.message : null;
+  const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message : null;
+
+  useEffect(() => {
+    if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
+    if (requestedDraftKey.current === draftSeedKey) return;
+    requestedDraftKey.current = draftSeedKey;
+    createDraft.mutate({
+      jobId: item.jobKey,
+      body: {
+        rendererFormat: "html_css",
+        resumePdfArtifactId: pdfArtifactId,
+        resumeTextArtifactId: item.materialsPreview.resumeTextArtifactId ?? undefined,
+      },
+    });
+  }, [auditArtifactId, createDraft, draftSeedKey, item.jobKey, item.materialsPreview.resumeTextArtifactId, pdfArtifactId]);
+
   if (!pdfArtifactId || !auditArtifactId) {
     return (
       <TextPreview
@@ -616,14 +646,31 @@ function ResumeLineReview({
       <h3 className="sr-only">Resume line review</h3>
       <ResumePlateEditor
         artifactId={auditArtifactId}
+        draft={draft}
+        draftError={draftError}
+        draftLoading={createDraft.isPending}
         finalUrl={api.artifactPreviewPdfUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         htmlUrl={api.artifactPreviewHtmlUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
         profileSourceFields={item.materialsPreview.profileSourceFields}
         resumeText={item.materialsPreview.resumeText}
+        saveError={saveError}
+        savePending={saveDraftRevision.isPending}
         selectedLine={selectedLine}
         title="Tailored resume preview"
+        onSaveDraft={({ editedText, plateDocument }) => {
+          if (!draft) return;
+          saveDraftRevision.mutate({
+            draftId: draft.draftId,
+            jobId: item.jobKey,
+            body: {
+              editedText,
+              editDeltas: [],
+              plateDocument,
+            },
+          });
+        }}
         onSelectLine={onSelectLine}
       />
     </section>

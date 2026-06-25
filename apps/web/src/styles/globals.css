@@ -1032,6 +1032,30 @@ textarea:focus-visible {
   color: #c8c8c8;
 }
 
+.resume-plate-toolbar .tab {
+  min-height: 28px;
+  border-color: rgb(255 255 255 / 22%);
+  background: rgb(255 255 255 / 8%);
+  color: #f5f5f5;
+}
+
+.resume-plate-toolbar .tab:disabled {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 4%);
+  color: #8e8e8e;
+  cursor: not-allowed;
+}
+
+.resume-plate-draft-status {
+  color: #c8c8c8;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.resume-plate-draft-status.dirty {
+  color: #f5f5f5;
+}
+
 .resume-plate-toolbar a {
   margin-left: auto;
   color: #f5f5f5;

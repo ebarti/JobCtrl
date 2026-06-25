@@ -5,6 +5,12 @@ import type {
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  ResumeCommentReplyRequest,
+  ResumeCommentReplyResponse,
+  ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftResponse,
+  ResumeReviewDraftRevisionResponse,
+  ResumeReviewDraftRevisionSaveRequest,
 } from "@jobhunter/contracts";
 import type { TenantId } from "@jobhunter/domain-types";
 import {
@@ -38,6 +44,23 @@ export interface OutcomeSuggestionDecisionVariables {
   readonly body: OutcomeSuggestionDecisionRequest;
 }
 
+export interface CreateResumeReviewDraftVariables {
+  readonly jobId: JobId;
+  readonly body?: ResumeReviewDraftCreateRequest;
+}
+
+export interface SaveResumeReviewDraftRevisionVariables {
+  readonly jobId: JobId;
+  readonly draftId: string;
+  readonly body: ResumeReviewDraftRevisionSaveRequest;
+}
+
+export interface ReplyToResumeReviewCommentVariables {
+  readonly jobId: JobId;
+  readonly threadId: string;
+  readonly body: ResumeCommentReplyRequest;
+}
+
 function invalidateApplyReviewSurfaces(
   queryClient: QueryClient,
   tenantId: TenantId,
@@ -48,6 +71,8 @@ function invalidateApplyReviewSurfaces(
   void queryClient.invalidateQueries({ queryKey: applyReviewKeys.queue(tenantId) });
   void queryClient.invalidateQueries({ queryKey: outcomesKeys.list(tenantId) });
   if (jobId) {
+    void queryClient.invalidateQueries({ queryKey: applyReviewKeys.draft(tenantId, jobId) });
+    void queryClient.invalidateQueries({ queryKey: applyReviewKeys.feedback(tenantId, jobId) });
     void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(tenantId, jobId) });
     void queryClient.invalidateQueries({ queryKey: outcomesKeys.detail(tenantId, jobId) });
   }
@@ -95,6 +120,63 @@ export function useOutcomeSuggestionDecisionMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ suggestionId, body }) => api.decideOutcomeSuggestion(suggestionId, body),
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useCreateResumeReviewDraftMutation(): UseMutationResult<
+  ResumeReviewDraftResponse,
+  Error,
+  CreateResumeReviewDraftVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, body }) => api.createResumeReviewDraft(jobId, body ?? {}),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(applyReviewKeys.draft(tenantId, variables.jobId), data);
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useSaveResumeReviewDraftRevisionMutation(): UseMutationResult<
+  ResumeReviewDraftRevisionResponse,
+  Error,
+  SaveResumeReviewDraftRevisionVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ draftId, body }) => api.saveResumeReviewDraftRevision(draftId, body),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(applyReviewKeys.draft(tenantId, variables.jobId), {
+        ok: true,
+        draft: data.draft,
+      });
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useReplyToResumeReviewCommentMutation(): UseMutationResult<
+  ResumeCommentReplyResponse,
+  Error,
+  ReplyToResumeReviewCommentVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ threadId, body }) => api.replyToResumeReviewComment(threadId, body),
     onSettled: (_data, _error, variables) => {
       invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
     },

@@ -101,6 +101,30 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.decideApplyReview(jobKey, body);
   }
+  resumeReviewDraft(jobKey: string) {
+    return this.client.resumeReviewDraft(jobKey);
+  }
+  createResumeReviewDraft(
+    jobKey: string,
+    body: Parameters<JobHunterApiClient["createResumeReviewDraft"]>[1] = {},
+  ) {
+    return this.client.createResumeReviewDraft(jobKey, body);
+  }
+  saveResumeReviewDraftRevision(
+    draftId: string,
+    body: Parameters<JobHunterApiClient["saveResumeReviewDraftRevision"]>[1],
+  ) {
+    return this.client.saveResumeReviewDraftRevision(draftId, body);
+  }
+  replyToResumeReviewComment(
+    threadId: string,
+    body: Parameters<JobHunterApiClient["replyToResumeReviewComment"]>[1],
+  ) {
+    return this.client.replyToResumeReviewComment(threadId, body);
+  }
+  resumeReviewFeedback(jobKey: string) {
+    return this.client.resumeReviewFeedback(jobKey);
+  }
   applicationOutcomes() {
     return this.client.applicationOutcomes();
   }

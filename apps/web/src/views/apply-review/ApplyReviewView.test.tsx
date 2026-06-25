@@ -1,4 +1,9 @@
-import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
+import type {
+  ArtifactTailoringExplanation,
+  ResumeReviewDraft,
+  ResumeReviewDraftRevision,
+  ResumeReviewEditDelta,
+} from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -158,6 +163,99 @@ async function selectResumeLine(shadow: HTMLElement, text: string): Promise<void
   await waitFor(() => expect(shadowElementWithText(shadow, text).className).toContain("jobhunter-selected-line"));
 }
 
+function savedDraftPlateDocument(lineText = "Restored human rewrite for incident response.") {
+  return [
+    {
+      type: "resume_block",
+      tagName: "main",
+      className: "resume-page",
+      pageNumber: 1,
+      semanticId: null,
+      children: [
+        {
+          type: "resume_block",
+          tagName: "h1",
+          className: "resume-name",
+          lineNumber: 1,
+          pageNumber: 1,
+          semanticId: "personal:full_name",
+          children: [{ text: "Principal Platform Engineer" }],
+        },
+        {
+          type: "resume_block",
+          tagName: "section",
+          className: "resume-section",
+          pageNumber: 1,
+          semanticId: null,
+          children: [
+            {
+              type: "resume_block",
+              tagName: "h2",
+              className: "resume-section-title",
+              lineNumber: 2,
+              pageNumber: 1,
+              semanticId: "section:experience",
+              children: [{ text: "Experience" }],
+            },
+            {
+              type: "resume_block",
+              tagName: "li",
+              className: "resume-line",
+              lineNumber: 3,
+              pageNumber: 1,
+              semanticId: "experience:line:3",
+              children: [{ text: lineText }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+function makeResumeReviewDraft(
+  jobKey = sampleApplyReviewQueue.items[0]!.jobKey,
+  revision?: Partial<ResumeReviewDraftRevision> | null,
+): ResumeReviewDraft {
+  const latestRevision =
+    revision === null
+      ? null
+      : {
+          revisionId: "draft-revision-1",
+          draftId: "draft-job-2",
+          jobKey,
+          revisionNumber: 1,
+          editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+          plateDocument: savedDraftPlateDocument(),
+          editDeltas: [],
+          createdAt: "2026-06-24T10:00:00.000Z",
+          ...revision,
+        };
+  return {
+    draftId: latestRevision?.draftId ?? "draft-job-2",
+    jobKey,
+    baseGeneration: 1,
+    baseResumeTextArtifactId: "resume-text-2",
+    baseResumePdfArtifactId: "resume-pdf-2",
+    rendererFormat: "html_css",
+    state: "active",
+    currentRevisionId: latestRevision?.revisionId ?? null,
+    latestRevisionNumber: latestRevision?.revisionNumber ?? 0,
+    createdAt: "2026-06-24T09:45:00.000Z",
+    updatedAt: "2026-06-24T10:00:00.000Z",
+    latestRevision,
+    commentThreads: [],
+    feedbackSignals: [],
+  };
+}
+
+function jsonResponse(body: unknown) {
+  return {
+    ok: true,
+    json: async () => body,
+  };
+}
+
 beforeEach(() => {
   htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
   const originalFetch = globalThis.fetch.bind(globalThis);
@@ -170,6 +268,23 @@ beforeEach(() => {
           ok: true,
           text: async () => buildPreviewHtmlFromText(htmlPreviewResumeText ?? ""),
         };
+      }
+      const draftRoute = url.match(/\/v1\/jobs\/([^/]+)\/resume-review\/draft/);
+      if (draftRoute) {
+        return jsonResponse({ ok: true, draft: makeResumeReviewDraft(decodeURIComponent(draftRoute[1]!), null) });
+      }
+      const revisionRoute = url.match(/\/v1\/resume-review\/drafts\/([^/]+)\/revisions/);
+      if (revisionRoute) {
+        const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
+        const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+          draftId: decodeURIComponent(revisionRoute[1]!),
+          revisionId: "draft-revision-saved",
+          editedText: typeof body.editedText === "string" ? body.editedText : "",
+          plateDocument: body.plateDocument,
+          editDeltas: (body.editDeltas ?? []) as ResumeReviewEditDelta[],
+          revisionNumber: 1,
+        });
+        return jsonResponse({ ok: true, draft, revision: draft.latestRevision });
       }
       return originalFetch(input, init);
     }),
@@ -567,6 +682,39 @@ describe("<ApplyReviewView>", () => {
     const shadow = await findResumeShadowRoot();
     expect(shadow.querySelectorAll('[aria-label="JobHunter resume comment"]').length).toBeGreaterThan(0);
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("restores the latest saved resume review draft in the Plate editor", async () => {
+    const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+      editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+      plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
+    });
+    const createResumeReviewDraft = vi.fn(async () => ({ ok: true as const, draft }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft,
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
+    expect(shadowText(shadow)).not.toContain("Owned platform reliability improvements for incident response.");
+    await waitFor(() =>
+      expect(createResumeReviewDraft).toHaveBeenCalledWith(
+        sampleApplyReviewQueue.items[0]!.jobKey,
+        expect.objectContaining({
+          rendererFormat: "html_css",
+          resumePdfArtifactId: "resume-pdf-2",
+          resumeTextArtifactId: "resume-text-2",
+        }),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("saved revision 1");
   });
 
   it("distinguishes pre-tailor profile gaps from accepted-resume coverage gaps", async () => {

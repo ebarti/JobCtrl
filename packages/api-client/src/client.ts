@@ -68,6 +68,13 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  ResumeCommentReplyRequest,
+  ResumeCommentReplyResponse,
+  ResumeReviewDraftCreateRequest,
+  ResumeReviewDraftResponse,
+  ResumeReviewDraftRevisionResponse,
+  ResumeReviewDraftRevisionSaveRequest,
+  ResumeReviewFeedbackListResponse,
   TailorJobRequest,
   RetryStageRequest,
   RunJobStageRequest,
@@ -278,6 +285,35 @@ export class JobHunterApiClient {
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`, body);
+  }
+
+  resumeReviewDraft(jobKey: string): Promise<ResumeReviewDraftResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`);
+  }
+
+  createResumeReviewDraft(
+    jobKey: string,
+    body: ResumeReviewDraftCreateRequest = {},
+  ): Promise<ResumeReviewDraftResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`, body);
+  }
+
+  saveResumeReviewDraftRevision(
+    draftId: string,
+    body: ResumeReviewDraftRevisionSaveRequest,
+  ): Promise<ResumeReviewDraftRevisionResponse> {
+    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`, body);
+  }
+
+  replyToResumeReviewComment(
+    threadId: string,
+    body: ResumeCommentReplyRequest,
+  ): Promise<ResumeCommentReplyResponse> {
+    return this.post(`/v1/resume-review/comment-threads/${encodeURIComponent(threadId)}/replies`, body);
+  }
+
+  resumeReviewFeedback(jobKey: string): Promise<ResumeReviewFeedbackListResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/feedback`);
   }
 
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {
