@@ -12,8 +12,9 @@
  *     ``cmd /c start`` to fire the OS file handler.  Not part of the
  *     JSON-RPC protocol surface.
  *   * ``defaultProfilePreviewRenderer`` — invokes an inline Python
- *     script via ``uv run python -c`` for the LaTeX render path.  This
- *     is a one-off helper that doesn't fit the JSON-RPC method set.
+ *     script via ``uv run python -c`` for the profile preview PDF render
+ *     path.  This is a one-off helper that doesn't fit the JSON-RPC
+ *     method set.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -644,12 +645,15 @@ function runCommand(command: string, args: string[], appDir: string): Promise<st
   });
 }
 
-const PROFILE_PREVIEW_SCRIPT = `
+export const PROFILE_PREVIEW_SCRIPT = `
 import json
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from jobhunter.infrastructure.materials.latex_pdf import build_latex, render_pdf_latex
+from jobhunter.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter
 
 profile_path = Path(sys.argv[1])
 template_path = Path(sys.argv[2])
@@ -680,9 +684,18 @@ data = {
     ],
 }
 
-template_text = template_path.read_text(encoding="utf-8") if template_path.exists() else None
-latex = build_latex(data, profile, template_text=template_text)
-render_pdf_latex(latex, str(output_path))
+renderer = os.environ.get("JOBHUNTER_RESUME_RENDERER", "html_pdf").strip().lower()
+if renderer == "latex_pdf":
+    template_text = template_path.read_text(encoding="utf-8") if template_path.exists() else None
+    latex = build_latex(data, profile, template_text=template_text)
+    render_pdf_latex(latex, str(output_path))
+else:
+    HtmlResumePdfAdapter().render_resume_to_pdf(
+        tailored_payload=data,
+        profile_dict=profile,
+        output_path=str(output_path),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
 `;
 
 function extractProfileImportDraft(result: unknown): Omit<ProfileImportResult, "action"> {

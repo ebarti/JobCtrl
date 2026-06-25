@@ -8,7 +8,7 @@ import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
-import { defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
+import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -5857,6 +5857,13 @@ describe("local TypeScript API", () => {
     expect(importer).not.toHaveBeenCalled();
 
     await app.close();
+  });
+
+  it("uses the HTML/CSS resume renderer for default profile PDF previews", () => {
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobhunter.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain('os.environ.get("JOBHUNTER_RESUME_RENDERER", "html_pdf")');
+    expect(PROFILE_PREVIEW_SCRIPT).toContain('if renderer == "latex_pdf":');
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
   });
 
   it("serves a rendered profile PDF preview", async () => {

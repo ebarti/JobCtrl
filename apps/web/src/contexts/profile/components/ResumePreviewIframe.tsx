@@ -7,9 +7,9 @@ export function ResumePreviewIframe() {
     <PdfPreviewViewer
       cacheKey={cacheKey}
       loadingMessage="The PDF endpoint is loading into the in-app preview."
-      loadingTitle="Rendering resume."
+      loadingTitle="Rendering baseline resume."
       pageAltPrefix="Resume"
-      title="Resume preview"
+      title="Baseline resume preview"
       url={url}
     />
   );

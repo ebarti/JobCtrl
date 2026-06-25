@@ -369,6 +369,11 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
+`GET /v1/profile/preview.pdf` renders the baseline Candidate Profile resume
+through the same HTML/CSS resume renderer used for generated materials by
+default. Set `JOBHUNTER_RESUME_RENDERER=latex_pdf` only when an explicit legacy
+LaTeX profile preview is required.
+
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
 ingestion is Gmail-only and runs through the Python worker, not through the

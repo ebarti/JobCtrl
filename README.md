@@ -481,6 +481,9 @@ Human edits are saved as separate resume-review drafts, JobHunter line comments
 can be replied to in place, and approval controls stay blocked until a saved
 draft validates and renders into replacement resume artifacts. The previously
 accepted materials remain available until that replacement render succeeds.
+The Profile page preview also uses the HTML/CSS resume renderer by default, so
+the baseline resume preview matches the same print layout family used for
+generated materials instead of the legacy LaTeX template.
 Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
 Debug activity, expose resizable column handles in the headers so long local
 data can be inspected without changing code or global density settings.
@@ -731,7 +734,8 @@ Common environment variables:
   profile headless. The default is visible Chrome so a throwaway LinkedIn
   account can be logged in and kept fresh.
 - `JOBHUNTER_RESUME_RENDERER`: set to `latex_pdf` to use the legacy LaTeX
-  resume renderer; defaults to `html_pdf`.
+  resume renderer, including the Profile page PDF preview; defaults to
+  `html_pdf`.
 - `PDFLATEX_PATH`: override LaTeX detection when the legacy renderer is enabled.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout
