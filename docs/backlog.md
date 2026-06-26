@@ -1,17 +1,19 @@
 # Backlog
 
-This is the authoritative roadmap. Keep active accepted or exploratory
-proposals under `docs/plans/proposed/`; move delivered or superseded plans to
+This is the detailed engineering backlog. The public roadmap lives in
+[`ROADMAP.md`](../ROADMAP.md). Keep active accepted or exploratory proposals
+under `docs/plans/proposed/`; move delivered or superseded plans to
 `docs/plans/implemented/` and summarize delivered work in `docs/delivered.md`.
 
-## Current State Snapshot (2026-06-05)
+## Current State Snapshot (2026-06-26)
 
 Delivered work is archived in [`docs/delivered.md`](delivered.md) and the
 implemented plan directory. Discovery RFC production wiring and scoring
 intelligence are implemented via PR #61; the calibrated scoring policy stack,
 target-search recall, the single Discovery preparation stage, apply review and
 outcome feedback, resume-tailoring quality gates, the local Temporal stack, DDD
-/ hexagonal migration, and frontend TanStack migration are also implemented.
+/ hexagonal migration, frontend TanStack migration, HTML/CSS resume rendering,
+and the Plate-backed Apply Review surface are also implemented.
 
 The active local-product backlog is the remaining validation and hardening
 work below: realtime cache patching beyond apply-run timeline events,
@@ -351,14 +353,12 @@ and are tracked here per the migration plan §"Deferred follow-ups":
 - **`data-testid` attributes on dashboard / jobs row selectors** — Phase 6
   reviewer follow-up. Playwright specs currently rely on text content for
   row selection, which is brittle as copy evolves.
-- **`apps/api/test/qa-seed.ts` schema bump** — Phase 6 reviewer follow-up.
-  The seed currently creates only the legacy tables (`jobs`,
-  `job_stage_states`, `job_artifacts`, `job_events`,
-  `apply_run_projections`). It is missing `job_scores`, `job_materials`,
-  `job_materials_artifacts`, `jobhunter_deleted_jobs`, and
-  `job_enrichments`. The seeded `job_stage_states` row also omits
-  `metadata_json` and `version`, so it no longer represents the production
-  projection schema closely enough.
+- **`apps/api/test/qa-seed.ts` remaining schema parity** — The seed now covers
+  core score, materials, artifact, employer-analysis, requirement-fit,
+  projection, worker-heartbeat, and screenshot surfaces. Remaining parity gaps
+  are `job_enrichments`, `jobhunter_deleted_jobs`, source-registry rows, and
+  resume-review draft/comment tables when new E2E flows need those exact
+  production schemas.
 - **Generate-materials backend enablement** — DONE (INSPECT-01). The
   `POST /v1/jobs/:jobKey/actions/generate-materials` route now dispatches a
   `run_stage` command over the canonical material stages (tailor → cover) and
