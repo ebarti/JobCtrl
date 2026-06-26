@@ -140,5 +140,6 @@ intentional.
 | `JOBHUNTER_E2E_API_PORT` | E2E API port. |
 | `JOBHUNTER_E2E_WEB_PORT` | E2E web port. |
 | `JOBHUNTER_E2E_STUB_DISPATCH` | Routes selected dispatches through deterministic test stubs. |
+| `VITE_JOBHUNTER_HIDE_DEVTOOLS` | Hides TanStack devtools in Vite builds used for public screenshots. |
 
 Use these only for synthetic QA, screenshot generation, and CI.

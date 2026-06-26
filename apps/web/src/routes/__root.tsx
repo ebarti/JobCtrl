@@ -12,10 +12,13 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootComponent() {
+  const showDevtools =
+    import.meta.env.DEV && import.meta.env.VITE_JOBHUNTER_HIDE_DEVTOOLS !== "1";
+
   return (
     <>
       <AppShell />
-      {import.meta.env.DEV ? (
+      {showDevtools ? (
         <>
           <TanStackRouterDevtools position="bottom-right" />
           <ReactQueryDevtools buttonPosition="bottom-left" />

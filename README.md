@@ -157,10 +157,26 @@ uv --project workers/automation run --extra dev pytest -q
 
 For contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Screenshots
+
+Documentation screenshots must be generated from synthetic data. Use:
+
+```bash
+pnpm docs:screenshots
+```
+
+![Dashboard with synthetic data](docs/assets/screenshots/dashboard.png)
+
+![Apply Review with synthetic data](docs/assets/screenshots/apply-review.png)
+
+The screenshot playbook in
+[docs/developer/screenshot-playbook.md](docs/developer/screenshot-playbook.md)
+explains the disposable database, routes, and refresh process.
+
 ## Documentation
 
-- [docs/user/](docs/user/): end-user setup, configuration, normal flows, and
-  safety.
+- [docs/user/](docs/user/): end-user setup, configuration, normal flows, safety,
+  and screenshot references.
 - [docs/developer/](docs/developer/): contributor onboarding and architecture
   reading path.
 - [docs/architecture.md](docs/architecture.md): current runtime architecture.

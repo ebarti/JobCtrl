@@ -23,11 +23,15 @@
   setup through review and apply.
 - [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
   generated artifacts, automation consent, and open-source sharing guidance.
+- [`user/screenshots.md`](user/screenshots.md): public screenshot generation
+  command and covered UI surfaces.
 
 ## Developer Docs
 
 - [`developer/README.md`](developer/README.md): contributor entry point and
   architecture/QA reading path.
+- [`developer/screenshot-playbook.md`](developer/screenshot-playbook.md):
+  repeatable synthetic screenshot refresh workflow.
 - [`architecture.md`](architecture.md): runtime boundaries and repository
   ownership.
 - [`job-pipeline-architecture.md`](job-pipeline-architecture.md): phase-by-phase
@@ -38,8 +42,8 @@
 - [`frontend-target.md`](frontend-target.md): canonical frontend architecture,
   state layers, bounded contexts, ports, SSE realtime, invalidation, and test
   pyramid.
-- [`local-development.md`](local-development.md): setup, run, build, test, and
-  lint commands.
+- [`local-development.md`](local-development.md): setup, run, build, test, lint,
+  and screenshot commands.
 - [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app
   development notes, and the `GET /v1/events/stream` SSE contract.
 - [`local-reliability-qa.md`](local-reliability-qa.md): local QA checklist,

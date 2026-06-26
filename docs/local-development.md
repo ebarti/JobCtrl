@@ -97,6 +97,15 @@ pnpm web:build
 pnpm qa:test
 ```
 
+Regenerate public documentation screenshots from the synthetic E2E workspace:
+
+```bash
+pnpm docs:screenshots
+```
+
+The screenshot command writes PNG files under `docs/assets/screenshots/` and
+must never point at a real `~/.jobhunter` workspace.
+
 ## Frontend
 
 The React frontend under `apps/web` follows the architecture documented in
