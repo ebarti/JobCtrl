@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "scripts/dev run",
+    "install:interactive": "scripts/install",
     "dev:setup": "scripts/dev setup",
     "dev:start": "scripts/dev start",
     "dev:status": "scripts/dev status",

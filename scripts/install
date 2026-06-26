@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+# Interactive JobHunter dependency installer for first-time local setup.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ASSUME_YES=0
+DRY_RUN=0
+SKIP_SYSTEM=0
+SKIP_BROWSERS=0
+SKIP_DOCTOR=0
+
+REMAINING_SYSTEM_DEPS=()
+REQUIRED_TOOL_MISSING=()
+SKIPPED_STEPS=()
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/install [options]
+
+Interactive first-time installer for JobHunter. It checks machine-level tools,
+then installs the Node workspace, Python worker environment, and Playwright
+Chromium browsers used by the web tests and Python PDF/rendering paths.
+
+Options:
+  -y, --yes        Accept default yes prompts.
+  --dry-run        Print commands without running them.
+  --skip-system    Skip system dependency checks and Homebrew prompts.
+  --skip-browsers  Skip Playwright Chromium browser installs.
+  --skip-doctor    Skip the final jobhunter doctor check.
+  -h, --help       Show this help.
+EOF
+}
+
+heading() {
+  printf '\n==> %s\n' "$1"
+}
+
+ok() {
+  printf 'ok: %s\n' "$1"
+}
+
+warn() {
+  printf 'warning: %s\n' "$1" >&2
+}
+
+run() {
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  "$@"
+}
+
+run_in_root() {
+  ( cd "$ROOT" && run "$@" )
+}
+
+confirm() {
+  local prompt="$1"
+  local reply
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    printf '%s yes\n' "$prompt"
+    return 0
+  fi
+
+  printf '%s [Y/n] ' "$prompt"
+  read -r reply
+  case "${reply:-y}" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+version_at_least() {
+  local have="$1" need="$2"
+  local have_major have_minor have_patch need_major need_minor need_patch
+  IFS=. read -r have_major have_minor have_patch <<<"${have#v}"
+  IFS=. read -r need_major need_minor need_patch <<<"${need#v}"
+  have_major="${have_major:-0}"
+  have_minor="${have_minor:-0}"
+  have_patch="${have_patch:-0}"
+  need_major="${need_major:-0}"
+  need_minor="${need_minor:-0}"
+  need_patch="${need_patch:-0}"
+
+  if (( have_major != need_major )); then
+    (( have_major > need_major ))
+    return
+  fi
+  if (( have_minor != need_minor )); then
+    (( have_minor > need_minor ))
+    return
+  fi
+  (( have_patch >= need_patch ))
+}
+
+record_missing() {
+  local label="$1" hint="$2" required="${3:-0}"
+  REMAINING_SYSTEM_DEPS+=("$label - $hint")
+  if [[ "$required" -eq 1 ]]; then
+    REQUIRED_TOOL_MISSING+=("$label")
+  fi
+}
+
+maybe_brew_install() {
+  local label="$1"
+  shift
+
+  if [[ "$SKIP_SYSTEM" -eq 1 ]]; then
+    return 1
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    return 1
+  fi
+  if confirm "Install $label with Homebrew now?"; then
+    run brew install "$@"
+    hash -r
+    return 0
+  fi
+  return 1
+}
+
+ensure_node() {
+  local version
+  if command -v node >/dev/null 2>&1; then
+    version="$(node -p 'process.versions.node' 2>/dev/null || true)"
+    if [[ -n "$version" ]] && version_at_least "$version" "20.19.0"; then
+      ok "Node.js $version"
+      return 0
+    fi
+    warn "Node.js 20.19+ is required; found ${version:-unknown}."
+  else
+    warn "Node.js 20.19+ is required; node was not found."
+  fi
+
+  maybe_brew_install "Node.js" node || true
+
+  if command -v node >/dev/null 2>&1; then
+    version="$(node -p 'process.versions.node' 2>/dev/null || true)"
+    if [[ -n "$version" ]] && version_at_least "$version" "20.19.0"; then
+      ok "Node.js $version"
+      return 0
+    fi
+  fi
+
+  record_missing "Node.js 20.19+" "install Node.js from nodejs.org, nvm, asdf, or Homebrew" 1
+}
+
+ensure_command() {
+  local command_name="$1" label="$2" hint="$3" required="${4:-0}"
+  shift 4 || true
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    ok "$label: $(command -v "$command_name")"
+    return 0
+  fi
+
+  warn "$label was not found."
+  if [[ "$#" -gt 0 ]]; then
+    maybe_brew_install "$label" "$@" || true
+  fi
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    ok "$label: $(command -v "$command_name")"
+    return 0
+  fi
+
+  record_missing "$label" "$hint" "$required"
+}
+
+chrome_found() {
+  if [[ -n "${CHROME_PATH:-}" && -x "${CHROME_PATH:-}" ]]; then
+    return 0
+  fi
+
+  local command_name
+  for command_name in google-chrome google-chrome-stable chromium chromium-browser chrome; do
+    if command -v "$command_name" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  local app_path
+  for app_path in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+    if [[ -x "$app_path" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_chrome() {
+  if chrome_found; then
+    ok "Chrome/Chromium browser found"
+    return 0
+  fi
+
+  warn "Chrome or Chromium was not found."
+  if command -v brew >/dev/null 2>&1 && confirm "Install Google Chrome with Homebrew now?"; then
+    run brew install --cask google-chrome
+    hash -r
+  fi
+
+  if chrome_found; then
+    ok "Chrome/Chromium browser found"
+    return 0
+  fi
+
+  record_missing "Chrome or Chromium" "install Google Chrome/Chromium or set CHROME_PATH in ~/.jobhunter/.env" 0
+}
+
+check_system_dependencies() {
+  heading "Checking system tools"
+  ensure_node
+  ensure_command "corepack" "Corepack" "install Node.js 20.19+ with Corepack enabled" 1
+  ensure_command "uv" "uv" "install uv from https://docs.astral.sh/uv/ or Homebrew" 1 uv
+  ensure_command "temporal" "Temporal CLI" "install the Temporal CLI so pnpm dev can start temporal server start-dev" 0 temporal
+  ensure_command "pdftoppm" "Poppler pdftoppm" "install Poppler for PDF page previews" 0 poppler
+  ensure_chrome
+}
+
+enable_corepack() {
+  if ! command -v corepack >/dev/null 2>&1; then
+    return 0
+  fi
+  if confirm "Enable Corepack for the repo pnpm version?"; then
+    run corepack enable
+  fi
+}
+
+install_node_workspace() {
+  if confirm "Install Node workspace dependencies with the lockfile?"; then
+    run_in_root corepack pnpm install --frozen-lockfile
+  else
+    SKIPPED_STEPS+=("Node workspace dependency install")
+  fi
+}
+
+install_python_worker() {
+  if confirm "Sync the uv-managed Python worker environment?"; then
+    run_in_root uv --project workers/automation sync --extra dev
+  else
+    SKIPPED_STEPS+=("Python worker dependency sync")
+  fi
+}
+
+install_playwright_browsers() {
+  if [[ "$SKIP_BROWSERS" -eq 1 ]]; then
+    SKIPPED_STEPS+=("Playwright Chromium browser installs")
+    return 0
+  fi
+  if ! confirm "Install Playwright Chromium browsers for web tests and Python rendering?"; then
+    SKIPPED_STEPS+=("Playwright Chromium browser installs")
+    return 0
+  fi
+
+  run_in_root corepack pnpm --filter @jobhunter/web exec playwright install chromium
+  run_in_root uv --project workers/automation run playwright install chromium
+}
+
+run_doctor() {
+  if [[ "$SKIP_DOCTOR" -eq 1 ]]; then
+    return 0
+  fi
+  if ! confirm "Run jobhunter doctor after dependency setup?"; then
+    return 0
+  fi
+
+  if ! run_in_root uv --project workers/automation run jobhunter doctor; then
+    warn "jobhunter doctor reported setup issues; review the output above."
+  fi
+}
+
+print_summary() {
+  heading "Summary"
+  if [[ "${#SKIPPED_STEPS[@]}" -gt 0 ]]; then
+    printf 'Skipped by request:\n'
+    printf '  - %s\n' "${SKIPPED_STEPS[@]}"
+  fi
+
+  if [[ "${#REMAINING_SYSTEM_DEPS[@]}" -gt 0 ]]; then
+    printf 'Remaining system dependencies:\n' >&2
+    printf '  - %s\n' "${REMAINING_SYSTEM_DEPS[@]}" >&2
+  fi
+
+  cat <<'EOF'
+
+Next commands:
+  uv --project workers/automation run jobhunter init
+  uv --project workers/automation run jobhunter doctor
+  pnpm dev
+EOF
+}
+
+parse_args() {
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --) shift; continue ;;
+      -y|--yes) ASSUME_YES=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      --skip-system) SKIP_SYSTEM=1 ;;
+      --skip-browsers) SKIP_BROWSERS=1 ;;
+      --skip-doctor) SKIP_DOCTOR=1 ;;
+      -h|--help) usage; exit 0 ;;
+      *) echo "install: unknown option '$1'" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if [[ "$ASSUME_YES" -eq 0 && ! -t 0 ]]; then
+    echo "install: interactive mode requires a TTY; rerun with --yes for non-interactive defaults." >&2
+    exit 2
+  fi
+
+  heading "JobHunter interactive install"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    ok "dry run enabled"
+  fi
+
+  if [[ "$SKIP_SYSTEM" -eq 0 ]]; then
+    check_system_dependencies
+  else
+    ok "system dependency checks skipped"
+  fi
+
+  if [[ "${#REQUIRED_TOOL_MISSING[@]}" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
+    printf 'Required tools are missing:\n' >&2
+    printf '  - %s\n' "${REQUIRED_TOOL_MISSING[@]}" >&2
+    exit 1
+  fi
+
+  heading "Installing repository dependencies"
+  enable_corepack
+  install_node_workspace
+  install_python_worker
+  install_playwright_browsers
+  run_doctor
+  print_summary
+
+  if [[ "${#REMAINING_SYSTEM_DEPS[@]}" -gt 0 ]]; then
+    exit 1
+  fi
+}
+
+main "$@"

@@ -30,11 +30,21 @@ Optional:
 ```bash
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
-pnpm dev:setup
+pnpm install:interactive
 ```
 
-`pnpm dev:setup` installs the Node workspace dependencies and syncs the
-uv-managed Python worker environment.
+`pnpm install:interactive` is the guided first-run installer. It checks
+machine-level tools, offers Homebrew installs when available, installs the Node
+workspace dependencies with the lockfile, syncs the uv-managed Python worker
+environment, and installs the Playwright Chromium browsers used by web tests and
+Python PDF/rendering paths.
+
+If your machine already has the system tools and browser dependencies, this
+non-interactive command is enough to sync the Node and Python dependencies:
+
+```bash
+pnpm dev:setup
+```
 
 If Playwright Chromium is missing:
 

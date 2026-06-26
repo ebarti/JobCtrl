@@ -60,11 +60,17 @@ Install and run:
 ```bash
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
-pnpm dev:setup
+pnpm install:interactive
 uv --project workers/automation run jobhunter init
 uv --project workers/automation run jobhunter doctor
 pnpm dev
 ```
+
+`pnpm install:interactive` checks local system tools, offers guided installs
+when Homebrew is available, installs the Node and Python dependencies, and
+installs the Playwright Chromium browsers used by web tests and PDF rendering.
+For an already provisioned machine or CI-style setup, `pnpm dev:setup` remains
+the non-interactive Node + Python dependency sync.
 
 `pnpm dev` starts the full local stack in the foreground: Temporal dev server,
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
@@ -136,7 +142,7 @@ Common variables:
 ## Development
 
 ```bash
-pnpm dev:setup
+pnpm install:interactive
 pnpm check
 pnpm test
 uv --project workers/automation run --extra dev python -m build workers/automation
