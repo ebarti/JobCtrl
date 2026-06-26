@@ -11,13 +11,11 @@ contexts, aggregates, ports, and adapters for the Python worker and the TS
 API, this doc models the React/TypeScript single-page application that sits
 in front of them.
 
-The frontend today is a 2,527-line `App.tsx` with manual `useState` /
-`useEffect` plumbing, a `useState<View>` view switcher in place of a router,
-hand-rolled stale-response guards via `requestSeq` refs, untyped
-`window.dispatchEvent` cross-component coordination, and zero tests, zero
-component primitives, zero realtime path. The backend just shipped DDD +
-hexagonal architecture in PR #21. The frontend now needs the same
-architectural treatment.
+The TanStack migration has landed. The current frontend is organized around
+TanStack Router, TanStack Query, TanStack Table, TanStack Form, shadcn/Radix
+primitives, context-owned hooks/components, and an SSE-fed invalidation router.
+This document now describes the canonical implemented architecture and the
+hosted-future extension points that must stay intact as the web app evolves.
 
 This doc is the authoritative reference for:
 
@@ -59,13 +57,12 @@ deployment model.
   at `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
   Whenever this doc says "the target X replaces Y," it is a structural
   statement, not an ordering constraint.
-- **Implementation code.** Pseudocode and TypeScript signatures appear where
-  they aid clarity; no production `.tsx`, no tests, no `package.json` edits,
-  no Vite plugin configuration.
-- **Strangler / dual-mount / feature flags.** JobHunter has exactly one
-  user. Every migration is rip-and-replace: the new implementation lands in
-  the same change that deletes the old one. This doc does not model any
-  legacy code path or compatibility shim.
+- **Implementation listing.** Pseudocode and TypeScript signatures appear where
+  they aid clarity; this document is not a generated inventory of production
+  `.tsx`, tests, package scripts, or Vite configuration.
+- **Migration sequencing.** The historical migration was rip-and-replace and is
+  archived in the implemented plan. This document now models the resulting
+  architecture, not dual-mount compatibility paths.
 - **Visual design / copy / iconography choices.** This doc constrains the
   *primitives* (shadcn/ui + Radix) and the *layout system* (Tailwind), not
   the visual identity, design tokens, or copy.

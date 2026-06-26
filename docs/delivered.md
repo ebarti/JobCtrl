@@ -3,6 +3,29 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-06-25: Live Resume Editor Feedback
+
+Plan:
+
+- `openspec/changes/archive/2026-06-25-add-live-resume-editor-feedback/README.md`
+
+Delivered:
+
+- Apply Review now supports live Plate resume editing with formatting controls,
+  draft persistence, revision metadata, edit deltas, and comment replies.
+- Review feedback can accept, reject, or comment on generated materials while
+  keeping the selected artifact inspectable until a replacement is approved.
+- Validation, rendering, and replacement-material flows operate against the
+  generated HTML/CSS resume source used for the final PDF.
+- Profile baseline resume preview uses the same Plate HTML/CSS editor surface
+  so profile edits and generated-material review stay visually aligned.
+
+Validation:
+
+- The archived OpenSpec task record lists API tests, web checks and focused
+  tests, Python materials tests, and a browser smoke path for Apply Review and
+  Profile preview flows.
+
 ## 2026-06-24: HTML/CSS Resume Rendering And Plate Review Surface
 
 Plan:
