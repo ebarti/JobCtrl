@@ -68,6 +68,7 @@ export default defineConfig({
       env: {
         VITE_JOBHUNTER_API_BASE_URL: "",
         VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
+        VITE_JOBHUNTER_HIDE_DEVTOOLS: "1",
       },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,

@@ -34,6 +34,7 @@
     "web:storybook:test": "corepack pnpm --filter @jobhunter/web storybook:test",
     "qa:seed": "corepack pnpm --filter @jobhunter/api qa:seed",
     "qa:test": "corepack pnpm --filter @jobhunter/api qa:test",
+    "docs:screenshots": "corepack pnpm --filter @jobhunter/web e2e -- tests/docs-screenshots.spec.ts",
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",

@@ -95,6 +95,37 @@ const QA_RESUME_STYLE = {
   paper_size: "a4paper",
 };
 
+const QA_RESUME_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>QA Candidate Resume</title>
+    <style>
+      body { font-family: Inter, system-ui, sans-serif; margin: 48px; color: #111827; }
+      main { max-width: 760px; margin: 0 auto; }
+      h1 { font-size: 28px; margin: 0 0 4px; }
+      h2 { font-size: 15px; margin: 28px 0 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+      p, li { font-size: 14px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <main class="resume-page">
+      <h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">QA Candidate</h1>
+      <p data-resume-layout-target="personal:contact" data-resume-line-number="2">qa@example.local | Remote City</p>
+      <h2>Profile</h2>
+      <p data-resume-layout-target="summary" data-resume-line-number="3">Platform and security engineering leader for QA validation.</p>
+      <h2>Experience</h2>
+      <p data-resume-layout-target="experience:qa_platform" data-resume-line-number="4"><strong>Director of Platform Engineering, QA Systems</strong></p>
+      <ul>
+        <li data-resume-layout-target="experience:qa_platform:bullet:1" data-resume-line-number="5">Led platform reliability and security validation programs.</li>
+      </ul>
+      <h2>Skills</h2>
+      <p data-resume-layout-target="skills:platform" data-resume-line-number="6">Kubernetes, Security, Developer Experience</p>
+    </main>
+  </body>
+</html>
+`;
+
 export function createQaWorkspace(targetDir?: string): QaWorkspace {
   const appDir = targetDir ? path.resolve(targetDir) : fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-qa-"));
   fs.mkdirSync(appDir, { recursive: true });
@@ -140,10 +171,12 @@ export function seedQaDatabase(dbPath: string): void {
 
   const resumeTxt = path.join(artifactDir, "gitlab-platform-resume.txt");
   const resumePdf = path.join(artifactDir, "gitlab-platform-resume.pdf");
+  const resumeHtml = path.join(artifactDir, "gitlab-platform-resume.html");
   const coverTxt = path.join(artifactDir, "gitlab-platform-cover.txt");
   const coverPdf = path.join(artifactDir, "gitlab-platform-cover.pdf");
   fs.writeFileSync(resumeTxt, "QA tailored resume");
   fs.writeFileSync(resumePdf, "%PDF-1.4\n% QA resume\n");
+  fs.writeFileSync(resumeHtml, QA_RESUME_HTML);
   fs.writeFileSync(coverTxt, "QA cover letter");
   fs.writeFileSync(coverPdf, "%PDF-1.4\n% QA cover\n");
 
@@ -251,21 +284,48 @@ export function seedQaDatabase(dbPath: string): void {
       PRIMARY KEY (job_url, version, tenant_id)
     );
     CREATE TABLE job_materials (
-      job_url TEXT,
-      generation INTEGER,
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_validation_json TEXT,
+      last_verdict_json TEXT,
+      metadata_json TEXT,
       PRIMARY KEY (job_url, generation)
     );
     CREATE TABLE job_materials_artifacts (
-      job_url TEXT,
-      generation INTEGER,
-      artifact_id TEXT,
-      artifact_type TEXT,
-      status TEXT,
-      path TEXT,
-      created_at TEXT,
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_type TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      path TEXT NOT NULL,
+      render_format TEXT NOT NULL,
       size_bytes INTEGER,
       metadata_json TEXT,
-      PRIMARY KEY (job_url, generation, artifact_id)
+      created_at TEXT NOT NULL,
+      superseded_at TEXT,
+      PRIMARY KEY (job_url, generation, artifact_type)
+    );
+    CREATE TABLE job_material_layout_boxes (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_id TEXT NOT NULL,
+      box_index INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      semantic_id TEXT NOT NULL,
+      page_number INTEGER NOT NULL,
+      line_number INTEGER,
+      text_excerpt TEXT NOT NULL,
+      left_pct REAL NOT NULL,
+      top_pct REAL NOT NULL,
+      width_pct REAL NOT NULL,
+      height_pct REAL NOT NULL,
+      audit_target_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, artifact_id, box_index)
     );
     CREATE TABLE job_bullet_provenance (
       job_url TEXT,
@@ -429,6 +489,7 @@ export function seedQaDatabase(dbPath: string): void {
   insertRequirementFitAuditFixture(db, {
     coverPdf,
     coverTxt,
+    resumeHtml,
     resumePdf,
     resumeTxt,
   });
@@ -456,6 +517,7 @@ function insertRequirementFitAuditFixture(
   paths: {
     coverPdf: string;
     coverTxt: string;
+    resumeHtml: string;
     resumePdf: string;
     resumeTxt: string;
   },
@@ -472,59 +534,93 @@ function insertCanonicalMaterials(
   paths: {
     coverPdf: string;
     coverTxt: string;
+    resumeHtml: string;
     resumePdf: string;
     resumeTxt: string;
   },
 ): void {
-  db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(QA_PLATFORM_JOB_URL, 1);
+  db.prepare(
+    `INSERT INTO job_materials (
+      job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(QA_PLATFORM_JOB_URL, 1, "local", "approved", QA_NOW, QA_NOW, "{}");
   const insert = db.prepare(
     `INSERT INTO job_materials_artifacts (
-      job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      job_url, generation, artifact_type, artifact_id, status, path,
+      render_format, size_bytes, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insert.run(
     QA_PLATFORM_JOB_URL,
     1,
-    "qa-platform-resume-text",
     "tailored_resume",
+    "qa-platform-resume-text",
     "approved",
     paths.resumeTxt,
-    QA_NOW,
+    "text",
     localFileSize(paths.resumeTxt),
-    null,
+    "{}",
+    QA_NOW,
   );
   insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "resume_pdf",
+    "qa-platform-resume-pdf",
+    "approved",
+    paths.resumePdf,
+    "html_pdf",
+    localFileSize(paths.resumePdf),
+    JSON.stringify({ html_path: paths.resumeHtml }),
+    QA_NOW,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "cover_letter",
+    "qa-platform-cover-text",
+    "approved",
+    paths.coverTxt,
+    "text",
+    localFileSize(paths.coverTxt),
+    "{}",
+    QA_NOW,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "cover_letter_pdf",
+    "qa-platform-cover-pdf",
+    "approved",
+    paths.coverPdf,
+    "html_pdf",
+    localFileSize(paths.coverPdf),
+    "{}",
+    QA_NOW,
+  );
+  const insertBox = db.prepare(
+    `INSERT INTO job_material_layout_boxes (
+      job_url, generation, artifact_id, box_index, tenant_id, semantic_id,
+      page_number, line_number, text_excerpt, left_pct, top_pct, width_pct,
+      height_pct, audit_target_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertBox.run(
     QA_PLATFORM_JOB_URL,
     1,
     "qa-platform-resume-pdf",
-    "resume_pdf",
-    "approved",
-    paths.resumePdf,
-    QA_NOW,
-    localFileSize(paths.resumePdf),
-    null,
-  );
-  insert.run(
-    QA_PLATFORM_JOB_URL,
+    0,
+    "local",
+    "experience:qa_platform:bullet:1",
     1,
-    "qa-platform-cover-text",
-    "cover_letter",
-    "approved",
-    paths.coverTxt,
+    5,
+    "Led platform reliability and security validation programs.",
+    12.5,
+    35.0,
+    68.0,
+    3.0,
+    "{}",
     QA_NOW,
-    localFileSize(paths.coverTxt),
-    null,
-  );
-  insert.run(
-    QA_PLATFORM_JOB_URL,
-    1,
-    "qa-platform-cover-pdf",
-    "cover_letter_pdf",
-    "approved",
-    paths.coverPdf,
-    QA_NOW,
-    localFileSize(paths.coverPdf),
-    null,
   );
 }
 
