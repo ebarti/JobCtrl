@@ -277,9 +277,15 @@ FONT_STACKS = {
 }
 
 DENSITY_SCALE = {
-    "compact": {"section": 3.2, "entry": 2.4, "bullet": 0.45, "line": 1.24},
-    "balanced": {"section": 4.1, "entry": 3.2, "bullet": 0.75, "line": 1.32},
-    "spacious": {"section": 5.2, "entry": 4.1, "bullet": 1.05, "line": 1.42},
+    "compact": {"section": 2.2, "entry": 1.4, "list": 0.35, "line": 1.2, "meta_line": 1.12},
+    "balanced": {"section": 4.1, "entry": 3.2, "list": 1.1, "line": 1.32, "meta_line": 1.22},
+    "spacious": {"section": 7.2, "entry": 5.8, "list": 2.4, "line": 1.48, "meta_line": 1.34},
+}
+
+BULLET_SPACING = {
+    "tight": 0.05,
+    "normal": 0.8,
+    "loose": 2.4,
 }
 
 
@@ -290,6 +296,7 @@ def resume_theme_css(theme: dict[str, Any] | None) -> str:
         return ""
     font_family = FONT_STACKS.get(str(theme.get("fontFamily", "sans")), FONT_STACKS["sans"])
     density = DENSITY_SCALE.get(str(theme.get("density", "balanced")), DENSITY_SCALE["balanced"])
+    bullet_spacing = BULLET_SPACING.get(str(theme.get("bulletSpacing", "normal")), BULLET_SPACING["normal"])
     font_scale = _bounded_float(theme.get("fontScale"), 0.85, 1.2, 1.0)
     margins = theme.get("marginMm") if isinstance(theme.get("marginMm"), dict) else {}
     margin_top = _bounded_float(margins.get("top"), 8, 28, 16.5)
@@ -333,9 +340,17 @@ body {{
 .resume-entry {{
   margin-block-end: {density["entry"]:.2f}mm;
 }}
+.resume-entry-subtitle,
+.resume-meta {{
+  line-height: {density["meta_line"]:.3f};
+}}
+.resume-bullets,
+.resume-skills-list {{
+  margin-block-start: {density["list"]:.2f}mm;
+}}
 .resume-bullets li,
 .resume-skills-list li {{
-  margin-block-end: {density["bullet"]:.2f}mm;
+  margin-block-end: {bullet_spacing:.2f}mm;
 }}
 .resume-section-title {{
   color: {accent};

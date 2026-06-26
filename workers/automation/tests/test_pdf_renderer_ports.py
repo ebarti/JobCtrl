@@ -399,6 +399,7 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
         resume_theme={
             "fontFamily": "garamond",
             "density": "compact",
+            "bulletSpacing": "loose",
             "fontScale": 1.1,
             "accentColor": "#123456",
             "marginMm": {"top": 12, "right": 13, "bottom": 14, "left": 15},
@@ -414,6 +415,10 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
     assert "Garamond" in html
     assert "color: #123456" in html
     assert "padding: 12.00mm 13.00mm 14.00mm 15.00mm" in html
+    assert "line-height: 1.200" in html
+    assert "line-height: 1.120" in html
+    assert "margin-block-start: 0.35mm" in html
+    assert "margin-block-end: 2.40mm" in html
     assert "text-align: left" in html
     assert artifact.metadata["resume_template"] == template
     assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))

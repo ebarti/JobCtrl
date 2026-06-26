@@ -57,10 +57,37 @@ const FONT_LABELS: Record<ResumeTemplateTheme["fontFamily"], string> = {
 
 const FONT_OPTIONS = Object.entries(FONT_LABELS) as Array<[ResumeTemplateTheme["fontFamily"], string]>;
 
-const DENSITY_SCALE: Record<ResumeTemplateTheme["density"], number> = {
-  compact: 0.82,
-  balanced: 1,
-  spacious: 1.18,
+const DENSITY_TOKENS: Record<
+  ResumeTemplateTheme["density"],
+  {
+    readonly entryGapMm: number;
+    readonly lineHeight: number;
+    readonly listGapMm: number;
+    readonly metaLineHeight: number;
+    readonly sectionGapMm: number;
+  }
+> = {
+  compact: {
+    entryGapMm: 1.4,
+    lineHeight: 1.2,
+    listGapMm: 0.35,
+    metaLineHeight: 1.12,
+    sectionGapMm: 2.2,
+  },
+  balanced: {
+    entryGapMm: 3.2,
+    lineHeight: 1.32,
+    listGapMm: 1.1,
+    metaLineHeight: 1.22,
+    sectionGapMm: 4.1,
+  },
+  spacious: {
+    entryGapMm: 5.8,
+    lineHeight: 1.48,
+    listGapMm: 2.4,
+    metaLineHeight: 1.34,
+    sectionGapMm: 7.2,
+  },
 };
 
 export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePanelProps): JSX.Element {
@@ -360,7 +387,7 @@ function templateByMetadata(
 }
 
 function previewStyleForTheme(theme: ResumeTemplateTheme): TemplatePreviewStyle {
-  const density = DENSITY_SCALE[theme.density];
+  const density = DENSITY_TOKENS[theme.density];
   const fontSize = (points: number) => `${Number((points * theme.fontScale).toFixed(2))}pt`;
   const headerTextAlign = theme.headerLayout === "centered" ? "center" : "left";
   const headerJustify = theme.headerLayout === "centered" ? "center" : "flex-start";
@@ -382,14 +409,17 @@ function previewStyleForTheme(theme: ResumeTemplateTheme): TemplatePreviewStyle 
     "--resume-template-heading-rule-opacity": headingRuleOpacity,
     "--resume-template-heading-box-border": headingBoxBorder,
     "--resume-template-heading-padding": theme.sectionHeadingStyle === "boxed" ? "1mm 1.6mm" : "0",
-    "--resume-template-section-gap": `${4.1 * density}mm`,
-    "--resume-template-entry-gap": `${3.2 * density}mm`,
-    "--resume-template-bullet-gap": `${bulletGap(theme.bulletSpacing) * density}mm`,
+    "--resume-template-line-height": density.lineHeight,
+    "--resume-template-meta-line-height": density.metaLineHeight,
+    "--resume-template-section-gap": `${density.sectionGapMm}mm`,
+    "--resume-template-entry-gap": `${density.entryGapMm}mm`,
+    "--resume-template-list-gap": `${density.listGapMm}mm`,
+    "--resume-template-bullet-gap": `${bulletGap(theme.bulletSpacing)}mm`,
   };
 }
 
 function bulletGap(value: ResumeTemplateTheme["bulletSpacing"]): number {
-  if (value === "tight") return 0.35;
-  if (value === "loose") return 1.2;
-  return 0.75;
+  if (value === "tight") return 0.05;
+  if (value === "loose") return 2.4;
+  return 0.8;
 }

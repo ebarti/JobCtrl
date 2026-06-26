@@ -1029,6 +1029,9 @@ textarea:focus-visible {
   --resume-template-heading-font-size: 9.5pt;
   --resume-template-heading-padding: 0;
   --resume-template-heading-rule-opacity: 1;
+  --resume-template-line-height: 1.32;
+  --resume-template-list-gap: 1.1mm;
+  --resume-template-meta-line-height: 1.22;
   --resume-template-name-font-size: 22pt;
   --resume-template-page-padding: 16.5mm 17.5mm 18mm;
   --resume-template-section-gap: 4.1mm;
@@ -1184,7 +1187,7 @@ textarea:focus-visible {
   color: #111;
   font-family: "Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 10.35pt;
-  line-height: 1.32;
+  line-height: var(--resume-template-line-height);
 }
 
 .resume-plate-document [data-resume-line-number] {
@@ -1403,18 +1406,18 @@ textarea:focus-visible {
   margin: 0 0 1mm;
   color: var(--resume-template-accent);
   font-size: var(--resume-template-entry-meta-font-size);
-  line-height: 1.22;
+  line-height: var(--resume-template-meta-line-height);
 }
 
 .resume-plate-document .resume-bullets {
   list-style: disc outside;
-  margin: 1.1mm 0 0 4.2mm;
+  margin: var(--resume-template-list-gap) 0 0 4.2mm;
   padding: 0;
 }
 
 .resume-plate-document .resume-skills-list {
   list-style: none;
-  margin: 1.1mm 0 0 0;
+  margin: var(--resume-template-list-gap) 0 0 0;
   padding: 0;
 }
 

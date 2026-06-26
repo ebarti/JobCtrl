@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -85,6 +85,15 @@ describe("<ProfileEditor>", () => {
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
     expect(screen.queryByText("Baseline resume editor")).not.toBeInTheDocument();
     expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
+    const templatePreview = document.querySelector<HTMLElement>(".resume-template-plate-editor");
+    expect(templatePreview).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Density"), { target: { value: "spacious" } });
+    expect(templatePreview?.style.getPropertyValue("--resume-template-line-height")).toBe("1.48");
+    expect(templatePreview?.style.getPropertyValue("--resume-template-section-gap")).toBe("7.2mm");
+    expect(templatePreview?.style.getPropertyValue("--resume-template-entry-gap")).toBe("5.8mm");
+    expect(templatePreview?.style.getPropertyValue("--resume-template-list-gap")).toBe("2.4mm");
+    fireEvent.change(screen.getByLabelText("Bullets"), { target: { value: "loose" } });
+    expect(templatePreview?.style.getPropertyValue("--resume-template-bullet-gap")).toBe("2.4mm");
     const fontSelects = screen.getAllByLabelText("Font");
     expect(fontSelects).toHaveLength(2);
     expect(within(fontSelects[0]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
