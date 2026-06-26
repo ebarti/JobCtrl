@@ -43,6 +43,7 @@ ResumeDocument = dict[str, Any]
 ContactItem = dict[str, str]
 RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
 CONTACT_KIND_ORDER = {"phone": 0, "email": 1, "website": 2, "linkedin": 3, "github": 4}
+DATE_RANGE_SEPARATOR_RE = re.compile(r"\s*(?:--|–|—)\s*")
 
 RESUME_HTML_STYLE = """
 @page {
@@ -502,6 +503,12 @@ def contact_items_text(items: list[ContactItem]) -> str:
     return " • ".join(item["label"] for item in items if item.get("label"))
 
 
+def normalize_resume_date_range(value: str) -> str:
+    """Normalize resume date ranges to the app's single-dash display convention."""
+
+    return DATE_RANGE_SEPARATOR_RE.sub(" - ", value.strip()).strip()
+
+
 def contact_items_html(items: list[ContactItem]) -> str:
     segments: list[str] = []
     for index, item in enumerate(items):
@@ -583,14 +590,16 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     for entry in experience_entries:
         entry_id = str(entry.get("id", "")).strip() or f"experience-{len(experiences) + 1}"
         update = experience_updates.get(entry.get("id"), {})
-        subtitle_parts = [entry.get("location", ""), entry.get("date_range", "")]
+        location = sanitize_text(str(entry.get("location", "")))
+        date_range = normalize_resume_date_range(sanitize_text(str(entry.get("date_range", ""))))
+        subtitle_parts = [location, date_range]
         experiences.append(
             {
                 "id": entry_id,
                 "title": sanitize_text(tailored_experience_title(entry, update, profile)),
                 "company": sanitize_text(str(entry.get("company", ""))),
-                "location": sanitize_text(str(entry.get("location", ""))),
-                "date_range": sanitize_text(str(entry.get("date_range", ""))),
+                "location": location,
+                "date_range": date_range,
                 "subtitle": sanitize_text(" | ".join(part for part in subtitle_parts if part)),
                 "bullets": [
                     {
@@ -711,7 +720,8 @@ def build_resume_html(
         entry_id = str(entry.get("id", "experience"))
         title = html.escape(str(entry.get("title", "")))
         company = html.escape(str(entry.get("company", "")))
-        date_range = html.escape(str(entry.get("date_range", "")))
+        date_range = normalize_resume_date_range(str(entry.get("date_range", "")))
+        date_range_html = html.escape(date_range)
         location = str(entry.get("location", "")).strip()
         location_html = html.escape(location)
         heading_html = (
@@ -721,14 +731,14 @@ def build_resume_html(
             + "</span>"
             + '<span class="resume-entry-row resume-entry-role-row">'
             f'<span class="resume-entry-title">{title}</span>'
-            + (f'<span class="resume-entry-date">{date_range}</span>' if date_range else "")
+            + (f'<span class="resume-entry-date">{date_range_html}</span>' if date_range else "")
             + "</span>"
         )
         body.append('<article class="resume-entry">')
         body.append(
             target(
                 f"experience:{entry_id}:heading",
-                " | ".join(part for part in [entry.get("company", ""), location, entry.get("title", ""), entry.get("date_range", "")] if part),
+                " | ".join(part for part in [entry.get("company", ""), location, entry.get("title", ""), date_range] if part),
                 class_name="resume-entry-heading",
                 inner_html=heading_html,
             )
@@ -889,4 +899,5 @@ __all__ = [
     "build_resume_html_document",
     "build_resume_document",
     "build_resume_html",
+    "normalize_resume_date_range",
 ]

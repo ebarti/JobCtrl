@@ -304,14 +304,19 @@ def test_build_resume_html_escapes_text_and_marks_layout_targets() -> None:
 
 
 def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> None:
-    html = build_resume_html(build_resume_document(_payload(), _profile()))
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["date_range"] = "Mar 2024 -- Present"
+    document = build_resume_document(_payload(), profile)
+    html = build_resume_html(document)
 
     assert '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">+1-555-0100</a></span>' in html
     assert '<span class="resume-contact-item resume-contact-email"><a href="mailto:jane@example.com">jane@example.com</a></span>' in html
     assert '<span class="resume-contact-item resume-contact-website"><a href="https://janedoe.dev">janedoe.dev</a></span>' in html
     assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>' in html
     assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
-    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">2020-Present</span></span>' in html
+    assert document["experience"][0]["date_range"] == "Mar 2024 - Present"
+    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">Mar 2024 - Present</span></span>' in html
+    assert "Mar 2024 -- Present" not in html
     assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
 
 

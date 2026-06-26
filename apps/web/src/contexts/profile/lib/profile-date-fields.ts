@@ -121,7 +121,8 @@ export function parseProfileDateRange(value: string): ProfileDateRangeValue {
     return { start: emptyProfileMonth(), end: emptyProfileMonth(), present: false };
   }
 
-  const spacedRange = /^(.+?)\s*(?:--|–|—)\s*(.+)$/.exec(trimmed);
+  const spacedSingleDashRange = /^(.+?)\s+-\s+(.+)$/.exec(trimmed);
+  const spacedRange = spacedSingleDashRange ?? /^(.+?)\s*(?:--|–|—)\s*(.+)$/.exec(trimmed);
   const compactYearRange = /^(\d{4})-(\d{4}|present|current)$/i.exec(trimmed);
   const startText = spacedRange?.[1] ?? compactYearRange?.[1] ?? trimmed;
   const endText = spacedRange?.[2] ?? compactYearRange?.[2] ?? "";
@@ -139,7 +140,7 @@ export function formatProfileDateRange(value: ProfileDateRangeValue): string {
   const end = value.present ? "Present" : formatProfileMonth(value.end);
 
   if (start && end) {
-    return `${start} -- ${end}`;
+    return `${start} - ${end}`;
   }
   return start || end;
 }
