@@ -2,57 +2,80 @@
 
 JobHunter is a local-first job search automation system. It keeps your profile,
 job database, generated materials, browser state, and logs on your machine while
-helping you move jobs through the user-facing pipeline:
+helping you move jobs through a focused pipeline:
 
 ```text
 discover -> apply
 ```
 
-Discovery also drains the internal preparation work needed before applying,
-including enrichment, scoring, resume tailoring, and artifact suppression.
-Those lower-level stages remain available as maintenance and diagnostic
-commands.
-
-The automation engine is Python. The product surface is a local TypeScript API
-plus a React/Vite web app built on TanStack Router, TanStack Query, TanStack
-Table, and TanStack Form. SQLite and local files remain the source of truth
-while the project validates reliability before any hosted/SaaS hardening.
+Discovery finds and enriches jobs, scores them against your candidate profile,
+and prepares tailored materials when the job is eligible. Apply is separate
+because it can drive browser automation and submit applications.
 
 ## What It Does
 
-JobHunter can:
+- Discover jobs from configured searches and supported source registries.
+- Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
+- Score jobs as an applicant-side triage aid with auditable evidence.
+- Generate tailored resumes, cover letters, PDFs, and review artifacts.
+- Review and edit generated resumes in Apply Review before approval.
+- Edit resume PDF style templates in Preferences, choose a default template, and
+  override the template per job without modifying candidate profile data.
+- Track pipeline state, failures, retries, workflow runs, artifacts, and apply
+  history in a local web UI.
+- Optionally run browser-based apply automation, starting with dry runs.
 
-- find jobs from configured searches and supported source registries, then
-  enrich matching jobs with full descriptions and application URLs;
-- score jobs against your candidate profile with an LLM;
-- tailor resumes from your structured resume baseline;
-- edit resume PDF style templates in Preferences, choose a default template,
-  and override the template per job without modifying candidate profile data;
-- generate cover letters;
-- convert generated text artifacts to PDFs;
-- show stage state, failures, retries, artifacts, and apply runs in a local UI;
-- show posted and reported company-role compensation ranges with statistical
-  confidence and selected source-row evidence, including source links when
-  available, in Jobs triage and Apply Review;
-- optionally drive local browser-based application submission.
+Auto-apply is powerful and must be treated as an explicit submission tool. Use
+dry-run paths and narrow targets before allowing it to submit anything.
 
-Auto-apply is powerful and should be treated as an explicit submission tool. Use
-dry-run paths and targeted commands before allowing it to submit anything.
+## Current System
 
-## Current System Shape
+JobHunter has three local runtime components:
 
-JobHunter is split by responsibility:
+- `apps/api`: local TypeScript/Fastify API for read models, profile/settings,
+  structured actions, artifacts, and worker dispatch.
+- `apps/web`: React/Vite app using TanStack Router, Query, Table, and Form with
+  SSE-backed cache invalidation.
+- `workers/automation`: Python automation engine, CLI, Temporal worker,
+  discovery, scoring, materials, PDF rendering, and apply automation.
 
-- `apps/api`: local TypeScript/Fastify API for typed read models, local
-  product actions, profile/settings, artifacts, and worker invocation.
-- `apps/web`: React/Vite local web app using TanStack Router, Query, Table,
-  and Form with SSE-backed cache invalidation.
-- `workers/automation/src/jobhunter`: Python automation engine, CLI, workers,
-  profile import, PDF creation, and apply automation.
+SQLite and local files are the source of truth. Hosted accounts, billing,
+managed browsers, object storage, and SaaS deployment are deferred; see
+[ROADMAP.md](ROADMAP.md).
 
-## Safety And Data
+## Quick Start
 
-By default, JobHunter writes user data under:
+Requirements:
+
+- Python 3.11+
+- Node.js 20.19+
+- pnpm through Corepack
+- uv
+- Temporal CLI with `temporal server start-dev`
+- Playwright Chromium for HTML/CSS PDF rendering
+- an LLM provider key or local LLM endpoint for scoring and materials
+
+Install and run:
+
+```bash
+git clone https://github.com/ebarti/JobHunter.git
+cd JobHunter
+pnpm dev:setup
+uv --project workers/automation run jobhunter init
+uv --project workers/automation run jobhunter doctor
+pnpm dev
+```
+
+`pnpm dev` starts the full local stack in the foreground: Temporal dev server,
+TypeScript API, Vite web app, and Python worker. Keep the terminal open while
+using the app and stop it with Ctrl-C.
+
+For the full first-run guide, see
+[docs/user/getting-started.md](docs/user/getting-started.md).
+
+## Local Data And Safety
+
+By default, JobHunter writes local data under:
 
 ```text
 ~/.jobhunter/
@@ -60,775 +83,96 @@ By default, JobHunter writes user data under:
 
 Important local files include:
 
-- `jobhunter.db`: local SQLite database, including normalized candidate profile,
-  jobs, discovery settings, events, projections, and artifact metadata.
-- `.env`: API keys and local runtime settings.
-- `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts.
+- `jobhunter.db`: local SQLite database with profile, jobs, events,
+  projections, settings, and artifact metadata.
+- `.env`: provider keys and local runtime settings.
+- `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts and logs.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
-- `codex_home/`: isolated Codex SDK home (session rollouts plus a copied auth
-  token; sensitive, never commit).
-
-Do not commit profile data, keys, generated resumes, cover letters, PDFs,
-browser profiles, logs, or SQLite databases.
-
-Job scoring is an applicant-side triage aid. Scores, criteria snapshots,
-eligibility blockers, confidence, trace metadata, and user corrections are
-stored locally so you can inspect why a job was ranked or gated. Do not use
-JobHunter as an employer-side candidate screening or selection tool without a
-separate legal, bias-audit, validation, and notice process.
-
-The local TypeScript API binds to `127.0.0.1` by default. Binding it to a
-non-loopback interface requires an explicit opt-in because it exposes local job,
-profile, and artifact metadata.
-
-## Requirements
-
-Core pipeline:
-
-- Python 3.11 or newer.
-- A local LLM provider configuration for scoring, tailoring, and cover letters.
-  Gemini, OpenAI, and local HTTP-backed providers are supported through
-  environment variables. Gemini keys default to `gemini-3.5-flash` unless
-  `LLM_MODEL` overrides the model.
-- Playwright Chromium for HTML/CSS resume and cover-letter PDF output. The
-  Python worker dependency includes Playwright; if Chromium is missing, run
-  `uv --project workers/automation run playwright install chromium`.
-- Optional TeX distribution with `pdflatex` only for the legacy resume renderer
-  selected with `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
-- Poppler with `pdftoppm` on `PATH` for local PDF page previews in the web UI.
-- Temporal CLI with dev server support (`temporal server start-dev`) for the
-  workflow engine the Python worker runs against. The local dev launcher starts
-  it for you with persistent local workflow history; see
-  `docs/local-development.md`.
-
-Local API and web UI:
-
-- Node.js 20.19 or newer.
-- pnpm through Corepack.
-- Optional `VITE_GOOGLE_MAPS_API_KEY` for Google Maps address search in the
-  Profile form.
-
-Auto-apply:
-
-- Chrome or Chromium.
-- Node.js and `npx` for the Playwright MCP runtime.
-- Claude Code CLI for browser-driven form completion.
-- Optional Gmail connector auth for read-only email verification codes.
-- Optional `CAPSOLVER_API_KEY` for CAPTCHA solving.
-
-Run the doctor command after setup. It is the fastest way to see which tier of
-functionality is available on your machine.
-
-## Install From Source
-
-```bash
-git clone https://github.com/ebarti/JobHunter.git
-cd JobHunter
-pnpm dev:setup
-uv --project workers/automation run jobhunter doctor
-```
-
-Start the full local dev stack for UI/API job runs:
-
-```bash
-pnpm dev
-```
-
-`pnpm dev:setup` installs the Node workspace dependencies and syncs the
-uv-managed Python automation environment, including `python-jobspy` and its
-locked transitive dependencies plus the Python dev extras used by local checks.
-`pnpm dev` runs the process supervisor in the foreground and also invokes the
-Python worker through `uv run`, which re-syncs the worker environment if needed.
-Keep that terminal open while using the app and stop it with Ctrl-C. First-time
-setup should use `pnpm dev:setup` so dependency failures are separated from
-process startup.
-
-For verification:
-
-```bash
-pnpm test
-```
-
-Discovery includes `python-jobspy` for broad-board scraping through JobSpy.
-If `jobhunter doctor` reports JobSpy is missing, rerun
-`uv --project workers/automation sync`.
-
-## First-Time Setup
-
-Create your local profile and configuration:
-
-```bash
-uv --project workers/automation run jobhunter init
-uv --project workers/automation run jobhunter doctor
-```
-
-The setup writes local files into `~/.jobhunter`. Review them before running a
-large pipeline:
-
-```bash
-ls ~/.jobhunter
-```
-
-At minimum, confirm:
-
-- your profile and resume facts are accurate;
-- your search configuration is narrow enough for a first run;
-- your LLM key or local model endpoint is configured;
-- optional frontend-only keys such as `VITE_GOOGLE_MAPS_API_KEY` are available
-  from repo `.env`, `~/.jobhunter/.env`, or `~/Jobhunter/.env` before starting
-  `pnpm dev`;
-- Playwright Chromium is available for resume and cover-letter PDFs;
-- `pdflatex` is available only if you explicitly use
-  `JOBHUNTER_RESUME_RENDERER=latex_pdf`;
-- `pdftoppm` is available if you need PDF page previews in the web UI;
-- Chrome and Claude Code are available only if you intend to use auto-apply.
-
-## Running The Pipeline
-
-Run the default preparation pipeline:
-
-```bash
-uv --project workers/automation run jobhunter run
-```
-
-Run specific low-level maintenance stages:
-
-```bash
-uv --project workers/automation run jobhunter discover
-uv --project workers/automation run jobhunter score --workers 4
-uv --project workers/automation run jobhunter tailor --workers 4 --min-score 7
-uv --project workers/automation run jobhunter cover --min-score 7
-```
-
-Run low-level stages by name through the orchestrator:
-
-```bash
-uv --project workers/automation run jobhunter run discover score
-uv --project workers/automation run jobhunter run tailor cover --validation normal
-uv --project workers/automation run jobhunter run --stream
-```
-
-`jobhunter enrich` remains available as a diagnostic queue-drain command, but
-normal discovery runs own detail enrichment.
-
-Refresh compensation facts for existing jobs without rerunning discovery,
-scoring, tailoring, cover-letter generation, or apply automation:
-
-```bash
-uv --project workers/automation run jobhunter compensation-refresh \
-  --observations-json /path/to/reported-compensation.json
-```
-
-The command reparses current `jobs.salary` values plus compensation text found
-in job descriptions into posted-compensation facts, imports local reported
-compensation rows from `--observations-json` when supplied, imports configured
-licensed Levels.fyi and Glassdoor feeds by default when their source-policy
-environment variables and feed path or URL are present, imports public Euro Top
-Tech community-reported rows by default, and refreshes local projections. Set
-`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
-`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` for Levels.fyi feeds and
-`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
-`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL` for Glassdoor feeds; JSON and CSV feeds
-are accepted. When no external reported evidence matches,
-JobHunter derives low-confidence market ranges from employer-posted salary facts
-it already captured.
-It uses the best available grounded tier: same company and role first, then
-same-location role evidence, same-company adjacent roles, trimodal company-tier
-fallbacks, and finally a broad market baseline when that is all the local data
-supports. The market response stores both the best range and a wider confidence
-interval; weaker tiers get wider intervals. Employer-posted rows are attributed
-as job posting salary text, not Levels.fyi, Glassdoor, Euro Top Tech, or manual
-reported data. Use `--url <job-url>` or `--limit N` to narrow the refresh. Use
-`--no-eurotoptech` to disable only the public Euro Top Tech import, or
-`--eurotoptech-max-pages N` to cap its paginated data-entry fetch.
-The Jobs toolbar also exposes a `refresh compensation` maintenance action that
-uses the same source-loading path for every existing job without rerunning the
-application pipeline.
-
-Useful options:
-
-- `--dry-run`: preview a stage without executing it.
-- `--workers` / `-w`: parallelize supported stages.
-- `--limit`: cap eligible records for supported single-stage commands.
-- `--min-score`: control which scored jobs proceed to materials or apply.
-- `--validation strict|normal|lenient`: tune tailoring and cover-letter checks.
-- `--retailor`: regenerate tailored resumes for jobs that already have one.
-- `--tailor-models`: comma-separated tailoring generator model specs such as
-  `local:draft-a,gemini:gemini-3.5-flash`; omit it to use the existing
-  `LLM_MODEL`/provider default.
-- `--tailor-judge-model`: optional separate model spec for the structured
-  tailoring judge. This is independent of the apply `--model` option.
-- `--tailor-judge-min-score`: minimum structured judge score for approval
-  (`0.82` by default). `--validation lenient` skips the judge.
-
-For high-fit jobs (fit score `8+`), a resume that passes deterministic
-validation and the structured judge is also checked by adversarial reviewer
-personas. Blocker findings keep the resume unapproved and feed the retry loop
-instead of being hidden as a successful tailoring run. Non-blocking review
-warnings also feed a repair retry while retry budget remains; any warning still
-shown on the accepted artifact is residual feedback on the selected resume.
-Persona reviews persist their rubric, bounded LLM request excerpts, structured
-response fields, and score rationale so a `PASS (100%)` judgement remains
-auditable.
-
-The same tailoring controls can be provided through
-`TAILORING_GENERATOR_MODELS`, `TAILORING_JUDGE_MODEL`, and
-`TAILORING_JUDGE_MIN_SCORE`. The shorter aliases `TAILOR_LLM_MODELS`,
-`TAILOR_JUDGE_MODEL`, and `TAILOR_JUDGE_MIN_SCORE` are also accepted. Model
-specs name only a provider/model (`gemini:...`, `openai:...`, or `local:...`);
-credentials and local endpoint URLs still come only from environment variables
-and are not written to artifact metadata.
-
-## Single-Job And Retry Commands
-
-Process one URL:
-
-```bash
-uv --project workers/automation run jobhunter job https://example.com/job/123 --tailor --dry-run
-uv --project workers/automation run jobhunter job https://example.com/job/123 --tailor
-uv --project workers/automation run jobhunter job https://example.com/job/123 --apply --dry-run
-```
-
-Reset one stage for one job:
-
-```bash
-uv --project workers/automation run jobhunter retry score https://example.com/job/123
-uv --project workers/automation run jobhunter retry tailor https://example.com/job/123 --reset-attempts
-```
-
-`retry --run` can process other eligible pending work for some stages. Use it
-deliberately.
-
-In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
-failed jobs so you can retry selected failures or retry all currently matching
-failed jobs after confirmation. The active Jobs toolbar keeps `retry all failed`
-available outside the failed-state filter; it retries failed jobs matching the
-current non-state filters. Bulk failed retries reset the failed preparation
-substage and immediately queue grouped preparation workflows for `enrich`,
-`score`, `tailor`, or `cover` with the worker count from the saved pipeline
-controls. The same toolbar also exposes `continue pending prep`, which queues
-eligible active pending preparation work without resetting failures. Both bulk
-actions run only preparation substages (`enrich`, `score`, `tailor`, or
-`cover`) and do not auto-run `apply`. Viewing the Jobs page also picks up
-eligible visible pending preparation substages by starting the job-scoped
-pipeline at that substage. This pickup is paced and eligibility-gated, so a
-page of pending rows does not start skip-only worker runs for jobs that are not
-ready for the requested substage. A retry from a job detail drawer resumes
-the remaining preparation pipeline for that job (`enrich` -> `score` ->
-`tailor` -> `cover`, starting at the retried stage); application submission
-remains a separate explicit action. Cover remains retryable preparation work,
-but a pending or failed cover stage does not keep a job with a tailored resume
-out of Apply review. Applied opens the jobs with an actual applied outcome
-(`applied_at` present or apply status `applied`), not a synthetic pipeline
-state.
-
-## Auto-Apply
-
-Auto-apply launches local browser workers and can submit applications. Start
-with dry runs and narrow targets:
-
-```bash
-uv --project workers/automation run jobhunter apply --dry-run --limit 1
-uv --project workers/automation run jobhunter apply --url https://example.com/job/123 --dry-run
-```
-
-Run apply for prepared jobs:
-
-```bash
-uv --project workers/automation run jobhunter apply --limit 5
-uv --project workers/automation run jobhunter apply --workers 3 --min-score 8
-```
-
-Utility modes:
-
-```bash
-uv --project workers/automation run jobhunter apply --gen --url https://example.com/job/123
-uv --project workers/automation run jobhunter apply --mark-applied https://example.com/job/123
-uv --project workers/automation run jobhunter apply --mark-failed https://example.com/job/123 --fail-reason "manual review"
-uv --project workers/automation run jobhunter apply --reset-failed
-```
-
-Auto-apply requires a prepared profile, generated materials, Chrome/Chromium,
-Node.js, and Claude Code CLI. Jobs can start from a direct application URL
-when enrichment finds one, or from the original posting URL when the local
-agent needs to click through to the employer form. The default model is
-`default`, which lets Claude Code use its configured local model; pass
-`--model <name>` only when you want to override that local default.
-
-For LinkedIn postings, enrichment can use a dedicated authenticated Chrome
-profile to retry first-pass misses and capture the external company apply URL.
-The resolver only clicks far enough to capture the outbound target; it does not
-fill forms or submit applications.
-
-The local API and web app also record apply-review decisions and application
-outcomes. The web `/apply-review` queue shows active apply-stage jobs with
-materials readiness, latest apply-run context, blockers, review decisions, and
-pending outcome suggestions. Job details include a local outcome timeline and
-manual outcome form. `approve_submit` is an approval fact only; it does not
-start browser submission by itself, and the web UI only offers submit approval
-after a completed dry run. Manual outcomes can include local notes in SQLite,
-but event payloads contain only safe identifiers, outcome kinds, and
-presence flags.
-
-Gmail outcome feedback is a separate read-only scan from the verification-code
-MCP server. `POST /v1/outcomes/gmail/scan` asks the worker to search bounded
-post-application windows for known application anchors only, using the
-candidate recipient email plus employer, ATS, title/company, and application
-URL/domain hints. JobHunter reads and stores a full Gmail body only after the
-metadata is confidently linked to one known application. Linked evidence stays
-in local SQLite with body text and a body hash; API responses, event payloads,
-logs, and broad projections expose only safe evidence/suggestion identifiers,
-kinds, confidence values, and link signals.
-
-Applications that send verification codes by email use JobHunter's first-party,
-read-only Gmail connector. Put a Google OAuth Desktop client file at
-`~/.jobhunter/gmail/oauth-client.json`, then authenticate once:
-
-```bash
-uv --project workers/automation run jobhunter gmail-auth
-uv --project workers/automation run jobhunter doctor
-```
-
-The connector requests only the `gmail.readonly` OAuth scope and stores the
-token at `~/.jobhunter/gmail/token.json`. `jobhunter doctor` reports `Gmail
-connector auth`. Without authenticated Gmail,
-auto-apply stops with `RESULT:LOGIN_ISSUE` when an application requires an
-email verification code. Override long ATS timeouts with
-`JOBHUNTER_APPLY_TIMEOUT_SECONDS=<seconds>` in `~/.jobhunter/.env`.
-
-## Structured Local Actions
-
-The CLI also exposes a JSON-returning action surface used by local UI paths:
-
-```bash
-uv --project workers/automation run jobhunter action score --limit 5 --dry-run
-uv --project workers/automation run jobhunter action apply --url https://example.com/job/123 --dry-run
-uv --project workers/automation run jobhunter action profile_import --pdf ~/resume.pdf --dry-run
-```
-
-These actions record start and finish events where possible and return
-structured success or failure data.
-
-## Local UI
-
-Start the full local development stack:
-
-```bash
-pnpm dev
-```
-
-That launches the Temporal dev server, local TypeScript API, React/Vite web app,
-and JobHunter automation worker in the foreground. Before each component starts,
-the launcher stops the previous tracked JobHunter process tree for that
-component, so rerunning `pnpm dev` starts from a clean owned stack. Keep the
-terminal open and use Ctrl-C to stop the stack. The launcher defaults to
-`~/.jobhunter`,
-`127.0.0.1:8766` for the API, and `127.0.0.1:5173` for the web app. Inspect the
-stack from another terminal with:
-
-```bash
-pnpm dev:status
-pnpm dev:logs worker
-```
-
-`pnpm dev:status` reports process liveness for the local fleet and includes
-the API health classification for the worker heartbeat, so a live worker process
-whose heartbeat has gone stale is shown as `stale` instead of only `up`.
-
-For a detached background stack, use the explicit daemon mode:
-
-```bash
-pnpm dev:start
-pnpm dev:stop
-```
-
-`pnpm dev:start` prints the observed local bindings after launch. Use that
-output as the browser URL, especially when Vite moves the web app to a higher
-port because `5173` is already occupied.
-
-The API health endpoint reports the API app/database identity and the latest
-JobHunter automation worker heartbeat. The web topbar alerts when the worker is
-missing or stale, and pipeline stage buttons stay disabled until the worker is
-heartbeating against the same local database.
-
-Temporal workflow history is persisted under `.dev/temporal/temporal.db` by
-default so local debugging can survive launcher restarts. Override
-`JOBHUNTER_TEMPORAL_DB` when a separate Temporal dev store is needed.
-
-For troubleshooting, run individual components in separate terminals:
-
-```bash
-temporal server start-dev --db-filename .dev/temporal/temporal.db
-pnpm api:dev
-pnpm web:dev
-uv --project workers/automation run jobhunter worker
-```
-
-The Vite dev server proxies `/v1/*` to the local API by default. Set
-`VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
-
-The Jobs tab can filter by stage, state, and fit-score range. Its source column
-shows the posting owner and the discovery source separately when available, so
-broad-board results can be distinguished from canonical employer or ATS sources.
-Its compensation column shows the best available persisted range, whether it
-comes from posted salary text or reported company-role market data, plus
-statistical confidence, source/sample support, and warnings. The expanded job
-drawer keeps posted salary and reported market evidence separate with source
-trail, collapsed selected evidence rows, source links when available, and
-confidence factors. Compensation
-display is warning-only: it does not change fit score, sorting, filtering, apply
-readiness, Apply Review handoff, or apply mutation behavior.
-Apply Review renders current HTML/CSS resume artifacts as a live Plate editor.
-Human edits are saved as separate resume-review drafts, JobHunter line comments
-can be replied to in place, and approval controls stay blocked until a saved
-draft validates and renders into replacement resume artifacts. The previously
-accepted materials remain available until that replacement render succeeds.
-The Profile page renders the baseline resume through the same Plate HTML/CSS
-editor surface, backed by `GET /v1/profile/preview.html`, so the profile
-baseline matches the generated-materials layout without the old PDF iframe or
-Profile-specific LaTeX render path.
-Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
-Debug activity, expose resizable column handles in the headers so long local
-data can be inspected without changing code or global density settings.
-
-The Jobs tab separates posting lifecycle state from manual suppression. Closed
-jobs are postings the system verified as unavailable, expired, removed, or
-location-incompatible; they move to the Closed tab instead of staying in the
-active dashboard or worker queues. Deleting a job moves it to the Deleted tab; a
-later discovery run can resurface that job if the posting is found again. Hiding
-a job moves it to the Hidden tab and keeps it hidden across future discovery
-runs until you select it there and use **unhide selected**. Deleted and hidden
-rows can also be permanently deleted from the local database; discovery can add
-the same posting again later because that action clears the delete/hide
-tombstones instead of creating a new suppression record.
-
-The Pipelines tab exposes the product-stage starts for `discover` and `apply`.
-Discover owns preparation and Apply owns browser automation; lower-level
-`enrich`, `score`, `tailor`, and `cover` remain CLI/API maintenance and
-diagnostic surfaces rather than product tabs. The Jobs page can still start
-eligible internal stages for visible pending per-job work through the
-job-scoped API, and failed rows remain recoverable through retry. Each product
-tab keeps persisted local config and only shows
-controls that the selected stage actually consumes. Running a tab submits that
-stage through the local API. The panel reports when the request is waiting on
-the local worker, whether the start was queued, completed, dry-run, or failed,
-and the returned run/action id when one is
-available. Queued or running Discover and Apply workflows expose stop controls
-from the Pipelines and Workflow Runs views, and active per-job apply runs can be
-stopped from Apply review when a latest apply run is attached to the job.
-Jobs whose first-time tailoring is skipped by the default low-fit gate can still
-be tailored explicitly from the job detail tailor stage. The job detail panel
-also has a "generate materials" control that runs the canonical material stages
-(tailor → cover) for a single job on demand; it confirms before dispatching,
-shows a queued/in-flight state, and never discards the last accepted materials —
-the prior accepted artifact is superseded only after a replacement is approved, so
-a failed regeneration stays as inspectable audit history. Re-tailor controls are
-reserved for jobs that already have tailored artifacts and need current-policy
-regeneration.
-The job detail drawer surfaces the tailored resume artifact, and Apply review
-uses a Plate-backed HTML/CSS resume editor for line-level review. The editor is
-fed from the generated resume HTML used to create the final PDF, keeps an "open
-final file" link for the approved artifact, and renders JobHunter-authored
-comments directly beside resume lines instead of a separate side-by-side audit
-pane. Existing legacy LaTeX resume PDFs can be moved onto the same HTML/CSS
-source with `uv --project workers/automation run jobhunter migrate-resume-html`
-(`--dry-run`, `--force`, `--job-url`, and `--limit` are available for scoped
-migration or refresh).
-The employer-analysis panel shows the reasoned "ideal candidate"
-analysis — requirements classified must-have vs nice-to-have with a priority
-weight, and reasoned keywords each tied to a quoted job-description evidence span,
-plus the ensemble audit trail and a degraded-ensemble indicator. When the latest
-score has requirement-level evidence, each requirement shows the candidate fit,
-score contribution, and tailoring action that explain the fit score. Older scores
-that predate requirement-fit reports show an explicit "not assessed" state with a
-re-score action instead of inferring matches from broad score-signal text. The
-per-bullet provenance list shows, for each generated bullet, the original-profile-bullet →
-tailored-bullet diff and the evidence × requirement × transform × control ×
-rationale that produced it. The tailoring rationale also includes keyword
-coverage counts for actionable high-signal terms derived from the material audit
-and job scoring keywords, the voice-pass status (whether the de-buzzword pass ran,
-was accepted, and why), evidence support, quality gates, review outcome,
-warning-repair status,
-annotated source-vs-tailored resume changes, high-fit persona prompt/response
-audit, and model summary. Persona warnings include an expandable audit trail for
-the stored LLM request and structured response behind that judgment. Missing audit
-data is rendered explicitly: a job with no analysis shows a "not recorded" state,
-empty requirement/keyword/evidence sets show "none recorded", and the keyword
-section marks when a resume keyword match audit was not recorded, instead
-of treating target terms as missing from the resume.
-rationale does not expose raw generator prompts, raw profile payloads, or raw job
-text; annotated changes and persona prompts are bounded excerpts explaining what
-was reframed, what was asked, how the reviewer responded, and why the score was
-assigned.
-Longer-running progress appears in the dashboard pipeline and
-apply-runs cards, while the Debug tab owns the paginated Recent activity table
-for event-level inspection. Non-apply stages emit pipeline lifecycle events;
-Discover also emits source-step events and scheduled discovery-run events for
-JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
-before the request finishes. Long JobSpy crawls also persist source-level
-progress, including completed search combinations, current query/location, new
-rows, duplicates, filtered rows, errors, and raw observed rows. Stopping a
-running Discover workflow marks the matching source run terminal so the
-dashboard does not keep reporting an old crawl as active. The dashboard
-source-health card summarizes the
-local source-quality projection used to budget and demote future crawls. The
-Discovery page owns the local source registry, source locator candidates,
-observed-source preview, quarantined leads, and manual-capture queue. Its source
-registry tab renders sources as a filterable, sortable table with company,
-source id, source type, state, priority, recommendation, activity, run health,
-and quality-metric columns. Located parseable sources are automatically approved
-into the active source registry; manual review is reserved for blocked,
-ambiguous, or unparseable sources. JobSpy broad-board results can also learn
-durable sources: when a result exposes a direct owner URL, JobHunter records the
-board provenance, links the job to the canonical posting URL, and promotes
-runnable ATS sources into the registry; unknown owner URLs and ATS URLs that
-still need adapter configuration stay in review. These controls can add an
-experimental source, preview recently observed leads for a source, enable or
-quarantine a source, approve or reject quarantined leads, record source
-feedback, review low-score role-match suggestions, approve or decline exact
-title-exclusion rules for future discovery, open a blocked lead in the local
-browser, and import a user-provided URL, current-page URL, pasted text, saved
-HTML, or email content as manual-capture provenance. Manual capture stores
-local provenance metadata and content hashes, not raw captured posting text in
-domain events. The `limit` control is honored by the Discover and Apply tabs; a
-bounded Discover run stops
-remaining sources once the cap is reached. Tabs default to dry-run mode so apply
-automation does not submit applications unless you explicitly clear dry run.
-
-## Inspecting Progress
-
-Show pipeline counts:
-
-```bash
-uv --project workers/automation run jobhunter status
-```
-
-Inspect recent apply runs:
-
-```bash
-uv --project workers/automation run jobhunter runs
-uv --project workers/automation run jobhunter runs --failed-only
-uv --project workers/automation run jobhunter runs --run-id <prefix>
-```
-
-The normalized stage states are stored in `job_stage_states`, and events are
-stored in `job_events`. Prefer the local UI/API and CLI over direct SQLite
-edits.
+- `codex_home/`: isolated Codex SDK home when apply/review agents need it.
+
+Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
+profiles, logs, SQLite databases, screenshots containing real data, or local
+worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
+and [SECURITY.md](SECURITY.md).
+
+## Normal Flow
+
+1. Create or import a candidate profile.
+2. Configure target roles, locations, work models, and application preferences.
+3. Run Discover from the UI or CLI.
+4. Review jobs, scores, blockers, compensation evidence, and audit history.
+5. Generate or inspect materials for promising jobs.
+6. Use Apply Review to edit/approve the resume and review comments.
+7. Run apply dry-runs before approving any real browser submission.
+8. Track progress in Dashboard, Jobs, Runs, Artifacts, Apply Review, and Debug.
+
+See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
+expected state transitions.
 
 ## Configuration
 
-JobHunter uses local user configuration plus package-shipped registries:
+Configuration comes from three places:
 
-- `~/.jobhunter/jobhunter.db`: candidate profile source of truth, application
-  defaults, discovery settings, resume baseline, tailoring controls, rendering
-  settings, jobs, events, and projections.
-- `~/.jobhunter/.env`: provider keys and runtime environment.
-- `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
-- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS
-  behavior settings.
+- the local SQLite profile/settings database;
+- environment variables in `~/.jobhunter/.env`, repo `.env`, or an explicit
+  shell environment;
+- package-shipped source registries under `workers/automation/src/jobhunter/config/`.
 
-Create or update the Candidate Profile through the local Profile page or the
-resume-import flow so profile data, rendering settings, and template text are
-stored in SQLite.
+Start with [.env.example](.env.example), then read the full reference in
+[docs/user/configuration.md](docs/user/configuration.md).
 
-Profile, Preferences, Discovery target search, Discovery automation settings,
-and Settings forms autosave five seconds after the last edit through the same
-local API mutations as the Save buttons. Checkbox, select, and other non-text
-setting controls keep an in-session undo history for Ctrl+Z / Cmd+Z.
-
-Preferences includes resume tailoring controls for claim mode, auto-approvable
-claim modes, adjacent achievement drafts, writing style, and custom tailoring
-instructions. Profile experience entries include achievement evidence fields
-for source text, scope, action, tools, metrics, outcome, seniority signal,
-evidence strength, claim confidence, and user confirmation. Only verified facts
-and evidence reframing can be auto-approved; adjacent translations and draft
-claims remain review material.
-
-Discovery runtime settings are edited on the Discovery page and stored in the
-SQLite `discovery_settings` table. JobSpy board selection uses the `boards`
-field in that row, and target roles/locations from the Discovery target-search
-form are overlaid by the worker before any source persists jobs. The Discovery
-page also owns the automation settings for minimum fit score and auto apply;
-the Settings page keeps execution controls such as apply concurrency.
-
-The legacy `sites` key is still accepted for the compatibility window and logs
-a warning instead of failing. When both keys are present, `boards` wins. The
-worker also builds a local source registry contract from packaged
-`sites.yaml`, `employers.yaml`, and the selected JobSpy boards; migrated
-Smart Extract entries start as `experimental` with the
-`smart_extract_experimental` policy so existing arbitrary-site discovery keeps
-working while sources are promoted or rejected.
-
-The Discovery page's Target search settings are discovery inputs. Target roles
-stay as explicit guidance and replace the active discovery query list with exact
-role queries. Target tracks are normalized to IC, management, and executive;
-seniority floors use the engineering ladder choices shown in Discovery
-settings. Target tracks, seniority floors, role areas, and specializations add
-structured intent; resume import can suggest these fields conservatively but
-does not overwrite existing user choices. The worker expands that intent into
-deterministic recall queries. Recall queries keep the same search tier as exact
-queries because relevance is determined after discovery by scoring, not by
-query generation.
-Recall title matching enforces candidate seniority and track: IC targets stay
-IC, management targets stay management, executive targets stay executive, and
-mixed profiles can opt into multiple tracks explicitly. Broad-board providers
-such as JobSpy use exact and recall queries as retrieval probes. Direct ATS,
-Workday, and source-first Smart Extract sources enumerate their known
-board/source and apply the same
-exact-plus-recall title intent internally, avoiding repeated board fetches for
-each role variant. Smart Extract search-only sources still fan out by query when
-the source has no useful browse/all-jobs page. Canonical ATS rows must include a
-usable description before insertion; Greenhouse reads the public board content
-payload instead of creating blank-description rows. Each discovery run also
-checks discovered postings for staleness: verified unavailable, expired,
-removed, or location-incompatible postings move to Closed, while active jobs
-that no longer satisfy the current title, location, or description contract are
-soft-deleted instead of remaining visible. Target locations replace the active
-location list, and if target locations are blank
-the worker falls back to the profile city/country. Target locations are
-validated as real places before they can be saved. Hybrid and on-site target
-work models search and filter only the target location. Remote target work
-models search and filter the target country, and European countries also add an
-Europe-remote search and accept pattern. Profile-driven discovery searches at
-least the last 30 days unless local config sets a larger window. A Spain or
-Europe target sets JobSpy's Indeed country to Spain, rejects America-only
-non-remote locations, and hides packaged America-only source rows from discovery
-controls. Discovery `limit` is a new-job budget: already-seen jobs record
-observations but do not consume the cap.
-Title matching uses deterministic exact/alias checks first. When a posting only
-matches a target role loosely and an LLM provider is configured, discovery asks
-the LLM to adjudicate the role family, primary function, seniority, and track
-before keeping the row. This prevents broad-board keyword overlap such as
-finance, vendor, construction, project, product, or sales manager titles from
-entering engineering, platform, security, IT, or technology leadership queues
-just because they contain one target keyword.
-
-Common environment variables:
+Common variables:
 
 - `JOBHUNTER_DIR`: override the local app directory.
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
-- `LLM_MODEL`: choose the model for the configured provider. Gemini defaults to
-  `gemini-3.5-flash`.
-- Pipeline scoring, resume tailoring, and cover-letter generation default to
-  the explicit model spec `gemini:gemini-3.5-flash`; stage-specific tailoring
-  model variables below override that pipeline default.
-- `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER`: controls LLM adjudication for loose
-  discovery title matches. Defaults to `auto`, which enables the check when an
-  LLM provider is configured. Set `0` to force deterministic title matching.
-- `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL`: optional model spec for discovery
-  role adjudication; defaults to the configured LLM model.
-- `TAILORING_GENERATOR_MODELS`: optional comma-separated generator model specs
-  for resume tailoring.
-- `TAILORING_JUDGE_MODEL`: optional separate judge model spec for resume
-  tailoring.
-- `TAILORING_JUDGE_MIN_SCORE`: optional quality threshold for judge approval.
+- `LLM_MODEL`: choose the default model for the configured provider.
+- `VITE_GOOGLE_MAPS_API_KEY`: optional address search in the Profile form.
 - `CHROME_PATH`: override Chrome/Chromium detection.
-- `JOBHUNTER_LINKEDIN_APPLY_RESOLVER`: set to `0` to disable authenticated
-  LinkedIn apply URL resolution during enrichment.
-- `JOBHUNTER_LINKEDIN_APPLY_PROFILE_DIR`: Chrome profile directory used for
-  LinkedIn apply URL resolution. Defaults to
-  `~/.jobhunter/chrome-workers/linkedin-apply-url-resolver`.
-- `JOBHUNTER_LINKEDIN_APPLY_SOURCE_PROFILE_DIR`: optional Chrome profile to
-  copy into the dedicated LinkedIn resolver profile the first time it is
-  created. Defaults to the platform Chrome user-data directory.
-- `JOBHUNTER_LINKEDIN_APPLY_CHROME_PROFILE`: Chrome profile name inside the
-  resolver user-data directory, for example `Default` or `Profile 2`.
-- `JOBHUNTER_LINKEDIN_APPLY_HEADLESS`: set to `1` to run the LinkedIn resolver
-  profile headless. The default is visible Chrome so a throwaway LinkedIn
-  account can be logged in and kept fresh.
-- `JOBHUNTER_RESUME_RENDERER`: set to `latex_pdf` to use the legacy LaTeX
-  resume renderer for generated resume materials; defaults to `html_pdf`.
-- `PDFLATEX_PATH`: override LaTeX detection when the legacy renderer is enabled.
-- `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
-- `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout
-  (`900` seconds by default).
-- `JOBHUNTER_GMAIL_DIR`, `JOBHUNTER_GMAIL_OAUTH_CLIENT_PATH`,
-  `JOBHUNTER_GMAIL_TOKEN_PATH`: override the first-party Gmail connector auth
-  directory, OAuth client file, or token file.
-- `JOBHUNTER_API_HOST`, `JOBHUNTER_API_PORT`: local TypeScript API bind
-  settings.
-- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`:
-  enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to a
-  Langfuse instance. When any of these is unset the worker runs normally
-  without exporting. Set `LANGFUSE_DISABLE=1` to opt out even when
-  credentials are present. Enabling this exports every LLM prompt and
-  completion to the configured Langfuse instance.
-- `LANGFUSE_OTEL_TIMEOUT_SECONDS`: optional OTLP/HTTP export timeout for
-  Langfuse; defaults to `5.0`.
+- `JOBHUNTER_RESUME_RENDERER=latex_pdf`: opt into the legacy LaTeX resume
+  renderer. The default is HTML/CSS printed by Playwright.
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`: optional
+  OpenTelemetry/Langfuse export. Set `LANGFUSE_DISABLE=1` to opt out.
 
 ## Development
 
-Install dependencies:
-
 ```bash
 pnpm dev:setup
-```
-
-Run the standard checks:
-
-```bash
 pnpm check
 pnpm test
 uv --project workers/automation run --extra dev python -m build workers/automation
 git diff --check
 ```
 
-Useful focused checks:
+Useful focused commands:
 
 ```bash
 pnpm api:check
 pnpm api:test
-pnpm qa:test
 pnpm web:check
 pnpm web:build
-uv --project workers/automation run --extra dev pytest workers/automation/tests/test_state_dashboard.py -q
+pnpm web:test
+pnpm web:e2e
+uv --project workers/automation run --extra dev pytest -q
 ```
 
-Seed a disposable local QA workspace when you need to exercise destructive UI
-flows without touching `~/.jobhunter`:
+For contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```bash
-pnpm qa:seed -- /tmp/jobhunter-qa
-JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm dev
-```
+## Documentation
 
-Build the Python package:
-
-```bash
-uv --project workers/automation run --extra dev python -m build workers/automation
-```
-
-## Project Status
-
-The near-term priority is local reliability:
-
-- make per-stage state canonical;
-- keep retries targeted and observable;
-- keep generated artifacts registered before the UI opens them;
-- keep dry-run apply behavior safe;
-- keep product-facing behavior in the TypeScript API and current React/Vite
-  shell while steering frontend architecture toward TanStack Router and
-  TanStack Query.
-
-Hosted accounts, billing, object storage, Postgres migration, hosted workers,
-and SaaS deployment are intentionally deferred until the local workflow is
-reliable.
-
-## Documentation Map
-
-- `docs/INDEX.md`: documentation index.
-- `docs/architecture.md`: current architecture and runtime boundaries.
-- `docs/job-pipeline-architecture.md`: detailed phase-by-phase job pipeline
-  execution diagrams and call paths.
-- `docs/ddd-target.md`: canonical DDD target, domain language, and ownership rules.
-- `docs/local-development.md`: setup, run, build, test, and lint commands.
-- `docs/local-ts-api.md`: local API and web development notes.
-- `docs/local-reliability-qa.md`: local QA checklist and regression matrix.
-- `docs/decisions.md`: accepted architecture decisions.
-- `docs/delivered.md`: delivery history by PR.
-- `docs/backlog.md`: deferred local and hosted work.
-- `docs/plans/`: proposed and implemented feature plans.
+- [docs/user/](docs/user/): end-user setup, configuration, normal flows, and
+  safety.
+- [docs/developer/](docs/developer/): contributor onboarding and architecture
+  reading path.
+- [docs/architecture.md](docs/architecture.md): current runtime architecture.
+- [docs/job-pipeline-architecture.md](docs/job-pipeline-architecture.md):
+  phase-by-phase pipeline sequence and class diagrams.
+- [docs/local-reliability-qa.md](docs/local-reliability-qa.md): regression
+  matrix and QA gates.
+- [docs/decisions.md](docs/decisions.md): accepted architecture decisions.
+- [docs/delivered.md](docs/delivered.md): delivery history.
+- [docs/backlog.md](docs/backlog.md): detailed engineering backlog.
+- [docs/plans/](docs/plans/): historical proposal and implementation records.
 
 ## License
 
-JobHunter is licensed under AGPL-3.0-only.
+JobHunter is licensed under AGPL-3.0-only. See [LICENSE](LICENSE).

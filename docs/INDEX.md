@@ -1,22 +1,52 @@
 # Documentation Index
 
-- `architecture.md`: runtime boundaries and repository ownership.
-- `job-pipeline-architecture.md`: phase-by-phase pipeline execution, sequence
-  diagrams, component diagrams, call paths, persistence, events, and failure
-  behavior.
-- `ddd-target.md`: canonical DDD + hexagonal target architecture, domain
-  language, and ownership rules (backend).
-- `frontend-target.md`: canonical frontend architecture — three-layer state,
-  eight bounded contexts mirrored from the backend, hexagonal frontend ports,
-  SSE realtime + invalidation router, testing pyramid.
-- `local-development.md`: setup, run, build, test, and lint commands.
-- `local-ts-api.md`: local TypeScript API, web app development notes, and the
-  `GET /v1/events/stream` SSE contract.
-- `local-reliability-qa.md`: local QA checklist, regression matrix, and the
-  frontend test pyramid + a11y bar.
-- `requirements.md`: product requirements that must stay true as
-  implementation changes.
-- `decisions.md`: accepted architecture decisions.
-- `delivered.md`: delivery history by PR.
-- `backlog.md`: deferred local and hosted work.
-- `plans/`: proposal and implementation history.
+## Public Project Docs
+
+- [`../README.md`](../README.md): product overview, quick start, safety notes,
+  command summary, and top-level documentation map.
+- [`../ROADMAP.md`](../ROADMAP.md): public roadmap and open-source readiness
+  direction.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md): contributor workflow, validation,
+  documentation expectations, and PR standards.
+- [`../SECURITY.md`](../SECURITY.md): supported security contact path and
+  sensitive-data handling rules.
+- [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md): community standards.
+
+## End-User Guides
+
+- [`user/getting-started.md`](user/getting-started.md): install, configure, run,
+  and seed a disposable workspace.
+- [`user/configuration.md`](user/configuration.md): runtime variables,
+  provider keys, local data paths, telemetry, browser automation, Gmail, and
+  screenshot/test workspaces.
+- [`user/normal-flows.md`](user/normal-flows.md): expected product flows from
+  setup through review and apply.
+- [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
+  generated artifacts, automation consent, and open-source sharing guidance.
+
+## Developer Docs
+
+- [`developer/README.md`](developer/README.md): contributor entry point and
+  architecture/QA reading path.
+- [`architecture.md`](architecture.md): runtime boundaries and repository
+  ownership.
+- [`job-pipeline-architecture.md`](job-pipeline-architecture.md): phase-by-phase
+  pipeline execution, sequence diagrams, component diagrams, call paths,
+  persistence, events, and failure behavior.
+- [`ddd-target.md`](ddd-target.md): canonical DDD + hexagonal architecture,
+  domain language, and backend ownership rules.
+- [`frontend-target.md`](frontend-target.md): canonical frontend architecture,
+  state layers, bounded contexts, ports, SSE realtime, invalidation, and test
+  pyramid.
+- [`local-development.md`](local-development.md): setup, run, build, test, and
+  lint commands.
+- [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app
+  development notes, and the `GET /v1/events/stream` SSE contract.
+- [`local-reliability-qa.md`](local-reliability-qa.md): local QA checklist,
+  regression matrix, frontend test pyramid, and a11y bar.
+- [`requirements.md`](requirements.md): product and technical requirements that
+  must stay true as implementation changes.
+- [`decisions.md`](decisions.md): accepted architecture decision records.
+- [`delivered.md`](delivered.md): delivery history by PR.
+- [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
+- [`plans/`](plans/): proposal and implementation history.
