@@ -16,6 +16,7 @@ import type {
   TelemetryPort,
 } from "../shared/ports/index.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
+import { sampleResumeTemplateListResponse } from "./fixtures/projections.js";
 
 export class FakeEventStreamPort implements EventStreamPort {
   status: EventStreamStatus = "open";
@@ -143,9 +144,67 @@ export interface BuildTestPortsOptions {
 
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
   const baseApi = new FetchApiClientAdapter();
+  const templateApiDefaults: Partial<Ports["api"]> = {
+    resumeTemplates: vi.fn(async () => sampleResumeTemplateListResponse),
+    saveResumeTemplate: vi.fn(async (body) => ({
+      ok: true as const,
+      template: {
+        ...sampleResumeTemplateListResponse.templates[0]!,
+        templateId: body.templateId ?? "custom-template-1",
+        displayName: body.displayName,
+        builtIn: false,
+        activeVersion: {
+          ...sampleResumeTemplateListResponse.templates[0]!.activeVersion,
+          templateId: body.templateId ?? "custom-template-1",
+          versionId: `${body.templateId ?? "custom-template-1"}:v2`,
+          versionNumber: 2,
+          displayName: body.displayName,
+          theme: body.theme,
+          layout: body.layout ?? {},
+        },
+      },
+    })),
+    setDefaultResumeTemplate: vi.fn(async (body) => ({
+      ok: true as const,
+      defaultTemplate: {
+        ...sampleResumeTemplateListResponse.builtInDefault,
+        templateId: body.templateId,
+        templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+        assignmentSource: "profile_default" as const,
+      },
+    })),
+    setJobResumeTemplate: vi.fn(async (jobKey, body) => ({
+      ok: true as const,
+      jobKey,
+      effectiveTemplate: {
+        ...sampleResumeTemplateListResponse.builtInDefault,
+        templateId: body.templateId ?? sampleResumeTemplateListResponse.builtInDefault.templateId,
+        templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+        assignmentSource: body.templateId ? ("job_override" as const) : ("built_in" as const),
+      },
+      overrideTemplate: body.templateId
+        ? {
+            ...sampleResumeTemplateListResponse.builtInDefault,
+            templateId: body.templateId,
+            templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+            assignmentSource: "job_override" as const,
+          }
+        : null,
+      templateState: null,
+    })),
+    ensureCurrentResumeMaterials: vi.fn(async (jobKey) => ({
+      ok: true as const,
+      jobKey,
+      status: "not_required" as const,
+      templateState: null,
+      attempt: null,
+      generation: null,
+      message: "Resume materials already use the effective template.",
+    })),
+  };
   const api = overrides.api
-    ? Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, overrides.api)
-    : baseApi;
+    ? Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, templateApiDefaults, overrides.api)
+    : Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, templateApiDefaults);
   return {
     api,
     eventStream: overrides.eventStream ?? new FakeEventStreamPort(),

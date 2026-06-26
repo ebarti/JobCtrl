@@ -14,7 +14,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
-import { makeApplyAudit, sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
+import {
+  makeApplyAudit,
+  sampleApplyReviewQueue,
+  sampleArtifact,
+  sampleResumeTemplateListResponse,
+} from "../../test/fixtures/projections.js";
 import { buildProviderHarness, createTestQueryClient, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -862,6 +867,42 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
+  it("assigns a resume template override for the selected job", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const setJobResumeTemplate = vi.fn(async (_jobKey: string, body: { templateId?: string | null }) => ({
+      ok: true as const,
+      jobKey,
+      effectiveTemplate: {
+        ...sampleResumeTemplateListResponse.builtInDefault,
+        templateId: body.templateId ?? sampleResumeTemplateListResponse.builtInDefault.templateId,
+        assignmentSource: body.templateId ? ("job_override" as const) : ("built_in" as const),
+      },
+      overrideTemplate: body.templateId
+        ? {
+            ...sampleResumeTemplateListResponse.builtInDefault,
+            templateId: body.templateId,
+            assignmentSource: "job_override" as const,
+          }
+        : null,
+      templateState: null,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: { setJobResumeTemplate },
+      }),
+    });
+
+    await userEvent.selectOptions(await screen.findByLabelText("Resume template"), "built_in:modern-html");
+
+    await waitFor(() =>
+      expect(setJobResumeTemplate).toHaveBeenCalledWith(jobKey, {
+        templateId: "built_in:modern-html",
+        versionId: null,
+      }),
+    );
+  });
+
   it("restores the latest saved resume review draft in the Plate editor", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
       editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
@@ -942,6 +983,42 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
     expect(editor).toBeInTheDocument();
     expect(editor).toHaveFocus();
+  });
+
+  it("scopes resume editor font and size formatting to all lines or the selected line", async () => {
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const nameLine = shadowElementWithText(shadow, "Principal Platform Engineer");
+    const bodyLine = shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.");
+
+    await waitFor(() => expect(nameLine.className).toContain("jobhunter-selected-line"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(nameLine.className).not.toContain("jobhunter-selected-line"));
+
+    await userEvent.selectOptions(screen.getByLabelText("Font"), "garamond");
+    await waitFor(() => expect(nameLine.style.fontFamily).toContain("Garamond"));
+    expect(bodyLine.style.fontFamily).toContain("Garamond");
+
+    await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
+    await userEvent.selectOptions(screen.getByLabelText("Font"), "helvetica");
+    await waitFor(() => expect(bodyLine.style.fontFamily).toContain("Helvetica"));
+    expect(nameLine.style.fontFamily).toContain("Garamond");
+
+    const sizeInput = screen.getByLabelText("Size");
+    await userEvent.clear(sizeInput);
+    await userEvent.type(sizeInput, "1.1");
+    await waitFor(() => expect(bodyLine.style.fontSize).toBe("1.1em"));
+    expect(nameLine.style.fontSize).toBe("");
+
+    await userEvent.click(document.body);
+    await waitFor(() => expect(bodyLine.className).not.toContain("jobhunter-selected-line"));
   });
 
   it("keeps the cached resume review draft visible while create/load is pending", async () => {

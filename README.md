@@ -26,6 +26,8 @@ JobHunter can:
   enrich matching jobs with full descriptions and application URLs;
 - score jobs against your candidate profile with an LLM;
 - tailor resumes from your structured resume baseline;
+- edit resume PDF style templates in Preferences, choose a default template,
+  and override the template per job without modifying candidate profile data;
 - generate cover letters;
 - convert generated text artifacts to PDFs;
 - show stage state, failures, retries, artifacts, and apply runs in a local UI;

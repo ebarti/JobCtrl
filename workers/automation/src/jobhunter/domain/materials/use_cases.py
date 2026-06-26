@@ -1114,6 +1114,7 @@ class TailorResumeUseCase:
             validation_mode=validation_mode,
             tenant_id=tenant_id,
         )
+        resume_template = _resolve_effective_resume_template(self._repository, job_id)
         policy_metadata = tailoring_policy.as_artifact_metadata()
         tailoring_metadata = {
             "validation_mode": validation_mode,
@@ -1139,6 +1140,11 @@ class TailorResumeUseCase:
             # here so the artifact report is self-contained for inspection).
             "voice_pass": voice_record.to_dict(),
             "keyword_coverage_v2": coverage.to_read_model() if coverage is not None else None,
+            **(
+                {"resume_template": resume_template["metadata"]}
+                if resume_template and isinstance(resume_template.get("metadata"), dict)
+                else {}
+            ),
         }
         report["tailoring_quality"] = tailoring_metadata
 
@@ -1162,6 +1168,11 @@ class TailorResumeUseCase:
                 "tailoring_policy_id": tailoring_policy.policy_id,
                 "tailoring_policy_version": tailoring_policy.version,
                 "tailoring_policy": policy_metadata,
+                **(
+                    {"resume_template": resume_template["metadata"]}
+                    if resume_template and isinstance(resume_template.get("metadata"), dict)
+                    else {}
+                ),
             },
             updated_at=materials.updated_at,
         )
@@ -2314,6 +2325,21 @@ def _load_current_approved_materials(
     return repository.load(tenant_id, job_id)
 
 
+def _resolve_effective_resume_template(
+    repository: MaterialsRepository,
+    job_id: JobId,
+) -> dict[str, Any] | None:
+    resolver = getattr(repository, "resolve_effective_resume_template", None)
+    if not callable(resolver):
+        return None
+    try:
+        resolved = resolver(job_id)
+    except Exception:  # noqa: BLE001 -- template metadata must not block tailoring
+        log.exception("Failed to resolve effective resume template for %s", job_id)
+        return None
+    return resolved if isinstance(resolved, dict) else None
+
+
 class GenerateCoverLetterUseCase:
     """Generate a cover letter for an approved resume's MaterialsSet.
 
@@ -2581,12 +2607,15 @@ class RenderPdfUseCase:
         ):
             text_path = Path(materials.tailored_resume.path)
             pdf_path = text_path.with_suffix(".pdf")
+            resume_template = _resolve_effective_resume_template(self._repository, job_id)
             try:
                 pdf_artifact = self._resume_renderer.render_resume_to_pdf(
                     tailored_payload=tailored_payload,
                     profile_dict=profile_dict,
                     output_path=str(pdf_path),
                     created_at=_utc_now(),
+                    resume_theme=resume_template.get("theme") if resume_template else None,
+                    resume_template=resume_template.get("metadata") if resume_template else None,
                 )
                 materials = materials.with_resume_pdf(pdf_artifact, updated_at=_utc_now())
                 rendered.append(ArtifactType.RESUME_PDF)

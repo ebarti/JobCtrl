@@ -224,6 +224,15 @@ class _FakeRepository:
         return suppressed
 
 
+class _TemplateRepository(_FakeRepository):
+    def __init__(self, resume_template: dict) -> None:
+        super().__init__()
+        self.resume_template = resume_template
+
+    def resolve_effective_resume_template(self, job_id) -> dict:
+        return self.resume_template
+
+
 class _ScriptedLlm:
     """Replays a queue of canned LLM responses so tests stay deterministic."""
 
@@ -1345,9 +1354,22 @@ class _CapturingRenderer:
     def __init__(self) -> None:
         self.resume_calls = 0
         self.cover_calls = 0
+        self.last_resume_template = None
+        self.last_resume_theme = None
 
-    def render_resume_to_pdf(self, *, tailored_payload, profile_dict, output_path, created_at) -> Artifact:
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ) -> Artifact:
         self.resume_calls += 1
+        self.last_resume_theme = resume_theme
+        self.last_resume_template = resume_template
         Path(output_path).write_bytes(b"%PDF-r")
         return Artifact.create(
             type=ArtifactType.RESUME_PDF,
@@ -1364,9 +1386,9 @@ class _CapturingRenderer:
             type=ArtifactType.COVER_LETTER_PDF,
             path=output_path,
             created_at=created_at,
-            render_format=RenderFormat.HTML_PDF,
-            size_bytes=len(b"%PDF-c"),
-        )
+        render_format=RenderFormat.HTML_PDF,
+        size_bytes=len(b"%PDF-c"),
+    )
 
 
 def test_render_pdf_use_case_renders_missing_pdfs(tmp_path: Path, job: dict) -> None:
@@ -1420,6 +1442,60 @@ def test_render_pdf_use_case_renders_missing_pdfs(tmp_path: Path, job: dict) -> 
     assert ArtifactType.COVER_LETTER_PDF in outcome.rendered
     pdf_events = [e for e in publisher.events if getattr(e, "event_type", "") == "PdfRendered"]
     assert len(pdf_events) == 2
+
+
+def test_render_pdf_use_case_passes_effective_template_to_resume_renderer(
+    tmp_path: Path,
+    job: dict,
+) -> None:
+    template = {
+        "theme": {"fontFamily": "serif", "accentColor": "#123456"},
+        "metadata": {
+            "templateId": "template_custom",
+            "templateVersionId": "template_custom:v2",
+            "templateVersionNumber": 2,
+            "templateName": "Custom serif",
+            "templateHash": "sha256:test",
+            "assignmentSource": "job_override",
+        },
+    }
+    repo = _TemplateRepository(template)
+    resume_path = tmp_path / "resume.txt"
+    resume_path.write_text("body", encoding="utf-8")
+    repo.save(
+        MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(job["url"]),
+            created_at="2024-01-01T00:00:00+00:00",
+        ).with_resume_attempt(
+            Artifact.create(
+                type=ArtifactType.TAILORED_RESUME,
+                path=str(resume_path),
+                created_at="2024-01-01T00:00:00+00:00",
+                render_format=RenderFormat.TEXT,
+            ),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2024-01-02T00:00:00+00:00",
+        )
+    )
+
+    renderer = _CapturingRenderer()
+    use_case = RenderPdfUseCase(
+        repository=repo,
+        resume_renderer=renderer,
+        cover_letter_renderer=renderer,
+    )
+    outcome = use_case.execute(
+        job_id=JobId(job["url"]),
+        tailored_payload=_good_json_payload_dict(),
+        profile_dict=_profile_dict(),
+    )
+
+    assert outcome.status == "ok"
+    assert renderer.resume_calls == 1
+    assert renderer.last_resume_theme == template["theme"]
+    assert renderer.last_resume_template == template["metadata"]
 
 
 def test_render_pdf_use_case_noop_when_pdfs_already_present(

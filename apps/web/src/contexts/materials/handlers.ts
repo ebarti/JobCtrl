@@ -6,14 +6,21 @@ import type {
   PdfRendered,
   ResumeApproved,
   ResumeFailed,
+  ResumeTemplateDefaultChanged,
+  ResumeTemplateRefreshCompleted,
+  ResumeTemplateRefreshFailed,
+  ResumeTemplateVersionSaved,
   TailoredArtifactsSuppressed,
   TailorRetailorRequested,
+  JobResumeTemplateAssigned,
 } from "@jobhunter/domain-types";
 
+import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { profileKeys } from "../profile/queryKeys.js";
 
 export const resumeApprovedHandler = (
   event: ResumeApproved,
@@ -88,4 +95,48 @@ export const tailoredArtifactsSuppressedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const resumeTemplateVersionSavedHandler = (
+  event: ResumeTemplateVersionSaved,
+): readonly InvalidationItem[] => [
+  invalidate(profileKeys.resumeTemplates(event.tenantId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+];
+
+export const resumeTemplateDefaultChangedHandler = (
+  event: ResumeTemplateDefaultChanged,
+): readonly InvalidationItem[] => [
+  invalidate(profileKeys.resumeTemplates(event.tenantId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(applyReviewKeys.all(event.tenantId)),
+];
+
+export const jobResumeTemplateAssignedHandler = (
+  event: JobResumeTemplateAssigned,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(applyReviewKeys.all(event.tenantId)),
+];
+
+export const resumeTemplateRefreshCompletedHandler = (
+  event: ResumeTemplateRefreshCompleted,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(applyReviewKeys.all(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const resumeTemplateRefreshFailedHandler = (
+  event: ResumeTemplateRefreshFailed,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(applyReviewKeys.all(event.tenantId)),
 ];

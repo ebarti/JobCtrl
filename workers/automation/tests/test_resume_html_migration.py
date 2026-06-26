@@ -22,7 +22,7 @@ def test_build_legacy_resume_html_uses_real_list_items_without_double_bullets() 
                 "",
                 "EXPERIENCE",
                 "Director of Engineering | Acme",
-                "Remote | 2020-Present",
+                "Remote | Mar 2024 -- Present",
                 "- Built a platform team.",
             ]
         )
@@ -35,7 +35,8 @@ def test_build_legacy_resume_html_uses_real_list_items_without_double_bullets() 
     assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/jordan">jordan</a></span>' in html
     assert html.index("resume-contact-phone") < html.index("resume-contact-email") < html.index("resume-contact-website") < html.index("resume-contact-linkedin")
     assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
-    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Director of Engineering</span><span class="resume-entry-date">2020-Present</span></span>' in html
+    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Director of Engineering</span><span class="resume-entry-date">Mar 2024 - Present</span></span>' in html
+    assert "Mar 2024 -- Present" not in html
     assert '<ul class="resume-bullets">' in html
     assert ">Built a platform team.</li>" in html
     assert ">- Built a platform team.</li>" not in html

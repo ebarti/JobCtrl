@@ -149,6 +149,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_score_tables(conn)
     ensure_tailoring_policy_tables(conn)
     ensure_materials_tables(conn)
+    ensure_resume_template_tables(conn)
     ensure_employer_analysis_tables(conn)
     ensure_bullet_provenance_tables(conn)
     ensure_preparation_work_item_tables(conn)
@@ -1600,6 +1601,165 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
 
     conn.commit()
     return ["job_materials", "job_materials_artifacts", "job_material_layout_boxes"]
+
+
+def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create local resume-template configuration tables.
+
+    Templates are style/layout records only. Generated materials snapshot the
+    effective template metadata in ``job_materials.metadata_json`` and artifact
+    metadata; the rows here remain mutable configuration, not artifact history.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resume_templates (
+            tenant_id    TEXT NOT NULL DEFAULT 'local',
+            template_id  TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'active',
+            built_in     INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, template_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resume_template_versions (
+            tenant_id      TEXT NOT NULL DEFAULT 'local',
+            version_id     TEXT NOT NULL,
+            template_id    TEXT NOT NULL,
+            version_number INTEGER NOT NULL,
+            display_name   TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'active',
+            theme_json     TEXT NOT NULL,
+            layout_json    TEXT NOT NULL DEFAULT '{}',
+            content_hash   TEXT NOT NULL,
+            created_at     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, version_id),
+            UNIQUE (tenant_id, template_id, version_number)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resume_template_versions_template
+        ON resume_template_versions(tenant_id, template_id, version_number DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resume_template_defaults (
+            tenant_id   TEXT NOT NULL DEFAULT 'local',
+            profile_id  TEXT NOT NULL DEFAULT 'default',
+            template_id TEXT NOT NULL,
+            version_id  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_resume_template_assignments (
+            tenant_id   TEXT NOT NULL DEFAULT 'local',
+            job_url     TEXT NOT NULL,
+            template_id TEXT NOT NULL,
+            version_id  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_url)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_resume_template_assignments_template
+        ON job_resume_template_assignments(tenant_id, template_id, version_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resume_template_refresh_attempts (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            attempt_id          TEXT NOT NULL,
+            job_url             TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            from_generation     INTEGER,
+            to_generation       INTEGER,
+            template_id         TEXT,
+            template_version_id TEXT,
+            template_hash       TEXT,
+            error_message       TEXT,
+            metadata_json       TEXT NOT NULL DEFAULT '{}',
+            created_at          TEXT NOT NULL,
+            completed_at        TEXT,
+            PRIMARY KEY (tenant_id, attempt_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resume_template_refresh_attempts_job
+        ON resume_template_refresh_attempts(tenant_id, job_url, created_at DESC)
+        """
+    )
+
+    import hashlib
+
+    theme = {
+        "pageSize": "a4",
+        "fontFamily": "sans",
+        "fontScale": 1,
+        "density": "balanced",
+        "marginMm": {"top": 16.5, "right": 17.5, "bottom": 18, "left": 17.5},
+        "headerLayout": "centered",
+        "sectionHeadingStyle": "rule",
+        "alignment": "justified",
+        "bulletSpacing": "normal",
+        "accentColor": "#111111",
+        "sectionOrder": ["summary", "experience", "education", "skills"],
+        "hiddenSections": [],
+    }
+    layout: dict[str, object] = {}
+    content_hash = hashlib.sha256(
+        json.dumps([theme, layout], separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO resume_templates (
+            tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+        ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)
+        """,
+        (now, now),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO resume_template_versions (
+            tenant_id, version_id, template_id, version_number, display_name, status,
+            theme_json, layout_json, content_hash, created_at
+        ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+                  'Modern HTML', 'active', ?, ?, ?, ?)
+        """,
+        (
+            json.dumps(theme, sort_keys=True),
+            json.dumps(layout, sort_keys=True),
+            content_hash,
+            now,
+        ),
+    )
+    conn.commit()
+    return [
+        "resume_templates",
+        "resume_template_versions",
+        "resume_template_defaults",
+        "job_resume_template_assignments",
+        "resume_template_refresh_attempts",
+    ]
 
 
 def _backfill_one_materials_row(

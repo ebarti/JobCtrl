@@ -49,6 +49,8 @@ describe("resume preview style contract", () => {
     expect(entryHeadingRule).toContain("display: grid;");
     expect(entryRowRule).toContain("grid-template-columns: minmax(0, 1fr) max-content;");
     expect(titleRule).toContain("font-style: italic;");
-    expect(globalsCss).toContain(".resume-plate-document .resume-entry-location {\n  color: #111;\n  text-align: end;");
+    expect(globalsCss).toContain(
+      ".resume-plate-document .resume-entry-location {\n  color: var(--resume-template-accent);\n  text-align: end;",
+    );
   });
 });

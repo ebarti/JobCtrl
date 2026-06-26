@@ -1015,6 +1015,26 @@ textarea:focus-visible {
 }
 
 .resume-plate-editor {
+  --resume-template-accent: #111;
+  --resume-template-body-align: justify;
+  --resume-template-bullet-gap: 0.75mm;
+  --resume-template-body-font-size: 9.6pt;
+  --resume-template-contact-font-size: 8.8pt;
+  --resume-template-entry-gap: 3.2mm;
+  --resume-template-entry-meta-font-size: 8.9pt;
+  --resume-template-font-family: "Aptos", "Inter", "Arial", sans-serif;
+  --resume-template-header-justify: center;
+  --resume-template-header-text-align: center;
+  --resume-template-heading-box-border: 0 solid transparent;
+  --resume-template-heading-font-size: 9.5pt;
+  --resume-template-heading-padding: 0;
+  --resume-template-heading-rule-opacity: 1;
+  --resume-template-line-height: 1.32;
+  --resume-template-list-gap: 1.1mm;
+  --resume-template-meta-line-height: 1.22;
+  --resume-template-name-font-size: 22pt;
+  --resume-template-page-padding: 16.5mm 17.5mm 18mm;
+  --resume-template-section-gap: 4.1mm;
   display: flex;
   height: min(78dvh, 960px);
   min-height: 620px;
@@ -1079,6 +1099,7 @@ textarea:focus-visible {
 
 .resume-format-button:focus-visible,
 .resume-format-select select:focus-visible,
+.resume-format-select input:focus-visible,
 .resume-plate-toolbar .tab:focus-visible,
 .resume-plate-toolbar a:focus-visible {
   outline: 2px solid #f5f5f5;
@@ -1086,7 +1107,8 @@ textarea:focus-visible {
 }
 
 .resume-format-button:disabled,
-.resume-format-select select:disabled {
+.resume-format-select select:disabled,
+.resume-format-select input:disabled {
   color: #8e8e8e;
   cursor: not-allowed;
   opacity: 0.65;
@@ -1100,13 +1122,18 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.resume-format-select select {
+.resume-format-select select,
+.resume-format-select input {
   min-block-size: 30px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 5px;
   background: #242424;
   color: #f5f5f5;
   font: inherit;
+}
+
+.resume-format-select input {
+  inline-size: 64px;
 }
 
 .resume-plate-toolbar .tab {
@@ -1160,7 +1187,7 @@ textarea:focus-visible {
   color: #111;
   font-family: "Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 10.35pt;
-  line-height: 1.32;
+  line-height: var(--resume-template-line-height);
 }
 
 .resume-plate-document [data-resume-line-number] {
@@ -1192,36 +1219,39 @@ textarea:focus-visible {
   position: relative;
   inline-size: 210mm;
   min-block-size: 297mm;
-  padding: 16.5mm 17.5mm 18mm;
+  padding: var(--resume-template-page-padding);
   background: #fff;
+  color: var(--resume-template-accent);
+  font-family: var(--resume-template-font-family);
+  font-size: var(--resume-template-body-font-size);
 }
 
 .resume-plate-document .resume-header {
   margin-block-end: 4.5mm;
-  text-align: center;
+  text-align: var(--resume-template-header-text-align);
 }
 
 .resume-plate-document .resume-name {
   margin: 0 0 1.8mm;
-  color: #111;
-  font-size: 22pt;
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-name-font-size);
   font-weight: 400;
   line-height: 1.08;
 }
 
 .resume-plate-document .resume-contact {
   display: flex;
-  justify-content: center;
+  justify-content: var(--resume-template-header-justify);
   margin: 0;
-  color: #111;
-  font-size: 8.8pt;
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-contact-font-size);
   line-height: 1.25;
 }
 
 .resume-plate-document .resume-address {
   margin: 0 0 0.65mm;
-  color: #111;
-  font-size: 8.8pt;
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-contact-font-size);
   line-height: 1.22;
 }
 
@@ -1243,7 +1273,7 @@ textarea:focus-visible {
 .resume-plate-document .resume-contact-item::before {
   display: inline-block;
   min-inline-size: 3mm;
-  color: #111;
+  color: var(--resume-template-accent);
   font-size: 0.95em;
   font-weight: 700;
   line-height: 1;
@@ -1275,17 +1305,17 @@ textarea:focus-visible {
 }
 
 .resume-plate-document .resume-contact-separator {
-  color: #111;
+  color: var(--resume-template-accent);
   font-weight: 700;
 }
 
 .resume-plate-document .resume-contact a {
-  color: #111;
+  color: var(--resume-template-accent);
   text-decoration: none;
 }
 
 .resume-plate-document .resume-section {
-  margin-block-start: 4.1mm;
+  margin-block-start: var(--resume-template-section-gap);
 }
 
 .resume-plate-document .resume-section:first-of-type {
@@ -1297,27 +1327,30 @@ textarea:focus-visible {
   align-items: center;
   gap: 2.5mm;
   margin: 0 0 2.2mm;
-  color: #111;
-  font-size: 9.5pt;
+  border: var(--resume-template-heading-box-border);
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-heading-font-size);
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.15;
+  padding: var(--resume-template-heading-padding);
   text-transform: uppercase;
 }
 
 .resume-plate-document .resume-section-title::after {
   flex: 1 1 auto;
-  border-block-start: 0.45pt solid #111;
+  border-block-start: 0.45pt solid var(--resume-template-accent);
   content: "";
+  opacity: var(--resume-template-heading-rule-opacity);
 }
 
 .resume-plate-document .resume-summary {
   margin: 0;
-  text-align: justify;
+  text-align: var(--resume-template-body-align);
 }
 
 .resume-plate-document .resume-entry {
-  margin-block-end: 3.2mm;
+  margin-block-end: var(--resume-template-entry-gap);
   break-inside: avoid;
 }
 
@@ -1349,21 +1382,21 @@ textarea:focus-visible {
 }
 
 .resume-plate-document .resume-entry-title {
-  color: #111;
+  color: var(--resume-template-accent);
   font-style: italic;
   font-weight: 400;
 }
 
 .resume-plate-document .resume-entry-date {
-  color: #111;
-  font-size: 8.9pt;
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-entry-meta-font-size);
   font-style: italic;
   text-align: end;
   white-space: nowrap;
 }
 
 .resume-plate-document .resume-entry-location {
-  color: #111;
+  color: var(--resume-template-accent);
   text-align: end;
   white-space: nowrap;
 }
@@ -1371,36 +1404,36 @@ textarea:focus-visible {
 .resume-plate-document .resume-entry-subtitle,
 .resume-plate-document .resume-meta {
   margin: 0 0 1mm;
-  color: #111;
-  font-size: 8.9pt;
-  line-height: 1.22;
+  color: var(--resume-template-accent);
+  font-size: var(--resume-template-entry-meta-font-size);
+  line-height: var(--resume-template-meta-line-height);
 }
 
 .resume-plate-document .resume-bullets {
   list-style: disc outside;
-  margin: 1.1mm 0 0 4.2mm;
+  margin: var(--resume-template-list-gap) 0 0 4.2mm;
   padding: 0;
 }
 
 .resume-plate-document .resume-skills-list {
   list-style: none;
-  margin: 1.1mm 0 0 0;
+  margin: var(--resume-template-list-gap) 0 0 0;
   padding: 0;
 }
 
 .resume-plate-document .resume-bullets li {
   display: list-item;
   list-style: disc outside;
-  margin-block-end: 0.75mm;
+  margin-block-end: var(--resume-template-bullet-gap);
   padding-inline-start: 0.8mm;
-  text-align: justify;
+  text-align: var(--resume-template-body-align);
   break-inside: avoid;
 }
 
 .resume-plate-document .resume-skills-list li {
-  margin-block-end: 0.75mm;
+  margin-block-end: var(--resume-template-bullet-gap);
   padding-inline-start: 0;
-  text-align: justify;
+  text-align: var(--resume-template-body-align);
   break-inside: avoid;
 }
 
@@ -5061,6 +5094,66 @@ textarea:focus-visible {
   padding: 14px 16px;
 }
 
+.resume-template-panel {
+  margin: 14px 16px 16px;
+}
+
+.resume-template-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.resume-template-controls {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resume-template-actions,
+.resume-template-job-select {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-template-actions .tab,
+.resume-template-job-select .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resume-template-preview {
+  min-width: 0;
+}
+
+.resume-template-plate-editor {
+  height: min(72dvh, 820px);
+  min-height: 560px;
+}
+
+.resume-template-plate-editor .resume-plate-scroll {
+  padding: 16px;
+}
+
+.resume-template-job-select {
+  padding: 8px 0 0;
+}
+
+.resume-template-job-select .field.compact {
+  min-width: min(100%, 260px);
+  margin: 0;
+}
+
+.resume-template-job-select .field.compact select {
+  min-height: 32px;
+}
+
 .form-section {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -5599,12 +5692,13 @@ textarea:focus-visible {
   .apply-review-selected-head,
   .apply-review-workspace,
   .compensation-panels,
-  .compensation-detail-grid,
-  .import-panel,
-  .credential-row,
-  .credential-row-form {
-    grid-template-columns: 1fr;
-  }
+	  .compensation-detail-grid,
+	  .import-panel,
+	  .resume-template-shell,
+	  .credential-row,
+	  .credential-row-form {
+	    grid-template-columns: 1fr;
+	  }
 
   .apply-review-queue {
     border-right: 0;
@@ -5659,9 +5753,14 @@ textarea:focus-visible {
     width: min(100vw, 760px);
   }
 
-  .artifact-detail-layout {
-    grid-template-columns: 1fr;
-  }
+	  .artifact-detail-layout {
+	    grid-template-columns: 1fr;
+	  }
+
+	  .resume-template-plate-editor {
+	    height: min(68dvh, 680px);
+	    min-height: 460px;
+	  }
 
   .artifact-detail-sidebar {
     border-right: 0;

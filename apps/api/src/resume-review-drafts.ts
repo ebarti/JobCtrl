@@ -30,6 +30,7 @@ import type {
   TailoringFeedbackSourceKind,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { ensureCurrentResumeTemplateMaterials } from "./resume-templates.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
@@ -290,6 +291,10 @@ export function createOrLoadResumeReviewDraft(
   request: ResumeReviewDraftCreateRequest = {},
 ): ResumeReviewDraftResponse {
   ensureResumeReviewTables(db);
+  const refresh = ensureCurrentResumeTemplateMaterials(db, jobKey);
+  if (refresh.status === "failed" || refresh.status === "unavailable") {
+    throw new InputError(refresh.message ?? "Resume template refresh did not complete.");
+  }
   const base = resolveBaseResumeMaterial(db, jobKey, request);
   const existing = getRow<ResumeReviewDraftRow>(
     db,
@@ -1181,10 +1186,13 @@ function resolveBaseResumeMaterial(
   if (!tableExists(db, "job_materials_artifacts")) {
     throw new InputError(`No material artifacts found for ${jobKey}.`);
   }
+  const columns = tableColumnSet(db, "job_materials_artifacts");
+  const renderFormatSelect = columns.includes("render_format") ? "render_format" : "NULL AS render_format";
+  const createdAtSelect = columns.includes("created_at") ? "created_at" : "NULL AS created_at";
   const rows = allRows<MaterialArtifactRow>(
     db,
     `SELECT artifact_id, artifact_type, generation, path,
-            render_format, created_at
+            ${renderFormatSelect}, ${createdAtSelect}
        FROM job_materials_artifacts
       WHERE job_url = ?
         AND COALESCE(status, 'approved') IN ('approved', 'active')

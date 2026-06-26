@@ -8,6 +8,7 @@ import { ProfileForm } from "../forms/profile-form.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
+import { ResumeTemplatePanel } from "./ResumeTemplatePanel.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
 const DEFAULT_EDITOR_WIDTH = 62;
@@ -88,11 +89,14 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
         {profileQuery.data && (section !== "preferences" || settingsQuery.data) ? (
           section === "preferences" && settingsQuery.data ? (
-            <ProfileForm
-              initial={profileQuery.data}
-              section={section}
-              settings={settingsQuery.data.settings}
-            />
+            <>
+              <ProfileForm
+                initial={profileQuery.data}
+                section={section}
+                settings={settingsQuery.data.settings}
+              />
+              <ResumeTemplatePanel profileHtmlPreviewUrl={profileHtmlPreviewUrl} />
+            </>
           ) : (
             <ProfileForm initial={profileQuery.data} section={section} />
           )

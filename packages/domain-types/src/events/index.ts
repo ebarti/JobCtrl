@@ -127,6 +127,21 @@ export {
   type TailoredArtifactsSuppressedPayload,
   type TailoredArtifactsSuppressed,
   createTailoredArtifactsSuppressed,
+  type ResumeTemplateVersionSavedPayload,
+  type ResumeTemplateVersionSaved,
+  createResumeTemplateVersionSaved,
+  type ResumeTemplateDefaultChangedPayload,
+  type ResumeTemplateDefaultChanged,
+  createResumeTemplateDefaultChanged,
+  type JobResumeTemplateAssignedPayload,
+  type JobResumeTemplateAssigned,
+  createJobResumeTemplateAssigned,
+  type ResumeTemplateRefreshCompletedPayload,
+  type ResumeTemplateRefreshCompleted,
+  createResumeTemplateRefreshCompleted,
+  type ResumeTemplateRefreshFailedPayload,
+  type ResumeTemplateRefreshFailed,
+  createResumeTemplateRefreshFailed,
 } from "./materials.js";
 
 export {
@@ -246,8 +261,13 @@ import type {
   PdfRendered,
   ResumeApproved,
   ResumeFailed,
+  ResumeTemplateDefaultChanged,
+  ResumeTemplateRefreshCompleted,
+  ResumeTemplateRefreshFailed,
+  ResumeTemplateVersionSaved,
   TailoredArtifactsSuppressed,
   TailorRetailorRequested,
+  JobResumeTemplateAssigned,
 } from "./materials.js";
 import type {
   PreparationWorkItemCompleted,
@@ -311,6 +331,11 @@ export type DomainEventUnion =
   | BulletProvenanceRecorded
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
+  | ResumeTemplateVersionSaved
+  | ResumeTemplateDefaultChanged
+  | JobResumeTemplateAssigned
+  | ResumeTemplateRefreshCompleted
+  | ResumeTemplateRefreshFailed
   | PreparationWorkItemQueued
   | PreparationWorkItemStarted
   | PreparationWorkItemCompleted
@@ -371,6 +396,11 @@ export const DOMAIN_EVENT_TYPES = [
   "BulletProvenanceRecorded",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
+  "ResumeTemplateVersionSaved",
+  "ResumeTemplateDefaultChanged",
+  "JobResumeTemplateAssigned",
+  "ResumeTemplateRefreshCompleted",
+  "ResumeTemplateRefreshFailed",
   "PreparationWorkItemQueued",
   "PreparationWorkItemStarted",
   "PreparationWorkItemCompleted",

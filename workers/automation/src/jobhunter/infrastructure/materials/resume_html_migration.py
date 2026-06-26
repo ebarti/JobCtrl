@@ -20,6 +20,7 @@ from jobhunter.infrastructure.materials.html_resume_pdf import (
     contact_items_from_text,
     contact_items_html,
     contact_items_text,
+    normalize_resume_date_range,
 )
 
 LayoutBox = dict[str, object]
@@ -102,6 +103,9 @@ def build_legacy_resume_html(resume_text: str) -> str:
     def split_parts(text: str) -> list[str]:
         return [part.strip() for part in re.split(r"\s+\|\s+|\s+--\s+", text.strip()) if part.strip()]
 
+    def split_subtitle_parts(text: str) -> list[str]:
+        return [part.strip() for part in re.split(r"\s+\|\s+", text.strip()) if part.strip()]
+
     def render_section_title(label: str) -> None:
         body.append('<section class="resume-section">')
         line(f"section:{section_id(label)}", label.title(), tag="h2", class_name="resume-section-title")
@@ -118,9 +122,9 @@ def build_legacy_resume_html(resume_text: str) -> str:
         heading_parts = split_parts(heading)
         title = heading_parts[0] if heading_parts else heading
         company = " | ".join(heading_parts[1:])
-        subtitle_parts = split_parts(subtitle)
+        subtitle_parts = split_subtitle_parts(subtitle)
         location = subtitle_parts[0] if subtitle_parts else subtitle
-        date_range = " | ".join(subtitle_parts[1:])
+        date_range = normalize_resume_date_range(" | ".join(subtitle_parts[1:]))
         heading_html = (
             '<span class="resume-entry-row resume-entry-company-row">'
             f'<span class="resume-entry-company">{html.escape(company)}</span>'

@@ -36,6 +36,10 @@ import type {
   DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
   JobDetail,
+  EnsureCurrentResumeMaterialsRequest,
+  EnsureCurrentResumeMaterialsResponse,
+  JobResumeTemplateAssignmentRequest,
+  JobResumeTemplateAssignmentResponse,
   JobApplicationOutcomeListResponse,
   JobListQuery,
   JobMutationResponse,
@@ -75,6 +79,12 @@ import type {
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
   ResumeReviewFeedbackListResponse,
+  ResumeTemplateDefaultSelectionRequest,
+  ResumeTemplateDefaultSelectionResponse,
+  ResumeTemplateDetailResponse,
+  ResumeTemplateListResponse,
+  ResumeTemplateVersionSaveRequest,
+  ResumeTemplateVersionSaveResponse,
   TailorJobRequest,
   RetryStageRequest,
   RunJobStageRequest,
@@ -191,6 +201,20 @@ export interface ApiClientPort {
     body: ResumeCommentReplyRequest,
   ): Promise<ResumeCommentReplyResponse>;
   resumeReviewFeedback(jobKey: string): Promise<ResumeReviewFeedbackListResponse>;
+  resumeTemplates(): Promise<ResumeTemplateListResponse>;
+  resumeTemplate(templateId: string): Promise<ResumeTemplateDetailResponse>;
+  saveResumeTemplate(body: ResumeTemplateVersionSaveRequest): Promise<ResumeTemplateVersionSaveResponse>;
+  setDefaultResumeTemplate(
+    body: ResumeTemplateDefaultSelectionRequest,
+  ): Promise<ResumeTemplateDefaultSelectionResponse>;
+  setJobResumeTemplate(
+    jobKey: string,
+    body: JobResumeTemplateAssignmentRequest,
+  ): Promise<JobResumeTemplateAssignmentResponse>;
+  ensureCurrentResumeMaterials(
+    jobKey: string,
+    body?: Partial<EnsureCurrentResumeMaterialsRequest>,
+  ): Promise<EnsureCurrentResumeMaterialsResponse>;
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse>;
   jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse>;
   recordManualApplicationOutcome(

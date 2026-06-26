@@ -308,6 +308,239 @@ export interface ApplyReviewMaterialsPreview {
   resumePdfLayoutBoxes: ResumeLayoutBox[];
   profileSourceFields: ApplyReviewProfileSourceField[];
   coverLetterText: string | null;
+  resumeTemplate?: ResumeTemplateState | null;
+}
+
+export const RESUME_TEMPLATE_STATUSES = ["active", "archived"] as const;
+export type ResumeTemplateStatus = (typeof RESUME_TEMPLATE_STATUSES)[number];
+
+export const RESUME_TEMPLATE_ASSIGNMENT_SOURCES = [
+  "job_override",
+  "profile_default",
+  "built_in",
+] as const;
+export type ResumeTemplateAssignmentSource =
+  (typeof RESUME_TEMPLATE_ASSIGNMENT_SOURCES)[number];
+
+export const RESUME_TEMPLATE_STALE_STATES = [
+  "template_current",
+  "template_stale",
+  "refresh_queued",
+  "refresh_failed",
+  "refresh_unavailable",
+] as const;
+export type ResumeTemplateStaleState = (typeof RESUME_TEMPLATE_STALE_STATES)[number];
+
+export const RESUME_TEMPLATE_REFRESH_STATUSES = [
+  "not_required",
+  "queued",
+  "completed",
+  "failed",
+  "unavailable",
+] as const;
+export type ResumeTemplateRefreshStatus = (typeof RESUME_TEMPLATE_REFRESH_STATUSES)[number];
+
+export const RESUME_TEMPLATE_SECTIONS = [
+  "summary",
+  "experience",
+  "education",
+  "skills",
+] as const;
+export type ResumeTemplateSection = (typeof RESUME_TEMPLATE_SECTIONS)[number];
+
+export const RESUME_TEMPLATE_FONT_FAMILIES = [
+  "sans",
+  "serif",
+  "system",
+  "aptos",
+  "avenir",
+  "helvetica",
+  "inter",
+  "source_sans",
+  "calibri",
+  "georgia",
+  "garamond",
+  "charter",
+  "source_serif",
+  "times",
+  "cambria",
+] as const;
+export type ResumeTemplateFontFamily = (typeof RESUME_TEMPLATE_FONT_FAMILIES)[number];
+
+export const ResumeTemplateThemeSchema = z
+  .object({
+    pageSize: z.enum(["a4", "letter"]).default("a4"),
+    fontFamily: z.enum(RESUME_TEMPLATE_FONT_FAMILIES).default("sans"),
+    fontScale: z.coerce.number().min(0.85).max(1.2).default(1),
+    density: z.enum(["compact", "balanced", "spacious"]).default("balanced"),
+    marginMm: z
+      .object({
+        top: z.coerce.number().min(8).max(28).default(16.5),
+        right: z.coerce.number().min(8).max(28).default(17.5),
+        bottom: z.coerce.number().min(8).max(28).default(18),
+        left: z.coerce.number().min(8).max(28).default(17.5),
+      })
+      .strict()
+      .default({ top: 16.5, right: 17.5, bottom: 18, left: 17.5 }),
+    headerLayout: z.enum(["centered", "left", "split"]).default("centered"),
+    sectionHeadingStyle: z.enum(["rule", "plain", "boxed"]).default("rule"),
+    alignment: z.enum(["left", "justified"]).default("justified"),
+    bulletSpacing: z.enum(["tight", "normal", "loose"]).default("normal"),
+    accentColor: z
+      .string()
+      .trim()
+      .regex(/^#[0-9a-fA-F]{6}$/)
+      .default("#111111"),
+    sectionOrder: z
+      .array(z.enum(RESUME_TEMPLATE_SECTIONS))
+      .min(1)
+      .max(RESUME_TEMPLATE_SECTIONS.length)
+      .default(["summary", "experience", "education", "skills"]),
+    hiddenSections: z.array(z.enum(RESUME_TEMPLATE_SECTIONS)).max(RESUME_TEMPLATE_SECTIONS.length).default([]),
+  })
+  .strict();
+export type ResumeTemplateTheme = z.infer<typeof ResumeTemplateThemeSchema>;
+
+export const ResumeTemplateLayoutSchema = z
+  .object({
+    plateDocument: z.unknown().optional(),
+    sectionOrder: z.array(z.enum(RESUME_TEMPLATE_SECTIONS)).max(RESUME_TEMPLATE_SECTIONS.length).optional(),
+  })
+  .strict()
+  .default({});
+export type ResumeTemplateLayout = z.infer<typeof ResumeTemplateLayoutSchema>;
+
+export interface ResumeTemplateVersionSummary {
+  templateId: string;
+  versionId: string;
+  versionNumber: number;
+  displayName: string;
+  status: ResumeTemplateStatus;
+  theme: ResumeTemplateTheme;
+  layout: ResumeTemplateLayout;
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface ResumeTemplateSummary {
+  templateId: string;
+  displayName: string;
+  status: ResumeTemplateStatus;
+  builtIn: boolean;
+  activeVersion: ResumeTemplateVersionSummary;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResumeTemplateMetadata {
+  templateId: string;
+  templateVersionId: string;
+  templateVersionNumber: number;
+  templateName: string;
+  templateHash: string;
+  assignmentSource: ResumeTemplateAssignmentSource;
+}
+
+export interface ResumeTemplateRefreshAttempt {
+  attemptId: string;
+  jobKey: string;
+  status: ResumeTemplateRefreshStatus;
+  fromGeneration: number | null;
+  toGeneration: number | null;
+  templateId: string | null;
+  templateVersionId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ResumeTemplateState {
+  effective: ResumeTemplateMetadata;
+  snapshot: ResumeTemplateMetadata | null;
+  state: ResumeTemplateStaleState;
+  reason: string | null;
+  lastRefreshAttempt: ResumeTemplateRefreshAttempt | null;
+}
+
+export interface ResumeTemplateListResponse {
+  ok: true;
+  templates: ResumeTemplateSummary[];
+  defaultTemplate: ResumeTemplateMetadata | null;
+  builtInDefault: ResumeTemplateMetadata;
+}
+
+export interface ResumeTemplateDetailResponse {
+  ok: true;
+  template: ResumeTemplateSummary;
+}
+
+export const ResumeTemplateVersionSaveRequestSchema = z
+  .object({
+    templateId: z.string().trim().min(1).max(120).optional(),
+    displayName: z.string().trim().min(1).max(120),
+    theme: ResumeTemplateThemeSchema,
+    layout: ResumeTemplateLayoutSchema.optional().default({}),
+  })
+  .strict();
+export type ResumeTemplateVersionSaveRequest = z.infer<
+  typeof ResumeTemplateVersionSaveRequestSchema
+>;
+
+export interface ResumeTemplateVersionSaveResponse {
+  ok: true;
+  template: ResumeTemplateSummary;
+}
+
+export const ResumeTemplateDefaultSelectionRequestSchema = z
+  .object({
+    templateId: z.string().trim().min(1).max(120),
+    versionId: z.string().trim().min(1).max(160).optional(),
+  })
+  .strict();
+export type ResumeTemplateDefaultSelectionRequest = z.infer<
+  typeof ResumeTemplateDefaultSelectionRequestSchema
+>;
+
+export interface ResumeTemplateDefaultSelectionResponse {
+  ok: true;
+  defaultTemplate: ResumeTemplateMetadata;
+}
+
+export const JobResumeTemplateAssignmentRequestSchema = z
+  .object({
+    templateId: z.string().trim().min(1).max(120).nullable().optional(),
+    versionId: z.string().trim().min(1).max(160).nullable().optional(),
+  })
+  .strict();
+export type JobResumeTemplateAssignmentRequest = z.infer<
+  typeof JobResumeTemplateAssignmentRequestSchema
+>;
+
+export interface JobResumeTemplateAssignmentResponse {
+  ok: true;
+  jobKey: string;
+  effectiveTemplate: ResumeTemplateMetadata;
+  overrideTemplate: ResumeTemplateMetadata | null;
+  templateState: ResumeTemplateState | null;
+}
+
+export const EnsureCurrentResumeMaterialsRequestSchema = z
+  .object({
+    force: z.boolean().default(false),
+  })
+  .strict();
+export type EnsureCurrentResumeMaterialsRequest = z.infer<
+  typeof EnsureCurrentResumeMaterialsRequestSchema
+>;
+
+export interface EnsureCurrentResumeMaterialsResponse {
+  ok: true;
+  jobKey: string;
+  status: ResumeTemplateRefreshStatus;
+  templateState: ResumeTemplateState | null;
+  attempt: ResumeTemplateRefreshAttempt | null;
+  generation: number | null;
+  message: string | null;
 }
 
 export const APPLY_AUDIT_STATES = ["ready", "preparing", "blocked", "repair"] as const;
@@ -1649,6 +1882,7 @@ export interface JobSummary {
   activeState: ActiveState;
   deletedAt: string | null;
   hiddenAt: string | null;
+  resumeTemplate?: ResumeTemplateState | null;
 }
 
 export interface ArtifactSummary {
@@ -1662,6 +1896,7 @@ export interface ArtifactSummary {
   createdAt: string | null;
   sizeBytes: number | null;
   size: string;
+  resumeTemplate?: ResumeTemplateState | null;
 }
 
 export interface PaginatedResponse<T> {

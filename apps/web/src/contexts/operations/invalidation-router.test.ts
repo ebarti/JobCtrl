@@ -197,6 +197,35 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     artifactsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  ResumeTemplateVersionSaved: [
+    profileKeys.resumeTemplates(LOCAL_TENANT),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+  ],
+  ResumeTemplateDefaultChanged: [
+    profileKeys.resumeTemplates(LOCAL_TENANT),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    applyReviewKeys.all(LOCAL_TENANT),
+  ],
+  JobResumeTemplateAssigned: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    applyReviewKeys.all(LOCAL_TENANT),
+  ],
+  ResumeTemplateRefreshCompleted: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    applyReviewKeys.all(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ResumeTemplateRefreshFailed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    applyReviewKeys.all(LOCAL_TENANT),
+  ],
   PreparationWorkItemQueued: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),

@@ -56,6 +56,10 @@ import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
+import {
+  resumeTemplateStateForArtifact,
+  resumeTemplateStateForJob,
+} from "./resume-templates.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
@@ -582,7 +586,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
       `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
       [...filter.params, query.pageSize, offset],
     );
-    const summaries = rows.map(rowToJobSummary);
+    const summaries = rows.map((row) => rowToJobSummary(row, db));
     return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
   }
 
@@ -596,7 +600,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   );
   const normalizedQuery = query.q.toLowerCase();
   const filtered = allMatching
-    .map(rowToJobSummary)
+    .map((row) => rowToJobSummary(row, db))
     .filter((job) => !query.q || filterJob(job, query, normalizedQuery));
   filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
   return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
@@ -613,7 +617,7 @@ export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutat
   );
   const normalizedQuery = query.q.toLowerCase();
   return rows
-    .map(rowToJobSummary)
+    .map((row) => rowToJobSummary(row, db))
     .filter((job) => filterJob(job, query, normalizedQuery))
     .map((job) => job.jobKey);
 }
@@ -630,7 +634,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, listRow.job_id);
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
-  const jobSummary = rowToJobSummary(listRow);
+  const jobSummary = rowToJobSummary(listRow, db);
   const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
   return {
     ok: true,
@@ -1817,7 +1821,7 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
      WHERE ap.tenant_id = ?${deletedWhere}${hiddenWhere}`,
     [DEFAULT_TENANT],
   );
-  const artifacts = rows.map(rowToArtifactSummary).filter((artifact) => {
+  const artifacts = rows.map((row) => rowToArtifactSummary(row, db)).filter((artifact) => {
     if (!query.status && isSuppressedArtifactStatus(artifact.status)) return false;
     if (query.status && artifact.status !== query.status) return false;
     if (query.type && artifact.type !== query.type) return false;
@@ -1857,7 +1861,7 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
   if (!row) return null;
   return {
     ok: true,
-    artifact: rowToArtifactSummary(row),
+    artifact: rowToArtifactSummary(row, db),
     layoutBoxes: parseResumeLayoutBoxes(row.layout_boxes_json),
     tailoringExplanation: tailoringExplanationForArtifact(db, row),
   };
@@ -1923,7 +1927,7 @@ export function readSettingsConfig(paths: { settingsPath: string }): SettingsRes
 
 // ============================================================== mappings
 
-function rowToJobSummary(row: JobListProjectionRow): JobSummary {
+function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
   const jobKey = row.job_id;
   return {
     jobKey,
@@ -1962,6 +1966,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     activeState: isActiveState(row.active_state) ? row.active_state : "unknown",
     deletedAt: row.deleted_at,
     hiddenAt: row.hidden_at,
+    resumeTemplate: db ? resumeTemplateStateForJob(db, jobKey) : null,
   };
 }
 
@@ -3322,7 +3327,7 @@ function scoreDimension(value: unknown): number {
   return Math.trunc(n);
 }
 
-function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {
+function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): ArtifactSummary {
   const localPath = row.local_path ?? "";
   let sizeBytes = row.size_bytes;
   if (sizeBytes === null || sizeBytes === undefined) {
@@ -3343,6 +3348,9 @@ function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {
     createdAt: row.created_at,
     sizeBytes,
     size: formatSize(sizeBytes),
+    resumeTemplate: db
+      ? resumeTemplateStateForArtifact(db, row.job_id, row.metadata_json)
+      : null,
   };
 }
 
@@ -3726,7 +3734,7 @@ function artifactsForJob(db: SqliteDatabase, jobId: string): ArtifactSummary[] {
     "SELECT * FROM artifact_list_projections WHERE tenant_id = ? AND job_id = ?",
     [DEFAULT_TENANT, jobId],
   );
-  return rows.map(rowToArtifactSummary).filter((artifact) => !isSuppressedArtifactStatus(artifact.status));
+  return rows.map((row) => rowToArtifactSummary(row, db)).filter((artifact) => !isSuppressedArtifactStatus(artifact.status));
 }
 
 function isSuppressedArtifactStatus(status: string | null | undefined): boolean {

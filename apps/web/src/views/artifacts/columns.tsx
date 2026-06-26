@@ -5,6 +5,7 @@ import { type ChangeEvent, type MouseEvent } from "react";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { ArtifactTypeBadge } from "../../contexts/materials/components/ArtifactTypeBadge.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
+import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
 import { formatBytes } from "../../contexts/materials/lib/artifact-type-format.js";
 import type { ArtifactSummary } from "../../contexts/operations/types.js";
 import type {
@@ -172,6 +173,14 @@ export function artifactColumns(
       sortable: true,
       getFilterValue: (row) => row.status,
       render: (row) => <ArtifactStatusBadge status={row.status} />,
+    },
+    {
+      id: "resume_template",
+      label: "Template",
+      sortable: true,
+      getFilterValue: (row) => row.resumeTemplate?.state ?? "no template",
+      getFilterSearchValue: (row) => row.resumeTemplate?.effective.templateName ?? "no template",
+      render: (row) => <ResumeTemplateStatusBadge state={row.resumeTemplate} />,
     },
     {
       id: "size_bytes",

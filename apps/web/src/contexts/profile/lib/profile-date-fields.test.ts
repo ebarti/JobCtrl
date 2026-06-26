@@ -15,7 +15,7 @@ describe("profile date field helpers", () => {
     expect(formatProfileMonth({ month: "06", year: "2013" })).toBe("Jun 2013");
   });
 
-  it("parses and formats current role ranges", () => {
+  it("parses and formats current role ranges with a single display dash", () => {
     const parsed = parseProfileDateRange("Mar 2024 -- Present");
 
     expect(parsed).toEqual({
@@ -23,7 +23,8 @@ describe("profile date field helpers", () => {
       end: { month: "", year: "" },
       present: true,
     });
-    expect(formatProfileDateRange(parsed)).toBe("Mar 2024 -- Present");
+    expect(parseProfileDateRange("Mar 2024 - Present")).toEqual(parsed);
+    expect(formatProfileDateRange(parsed)).toBe("Mar 2024 - Present");
   });
 
   it("parses compact year ranges without opening native date pickers", () => {
@@ -34,7 +35,7 @@ describe("profile date field helpers", () => {
       end: { month: "", year: "2025" },
       present: false,
     });
-    expect(formatProfileDateRange(parsed)).toBe("2022 -- 2025");
+    expect(formatProfileDateRange(parsed)).toBe("2022 - 2025");
   });
 
   it("detects end dates that are before start dates", () => {
