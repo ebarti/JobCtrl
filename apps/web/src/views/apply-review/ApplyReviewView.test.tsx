@@ -1,14 +1,17 @@
 import type {
+  ApplyReviewDecisionRequest,
+  ApplyReviewDecisionResponse,
   ArtifactTailoringExplanation,
   ResumeCommentThread,
   ResumeReviewCommentThreadSeedRequest,
   ResumeReviewDraft,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftRevision,
   ResumeReviewEditDelta,
 } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1013,12 +1016,21 @@ describe("<ApplyReviewView>", () => {
 
     const sizeInput = screen.getByLabelText("Size");
     await userEvent.clear(sizeInput);
-    await userEvent.type(sizeInput, "1.1");
-    await waitFor(() => expect(bodyLine.style.fontSize).toBe("1.1em"));
-    expect(nameLine.style.fontSize).toBe("");
+    fireEvent.change(sizeInput, { target: { value: "1.1" } });
+    fireEvent.blur(sizeInput);
+    await waitFor(() =>
+      expect(shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").style.fontSize).toBe(
+        "1.1em",
+      ),
+    );
+    expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontSize).toBe("");
 
     await userEvent.click(document.body);
-    await waitFor(() => expect(bodyLine.className).not.toContain("jobhunter-selected-line"));
+    await waitFor(() =>
+      expect(
+        shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").className,
+      ).not.toContain("jobhunter-selected-line"),
+    );
   });
 
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
@@ -1050,7 +1062,7 @@ describe("<ApplyReviewView>", () => {
     expect(createResumeReviewDraft).toHaveBeenCalled();
   });
 
-  it("blocks approval until a saved draft is rendered into replacement artifacts", async () => {
+  it("renders a saved draft automatically when approval is requested", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
       editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
       plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
@@ -1060,7 +1072,7 @@ describe("<ApplyReviewView>", () => {
       state: "promoted",
       updatedAt: "2026-06-24T10:10:00.000Z",
     };
-    const renderResumeReviewDraft = vi.fn(async () => ({
+    const renderResponse = {
       ok: true as const,
       draft: promotedDraft,
       validation: { passed: true, errors: [], warnings: [] },
@@ -1079,13 +1091,34 @@ describe("<ApplyReviewView>", () => {
         },
       },
       layoutBoxCount: 3,
-    }));
+    } satisfies Extract<ResumeReviewDraftRenderResponse, { ok: true }>;
+    let resolveRender: ((response: typeof renderResponse) => void) | null = null;
+    const renderResumeReviewDraft = vi.fn(
+      () =>
+        new Promise<typeof renderResponse>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
+    const decideApplyReview = vi.fn(
+      async (jobKey: string, body: ApplyReviewDecisionRequest): Promise<ApplyReviewDecisionResponse> => ({
+        ok: true,
+        decision: {
+          decisionId: "decision-rendered-draft",
+          jobKey,
+          decision: body.decision,
+          reason: body.reason ?? null,
+          decidedBy: body.decidedBy,
+          decidedAt: "2026-06-24T10:15:00.000Z",
+        },
+      }),
+    );
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
           applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
           createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          decideApplyReview,
           renderResumeReviewDraft,
           seedResumeReviewCommentThreads: vi.fn(async () => ({
             ok: true as const,
@@ -1100,16 +1133,28 @@ describe("<ApplyReviewView>", () => {
 
     await findResumeShadowRoot();
     const approveDryRun = screen.getByRole("button", { name: /Approve dry run/i });
-    await waitFor(() => expect(approveDryRun).toBeDisabled());
-    expect(screen.getByText("Render the saved resume draft before approval.")).toBeInTheDocument();
+    await waitFor(() => expect(approveDryRun).not.toBeDisabled());
+    expect(screen.getByText("Saved draft will render automatically before approval.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Defer for Principal Platform Engineer/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /Decline for Principal Platform Engineer/i })).not.toBeDisabled();
 
-    await userEvent.click(screen.getByRole("button", { name: "render replacement" }));
-
+    await userEvent.click(approveDryRun);
     await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledWith(draft.draftId, {
       draftRevisionId: draft.currentRevisionId,
     }));
-    await waitFor(() => expect(approveDryRun).not.toBeDisabled());
-    expect(screen.queryByText("Render the saved resume draft before approval.")).not.toBeInTheDocument();
+    expect(approveDryRun).toBeDisabled();
+    expect(approveDryRun).toHaveTextContent("Rendering");
+
+    expect(resolveRender).not.toBeNull();
+    resolveRender!(renderResponse);
+    await waitFor(() =>
+      expect(decideApplyReview).toHaveBeenCalledWith(sampleApplyReviewQueue.items[0]!.jobKey, {
+        decision: "approve_dry_run",
+        reason: "Approved for dry-run validation from the review queue.",
+        decidedBy: "user",
+      }),
+    );
+    expect(screen.queryByText("Saved draft will render automatically before approval.")).not.toBeInTheDocument();
   });
 
   it("lets the user reply to a persisted JobHunter line comment without hiding source context", async () => {

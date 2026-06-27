@@ -656,6 +656,18 @@ function ResumeLineReview({
   const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
   const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
   const draftLoading = createDraft.isPending && !baseDraft;
+  const renderDraftAsync = renderDraft.mutateAsync;
+  const handleRenderDraft = useCallback(async () => {
+    if (!draft?.currentRevisionId) return false;
+    const result = await renderDraftAsync({
+      draftId: draft.draftId,
+      jobId: item.jobKey,
+      body: {
+        draftRevisionId: draft.currentRevisionId,
+      },
+    });
+    return result.ok;
+  }, [draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -704,15 +716,9 @@ function ResumeLineReview({
         selectedLine={selectedLine}
         title="Tailored resume preview"
         onDraftGateChange={onDraftGateChange}
+        onPrepareApproval={handleRenderDraft}
         onRenderDraft={() => {
-          if (!draft?.currentRevisionId) return;
-          renderDraft.mutate({
-            draftId: draft.draftId,
-            jobId: item.jobKey,
-            body: {
-              draftRevisionId: draft.currentRevisionId,
-            },
-          });
+          void handleRenderDraft();
         }}
         onReplyToThread={(thread, input) => {
           replyToComment.mutate({
@@ -818,19 +824,25 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const templatesQuery = useResumeTemplatesQuery();
   const setJobTemplate = useSetJobResumeTemplateMutation();
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
+  const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
     dirty: false,
     hasSavedRevision: false,
+    notice: null,
+    preparing: false,
     rendered: false,
     reason: null,
   });
   const handleDraftGateChange = useCallback((next: ResumeDraftGateState) => {
+    prepareApprovalRef.current = next.prepareApproval ?? null;
     setDraftGate((previous) =>
       previous.draftId === next.draftId &&
       previous.dirty === next.dirty &&
       previous.hasSavedRevision === next.hasSavedRevision &&
+      previous.notice === next.notice &&
+      previous.preparing === next.preparing &&
       previous.rendered === next.rendered &&
       previous.reason === next.reason
         ? previous
@@ -843,10 +855,14 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       draftId: null,
       dirty: false,
       hasSavedRevision: false,
+      notice: null,
+      preparing: false,
       rendered: false,
       reason: null,
     });
+    prepareApprovalRef.current = null;
   }, [item.jobKey]);
+  const handlePrepareApproval = useCallback(() => prepareApprovalRef.current?.() ?? Promise.resolve(false), []);
   const templateMutationError =
     setJobTemplate.error instanceof Error
       ? setJobTemplate.error.message
@@ -896,7 +912,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               ariaLabel={`Stop apply run for ${item.title}`}
             />
           ) : null}
-          <ApplyReviewDecisionControls item={item} approvalDisabledReason={draftGate.reason} />
+          <ApplyReviewDecisionControls
+            item={item}
+            approvalDisabledReason={draftGate.reason}
+            approvalNotice={draftGate.notice}
+            approvalPreparing={draftGate.preparing}
+            onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
+          />
         </div>
       </header>
 

@@ -85,6 +85,7 @@ interface ResumePlateEditorProps {
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
   readonly onDraftGateChange?: (state: ResumeDraftGateState) => void;
+  readonly onPrepareApproval?: () => Promise<boolean>;
   readonly onRenderDraft?: () => void;
   readonly onReplyToThread?: (
     thread: ResumeCommentThread,
@@ -106,6 +107,9 @@ export interface ResumeDraftGateState {
   readonly draftId: string | null;
   readonly dirty: boolean;
   readonly hasSavedRevision: boolean;
+  readonly notice: string | null;
+  readonly prepareApproval?: (() => Promise<boolean>) | null;
+  readonly preparing: boolean;
   readonly rendered: boolean;
   readonly reason: string | null;
 }
@@ -2364,6 +2368,7 @@ export function ResumePlateEditor({
   selectedLine,
   title,
   onDraftGateChange,
+  onPrepareApproval,
   onRenderDraft,
   onReplyToThread,
   onSaveDraft,
@@ -2428,19 +2433,28 @@ export function ResumePlateEditor({
   const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
   const hasSavedRevision = Boolean(draft?.latestRevision);
   const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
+  const savedDraftNeedsRender = hasSavedRevision && !draftRendered;
   const draftGateReason = draft
     ? draftDirty
       ? "Save and render the edited resume before approval."
-      : hasSavedRevision && !draftRendered
-        ? "Render the saved resume draft before approval."
+      : renderPending && savedDraftNeedsRender
+        ? "Rendering saved resume draft before approval."
         : renderResult && !renderResult.ok
           ? "Resolve draft validation errors before approval."
-          : null
+          : renderError && savedDraftNeedsRender
+            ? "Resume render failed; retry render before approval."
+            : savedDraftNeedsRender && !onPrepareApproval
+                ? "Render the saved resume draft before approval."
+                : null
     : null;
+  const draftGateNotice =
+    draft && savedDraftNeedsRender && !draftDirty && !renderPending && !renderError && !(renderResult && !renderResult.ok)
+      ? "Saved draft will render automatically before approval."
+      : null;
   const draftStatus = draftLoading
     ? "loading draft"
     : renderPending
-      ? "rendering replacement"
+      ? "rendering saved draft"
     : savePending
       ? "saving draft"
       : saveError || draftError || renderError || (renderResult && !renderResult.ok)
@@ -2469,10 +2483,24 @@ export function ResumePlateEditor({
       draftId: draft?.draftId ?? null,
       dirty: draftDirty,
       hasSavedRevision,
+      notice: draftGateNotice,
+      prepareApproval: draftGateNotice ? (onPrepareApproval ?? null) : null,
+      preparing: Boolean(renderPending && savedDraftNeedsRender),
       rendered: draftRendered,
       reason: draftGateReason,
     });
-  }, [draft?.draftId, draftDirty, draftGateReason, draftRendered, hasSavedRevision, onDraftGateChange]);
+  }, [
+    draft?.draftId,
+    draftDirty,
+    draftGateNotice,
+    draftGateReason,
+    draftRendered,
+    hasSavedRevision,
+    onDraftGateChange,
+    onPrepareApproval,
+    renderPending,
+    savedDraftNeedsRender,
+  ]);
 
   useEffect(() => {
     if (!seedKey || seededKey.current === seedKey || !seedThreads.length || !onSeedCommentThreads) return;
