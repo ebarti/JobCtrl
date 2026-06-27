@@ -795,7 +795,18 @@ describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    const selectedHeader = document.querySelector(".apply-review-selected-head");
+    expect(selectedHeader).toBeInstanceOf(HTMLElement);
+    const header = within(selectedHeader as HTMLElement);
+    expect(header.queryByText("Selected application")).not.toBeInTheDocument();
+    expect(header.queryByText("Principal Platform Engineer")).not.toBeInTheDocument();
+    expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
+    expect(header.queryByText("materials ready")).not.toBeInTheDocument();
+    expect(document.querySelector(".apply-review-status-note")).not.toBeInTheDocument();
+    expect(header.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
+    expect(header.getByLabelText("Resume template")).toBeInTheDocument();
+    expect(header.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
@@ -833,7 +844,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/signals/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Derived from existing scoring evidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence groups/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Dry run completed/i)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
     expect(screen.getByText("reported company-role market")).toBeInTheDocument();
@@ -870,7 +881,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
-  it("assigns a resume template override for the selected job", async () => {
+  it("assigns a resume template override and refreshes materials automatically", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const setJobResumeTemplate = vi.fn(async (_jobKey: string, body: { templateId?: string | null }) => ({
       ok: true as const,
@@ -889,10 +900,19 @@ describe("<ApplyReviewView>", () => {
         : null,
       templateState: null,
     }));
+    const ensureCurrentResumeMaterials = vi.fn(async (_jobKey: string, _body: { force?: boolean }) => ({
+      ok: true as const,
+      jobKey,
+      status: "not_required" as const,
+      templateState: null,
+      attempt: null,
+      generation: null,
+      message: "Resume materials already use the effective template.",
+    }));
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
-        api: { setJobResumeTemplate },
+        api: { ensureCurrentResumeMaterials, setJobResumeTemplate },
       }),
     });
 
@@ -904,6 +924,12 @@ describe("<ApplyReviewView>", () => {
         versionId: null,
       }),
     );
+    await waitFor(() =>
+      expect(ensureCurrentResumeMaterials).toHaveBeenCalledWith(jobKey, {
+        force: true,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
   });
 
   it("restores the latest saved resume review draft in the Plate editor", async () => {
@@ -2100,7 +2126,7 @@ describe("<ApplyReviewView>", () => {
 
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
-    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });

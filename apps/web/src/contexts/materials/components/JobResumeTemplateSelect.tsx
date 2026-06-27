@@ -1,6 +1,6 @@
 import type { ResumeTemplateSummary, ResumeTemplateState } from "@jobhunter/contracts";
-import { IconRefresh } from "@tabler/icons-react";
 import type { JSX } from "react";
+import { useId } from "react";
 
 import { ResumeTemplateStatusBadge } from "./ResumeTemplateStatusBadge.js";
 
@@ -8,7 +8,6 @@ export interface JobResumeTemplateSelectProps {
   readonly current?: ResumeTemplateState | null | undefined;
   readonly disabled?: boolean;
   readonly label?: string;
-  readonly onEnsureCurrent?: () => void;
   readonly onTemplateChange: (templateId: string | null) => void;
   readonly refreshing?: boolean;
   readonly templates: readonly ResumeTemplateSummary[];
@@ -18,11 +17,11 @@ export function JobResumeTemplateSelect({
   current,
   disabled,
   label = "Resume template",
-  onEnsureCurrent,
   onTemplateChange,
   refreshing,
   templates,
 }: JobResumeTemplateSelectProps): JSX.Element {
+  const refreshStatusId = useId();
   const selectedValue =
     current?.effective.assignmentSource === "job_override"
       ? current.effective.templateId
@@ -39,6 +38,7 @@ export function JobResumeTemplateSelect({
       <label className="field compact">
         <span>{label}</span>
         <select
+          aria-describedby={refreshing ? refreshStatusId : undefined}
           disabled={disabled}
           value={selectedValue}
           onChange={(event) => onTemplateChange(event.target.value === "inherit" ? null : event.target.value)}
@@ -51,19 +51,14 @@ export function JobResumeTemplateSelect({
           ))}
         </select>
       </label>
-      <ResumeTemplateStatusBadge state={current} />
-      {onEnsureCurrent ? (
-        <button
-          aria-label="Refresh resume materials with the selected template"
-          className="tab"
-          disabled={disabled || refreshing || current?.state === "template_current"}
-          type="button"
-          onClick={onEnsureCurrent}
-        >
-          <IconRefresh size={14} aria-hidden="true" />
-          {refreshing ? "refreshing" : "refresh"}
-        </button>
-      ) : null}
+      <div className="resume-template-job-select-status" aria-live="polite">
+        <ResumeTemplateStatusBadge state={current} />
+        {refreshing ? (
+          <span className="tag info" id={refreshStatusId}>
+            updating materials
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
