@@ -451,6 +451,9 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     continuous: Boolean(command.continuous),
   };
+  if (command.sourceIds && command.sourceIds.length > 0) {
+    params.sourceIds = command.sourceIds;
+  }
   if (command.tailorModels && command.tailorModels.length > 0) {
     params.tailorModels = command.tailorModels;
   }

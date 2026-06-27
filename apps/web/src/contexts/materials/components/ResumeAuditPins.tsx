@@ -915,7 +915,7 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   }
   if (!(node instanceof HTMLElement)) return null;
   const tagName = node.tagName.toLowerCase();
-  const className = node.getAttribute("class") || undefined;
+  const className = resumePlateClassNameFromDom(node);
   const isBlock = shouldRenderResumeElementAsBlock(tagName, className);
   const isInline = !isBlock && RESUME_PLATE_INLINE_TAGS.has(tagName);
   if (!isBlock && !isInline) {
@@ -931,6 +931,13 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
     tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
+}
+
+function resumePlateClassNameFromDom(node: HTMLElement): string | undefined {
+  const className = node.getAttribute("class")?.trim();
+  if (!className) return undefined;
+  const tokens = className.split(/\s+/).map((token) => token === "resume-document" ? "resume-page" : token);
+  return [...new Set(tokens)].join(" ");
 }
 
 function safeResumeHref(value: string | null): string | undefined {
@@ -1009,6 +1016,14 @@ function plateTagForKind(kind: ResumeLineEntry["kind"]): ResumePlateLine["tagNam
   if (kind === "section") return "h2";
   if (kind === "metadata") return "h3";
   return "div";
+}
+
+function resumeClassForLineKind(kind: ResumeLineEntry["kind"]): string {
+  if (kind === "name") return "resume-name";
+  if (kind === "contact") return "resume-contact";
+  if (kind === "section") return "resume-section-title";
+  if (kind === "metadata") return "resume-meta";
+  return "resume-line";
 }
 
 function layoutBoxForLine(
@@ -1738,6 +1753,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
   const showComment = Boolean(comment && (selected || comment.tone === "warn"));
   const className = [
     element.className,
+    lineEntry && !element.className ? resumeClassForLineKind(lineEntry.line.kind) : "",
     element.lineNumber ? "jobhunter-review-line" : "",
     comment ? "has-jobhunter-comment" : "",
     selected ? "jobhunter-selected-line" : "",

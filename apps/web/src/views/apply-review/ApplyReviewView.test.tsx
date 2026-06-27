@@ -28,6 +28,7 @@ import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
 
 let htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
+let htmlPreviewOverride: string | null = null;
 
 const TEST_RESUME_SECTION_HEADINGS = new Set([
   "core skills",
@@ -148,6 +149,17 @@ function buildPreviewHtmlFromText(text: string): string {
     .resume-bullets li { display: list-item; list-style: disc outside; }
     .resume-skills-list { list-style: none; margin: 1.1mm 0 0 0; padding: 0; }
   </style></head><body>${body}</body></html>`;
+}
+
+function buildLegacyPromotedDraftHtml(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body>
+    <main class="resume-document">
+      <h1 data-resume-layout-target="edited:line:1" data-resume-line-number="1" data-resume-page="1">Principal Platform Engineer</h1>
+      <p data-resume-layout-target="edited:line:2" data-resume-line-number="2" data-resume-page="1">principal@example.com | https://example.com/profile</p>
+      <h2 data-resume-layout-target="edited:line:3" data-resume-line-number="3" data-resume-page="1">Experience</h2>
+      <li data-resume-layout-target="edited:line:4" data-resume-line-number="4" data-resume-page="1">Restored incident response automation.</li>
+    </main>
+  </body></html>`;
 }
 
 async function findResumeShadowRoot(): Promise<HTMLElement> {
@@ -370,6 +382,7 @@ function jsonResponse(body: unknown) {
 
 beforeEach(() => {
   htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
+  htmlPreviewOverride = null;
   const originalFetch = globalThis.fetch.bind(globalThis);
   vi.stubGlobal(
     "fetch",
@@ -378,7 +391,7 @@ beforeEach(() => {
       if (url.includes("/preview.html")) {
         return {
           ok: true,
-          text: async () => buildPreviewHtmlFromText(htmlPreviewResumeText ?? ""),
+          text: async () => htmlPreviewOverride ?? buildPreviewHtmlFromText(htmlPreviewResumeText ?? ""),
         };
       }
       const draftRoute = url.match(/\/v1\/jobs\/([^/]+)\/resume-review\/draft/);
@@ -963,6 +976,28 @@ describe("<ApplyReviewView>", () => {
     );
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
     expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+  });
+
+  it("renders promoted draft HTML through the same page classes as the profile preview", async () => {
+    htmlPreviewOverride = buildLegacyPromotedDraftHtml();
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const page = shadow.querySelector(".resume-page");
+
+    expect(page).toBeTruthy();
+    expect(page?.querySelector(".resume-name")).toHaveTextContent("Principal Platform Engineer");
+    expect(page?.querySelector(".resume-contact")).toHaveTextContent("principal@example.com");
+    expect(page?.querySelector(".resume-section-title")).toHaveTextContent("Experience");
+    expect(page?.querySelector(".resume-line")).toHaveTextContent("Restored incident response automation.");
+    expect(shadow.querySelector(".resume-document")).toBeNull();
   });
 
   it("normalizes saved entry heading rows so editing does not add spacer grid tracks", async () => {

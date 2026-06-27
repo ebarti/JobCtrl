@@ -12,12 +12,15 @@ import type {
   SourceRegistryListResponse,
 } from "../types.js";
 
-export function useSourceRegistryQuery(): UseQueryResult<SourceRegistryListResponse> {
+export function useSourceRegistryQuery(
+  options: { readonly enabled?: boolean } = {},
+): UseQueryResult<SourceRegistryListResponse> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
     queryKey: discoveryKeys.sourceRegistry(tenantId),
     queryFn: () => api.discoverySources(),
+    enabled: options.enabled ?? true,
     staleTime: 0,
   });
 }

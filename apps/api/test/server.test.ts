@@ -5094,6 +5094,58 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches source-scoped Discover stage runs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: {
+        stages: ["discover"],
+        limit: 25,
+        workers: 2,
+        dryRun: false,
+        sourceIds: ["jobspy:linkedin"],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "run_stage",
+      status: "queued",
+      command: {
+        stages: ["discover"],
+        limit: 25,
+        workers: 2,
+        dryRun: false,
+        sourceIds: ["jobspy:linkedin"],
+      },
+      actions: [
+        {
+          command: expect.objectContaining({
+            action: "run_stage",
+            stage: "discover",
+            sourceIds: ["jobspy:linkedin"],
+          }),
+        },
+      ],
+    });
+    expect(dispatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        action: "run_stage",
+        stage: "discover",
+        stages: ["discover"],
+        sourceIds: ["jobspy:linkedin"],
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
   it("cancels an in-flight workflow run by run id", async () => {
     const db = new Database(options.dbPath);
     try {

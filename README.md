@@ -99,7 +99,8 @@ and [SECURITY.md](SECURITY.md).
 
 1. Create or import a candidate profile.
 2. Configure target roles, locations, work models, and application preferences.
-3. Run Discover from the UI or CLI.
+3. Run Discover from the UI or CLI, optionally targeting a single source from
+   the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
 5. Generate or inspect materials for promising jobs.
 6. Use Apply Review to edit/approve the resume and review comments.

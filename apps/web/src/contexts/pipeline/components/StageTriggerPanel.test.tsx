@@ -188,6 +188,7 @@ describe("StageTriggerPanel", () => {
     expect(limitInput).toHaveAttribute("max", "1000");
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
+    await user.selectOptions(await screen.findByLabelText("Source"), "jobspy:linkedin");
     await user.click(screen.getByLabelText("Dry run"));
     await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
@@ -208,6 +209,7 @@ describe("StageTriggerPanel", () => {
       model: "default",
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
+      sourceIds: ["jobspy:linkedin"],
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });

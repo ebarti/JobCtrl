@@ -1242,6 +1242,10 @@ textarea:focus-visible {
   line-height: 1.08;
 }
 
+.resume-plate-document .resume-page > .resume-name {
+  text-align: var(--resume-template-header-text-align);
+}
+
 .resume-plate-document .resume-contact {
   display: flex;
   justify-content: var(--resume-template-header-justify);
@@ -1249,6 +1253,7 @@ textarea:focus-visible {
   color: var(--resume-template-accent);
   font-size: var(--resume-template-contact-font-size);
   line-height: 1.25;
+  text-align: var(--resume-template-header-text-align);
 }
 
 .resume-plate-document .resume-address {
@@ -1318,6 +1323,10 @@ textarea:focus-visible {
 }
 
 .resume-plate-document .resume-section {
+  margin-block-start: var(--resume-template-section-gap);
+}
+
+.resume-plate-document .resume-page > .resume-section-title {
   margin-block-start: var(--resume-template-section-gap);
 }
 
@@ -3178,6 +3187,10 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 10px;
+}
+
+.stage-trigger-source-field {
+  grid-column: span 2;
 }
 
 .stage-trigger-options,
@@ -5718,6 +5731,10 @@ textarea:focus-visible {
   .apply-review-selected-actions,
   .apply-review-selected-actions .apply-review-actions {
     justify-content: flex-start;
+  }
+
+  .stage-trigger-source-field {
+    grid-column: span 1;
   }
 
   .resume-template-job-select {

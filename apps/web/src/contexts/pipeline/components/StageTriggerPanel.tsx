@@ -16,8 +16,9 @@ import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
+import { useSourceRegistryQuery } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
-import type { DashboardSummary } from "../../operations/types.js";
+import type { DashboardSummary, SourceRegistryEntrySummary } from "../../operations/types.js";
 import { CancelWorkflowRunButton } from "./CancelWorkflowRunButton.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
@@ -61,6 +62,17 @@ function modelSpecList(value: string): string[] {
 function stageActionCountLabel(count: number): string {
   return `${count} ${count === 1 ? "stage action" : "stage actions"}`;
 }
+
+const SOURCE_KIND_LABELS: Record<string, string> = {
+  ats_api: "ATS API",
+  employer_careers_page: "Employer careers",
+  official_api: "Official API",
+  licensed_feed: "Licensed feed",
+  niche_board: "Niche board",
+  broad_board: "Broad board",
+  smart_extract: "Smart extract",
+  user_mediated_capture: "User capture",
+};
 
 function actionReference(action: ActionRunResponse | undefined): string | null {
   return action?.runId ?? action?.actionId ?? null;
@@ -109,6 +121,26 @@ function pipelineRunStatusLine(stage: Stage, response: PipelineStageRunResponse)
   }
 
   return `${stageLabel} ${statusLabel(response.status)} (${stageActionCountLabel(response.count)}).`;
+}
+
+function sourceKindLabel(kind: string): string {
+  const known = SOURCE_KIND_LABELS[kind];
+  if (known) return known;
+  return kind
+    .split(/[_:-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function sourceOptionLabel(source: SourceRegistryEntrySummary): string {
+  return `${source.displayName} · ${sourceKindLabel(source.kind)} · ${source.state}`;
+}
+
+function selectableDiscoverySources(sources: readonly SourceRegistryEntrySummary[]): SourceRegistryEntrySummary[] {
+  return [...sources]
+    .filter((source) => source.state !== "disabled")
+    .sort((left, right) => sourceOptionLabel(left).localeCompare(sourceOptionLabel(right)));
 }
 
 function pipelineRequestErrorLine(stage: Stage, error: Error): string {
@@ -301,6 +333,7 @@ interface StageControlSet {
   retailor: boolean;
   tailorModels: boolean;
   applyModel: boolean;
+  discoverySource: boolean;
   headless: boolean;
   continuous: boolean;
 }
@@ -314,12 +347,13 @@ const BASE_CONTROLS: StageControlSet = {
   retailor: false,
   tailorModels: false,
   applyModel: false,
+  discoverySource: false,
   headless: false,
   continuous: false,
 };
 
 const STAGE_CONTROLS: Record<PipelineRunStage, StageControlSet> = {
-  discover: { ...BASE_CONTROLS, limit: true, workers: true },
+  discover: { ...BASE_CONTROLS, limit: true, workers: true, discoverySource: true },
   score: { ...BASE_CONTROLS, limit: true, workers: true, rescore: true },
   tailor: {
     ...BASE_CONTROLS,
@@ -367,6 +401,14 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
   const patchStageConfig = useStageTriggerStore((state) => state.patchStageConfig);
   const controls = STAGE_CONTROLS[activeStage];
+  const sourceRegistry = useSourceRegistryQuery({ enabled: controls.discoverySource });
+  const discoverySources = controls.discoverySource
+    ? selectableDiscoverySources(sourceRegistry.data?.sources ?? [])
+    : [];
+  const selectedDiscoverySourceId = config.discoverySourceId.trim();
+  const selectedDiscoverySourceAvailable =
+    !selectedDiscoverySourceId
+    || discoverySources.some((source) => source.sourceId === selectedDiscoverySourceId);
   const selectedApplyModel = applyModelValue(config.model);
   const statusStage = submittedStage ?? activeStage;
   const stageActivity = latestStageActivity(dashboardSummary.data, statusStage);
@@ -417,6 +459,9 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       headless: controls.headless ? config.headless : false,
       model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
+      ...(controls.discoverySource && selectedDiscoverySourceId
+        ? { sourceIds: [selectedDiscoverySourceId] }
+        : {}),
     });
   };
 
@@ -450,6 +495,27 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
               value={config.workers}
               onChange={(event) => patchConfig({ workers: event.target.value })}
             />
+          </label>
+        ) : null}
+        {controls.discoverySource ? (
+          <label className="field stage-trigger-source-field">
+            <span>Source</span>
+            <select
+              value={selectedDiscoverySourceId}
+              onChange={(event) => patchConfig({ discoverySourceId: event.target.value })}
+            >
+              <option value="">All runnable sources</option>
+              {sourceRegistry.isLoading ? <option disabled value="__loading">Loading sources</option> : null}
+              {sourceRegistry.isError ? <option disabled value="__error">Source list unavailable</option> : null}
+              {!selectedDiscoverySourceAvailable ? (
+                <option value={selectedDiscoverySourceId}>Selected source unavailable</option>
+              ) : null}
+              {discoverySources.map((source) => (
+                <option key={source.sourceId} value={source.sourceId}>
+                  {sourceOptionLabel(source)}
+                </option>
+              ))}
+            </select>
           </label>
         ) : null}
         {controls.minScore ? (

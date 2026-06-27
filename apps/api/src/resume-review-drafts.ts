@@ -1087,16 +1087,71 @@ function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {
 }
 
 function htmlForEditedResume(editedText: string): string {
-  const paragraphs = editedText
+  const lines = editedText
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      const tag = index === 0 ? "h1" : /^[-•*]\s+/.test(line) ? "li" : sectionHeadingLine(line) ? "h2" : "p";
-      const clean = escapeHtml(line.replace(/^[-•*]\s+/, ""));
-      return `<${tag} data-resume-line-number="${index + 1}" data-resume-page="${Math.floor(index / 42) + 1}" data-resume-layout-target="edited:line:${index + 1}">${clean}</${tag}>`;
-    })
-    .join("\n");
+    .filter(Boolean);
+  let html = '<main class="resume-page" data-resume-page="1"><header class="resume-header">';
+  let headerOpen = true;
+  let sectionOpen = false;
+  let listOpen = false;
+
+  const closeList = () => {
+    if (!listOpen) return;
+    html += "</ul>";
+    listOpen = false;
+  };
+  const closeHeader = () => {
+    if (!headerOpen) return;
+    html += "</header>";
+    headerOpen = false;
+  };
+  const lineAttrs = (index: number) =>
+    `data-resume-line-number="${index + 1}" data-resume-page="${Math.floor(index / 42) + 1}" data-resume-layout-target="edited:line:${index + 1}"`;
+
+  lines.forEach((line, index) => {
+    const clean = escapeHtml(line.replace(/^[-•*]\s+/, ""));
+    if (index === 0) {
+      html += `<h1 class="resume-name" ${lineAttrs(index)}>${clean}</h1>`;
+      return;
+    }
+    if (index === 1 && contactLine(line)) {
+      html += `<p class="resume-contact" ${lineAttrs(index)}>${clean}</p>`;
+      return;
+    }
+    closeHeader();
+    if (sectionHeadingLine(line)) {
+      closeList();
+      if (sectionOpen) html += "</section>";
+      sectionOpen = true;
+      html += '<section class="resume-section">';
+      html += `<h2 class="resume-section-title" ${lineAttrs(index)}>${clean}</h2>`;
+      return;
+    }
+    if (/^[-•*]\s+/.test(line)) {
+      if (!sectionOpen) {
+        sectionOpen = true;
+        html += '<section class="resume-section">';
+      }
+      if (!listOpen) {
+        html += '<ul class="resume-bullets">';
+        listOpen = true;
+      }
+      html += `<li class="resume-line" ${lineAttrs(index)}>${clean}</li>`;
+      return;
+    }
+    closeList();
+    if (!sectionOpen) {
+      sectionOpen = true;
+      html += '<section class="resume-section">';
+    }
+    const className = metadataLine(line) ? "resume-meta" : "resume-line";
+    html += `<p class="${className}" ${lineAttrs(index)}>${clean}</p>`;
+  });
+  closeHeader();
+  closeList();
+  if (sectionOpen) html += "</section>";
+  html += "</main>";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -1104,20 +1159,31 @@ function htmlForEditedResume(editedText: string): string {
     <title>Edited Resume</title>
     <style>
       body { margin: 0; font: 12px Arial, sans-serif; color: #111827; background: white; }
-      .resume-document { box-sizing: border-box; width: 8.5in; min-height: 11in; padding: 0.65in; }
-      h1 { font-size: 22px; margin: 0 0 10px; }
-      h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0; }
+      .resume-page { box-sizing: border-box; width: 8.5in; min-height: 11in; padding: 0.65in; }
+      .resume-header { text-align: center; margin-block-end: 14px; }
+      .resume-name { font-size: 22px; font-weight: 400; margin: 0 0 10px; }
+      .resume-contact { font-size: 11px; margin: 0; }
+      .resume-section { margin-block-start: 14px; }
+      .resume-section-title { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0; }
+      .resume-bullets { margin: 0 0 0 18px; padding: 0; }
       p, li { font-size: 11px; line-height: 1.35; margin: 0 0 5px; }
-      li { margin-left: 18px; }
     </style>
   </head>
-  <body><main class="resume-document">${paragraphs}</main></body>
+  <body>${html}</body>
 </html>
 `;
 }
 
 function sectionHeadingLine(line: string): boolean {
   return /^(?:summary|profile|experience|education|skills|projects|certifications|languages)$/i.test(line.trim());
+}
+
+function contactLine(line: string): boolean {
+  return /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(line);
+}
+
+function metadataLine(line: string): boolean {
+  return /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(line);
 }
 
 function pdfBufferForEditedResume(editedText: string): Buffer {
