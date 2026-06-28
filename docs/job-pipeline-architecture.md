@@ -3,13 +3,13 @@
 This document explains how JobHunter's job pipeline executes today. It is the
 deep-dive companion to [`architecture.md`](architecture.md): the top-level
 architecture doc names the runtime boundaries, while this document follows each
-pipeline phase through the UI, API, JSON-RPC worker boundary, Python stage
+pipeline stage through the UI, API, JSON-RPC worker boundary, Python stage
 runner, persistence, events, and projections.
 
 The canonical domain model remains [`ddd-target.md`](ddd-target.md). This file
 documents the implemented local execution shape.
 
-Use the first sections for the shared execution model. Each phase section then
+Use the first sections for the shared execution model. Each stage section then
 uses the same shape: purpose and boundary, sequence diagram, component diagram,
 data/events, and failure behavior. Component diagrams include concrete classes
 where the code has them and module/use-case components where the implementation
@@ -275,7 +275,7 @@ single-stage `run_pipeline(stages=[stage])` invocation. `apply` remains the
 dedicated `ApplyWorkflow`, executed as a child workflow when it appears in the
 ordered pipeline list.
 
-## Phase 1: Discover
+## Discover Stage
 
 ### Purpose And Boundary
 
@@ -759,7 +759,7 @@ classDiagram
   and resolved stale-marker counts, correction count, and correction agreement
   signal without emitting raw job URLs, correction rationales, anchor IDs,
   resumes, generated artifacts, or local paths.
-- Updates legacy-compatible score fields where needed by queue selectors.
+- Updates compact score fields where needed by queue selectors.
 - Publishes score events consumed by Pipeline and Operations.
 - Refreshes dashboard score distributions and job list score badges.
 
@@ -785,30 +785,18 @@ tailor stage for the selected job; explicit re-tailor actions remain
 current-policy regeneration controls for jobs that already have tailored
 artifacts.
 
-### Weaknesses Addressed
+### Generation And Approval Model
 
-The previous tailoring path could pass local validation while still producing a
-resume that was not good enough to send. The important gaps were:
+Tailoring separates drafting from approval. One or more configured
+provider/model specs draft structured resume candidates. Each candidate is
+validated independently against the profile contract, rendered text contract,
+tailoring quality plan, and optional high-fit adversarial review.
 
-- One generator call owned both drafting and self-approval, so there was no
-  independent quality gate.
-- `approved_with_judge_warning` counted as stage success, which hid weak
-  tailored resumes behind a green pipeline status.
-- The JSON validator checked fields before rendering, but rendered text could
-  still carry banned phrases, unsupported claims, or missing required evidence.
-- Model routing rejected per-call model choices, so CLI/UI/API controls could
-  not safely fan out across providers or run a separate judge.
-- The job blob used the source board as company fallback, which could leak
-  source names into generated materials.
-- Artifact/report metadata did not identify the selected generator, judge
-  result, prompt version, or schema version, making audit and retry decisions
-  weak.
-
-Tailoring now treats generation and judgment as separate steps: multiple
-provider/model specs can draft candidates, validation runs per candidate, and a
-structured judge must return `PASS` above the configured threshold before the
-resume is approved. `lenient` mode remains available for local low-cost runs,
-but normal and strict modes are quality-gated.
+Normal and strict validation modes require a separate structured judge to return
+`PASS` at or above the configured threshold before the resume is approved.
+`lenient` mode skips the judge for low-cost local runs. Approved artifacts carry
+the selected generator, candidate summaries, judge model, judge score/verdict,
+prompt/schema versions, quality checks, and retry feedback as audit metadata.
 
 ### Sequence
 
@@ -917,7 +905,7 @@ stage can be retried without losing successful materials.
 Cover creates job-specific cover letters for jobs that already have sufficient
 score/material context. It owns cover-letter text generation and persistence.
 It also renders the cover-letter PDF, so the stage outputs the artifacts Apply
-needs without relying on a later PDF-only phase. It is surfaced as Discover
+needs without relying on a separate PDF-only stage. It is surfaced as Discover
 diagnostic state in the product UI rather than a primary preparation stage.
 
 ### Sequence
@@ -998,12 +986,12 @@ classDiagram
 Failures are local to individual jobs so a retry can continue from the remaining
 pending cover letters.
 
-## Phase 2: Apply
+## Apply Stage
 
 ### Purpose And Boundary
 
 Apply drives browser/agent automation to submit or dry-run applications. It is
-the riskiest and longest-running phase, so the batch pipeline `run_stage` route
+the riskiest and longest-running stage, so the batch pipeline `run_stage` route
 keeps orchestration in Temporal and `JobPipelineWorkflow` delegates the selected
 `apply` stage to child `ApplyWorkflow` instead of a synchronous runner activity.
 It owns apply-run lifecycle, browser execution, dry-run submission safety,

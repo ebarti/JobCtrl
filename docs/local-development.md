@@ -36,7 +36,7 @@ pnpm dev
 
 `pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
 TypeScript API, Vite web app, and the JobHunter automation worker. Before each
-component starts, the launcher stops the previous tracked JobHunter process
+component starts, the launcher stops the existing tracked JobHunter process
 tree for that component, so rerunning `pnpm dev` starts from a clean owned
 stack. It runs in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The

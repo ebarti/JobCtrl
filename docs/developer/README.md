@@ -10,8 +10,8 @@ directory is for contributors who need to change behavior safely.
 2. [Configuration](../user/configuration.md) for runtime variables and local
    data boundaries.
 3. [Architecture](../architecture.md) for the current runtime shape.
-4. [Job pipeline architecture](../job-pipeline-architecture.md) for phase-by-
-   phase sequence and class diagrams.
+4. [Job pipeline architecture](../job-pipeline-architecture.md) for stage-by-
+   stage sequence and class diagrams.
 5. [Local reliability QA](../local-reliability-qa.md) for regression ownership.
 
 ## Current Runtime Shape
@@ -49,10 +49,10 @@ The React app mirrors those contexts under `apps/web/src/contexts/`. Views under
 - `docs/architecture.md` and `docs/job-pipeline-architecture.md` describe the
   implemented local architecture.
 - `docs/ddd-target.md` and `docs/frontend-target.md` are canonical architecture
-  references that now describe the landed target shape plus hosted-future seams.
-- `docs/plans/implemented/` contains historical plans and QA notes. Do not treat
-  old plan text as current product behavior without checking the canonical docs
-  and live code.
+  references plus hosted-future seams.
+- `docs/plans/implemented/` contains plan records and QA notes. Treat those as
+  project history; current product behavior belongs in the canonical docs and
+  live code.
 - `openspec/` contains current and archived OpenSpec-style requirements. When a
   feature ships, sync public docs and `docs/delivered.md` so the archive is not
   the only discoverable source.

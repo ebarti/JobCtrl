@@ -22,7 +22,7 @@ archived in [docs/delivered.md](docs/delivered.md).
   preparation, and Apply have one consistent run history and cancellation model.
 - Reduce broad SSE invalidation with targeted cache patches for jobs, artifacts,
   and dashboard projections.
-- Finish data-model cleanup around URL-shaped job identifiers, legacy projection
+- Finish data-model cleanup around URL-shaped job identifiers, projection
   fallbacks, source/employer persistence, and searchable scoring keywords.
 - Strengthen frontend tooling: linting, dependency-boundary checks, type-level
   tests, Playwright e2e in CI, and visual regression from Storybook or the docs

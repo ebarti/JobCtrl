@@ -78,6 +78,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   score_criteria_json: string | null;
   score_trace_json: string | null;
   current_stage: string;
+  current_substage: string | null;
   current_state: string;
   current_error_code: string | null;
   current_error_message: string | null;
@@ -284,7 +285,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            jlp.score_breakdown_json, jlp.score_keywords_json,
            jlp.score_reasoning, jlp.score_version, jlp.scored_at,
            jlp.score_criteria_json, jlp.score_trace_json,
-           jlp.current_stage, jlp.current_state,
+           jlp.current_stage, jlp.current_substage, jlp.current_state,
            jlp.current_error_code, jlp.current_error_message,
            jlp.has_resume, jlp.has_cover_letter, jlp.has_pdf,
            latest_decision.decision_id, latest_decision.decision,
@@ -642,6 +643,7 @@ function reviewQueueItemFromRow(
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ApplyReviewQueueItem {
   const currentState = stageState(row.current_state);
+  const currentSubstage = stage(row.current_substage ?? row.current_stage);
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
@@ -680,7 +682,7 @@ function reviewQueueItemFromRow(
     hasResume: Boolean(row.has_resume),
     hasCoverLetter: Boolean(row.has_cover_letter),
     hasPdf: Boolean(row.has_pdf),
-    currentStage: stage(row.current_stage),
+    currentStage: currentSubstage,
     currentState,
     currentErrorCode: row.current_error_code,
     currentErrorMessage: row.current_error_message,
@@ -773,7 +775,7 @@ function stageBlockerReason(row: ReviewQueueRow, currentState: StageState): stri
   if (code && !isGenericStageCode(code)) {
     return code;
   }
-  return `${stage(row.current_stage)}_${currentState}`;
+  return `${stage(row.current_substage ?? row.current_stage)}_${currentState}`;
 }
 
 function cleanBlockerText(value: string | null): string {

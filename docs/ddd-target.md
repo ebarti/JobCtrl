@@ -1,10 +1,10 @@
-# DDD Target-State Architecture
+# DDD Architecture
 
 ## 1. Purpose & Non-Goals
 
 ### Purpose
 
-This document defines the **canonical target-state architecture** for JobHunter,
+This document defines the **canonical domain architecture** for JobHunter,
 modeled with Domain-Driven Design (DDD) and Hexagonal Architecture (Ports &
 Adapters). It is the authoritative reference for:
 
@@ -18,15 +18,15 @@ Adapters). It is the authoritative reference for:
 Every modeling choice includes rationale so a senior engineer joining the team
 can re-derive the decision independently.
 
-**Cloud deployment is a hard requirement.** The local-first phase is a
-validation gate, not the end state. Every decision in this document is designed
+**Cloud deployment is a hard requirement.** Local-first mode is a validation
+gate, not the end state. Every decision in this document is designed
 to ship to a hosted multi-tenant cloud deployment. Section 9 is not
 "compatibility" — it is the target deployment model.
 
 ### Non-Goals
 
-- **Migration plan.** This document does not prescribe file moves, PR sequences,
-  or rollout phases. That is the migration-planning team's scope.
+- **Project history.** This document does not prescribe file moves, PR
+  sequences, or rollout phases. Plan records live under `docs/plans/`.
 - **Implementation code.** Pseudocode sketches appear where they aid clarity; no
   production code is included.
 - **Deployment topology.** Kubernetes manifests, Terraform modules, CI/CD
@@ -70,17 +70,16 @@ This architecture follows **evolutionary architecture** as the meta-principle.
 The cloud target is non-negotiable, but the architecture lets us walk there one
 well-defined step at a time — it does not arrive on day one.
 
-> Evolutionary architecture means cloud adapters are named-not-built; it does
-> NOT mean preserving legacy code paths. Migrations within the codebase are
-> clean replacements: the new implementation lands in the same change that
-> deletes the old one.
+> Evolutionary architecture means cloud adapters are named-not-built; local
+> implementations stay compact behind ports until a concrete fitness function
+> calls for a hosted adapter.
 
 | Principle | How we apply it |
 |---|---|
 | **Name the evolution, do not pre-build it** | Every driven port names its cloud adapter and technology. No cloud adapter is implemented until the evolution trigger fires. Local adapters stay minimal. |
 | **Local-mode adapters stay simple** | Local adapters do not carry hosted concerns (auth context propagation, distributed tracing, tenant enforcement). They accept `TenantId` as a parameter but ignore it. Cloud machinery is absent from local code. |
 | **Fitness functions trigger evolution** | Every major design choice has a concrete, testable trigger (Section 9.4). "When concurrent users > 1" is a fitness function; "when we go to the cloud" is not. |
-| **Independent context evolution** | Each bounded context's adapters can be swapped independently. Discovery can migrate to Postgres while Scoring remains on SQLite. Section 9.5 describes context-by-context cloud migration order. |
+| **Independent context evolution** | Each bounded context's adapters can be swapped independently. Discovery can use Postgres while Scoring remains on SQLite. Section 9.5 describes context-by-context cloud cutover order. |
 | **Deliberate trade-offs** | Where we choose local simplicity over cloud-ready flexibility, we name it as a **Trade-off** with the upgrade path documented. We do not pretend the local choice IS the cloud choice. |
 
 ### Data-Orientation (Hickey / Wlaschin)
@@ -172,7 +171,7 @@ records with stable identity.
 - **Employer** — the hiring company, distinct from the source board.
 - **SearchStrategy** — the extraction method used (jobspy, workday_api, smart_extract, manual).
 - **PostingUrl** — the original URL where the job was found.
-- **JobId** — a stable, system-generated identifier for a job (replaces URL-as-PK).
+- **JobId** — a stable, system-generated identifier for a job.
 
 **Upstream/Downstream:**
 - **Downstream supplier** to Pipeline Orchestration (Customer-Supplier): Orchestration
@@ -197,11 +196,9 @@ records with stable identity.
 
 **Boundary justification:** Discovery is the only context that touches external
 job board APIs and scraping infrastructure. Its domain types (`JobPosting`,
-`Source`, `SearchStrategy`) are meaningless outside this context. Separating
-it isolates scraping complexity and rate-limiting concerns from downstream
-processing. *Current pain point addressed:* `enrichment/detail.py` imports
-`discovery/smartextract.extract_json` and `discovery/jobspy.parse_proxy` —
-cross-context coupling that this boundary eliminates.
+`Source`, `SearchStrategy`) are meaningless outside this context. Separating it
+isolates scraping complexity and rate-limiting concerns from downstream
+processing.
 
 ---
 
@@ -238,9 +235,8 @@ application URLs by scraping job detail pages.
 **Boundary justification:** Enrichment is I/O-heavy (HTTP requests, Playwright
 browser sessions, HTML parsing) with domain logic limited to URL resolution and
 extraction strategy selection. Separating it from Discovery allows independent
-retry policies and concurrency control. *Current pain point addressed:*
-`enrichment/detail.py` is 950 LOC mixing Playwright, BeautifulSoup, LLM calls,
-and state writes — the hexagonal boundary extracts all of this I/O into adapters.
+retry policies and concurrency control. The hexagonal boundary keeps browser,
+parser, and LLM I/O in adapters.
 
 ---
 
@@ -282,9 +278,8 @@ policies, and writing style preferences.
 
 **Boundary justification:** Profile is a single-user, single-document aggregate
 with its own lifecycle (user edits it independently of any job). Consuming
-contexts need a stable read-only view. *Historical pain point addressed:* raw
-profile dictionaries were threaded through tailor, cover, apply, wizard, and
-profile import with no invariants enforced (briefing point 8).
+contexts need a stable read-only view with invariants enforced at the profile
+boundary.
 
 ---
 
@@ -295,7 +290,7 @@ scores.
 
 **Ubiquitous Language:**
 - **FitScore** — a 1-10 integer rating of candidate-job match quality.
-- **ScoreBreakdown** — structured explanation of why a job received its score (replaces raw reasoning strings).
+- **ScoreBreakdown** — structured explanation of why a job received its score.
 - **MatchedKeywords** — ATS keywords from the job description that match the candidate.
 - **ScoreCorrection** — a user-provided override with rationale.
 - **ScoringCriteria** — the rubric used to evaluate fit (technical skills weight, experience level, etc.).
@@ -359,14 +354,14 @@ PDFs) for jobs that pass the scoring threshold.
 - Validate tailored content (banned words, fabrication, structural integrity)
 - Optionally run LLM-as-judge for quality assessment
 - Run deterministic tailoring quality checks for unsupported metrics, keyword
-  stuffing, AI-sounding phrasing, weak seniority alignment, and missing evidence
+  stuffing, stock-phrase warnings, weak seniority alignment, and missing evidence
 - Run adversarial review for high-fit jobs after normal validation and judge pass
 - Generate cover letters
 - Render documents to PDF (resume via HTML/CSS + Playwright by default, with
   LaTeX available only as a compatibility renderer; cover letter via
   HTML/Playwright)
 - Register generated artifacts with provenance metadata
-- Emit domain events for each material milestone
+- Emit domain events for each material lifecycle event
 
 **What it does NOT own:**
 - Scoring or fit evaluation (that's Scoring)
@@ -375,14 +370,11 @@ PDFs) for jobs that pass the scoring threshold.
 - Pipeline scheduling or retry logic (that's Pipeline Orchestration)
 
 **Boundary justification:** Materials Generation encompasses the two artifact
-pipeline stages (tailor, cover) that share a tight invariant: cover
-letters require a tailored resume, and each stage renders the PDFs it owns. Grouping them in one
-context lets the aggregate enforce these dependencies directly rather than
-through cross-aggregate eventual consistency. *Current pain point addressed:*
-`scoring/tailor.py` (820 LOC) mixes LLM prompts, validation, judge logic, PDF
-generation, state writes, DB writes, and file writes — all of which get
-separated into domain logic (validation, assembly) and adapter concerns (LLM
-calls, file I/O, DB writes).
+pipeline stages (tailor, cover) that share a tight invariant: cover letters
+require a tailored resume, and each stage renders the PDFs it owns. Grouping them
+in one context lets the aggregate enforce these dependencies directly rather
+than through cross-aggregate eventual consistency. LLM calls, file I/O, and DB
+writes remain adapter concerns.
 
 ---
 
@@ -429,9 +421,8 @@ It manages subprocesses (Claude Code), browser processes (Chrome), MCP servers
 (Playwright), and durable telemetry — none of which any other context touches.
 Its `ApplyRun` aggregate has its own lifecycle and local persistence through
 `job_events` plus the `apply_run_projections` read model keyed by the Temporal
-workflow run id. *Current pain point addressed:* `apply/launcher.py`
-(1300 LOC) tangles subprocess spawning, Chrome management, telemetry, DB writes,
-dashboard updates, and business rules — hexagonal ports separate each concern.
+workflow run id. Hexagonal ports separate subprocess spawning, browser
+management, telemetry, persistence, and business rules.
 
 ---
 
@@ -473,13 +464,9 @@ the appropriate bounded contexts.
 - User-facing API contracts (that's Operations)
 
 **Boundary justification:** Orchestration is the "saga coordinator" — it knows
-the pipeline shape but not the processing details. This separation lets us
-replace the current `pipeline.py` procedural orchestrator with a
-state-machine-driven coordinator without touching Discovery, Scoring, or Apply
-logic. *Current pain point addressed:* `pipeline.py` (1100 LOC) is tightly
-coupled to specific stage modules and `dashboard.py` rendering (briefing point 3).
-The new boundary makes `pipeline.py` a thin adapter that reads the stage state
-machine and dispatches commands.
+the pipeline shape but not the processing details. This separation keeps
+stage-state coordination independent from Discovery, Scoring, Materials, and
+Apply processing logic.
 
 ---
 
@@ -517,10 +504,8 @@ bounded contexts into queryable views.
 **Boundary justification:** CQRS separation. The read side has fundamentally
 different optimization concerns (denormalized views, pagination, text search,
 aggregate counts) than the write side (transactional consistency, invariant
-enforcement). The existing `read-model.ts` already embodies this separation
-but re-derives legacy stage states at read time (briefing point 11) — the
-target eliminates this by having Orchestration write canonical stage states that
-the read model consumes directly.
+enforcement). Operations consumes canonical stage states and projection rows
+directly.
 
 ---
 
@@ -534,7 +519,7 @@ the read model consumes directly.
 Aggregate Root: Job
 Identity: (TenantId, JobId)
   - TenantId: tenant scope (constant "local" in local-first mode)
-  - JobId: system-generated UUID (replaces url-as-PK)
+  - JobId: system-generated UUID
 ```
 
 **Invariants:**
@@ -796,7 +781,7 @@ stateDiagram-v2
   converts blocker findings into retry feedback.
 
 **Generation lifecycle:** When the user re-tailors a job, a **new
-`MaterialsSet`** is created with `generation` incremented. The previous
+`MaterialsSet`** is created with `generation` incremented. The earlier
 `MaterialsSet` has its artifacts transitioned to `superseded` status and
 becomes read-only. The aggregate factory (`MaterialsSetFactory`) reads the
 current highest generation for the `(tenantId, jobId)` and creates
@@ -989,7 +974,7 @@ models) built from domain events emitted by other contexts.
 
 **Seam justification:** Job board scraping is the most brittle integration point
 (anti-scraping measures, API changes, rate limits). The port lets us swap
-scrapers without touching domain logic. The repository port lets us migrate
+scrapers without touching domain logic. The repository port lets us switch
 from SQLite to Postgres without changing Discovery logic.
 
 ### 5.2 Job Enrichment Context
@@ -1068,12 +1053,12 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `LlmPort` | `GeminiAdapter`, `OpenAiAdapter` | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
-| `PdfRendererPort` | `HtmlResumePdfAdapter` (default structured resume HTML/CSS + Playwright renderer with layout boxes), `LatexPdfAdapter` (legacy `pdflatex` compatibility renderer), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering; keep LaTeX/Tectonic only for compatibility if required. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
+| `PdfRendererPort` | `HtmlResumePdfAdapter` (default structured resume HTML/CSS + Playwright renderer with layout boxes), `LatexPdfAdapter` (`pdflatex` compatibility renderer), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering; keep LaTeX/Tectonic only for compatibility if required. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
 | `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobhunter/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobhunter-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** The `PdfRendererPort` absorbed the renderer swap:
-HTML/CSS + Playwright is now the production default for resume PDFs, emits
+HTML/CSS + Playwright is the production default for resume PDFs, emits
 layout boxes for Apply Review, and keeps LaTeX as an explicitly selected
 compatibility adapter without touching materials domain logic. The
 `ArtifactStoragePort` absorbs the local-to-cloud transition for generated files.
@@ -1094,7 +1079,7 @@ compatibility adapter without touching materials domain logic. The
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `BrowserPort` | `LocalChromeAdapter` (launch Chrome on isolated CDP ports) | `BrowserbaseAdapter` (**Browserbase** managed sessions; per-tenant session pool with concurrency limits enforced by Billing entitlements; alternative: headless Chromium sidecars in **Kubernetes pods** with CDP exposed via localhost) |
-| `AutonomousAgentPort` | `ClaudeCodeCliAdapter` (subprocess + Playwright MCP) | `ClaudeApiAgentAdapter` (**Anthropic Claude API** with tool use / computer use; MCP replaced by direct Playwright API calls from a managed agent container; apply prompt unchanged, transport switches from CLI subprocess to API request) |
+| `AutonomousAgentPort` | `ClaudeCodeCliAdapter` (subprocess + Playwright MCP) | `ClaudeApiAgentAdapter` (**Anthropic Claude API** with tool use / computer use; direct Playwright API calls from a managed agent container; apply prompt unchanged, transport switches from CLI subprocess to API request) |
 | `ApplyRunRepository` | `SqliteApplyRunRepository` | `PostgresApplyRunRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** Apply Automation is the most infrastructure-heavy context.
@@ -1375,9 +1360,7 @@ In the local-first architecture, "subscribing" means the projection builder
 runs in-process with the event bus. The TS API's `read-model.ts` queries
 the denormalized tables directly.
 
-**Key projection:** The `JobListProjection` replaces the current pattern of
-reading raw `jobs` rows + deriving stage states + re-computing from legacy
-columns. Instead, the projection is pre-computed from domain events:
+**Key projection:** The `JobListProjection` is precomputed from domain events:
 
 ```
 JobListProjection = {
@@ -1398,10 +1381,8 @@ mutating shared state:
 3. `ApplicationSubmitted` or `ApplicationFailed` — Pipeline Orchestration
    transitions the `apply` stage state. Operations updates the job list.
 
-This eliminates the former coupling where `launcher.py` directly wrote to
-the `jobs` table, bespoke apply-run tables, `job_events`, and
-`job_stage_states` while also updating the in-memory Rich dashboard — all in
-the same function.
+Apply result reporting stays event-driven: Apply writes domain events, Pipeline
+Orchestration owns stage transitions, and Operations updates read-side views.
 
 ### 6.8 TS API Write Operations — Domain Logic Hosting
 
@@ -1436,7 +1417,7 @@ latency for simple UI operations.
 
 **Cloud evolution:** In cloud mode, both TS and Python import the same
 `StageStateMachine` from a shared package. The TS API continues to host simple
-commands directly (now against Postgres via the repository adapter). Complex
+commands directly against Postgres via the repository adapter. Complex
 commands go through Temporal instead of subprocess.
 
 ---
@@ -1495,24 +1476,7 @@ This decoupling means:
 - Persistence schema can be optimized independently (indexes, denormalization).
 - Switching from SQLite to Postgres changes only the adapter, not the domain.
 
-### 7.3 Migration Shape
-
-The current wide `jobs` table is narrowed in the target:
-
-| Current `jobs` columns | Target owner | Target table |
-|---|---|---|
-| `url`, `title`, `salary`, `description`, `location`, `site`, `strategy`, `discovered_at` | Job Discovery | `jobs` (narrowed) |
-| `full_description`, `application_url`, `detail_scraped_at`, `detail_error` | Job Enrichment | `job_enrichments` |
-| `fit_score`, `score_reasoning`, `scored_at` | Scoring | `job_scores` |
-| `tailored_resume_path`, `tailored_at`, `tailor_attempts` | Materials Generation | `job_materials` + `job_artifacts` |
-| `cover_letter_path`, `cover_letter_at`, `cover_attempts` | Materials Generation | `job_materials` + `job_artifacts` |
-| `applied_at`, `apply_status`, `apply_error`, `apply_attempts`, `agent_id`, etc. | Apply Automation | `job_events` + `apply_run_projections` |
-
-The migration creates new tables, backfills them from the wide `jobs` table in
-the same change, and drops the legacy columns. Each context's extraction PR
-migrates its data and removes the corresponding `jobs` columns in one step.
-
-### 7.4 Current Tables to Aggregates Mapping
+### 7.3 Tables to Aggregates Mapping
 
 - **`job_stage_states`** → `JobPipelineState` aggregate. Already well-structured.
   Target adds a `Queued` state and `Canceled` state to `STATE_VALUES`.
@@ -1728,7 +1692,7 @@ deployment model that ships to production.
 
 **Moved from "does not change" to "changes":**
 - **Use case interfaces (driving ports):** Use case signatures *mostly* survive,
-  but the `tenantId` parameter is now explicit in every use case call. In local
+  but the `tenantId` parameter is explicit in every use case call. In local
   mode it was implicit (singleton). This is a signature change, not a logic
   change. The domain logic inside the use case is unchanged.
 
@@ -1866,7 +1830,7 @@ cloud" (circular), but measurable conditions.
 | No auth | Auth0 / Cognito JWT | Any public-facing deployment | Local loopback assumption breaks when API is remotely accessible. |
 | No billing / entitlements | Stripe + `EntitlementPort` | First paying customer | Until then, all entitlements return `Allowed`. The `EntitlementPort` exists as a no-op adapter locally. |
 | No audit log | Postgres `audit_events` + CloudWatch | First compliance requirement (SOC2, GDPR data access log) | The `AuditSink` port is a no-op locally. |
-| `pdflatex` subprocess for resume PDFs | HTML/CSS + Playwright/Chromium renderer, with LaTeX compatibility by explicit opt-in | Completed for local default **OR** cloud deployment (TeX Live is 4 GB, too large for containers) | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
+| `pdflatex` subprocess for resume PDFs | HTML/CSS + Playwright/Chromium renderer, with LaTeX compatibility by explicit opt-in | Local default is HTML/CSS + Playwright **OR** cloud deployment requires avoiding TeX Live (4 GB, too large for containers) | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
 
 ### 9.5 Cloud Migration Order
 
@@ -1926,12 +1890,11 @@ single-user system.
    aggregate per transaction). Use `PRAGMA busy_timeout=10000` (already in place).
    Monitor for `SQLITE_BUSY` errors.
 
-3. **Legacy data migration complexity.** The wide `jobs` table has ~800+ days of
-   data. Backfilling new tables from legacy columns will require careful
-   handling of NULL semantics, inconsistent timestamps, and partial state.
-   **Mitigation:** Each context's extraction PR ships a one-shot, idempotent
-   backfill script that runs against a staging database first; the same script
-   then runs in the cutover PR before the legacy columns are dropped.
+3. **Local data cutover complexity.** Existing local databases can contain years
+   of data. Moving a context to a hosted adapter requires careful handling of
+   NULL semantics, inconsistent timestamps, and partial state. **Mitigation:**
+   Each context cutover ships a one-shot, idempotent backfill script that runs
+   against a staging database before the production cutover.
 
 4. **In-process event bus reliability.** The synchronous in-process event bus
    means a crash between "command succeeded" and "projection updated" leaves
@@ -1954,7 +1917,7 @@ single-user system.
 
 7. **Materials Generation aggregate size.** Grouping tailor + cover + pdf in one
    aggregate could make it too large if many artifact versions accumulate.
-   **Mitigation:** The aggregate tracks only the *current generation*; historical
+   **Mitigation:** The aggregate tracks only the *current generation*; superseded
    artifacts are owned by the `ArtifactStoragePort` and queryable through the
    Operations read model.
 
@@ -2022,7 +1985,7 @@ single-user system.
    and `HtmlResumePdfAdapter` is the default renderer. Layout-map persistence
    and Apply Review layout-box consumption are in place for new artifacts; the
    remaining compatibility policy is how long to retain explicit
-   `JOBHUNTER_RESUME_RENDERER=latex_pdf` support for historical custom
+   `JOBHUNTER_RESUME_RENDERER=latex_pdf` support for custom
    templates.
 
 4. **Event streaming to the frontend.** The backlog calls for "event streaming or
@@ -2066,7 +2029,7 @@ single-user system.
 | **FullDescription** | Enrichment | The complete job posting text extracted from the detail page. |
 | **Job** | Discovery | A job posting discovered from an external source, identified by a stable `JobId`. |
 | **JobEnrichment** | Enrichment | The aggregate root for enrichment of a single job. Contains multiple `EnrichmentAttempt` child entities. Identity: `(TenantId, JobId)`. |
-| **JobId** | Discovery | A system-generated stable identifier for a job (replaces URL-as-primary-key). |
+| **JobId** | Discovery | A system-generated stable identifier for a job. |
 | **JobPipelineState** | Pipeline Orchestration | The collection of stage states for one job across all pipeline stages. |
 | **JudgeVerdict** | Materials Generation | LLM-as-judge evaluation of a tailored resume's quality and faithfulness. |
 | **MaterialsSet** | Materials Generation | The grouped artifacts (tailored resume, cover letter, PDFs) for one job application, tracked as a single aggregate. |
@@ -2083,7 +2046,7 @@ single-user system.
 | **ProfileSnapshot** | Candidate Profile | An immutable, validated copy of the Profile provided to consuming contexts. |
 | **Repository** | DDD | A port that provides the illusion of an in-memory collection of aggregates, abstracting persistence. |
 | **RetryPolicy** | Pipeline Orchestration | Configuration for max attempts and backoff rules per pipeline stage. |
-| **ScoreBreakdown** | Scoring | Structured explanation of why a job received its fit score (replaces raw reasoning strings). |
+| **ScoreBreakdown** | Scoring | Structured explanation of why a job received its fit score. |
 | **ScoreCorrection** | Scoring | A user-provided override of an LLM-generated score, with rationale. |
 | **SecretPort** | Platform (Secrets) | A driven port for retrieving per-tenant credentials. Local adapter reads `.env`/Keychain; cloud adapter reads AWS Secrets Manager. |
 | **SearchStrategy** | Discovery | The extraction method used to find jobs: `jobspy`, `workday_api`, `smart_extract`, `manual`. |

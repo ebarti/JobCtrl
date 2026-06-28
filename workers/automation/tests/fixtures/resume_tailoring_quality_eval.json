@@ -151,12 +151,12 @@
       }
     },
     {
-      "id": "ai_voice_blocks",
+      "id": "stock_phrase_signal_warns",
       "job": "high_fit_senior_backend",
       "bullet": "Owned results-driven backend initiatives, leveraged dynamic professional impactful solutions to drive value while reducing API latency 35% with Python.",
       "expected": {
-        "passed": false,
-        "errors_contain": ["AI-sounding voice"]
+        "passed": true,
+        "warnings_contain": ["Stock phrase markers"]
       }
     },
     {

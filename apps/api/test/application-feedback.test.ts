@@ -241,6 +241,44 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("labels apply-review repair status from the failed apply substage", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'failed',
+             error_code = 'RENDER_FAILED',
+             error_message = 'Cover PDF render failed'
+       WHERE job_url = ?
+         AND stage = 'cover'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "apply",
+      currentState: "failed",
+      blockers: ["Cover PDF render failed"],
+      applyAudit: {
+        state: "repair",
+        label: "cover failed",
+        hardBlockers: [
+          expect.objectContaining({
+            code: "stage_not_ready",
+            label: "cover failed",
+            detail: "cover PDF render failed",
+          }),
+        ],
+      },
+    });
+
+    await app.close();
+  });
+
   it("repairs stale apply material blockers before listing the review queue", async () => {
     const db = new Database(options.dbPath);
     db.prepare(

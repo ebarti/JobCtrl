@@ -312,6 +312,30 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
     )
 
 
+def _stock_phrase_json_payload() -> str:
+    return json.dumps(
+        {
+            "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "experience_updates": [
+                {
+                    "id": "acme_swe",
+                    "title": "",
+                    "bullets": [
+                        (
+                            "Owned results-driven backend initiatives, leveraged "
+                            "dynamic professional impactful solutions to drive value "
+                            "while reducing API latency 35% with Python."
+                        )
+                    ],
+                },
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+        }
+    )
+
+
 def _judge_pass() -> str:
     return json.dumps(
         {
@@ -538,8 +562,14 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
 
     assert outcome.status == "approved"
     assert "TAILORING QUALITY PLAN" in llm.calls[0][0].content
+    assert "WRITING METHOD" in llm.calls[0][0].content
+    assert "pinned must-include achievements" in llm.calls[0][0].content
+    assert "result-first CAR/PAR achievements" in llm.calls[0][0].content
+    assert "select and order exact existing skill strings" in llm.calls[0][0].content
     assert "ev_latency" in llm.calls[0][0].content
     assert "TAILORING QUALITY PLAN" in llm.calls[1][0].content
+    assert "Artifact quality checks" in llm.calls[1][0].content
+    assert "Achievement strength" in llm.calls[1][0].content
     assert outcome.materials is not None
     assert outcome.materials.tailored_resume is not None
     metadata = outcome.materials.tailored_resume.metadata
@@ -552,6 +582,46 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert metadata["change_annotations"][1]["source_id"] == "acme_swe"
     assert metadata["change_annotations"][1]["evidence_ids"] == ["ev_latency"]
     assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
+
+
+def test_tailor_use_case_labels_stock_phrases_without_retrying(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    senior_job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "PostgreSQL", "API performance"],
+        "responsibilities": ["Own backend latency improvements"],
+        "full_description": "Own Python services and improve API latency.",
+    }
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_stock_phrase_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+        max_retries=2,
+    )
+
+    outcome = use_case.execute(job=senior_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 2
+    assert outcome.report["review_feedback"] == {
+        "warning_retry_attempted": False,
+        "accepted_with_residual_warnings": False,
+        "accepted_warning_notes": [],
+    }
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    quality_checks = outcome.materials.tailored_resume.metadata["quality_checks"]
+    assert quality_checks["passed"] is True
+    assert any("Stock phrase markers" in warning for warning in quality_checks["warnings"])
 
 
 def test_tailor_use_case_skips_adversarial_review_below_high_fit_threshold(

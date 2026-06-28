@@ -65,7 +65,7 @@ EXECUTIVE_OVERREACH_MARKERS: tuple[str, ...] = (
     "multi-year strategy",
 )
 
-ANTI_AI_VOICE_MARKERS: tuple[str, ...] = (
+STOCK_PHRASE_MARKERS: tuple[str, ...] = (
     "results-driven",
     "leveraged",
     "dynamic professional",
@@ -87,6 +87,11 @@ STANDARD_SECTION_HEADINGS: tuple[str, ...] = (
     "education",
     "skills",
 )
+
+KEYWORD_REPETITION_WARNING_COUNT = 5
+KEYWORD_STUFFING_MIN_COUNT = 9
+KEYWORD_STUFFING_DENSITY_THRESHOLD = 0.08
+KEYWORD_STUFFING_ABSOLUTE_COUNT = 20
 
 _STOPWORDS: set[str] = {
     "a",
@@ -320,7 +325,7 @@ class TailoringPlan:
                 "Do not claim prohibited missing requirements unless grounded evidence exists.",
                 "Cover relevant job keywords naturally; do not stuff repeated keywords.",
                 "Match seniority to the job title and responsibilities.",
-                "Avoid AI-sounding stock phrases and inflated claims.",
+                "Avoid stock phrases and inflated claims; they are low-quality warnings.",
             ],
         }
 
@@ -669,9 +674,10 @@ def evaluate_tailoring_quality(
     for item in repeated_keywords:
         term = str(item["keyword"])
         count = int(item["count"])
-        if count >= 9:
+        density = float(item.get("density", 0.0))
+        if _is_keyword_stuffing(count=count, density=density):
             errors.append(f"Keyword stuffing: '{term}' repeated {count} times")
-        elif count >= 5:
+        elif count >= KEYWORD_REPETITION_WARNING_COUNT:
             warnings.append(f"Keyword repetition: '{term}' repeated {count} times")
 
     repeated_word = _consecutive_repeated_word(generated_lower)
@@ -697,11 +703,9 @@ def evaluate_tailoring_quality(
                 + ", ".join(found_overreach[:3])
             )
 
-    found_voice = [marker for marker in ANTI_AI_VOICE_MARKERS if marker in generated_lower]
-    if len(found_voice) >= 3:
-        errors.append("AI-sounding voice markers: " + ", ".join(found_voice[:5]))
-    elif found_voice:
-        warnings.append("AI-sounding voice markers: " + ", ".join(found_voice[:5]))
+    found_voice = [marker for marker in STOCK_PHRASE_MARKERS if marker in generated_lower]
+    if found_voice:
+        warnings.append("Stock phrase markers: " + ", ".join(found_voice[:5]))
 
     if covered_keywords:
         notes.append(
@@ -1193,12 +1197,32 @@ def _keyword_repetition(
     job_keywords: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     repeated: list[dict[str, Any]] = []
+    total_words = len(_WORD_RE.findall(generated_lower))
     for keyword in job_keywords:
         count = _term_count(generated_lower, keyword)
-        if count >= 5:
-            repeated.append({"keyword": keyword, "count": count})
+        if count >= KEYWORD_REPETITION_WARNING_COUNT:
+            density = _keyword_occurrence_density(
+                keyword=keyword,
+                count=count,
+                total_words=total_words,
+            )
+            repeated.append({"keyword": keyword, "count": count, "density": density})
     repeated.sort(key=lambda item: (-int(item["count"]), str(item["keyword"])))
     return repeated
+
+
+def _keyword_occurrence_density(*, keyword: str, count: int, total_words: int) -> float:
+    if total_words <= 0:
+        return 0.0
+    keyword_words = max(1, len(_WORD_RE.findall(_normalize_phrase(keyword))))
+    return (count * keyword_words) / total_words
+
+
+def _is_keyword_stuffing(*, count: int, density: float) -> bool:
+    return count >= KEYWORD_STUFFING_ABSOLUTE_COUNT or (
+        count >= KEYWORD_STUFFING_MIN_COUNT
+        and density >= KEYWORD_STUFFING_DENSITY_THRESHOLD
+    )
 
 
 def _consecutive_repeated_word(generated_lower: str) -> str:
@@ -1318,7 +1342,7 @@ def _text_list(value: object) -> list[str]:
 
 
 __all__ = [
-    "ANTI_AI_VOICE_MARKERS",
+    "STOCK_PHRASE_MARKERS",
     "EvidencePlanItem",
     "TailoringPlan",
     "TailoringQualityResult",

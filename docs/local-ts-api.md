@@ -17,8 +17,8 @@ tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
 and no item limit. The Python materials generation path creates a new materials
 generation for each re-tailored job, immediately follows it with cover-letter
-generation for jobs that are ready, and preserves the prior generation as
-historical/superseded artifact data.
+generation for jobs that are ready, and preserves older generations as
+superseded artifact data.
 The web Profile, Preferences, Discovery target search, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
@@ -45,13 +45,14 @@ Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
 artifacts. HTML/CSS-rendered resume PDFs also expose
 `GET /v1/artifacts/:artifactId/preview.html`, which streams the generated
 sibling HTML file used by the Plate-backed Apply Review editor. That route is
-limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects legacy
-renderer rows with `415`; operators can migrate approved legacy resume PDFs with
+limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects
+LaTeX-rendered rows with `415`; operators can create HTML siblings for approved
+LaTeX resume PDFs with
 `uv --project workers/automation run jobhunter migrate-resume-html` after
 checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
 with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
 renders a single registered PDF artifact page through local Poppler
-`pdftoppm` for legacy PDF page-image previews. The preview routes serve only
+`pdftoppm` for page-image previews. The preview routes serve only
 known PDF artifact files from the local artifact projection; they return `404`
 for missing metadata/files, `415` for unsupported artifact/renderer formats,
 and `400` for invalid page numbers. The separate
@@ -62,7 +63,7 @@ template refresh succeeds.
 PDF artifact detail responses also include `layoutBoxes` when the Materials
 projection has generated resume layout metadata. Boxes use page-relative
 percent coordinates plus optional resume line numbers. Apply Review passes them
-into the HTML editor for line/page anchoring; legacy PDFs or artifacts without a
+into the HTML editor for line/page anchoring; PDFs or artifacts without a
 layout map return an empty array.
 
 Resume template editing is exposed through local JSON endpoints:
@@ -73,7 +74,7 @@ version, `PATCH /v1/resume-templates/default` selects the default template, and
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
 render-only materials generation when the latest accepted resume text exists
 but was rendered with an older effective template. The endpoint preserves the
-previous accepted artifacts and records refresh status instead of modifying
+existing accepted artifacts and records refresh status instead of modifying
 profile data or replacing reviewable output in place.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
@@ -90,23 +91,23 @@ raw generator prompts, raw profile payloads, or raw job text; annotation and
 persona prompt snippets are bounded excerpts of the selected source, tailored
 resume, and adversarial-review request.
 
-The tailoring explanation is served exclusively from canonical projection rows
-(AUDIT-01). The read model parses each artifact's own `metadata_json` projection
-column for the non-coverage audit fields and attaches the per-bullet provenance,
-coverage, and voice from their canonical projection columns. There is no
-sibling-file fallback (an artifact whose own audit metadata is a shell is
-honestly flagged incomplete rather than synthesised from a neighbouring artifact
-or a sibling `.txt` file) and no TypeScript-side keyword recompute. The two
-canonical generation-time audit fields are: `coverageAudit`, the honest keyword
-coverage (covered + missing) computed against the actual rendered (voiced) resume
-text — a keyword counts as covered only when it appears in a provenance-backed
-grounded bullet, and `coveredBy` records which bullet demonstrates each covered
-keyword; and `voicePass`, the voice-pass audit (whether the de-buzzword/vary-
-structure pass ran and was accepted, the model, the prompt version, and the
-deterministic buzzword-density / structural-variety proxy delta that justified
-it). Both are `null` for a generation that recorded none, and a PDF artifact
-resolves them (and the derived `keywords` block) from the sibling tailored-resume
-projection row of the same generation.
+The tailoring explanation is served exclusively from canonical projection rows.
+The read model parses each artifact's own `metadata_json` projection column for
+the non-coverage audit fields and attaches the per-bullet provenance, coverage,
+and voice from their canonical projection columns. There is no sibling-file
+fallback (an artifact whose own audit metadata is a shell is honestly flagged
+incomplete rather than synthesised from a neighbouring artifact or a sibling
+`.txt` file) and no TypeScript-side keyword recompute. The two canonical
+generation-time audit fields are: `coverageAudit`, the honest keyword coverage
+(covered + missing) computed against the actual rendered (voiced) resume text —
+a keyword counts as covered only when it appears in a provenance-backed grounded
+bullet, and `coveredBy` records which bullet demonstrates each covered keyword;
+and `voicePass`, the voice-pass audit (whether the de-buzzword/vary-structure
+pass ran and was accepted, the model, the prompt version, and the deterministic
+buzzword-density / structural-variety proxy delta that justified it). Both are
+`null` for a generation that recorded none, and a PDF artifact resolves them
+(and the derived `keywords` block) from the sibling tailored-resume projection
+row of the same generation.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
@@ -116,8 +117,7 @@ policy version, rubric version, calibration adjustment, and policy anchor
 counts without exposing raw policy anchor payloads. `scoreStaleness` reports
 unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
-reset. `scoreReasoning` remains on the wire as a compatibility summary during
-the scoring evidence migration.
+reset. `scoreReasoning` remains on the wire as a compact compatibility summary.
 `/v1/jobs/:key` also exposes `requirementFitReport` when the latest score has
 canonical requirement-level assessments. The report is projected from
 `job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows and
@@ -125,16 +125,17 @@ shows the requirement weights, match status, score contribution, and tailoring
 directive that explain the resolved fit score. It is `null` for jobs that have
 not yet been scored with requirement-level evidence.
 `/v1/jobs/:key` also returns `auditHistory[]`, a user-facing timeline assembled
-from allow-listed `job_events` milestones plus append-only apply review and
+from allow-listed `job_events` entries plus append-only apply review and
 outcome feedback records. The timeline summarizes discovery, enrichment,
 scoring, materials, pipeline, apply, outcome, and job visibility changes without
 returning raw event payloads, debug messages, local paths, raw notes, or email
 body text.
 Job summaries also include source provenance. `discoverySource` is the observed
 source registry id where the job was found and falls back to the discovery
-strategy/source pair for legacy rows. `postingSource` and `postingSourceUrl`
-come from canonical identity evidence when a broad-board result points at a
-known ATS or employer-owned posting. The jobs list accepts `minFitScore` and
+strategy/source pair when canonical source identity is absent. `postingSource`
+and `postingSourceUrl` come from canonical identity evidence when a broad-board
+result points at a known ATS or employer-owned posting. The jobs list accepts
+`minFitScore` and
 `maxFitScore` query parameters, plus `applyStatus=applied` for jobs with an
 actual applied outcome (`applied_at` present or apply status `applied`). The
 same score and applied-outcome filters are accepted by all-matching bulk job
@@ -205,12 +206,13 @@ type and policy metadata are visible as columns instead of compact badges:
 - `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
   `GET /v1/discovery/manual-capture` expose the local review queues. Located
   parseable source candidates are auto-promoted into the active source registry;
-  these queues are for blocked, ambiguous, unparseable, or legacy pending work.
+  these queues are for blocked, ambiguous, unparseable, or compatibility pending
+  work.
   JobSpy direct URLs feed this same loop: runnable ATS URLs are promoted into
   the source registry, while unknown owner URLs or ATS URLs that still need
   adapter configuration remain visible for review.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
-  legacy source locator candidate into an active source registry entry and emits
+  source locator candidate into an active source registry entry and emits
   `SourceLocationCandidatePromoted`.
 - `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
   source locator candidate from the review queue.
@@ -257,25 +259,25 @@ When available, refresh paths automatically load licensed Levels.fyi rows from
 `JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL`. JSON and CSV feeds are accepted. The
 source registry does not expose secrets, row contents, local paths, or feed URLs.
 
-`GET /v1/jobs/:jobKey/compensation/posted` returns the Phase 18 read-only
+`GET /v1/jobs/:jobKey/compensation/posted` returns the read-only
 inspection contract for canonical posted-compensation facts. The endpoint reads
 `job_posted_compensation_facts` only; it does not parse, backfill, update,
 persist, refresh projections, call external providers, or run React-side
 normalization during a GET. For an existing job with a canonical row, the
 response is `{ ok: true, recordStatus: "recorded", fact }`, where `fact`
 contains the parse state (`missing`, `unparseable`, `ambiguous`, or
-`parsed_range`), bounded source text, legacy raw salary fallback, parser
+`parsed_range`), bounded source text, raw salary fallback, parser
 version, source hash, parse timestamp, confidence, warnings, and normalized
 currency/period/component/min/max/annualized fields only for legal parsed
 ranges. For an existing job without a canonical row, the response is
-`recordStatus: "not_recorded"` plus the current legacy raw `jobs.salary`
+`recordStatus: "not_recorded"` plus the current raw `jobs.salary`
 fallback. Unknown jobs return `404`.
 
-The projection-backed `/v1/jobs` and `/v1/jobs/:key` responses now include
+The projection-backed `/v1/jobs` and `/v1/jobs/:key` responses include
 `compensationSummary`, sourced from `job_list_projections` /
 `job_detail_projections` JSON rather than API read-time salary parsing. The
 detail response also includes top-level `compensationAudit`, which keeps
-`posted` and `market` inspection payloads separate. The legacy raw
+`posted` and `market` inspection payloads separate. The raw
 `JobSummary.salary` string remains present for compatibility. Compensation
 summary/audit data does not change fit score, apply readiness, apply-review
 handoff, or apply mutation behavior. The Jobs list exposes dedicated sortable
@@ -285,13 +287,13 @@ warnings; these sort through `compensation_min_eur`,
 `compensation_max_eur`, `compensation_market`, `compensation_confidence`, and
 `compensation_warnings` alongside the existing sortable job columns. The Salary
 min, Salary max, and Market headers carry the `EUR/year` unit so row values stay
-compact. The legacy `compensation_posted` sort remains accepted as a
+compact. The `compensation_posted` sort remains accepted as a
 compatibility alias for the posted minimum. Currency normalization is a
 projection concern: supported parsed currencies are converted to EUR/year;
 unsupported or missing currencies leave the normalized min/max empty instead of
 guessing.
 
-`GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
+`GET /v1/jobs/:jobKey/compensation/market` returns the read-only
 inspection contract for canonical company-role reported compensation estimate
 rows. The endpoint reads `job_market_compensation_estimates` only; it does not
 estimate, backfill, update, persist, refresh projections, call providers, scrape
@@ -304,7 +306,7 @@ Recorded market estimates expose one explicit state: `unsupported`,
 `source_unavailable`, `insufficient_evidence`, or `estimated_range`. Range
 fields are present only for `estimated_range`. Non-range states carry
 inspectable reasons, confidence factors, safe source snapshots, and warnings
-instead of nullable precision. Phase 19 source scope is reported compensation
+instead of nullable precision. Source scope is reported compensation
 evidence keyed by company and role: Euro Top Tech public community-reported
 rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
 estimate includes company name, normalized company, role title, normalized role,
@@ -368,8 +370,8 @@ contain source text, market source snapshots, profile compensation preferences,
 credentials, local paths, or provider payloads. The frontend Operations
 invalidation router uses the event to refresh job list/detail queries.
 
-`/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
-and projects each row to a `WorkflowRunSummary`, including the Temporal
+`/v1/workflow-runs` reads `apply_run_projections` and projects each row to a
+`WorkflowRunSummary`, including the Temporal
 workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
 uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `/runs` deep-links each row to the local Temporal Web UI
@@ -592,8 +594,7 @@ cached, legsAttempted, legsSucceeded, degraded }`. The same analysis is produced
 automatically as the front-half sub-step of tailoring, so a re-tailor reuses the
 cached analysis (keyed by posting snapshot hash) rather than re-reasoning;
 `force: true` recomputes and supersedes the prior generation. The standalone
-inspector surface for this analysis is a later milestone — this milestone lands
-the method, persistence, and read path only.
+inspector surface can build on the same method, persistence, and read path.
 
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for
@@ -770,8 +771,7 @@ Each frame:
 
 The server filters `job_events` with the COALESCE on the _event row's_
 extracted tenant — falling back to the literal `'local'` string when the
-row's `payload_json` lacks a `$.tenantId` key (legacy events written before
-`tenantId` was a required payload field):
+row's `payload_json` lacks a `$.tenantId` key:
 
 ```sql
 SELECT event_id, event_type, payload_json, occurred_at
@@ -784,8 +784,8 @@ LIMIT ?
 
 The right-hand `?` is the resolved request `tenantId` (per `resolveTenantId`
 above — `LOCAL_TENANT` in local mode; JWT-derived in hosted). The COALESCE
-guarantees that legacy `LOCAL_TENANT` rows missing `$.tenantId` still match
-the local-mode filter without a write-side backfill.
+guarantees that tenantless local rows still match the local-mode filter without
+a write-side backfill.
 
 Tenant scope is mandatory; there is no "all tenants" mode
 (`docs/frontend-target.md` §7.8).

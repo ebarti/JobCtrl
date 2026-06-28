@@ -648,7 +648,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       hasResume: Boolean(listRow.has_resume),
       hasCoverLetter: Boolean(listRow.has_cover_letter),
       hasPdf: Boolean(listRow.has_pdf),
-      currentStage: jobSummary.currentStage,
+      currentStage: jobSummary.currentSubstage,
       currentState: jobSummary.currentState,
       currentErrorCode: jobSummary.errorCode,
       currentErrorMessage: jobSummary.errorMessage,
