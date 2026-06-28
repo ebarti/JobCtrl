@@ -4,10 +4,10 @@ Voice ("reads like a human, not an LLM") is hard to test, so it silently
 regresses unless it is gated by deterministic, reproducible proxies rather than a
 vibe (Pitfall 7). This module is the pure, no-LLM gate the voice pass is held to:
 
-  * **Buzzword density** — banned-buzzword / AI-stock-phrase hits over total
+  * **Buzzword density** — banned-buzzword / stock-phrase hits over total
     words, against a FOCUSED lexicon (the project's already-curated
-    ``BANNED_WORDS`` + ``ANTI_AI_VOICE_MARKERS``, deduplicated). A high density is
-    the single loudest "reeks like AI" smell.
+    ``BANNED_WORDS`` + ``STOCK_PHRASE_MARKERS``, deduplicated). A high density is
+    the single loudest low-quality prose smell.
   * **Structural variety** — the average of (a) opening-token diversity (distinct
     first words / number of bullets — uniform "Spearheaded X… Spearheaded Y…"
     scores near zero) and (b) normalised bullet-length variance (every bullet the
@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from statistics import pvariance
 
-from jobhunter.domain.materials.quality import ANTI_AI_VOICE_MARKERS
+from jobhunter.domain.materials.quality import STOCK_PHRASE_MARKERS
 from jobhunter.domain.materials.services import BANNED_WORDS
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9+#./'-]*")
@@ -39,13 +39,13 @@ def _focused_buzzword_lexicon() -> tuple[str, ...]:
 
     Built from the project's already-curated lists so the gate and the validator
     agree on what "buzzword" means: ``BANNED_WORDS`` (the validator's hard list)
-    plus ``ANTI_AI_VOICE_MARKERS`` (the quality evaluator's AI-stock phrases),
+    plus ``STOCK_PHRASE_MARKERS`` (the quality evaluator's stock phrases),
     deduplicated and lowercased, longest-first so a multi-word phrase is matched
     before any single-word substring of it.
     """
     seen: set[str] = set()
     ordered: list[str] = []
-    for term in (*BANNED_WORDS, *ANTI_AI_VOICE_MARKERS):
+    for term in (*BANNED_WORDS, *STOCK_PHRASE_MARKERS):
         normalized = term.strip().lower()
         if normalized and normalized not in seen:
             seen.add(normalized)

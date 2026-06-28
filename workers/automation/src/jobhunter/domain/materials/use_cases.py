@@ -146,7 +146,7 @@ from jobhunter.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v2.quality-gated"
+TAILORING_PROMPT_VERSION = "tailor.v3.writer-method"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v1"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -242,6 +242,8 @@ TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
         "repair_instructions": {"type": "array", "items": {"type": "string"}},
     },
 }
+
+LOW_QUALITY_LABEL_ONLY_WARNING_PREFIXES = ("Stock phrase markers:",)
 
 
 @dataclass(frozen=True)
@@ -445,13 +447,25 @@ def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
         else {}
     )
 
-    notes.extend(_as_string_list(validator.get("warnings")))
-    notes.extend(_as_string_list(quality.get("warnings")))
+    notes.extend(
+        warning
+        for warning in _as_string_list(validator.get("warnings"))
+        if not _is_label_only_quality_warning(warning)
+    )
+    notes.extend(
+        warning
+        for warning in _as_string_list(quality.get("warnings"))
+        if not _is_label_only_quality_warning(warning)
+    )
     notes.extend(_as_string_list(judge.get("repair_instructions")))
     if review.get("ran"):
         notes.extend(_as_string_list(review.get("warnings")))
         notes.extend(_as_string_list(review.get("repair_instructions")))
     return tuple(dict.fromkeys(notes))
+
+
+def _is_label_only_quality_warning(warning: str) -> bool:
+    return warning.startswith(LOW_QUALITY_LABEL_ONLY_WARNING_PREFIXES)
 
 
 def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -690,6 +704,22 @@ HARD RULES:
 - No em dashes
 - BANNED WORDS: {banned_str}
 
+WRITING METHOD:
+- Treat required evidence and required bullets as pinned must-include achievements:
+  keep the fact, metric, and meaning visible in the matching experience entry
+- For each experience row, order bullets strongest-to-weakest for this job.
+  Lead with bullets that map to requirement directives, required evidence, and
+  grounded job keywords; demote generic duties
+- Write bullets as result-first CAR/PAR achievements: strong past-tense verb,
+  outcome or scope or metric, then the action/context. If no verified metric
+  exists, use only supported scale, scope, frequency, or time from master evidence
+- Every bullet should prove a requirement, surface required evidence, or preserve
+  a profile fact. Do not write duty-only filler
+- For skills, select and order exact existing skill strings by truthful target
+  overlap first; never add unsupported skills
+- Executive profile should be a concise 2-4 sentence target-role summary using
+  grounded proof and 3-6 truthful job terms, not a generic objective
+
 MASTER EXECUTIVE PROFILE:
 {resume.get("executive_profile", {}).get("baseline_text", "")}
 
@@ -807,7 +837,18 @@ Judge dimensions for criterion_scores:
 - fabrication_safety
 - required_content_preserved
 - ats_readability
-- specificity_and_metrics"""
+- specificity_and_metrics
+
+Artifact quality checks:
+- JD match: must-have and keyword coverage must be truthful, supported, and
+  naturally phrased, not stuffed
+- Achievement strength: experience bullets should be result-led CAR/PAR claims
+  with verified metrics or supported scale/scope/frequency, not duty lists
+- Targeting and focus: executive profile, skills, and top bullets should signal
+  this role without letting irrelevant content dominate
+- Red flags and language: penalize generic objectives, duty-only bullets,
+  unsupported skills, repeated stock phrases, keyword stuffing, hidden
+  instructions, inconsistent titles, and changed metrics"""
 
 
 def build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:

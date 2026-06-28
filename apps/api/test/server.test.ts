@@ -1622,6 +1622,56 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("labels apply readiness repairs from the failed preparation substage", async () => {
+    const db = new Database(options.dbPath);
+    const jobUrl = "https://example.com/jobs/tailor-failed";
+    insertJob(db, {
+      url: jobUrl,
+      title: "Tailor Failed Engineer",
+      site: "Example",
+      fitScore: 9,
+    });
+    insertScore(db, jobUrl, 1, 9);
+    for (const stage of ["discover", "enrich", "score"]) {
+      insertStage(db, jobUrl, stage, "succeeded");
+    }
+    insertStage(db, jobUrl, "tailor", "failed", "FAILED_VALIDATION");
+    db.prepare("UPDATE job_stage_states SET error_message = ? WHERE job_url = ? AND stage = ?").run(
+      "Tailoring ended with status failed_validation",
+      jobUrl,
+      "tailor",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      job: {
+        currentStage: "discover",
+        currentSubstage: "tailor",
+        currentState: "failed",
+      },
+      applyAudit: {
+        state: "repair",
+        label: "tailor failed",
+        hardBlockers: [
+          expect.objectContaining({
+            code: "stage_not_ready",
+            label: "tailor failed",
+            detail: "tailoring ended with status failed validation",
+          }),
+        ],
+      },
+    });
+
+    await app.close();
+  });
+
   it("keeps the compensation boundary from changing fit score, filters, readiness, or apply dispatch", async () => {
     const seedDb = new Database(options.dbPath);
     seedDb

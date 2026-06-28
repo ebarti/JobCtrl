@@ -83,7 +83,7 @@ class VoicePayload(BaseModel):
 class VoiceRequest:
     """The de-voiced prose the voice pass is asked to humanise.
 
-    Carries the SELECTED candidate's prose plus the small banned-buzzword/AI-stock
+    Carries the SELECTED candidate's prose plus the small banned-buzzword/stock-phrase
     lexicon the pass should avoid, so the adapter prompt can name concrete
     anti-patterns (the positive-style + anti-pattern-list technique). Bullets are
     grouped by experience id so the response maps 1:1 back onto the payload.

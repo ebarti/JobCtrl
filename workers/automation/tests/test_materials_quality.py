@@ -494,6 +494,47 @@ def test_quality_warns_or_fails_keyword_stuffing_by_severity() -> None:
     assert any("Keyword stuffing" in error for error in failing_result.errors)
 
 
+def test_quality_allows_domain_keyword_repetition_when_density_is_natural() -> None:
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("security", "latency"),
+    )
+    domain_context = " ".join(
+        [
+            "platform",
+            "delivery",
+            "ownership",
+            "stakeholder",
+            "planning",
+            "mentoring",
+            "operational",
+            "review",
+            "architecture",
+            "governance",
+        ]
+        * 18
+    )
+    bullet = (
+        "Owned API reliability and reduced latency 35% while coordinating "
+        f"{domain_context} "
+        "security reviews, security incidents, security risk triage, security "
+        "policy rollout, security architecture reviews, security partner alignment, "
+        "security training, security backlog cleanup, security release checks, "
+        "security documentation, security governance, and security design feedback."
+    )
+
+    result = evaluate_tailoring_quality(
+        _payload(bullet=bullet),
+        _resume_text(bullet=bullet),
+        plan,
+    )
+
+    assert result.passed is True
+    assert not any("Keyword stuffing" in error for error in result.errors)
+    assert any("Keyword repetition" in warning for warning in result.warnings)
+
+
 def test_quality_requires_seniority_signal_for_senior_roles_when_evidence_exists() -> None:
     plan = build_tailoring_plan(
         _profile(),

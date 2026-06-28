@@ -1,13 +1,11 @@
 # Architecture
 
-This document is the canonical architecture reference for JobHunter. The
-target-state model that this implementation realises is defined in
-[`docs/ddd-target.md`](ddd-target.md); the migration phases that took the
-codebase here are summarised in
-`docs/plans/implemented/2026-05-06-ddd-migration.md`. Detailed proposal and
-delivery history lives under `docs/plans/`.
+This document is the canonical architecture reference for JobHunter. The domain
+model that this implementation realises is defined in
+[`docs/ddd-target.md`](ddd-target.md). Project history lives under `docs/plans/`
+and `docs/delivered.md`.
 
-For a phase-by-phase execution view of the job pipeline, including sequence
+For a stage-by-stage execution view of the job pipeline, including sequence
 diagrams, component diagrams, call paths, persistence, events, and failure
 behavior, see [`docs/job-pipeline-architecture.md`](job-pipeline-architecture.md).
 
@@ -90,10 +88,9 @@ the local LLM clients. The hosted-mode adapters (Postgres, S3, SQS, Browserbase,
 Temporal) are named in `docs/ddd-target.md` §5 but not implemented yet — they
 are the next-evolution seam, not a parallel codepath today.
 
-Cross-context integration rides the **`InProcessEventBus`** (Phase 3, S-08) for
-domain events and the **`SubprocessJsonRpcAdapter`** (Phase 9, S-34) for the
-TS↔Python integration protocol (§6.5 of `docs/ddd-target.md`). The pre-DDD
-"call out via `uv run jobhunter action ...` per request" pattern is gone.
+Cross-context integration uses the **`InProcessEventBus`** for domain events and
+the **`SubprocessJsonRpcAdapter`** for the TS↔Python integration protocol
+(§6.5 of `docs/ddd-target.md`).
 
 Discovery preparation is a cross-context workflow, not a merged aggregate.
 Discovery owns source and enrichment facts, then durable
@@ -150,15 +147,13 @@ and human-review procedures before production use.
 ## Canonical Employer Analysis (Materials sub-step)
 
 The Materials context owns a persisted, inspectable "ideal candidate" analysis
-that replaces the former `_extract_job_keywords` stopword heuristic and is the
-single source of truth for tailoring keyword selection. It is produced by a
+that is the source of truth for tailoring keyword selection. It is produced by a
 **three-SDK agent ensemble** — Claude Agent SDK + Codex SDK + Google Antigravity
 (Gemini) SDK — running in parallel and reconciled by a Claude synthesizer pass.
 The ensemble orchestrator is N-leg and partial-failure safe
-(`asyncio.gather(return_exceptions=True)`), so a missing Gemini key degrades the
-Antigravity leg to a recorded per-leg failure (two surviving legs) rather than a
-hard fail. This is the first AI capability on the agent-SDK standard: all *new*
-AI runs through agent SDKs, never the legacy httpx `jobhunter.llm.LLMClient`.
+(`asyncio.gather(return_exceptions=True)`), so one SDK failure records a degraded
+per-leg failure instead of cancelling the healthy legs. Employer analysis runs
+through the analysis draft/synthesizer ports, not the generic LLM client.
 
 - **Domain model** (`domain/materials/analysis.py`): `JobAnalysis` /
   `JobAnalysisDraft` (Pydantic) carry role framing, inferred seniority, an
@@ -203,15 +198,13 @@ AI runs through agent SDKs, never the legacy httpx `jobhunter.llm.LLMClient`.
   read model (`job_detail_projections.employer_analysis_json`), built identically
   by the Python projection builder and `apps/api/src/projections.ts` and served
   by `read-model.ts` as `JobDetail.employerAnalysis`. A cross-runtime projection
-  parity test covers the table on both runtimes. The inspector UI for this
-  analysis is deferred to a later milestone; this milestone lands the backend,
-  contracts, and read path only.
+  parity test covers the table on both runtimes.
 - **Requirement fit read path**: requirement-led scoring persists canonical
   `job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows.
   The Operations projection publishes the latest report to
   `job_detail_projections.requirement_fit_report_json` and the API serves it as
-  `JobDetail.requirementFitReport`, preserving legacy score fields until the UI
-  fully migrates to the requirement-led explanation.
+  `JobDetail.requirementFitReport`. Compatibility score fields remain available
+  for queue selectors and read models that need the compact score shape.
 
 ## Per-Bullet Provenance + Granular Controls (Materials sub-step)
 
@@ -243,12 +236,11 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   is rejected before any row is built — provenance is FK bindings, not
   model-authored free text.
 - **Deterministic never-fabricate detector** (`domain/materials/fabrication_detector.py`):
-  a pure check that runs **independently of the prompt** (the Phase-2 analogue of
-  the analysis grounding gate). Every numeric, date, percentage, money, title, and
-  company-suffixed employer token in a generated bullet must trace to recorded
-  profile evidence; a token that does not is a fabrication and is **hard-rejected
-  at generation time**. A metrics-hungry job paired with a numberless profile
-  yields zero unsourced numerics in the output.
+  a pure check that runs **independently of the prompt**. Every numeric, date,
+  percentage, money, title, and company-suffixed employer token in a generated
+  bullet must trace to recorded profile evidence; a token that does not is a
+  fabrication and is **hard-rejected at generation time**. A metrics-hungry job
+  paired with a numberless profile yields zero unsourced numerics in the output.
 - **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
   after assembling the selected candidate's text. A fabrication downgrades
   validation so the resume is **not approved** (the last accepted generation's
@@ -263,9 +255,7 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   `apps/api/src/projections.ts` and served by `read-model.ts` as
   `ArtifactTailoringExplanation.bulletProvenance` (a PDF artifact resolves it from
   the sibling tailored-resume row). A cross-runtime projection parity test covers
-  the table on both runtimes. This milestone lands the backend, contracts, and
-  read path; the divergent legacy read paths are retired and the inspector UI is
-  built in later milestones.
+  the table on both runtimes.
 
 ## Voice Pass + Final Audit Against Rendered Text (Materials sub-step)
 
@@ -276,27 +266,26 @@ the voice pass rewords, it never invents, and the deterministic gates are re-run
 against the voiced text.
 
 - **Voice transform** (`VoicePort` + `infrastructure/materials/voice_adapter.py`):
-  a NEW AI transform implemented via the **Claude Agent SDK** (native structured
-  output, no timeout / no turn cap), mirroring the employer-analysis adapters —
-  not the legacy httpx client (the all-new-AI-via-SDK directive). It de-buzzwords
-  and varies bullet structure on the selected candidate's prose (executive profile
-  + experience bullets only; skill term lists are left untouched). The SDK boundary
-  is mocked in tests.
+  an AI transform implemented via the **Claude Agent SDK** with native
+  structured output. It de-buzzwords and varies bullet structure on the selected
+  candidate's prose (executive profile + experience bullets only; skill term
+  lists are left untouched). The SDK boundary is mocked in tests.
 - **Deterministic voice proxies** (`domain/materials/voice_metrics.py`): the
-  measurable gate (VOICE-01). Buzzword density (a focused lexicon built from
-  `BANNED_WORDS` + the quality evaluator's AI-stock markers) and structural variety
-  (opening-token diversity + bullet-length variance). The voiced payload is adopted
-  only when it **measurably reduces buzzword density OR raises structural variety**
-  vs the input; a no-op or a regression keeps the pre-voice candidate.
-- **Re-validation after voice** (VOICE-03): `TailorResumeUseCase` re-runs the
+  measurable gate for adopting voice edits. Buzzword density uses a focused
+  lexicon built from `BANNED_WORDS` plus the quality evaluator's stock-phrase
+  markers; structural variety uses opening-token diversity and bullet-length
+  variance. The voiced payload is adopted only when it **measurably reduces
+  buzzword density OR raises structural variety** vs the input; a no-op or a
+  regression keeps the pre-voice candidate.
+- **Re-validation after voice**: `TailorResumeUseCase` re-runs the
   provenance builder + the deterministic never-fabricate detector against the
   voiced text. A voice edit that introduces an unsourced numeric/date/title/
   employer is **hard-rejected exactly like a generator fabrication**: the voiced
   payload is discarded, the clean pre-voice candidate ships, and the failed voice
   stays as audit history. A reworded bullet is recorded with `transform_type =
   voice` (the outermost transform) so the shipped wording is inspectable, not a
-  hidden prompt tweak (VOICE-02).
-- **Final coverage audit** (`domain/materials/coverage_audit.py`, GROUND-06):
+  hidden prompt tweak.
+- **Final coverage audit** (`domain/materials/coverage_audit.py`):
   keyword coverage (covered + missing) is computed at generation time against the
   actual rendered (voiced) bullet text — never inferred from the job description —
   and a keyword counts as covered **only when it appears in a provenance-backed
@@ -304,9 +293,9 @@ against the voiced text.
   stuffing an ungrounded skills line and substring false positives do not count.
 - **Final canonical text** is the single voiced payload: `TailorResumeUseCase`
   assembles the plain-text resume from it, the provenance rows anchor to it, and
-  the active resume PDF renderer consumes `TailorOutcome.final_payload`. Today
-  that default is `HtmlResumePdfAdapter` (HTML/CSS + Playwright); the legacy
-  LaTeX adapter remains available only through explicit local configuration.
+  the active resume PDF renderer consumes `TailorOutcome.final_payload`. The
+  default renderer is `HtmlResumePdfAdapter` (HTML/CSS + Playwright);
+  `LatexPdfAdapter` remains available only through explicit local configuration.
   A round-trip fixture asserts the audited bullet text equals the rendered text.
 - **Persistence + read path**: the generation-time coverage and the voice-pass
   audit ride on the `BulletProvenanceSet` (denormalised onto the
@@ -316,51 +305,38 @@ against the voiced text.
   identically by the Python builder and `apps/api/src/projections.ts` and served by
   `read-model.ts` as `ArtifactTailoringExplanation.coverageAudit` /
   `.voicePass` (a PDF resolves them from the sibling tailored-resume row). A
-  cross-runtime parity test covers both. This milestone lands the backend,
-  contracts, and read path; the inspector UI is built in a later milestone.
+  cross-runtime parity test covers both.
 
-## Read-Model Cleanup (rip-and-replace, AUDIT-01 / AUDIT-02)
+## Tailoring Explanation Read Model
 
-With the canonical analysis, provenance, and coverage rows landed (above), the
-read model serves audit data **only** from canonical projection rows. The two
-divergent legacy read paths in `read-model.ts` are deleted (no compatibility
-shim — single-user rip-and-replace):
+The read model serves tailoring audit data from canonical projection rows.
 
-- **Sibling-file fallback removed.** `tailoringExplanationForArtifact` previously
-  fell back to a sibling artifact's `metadata_json` (and, for coverage, a sibling
-  `.txt` file read from disk) when an artifact's own metadata was a shell. That
-  fallback is gone: each artifact's tailoring explanation is parsed from its own
-  `metadata_json` projection column for the non-coverage audit fields, and the
-  per-bullet provenance, coverage, and voice come from their canonical projection
-  columns (a PDF still resolves those from the sibling tailored-resume projection
-  **row**, which is canonical, not a file). An artifact whose own audit metadata
-  is a shell is honestly flagged incomplete rather than synthesised from a
-  neighbour — closing the "synthesized-from-sibling-files artifacts" risk.
-- **TypeScript-side keyword recompute removed.** The `keywords` summary block
-  (`planned` / `covered` / `missing` + counts) is now **derived from the canonical
-  coverage audit** (`coverage_audit_json`, computed at generation time against the
-  rendered voiced text), not recomputed in TypeScript from the resume file and the
-  job description at read time. When a generation recorded no coverage the block is
-  honestly empty (`coverageRecorded: false`); coverage is never inferred from the
-  job description. The read-time keyword-extraction machinery (job-keyword
-  extraction, resume-text matching, candidate pruning) is deleted.
-- **Genuine cross-runtime drift guard.** The Phase 1–3 parity tests asserted the
-  read shape on the TS side from hand-seeded JSON. A real TS↔Python contract test
-  now drives both runtimes from one shared fixture
-  (`packages/domain-types/test/fixtures/audit_projection_parity.json`): the Python
-  builder test (`workers/automation/tests/test_audit_projection_parity.py`) and
-  the TS builder test (`apps/api/test/audit-projection-parity.test.ts`) seed the
-  same canonical `job_employer_analysis` + `job_bullet_provenance` rows, run their
-  **own** projection builder, and assert the resulting projection-column JSON
-  equals the fixture's expectation key-for-key. A schema/serialisation drift in
-  either builder fails its test — closing the "projection duplication TS↔Python"
-  risk for the audit tables.
+- **Artifact explanation shape.** Each artifact's tailoring explanation is parsed
+  from its own `metadata_json` projection column for non-coverage audit fields.
+  Per-bullet provenance, coverage, and voice come from canonical projection
+  columns. A PDF resolves those canonical audit fields from the sibling
+  tailored-resume projection row because the PDF is a render of that same
+  artifact.
+- **Keyword summary.** The `keywords` summary block (`planned` / `covered` /
+  `missing` + counts) is derived from the canonical coverage audit
+  (`coverage_audit_json`, computed at generation time against the rendered voiced
+  text). When a generation recorded no coverage the block is empty with
+  `coverageRecorded: false`; coverage is never inferred from the job description
+  at read time.
+- **Cross-runtime drift guard.** The Python builder test
+  (`workers/automation/tests/test_audit_projection_parity.py`) and the TypeScript
+  builder test (`apps/api/test/audit-projection-parity.test.ts`) both seed the
+  canonical `job_employer_analysis` and `job_bullet_provenance` rows from the
+  shared fixture
+  `packages/domain-types/test/fixtures/audit_projection_parity.json`. Each
+  runtime runs its own projection builder and asserts the resulting
+  projection-column JSON equals the fixture expectation key-for-key.
 
 ## Apply Review And Outcome Feedback
 
-The Apply Automation context now has a local feedback foundation in the
-TypeScript API. `apps/api/src/application-feedback.ts` owns idempotent SQLite
-table creation and read/write helpers for:
+The Apply Automation context has a local feedback foundation in the TypeScript
+API. `apps/api/src/application-feedback.ts` owns idempotent SQLite table
+creation and read/write helpers for:
 
 - `application_review_decisions`: append-only user decisions for apply review.
 - `application_outcomes`: reviewed manual or suggestion-derived outcomes.
@@ -380,9 +356,9 @@ deltas, JobHunter comment threads, user replies, and feedback signals are
 persisted in `resume_review_*` / `tailoring_feedback_signals` tables. A render
 promotion validates the saved draft, creates a new `job_materials` generation
 with replacement `tailored_resume` and `resume_pdf` artifacts plus layout boxes,
-then marks unresolved comments as residual after acceptance. The previous
-approved artifacts remain visible until that replacement generation is written,
-so failed validation or render attempts do not destroy reviewable materials.
+then marks unresolved comments as residual after acceptance. Existing approved
+artifacts remain visible until that replacement generation is written, so failed
+validation or render attempts do not destroy reviewable materials.
 
 Gmail outcome feedback is implemented in
 `workers/automation/src/jobhunter/infrastructure/gmail/feedback.py`, separate
@@ -402,7 +378,7 @@ sources, timestamps, confidence values, link signals, and presence flags; raw
 notes and raw email bodies are not copied into domain events, projections,
 logs, telemetry, or Gmail scan API responses.
 
-## Read-Model Projections (Phase 9)
+## Read-Model Projections
 
 The Operations / Read-Side context maintains denormalised projection
 tables that back every read-model endpoint:
@@ -423,8 +399,8 @@ The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
 shared `event_watermarks.operations_projections` watermark, recompute
 projections from canonical aggregate state, and advance the watermark in the
 same transaction. Both processes write to the same tables; SQLite handles the
-concurrent advances. This kills the per-stage `LEFT JOIN ... COALESCE` soup
-that the read-model used to assemble at request time.
+concurrent advances. Request paths read precomputed projections instead of
+assembling stage state with per-request joins.
 
 Job detail audit history is assembled at read time from allow-listed lifecycle
 events and append-only apply review/outcome records. It is a user-facing audit
@@ -434,10 +410,10 @@ Posted-compensation facts are persisted in `job_posted_compensation_facts`
 before inspection. They are exposed through both the narrow read-only
 inspection API and projection-backed job list/detail compensation summaries.
 Company-role market compensation estimates are persisted in
-`job_market_compensation_estimates` before inspection. Phase 19 estimates are
-deterministic local facts derived from configured reported compensation feeds
-for Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from
-employer-posted salary facts already captured by JobHunter.
+`job_market_compensation_estimates` before inspection. Estimates are
+deterministic local facts derived from configured reported compensation feeds for
+Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from employer-posted
+salary facts already captured by JobHunter.
 Euro Top Tech rows are treated as public community-reported EUR/year total
 compensation observations; Levels.fyi and Glassdoor rows are loaded only when a
 permitted source-policy mode and feed path or URL are configured.
@@ -836,13 +812,13 @@ available, and match scores.
 Employer-posted salary observations can emit low-confidence ranges with
 low-sample warnings. High-value posted base-salary text with an omitted period
 can be treated as annual evidence for market estimation, but bonus-only and
-one-sided rows are rejected. The temporary `jobhunter compensation-refresh`
-command reparses existing posted salary text, imports explicit local
+one-sided rows are rejected. The `jobhunter compensation-refresh` command
+reparses existing posted salary text, imports explicit local
 observations, configured licensed Levels.fyi and Glassdoor feeds, and public
 Euro Top Tech observations additively, writes estimates for existing jobs, and
 refreshes projections without running the job pipeline. It
 does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
-or apply dispatch behavior in Phase 19.
+or apply dispatch behavior.
 Operations projections materialize compensation read data from those canonical
 tables into `job_list_projections.compensation_summary_json`,
 `job_detail_projections.compensation_summary_json`, and
@@ -864,7 +840,7 @@ The apply launcher records each per-worker agent log
 (`LOG_DIR/worker-{worker_id}.log`, written by `ClaudeCodeCliAdapter`) as a
 `job_artifacts` row of kind `apply_log` in the same transaction as the
 terminal `ApplicationSubmitted` / `ApplicationFailed` / `DryRunCompleted`
-event (PR 7 of the Temporal stack).
+event.
 
 ## Core Data Flow
 
@@ -876,11 +852,9 @@ event (PR 7 of the Temporal stack).
    internal preparation subwork.
 4. Each domain operation publishes events through `InProcessEventBus`.
 5. Workers record events in `job_events` and update per-aggregate tables
-   (`job_scores`, `job_materials`, `job_enrichments`). The apply lifecycle
-   is observable via `apply_run_projections`, sourced from `job_events`
-   by the projection builder — the bespoke `apply_runs` table was
-   collapsed into the Temporal workflow run history (PR 4 of the
-   Temporal stack).
+   (`job_scores`, `job_materials`, `job_enrichments`). The apply lifecycle is
+   observable via `apply_run_projections`, sourced from `job_events` by the
+   projection builder and keyed to Temporal workflow run history.
 6. Generated files are registered in `job_artifacts` /
    `job_materials_artifacts`.
 7. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
@@ -888,7 +862,7 @@ event (PR 7 of the Temporal stack).
    aggregate state. The Python builder owns `apply_run_projections`;
    the TS API reads it directly.
 8. The UI reads from the projection tables via the TS read-model — no joins.
-   The Workflow Runs view at `/runs` (PR 5 of the Temporal stack) reads
+   The Workflow Runs view at `/runs` reads
    `apply_run_projections` via `GET /v1/workflow-runs` and deep-links each
    row to the local Temporal Web UI (`http://127.0.0.1:8233`).
 9. UI actions are routed through JSON-RPC for complex commands or executed
@@ -924,12 +898,3 @@ uv --project workers/automation run --extra dev ruff check .
 uv --project workers/automation run python scripts/check-domain-type-parity.py
 git diff --check
 ```
-
-## Plan History
-
-- `docs/plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md`
-- `docs/plans/implemented/2026-05-02-local-ts-api.md`
-- `docs/plans/implemented/2026-05-03-local-reliability-qa.md`
-- `docs/plans/implemented/2026-05-03-remove-python-dashboard-compat.md`
-- `docs/plans/implemented/2026-05-06-ddd-migration.md`
-- `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`

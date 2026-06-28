@@ -34,9 +34,12 @@
   repeatable synthetic screenshot refresh workflow.
 - [`architecture.md`](architecture.md): runtime boundaries and repository
   ownership.
-- [`job-pipeline-architecture.md`](job-pipeline-architecture.md): phase-by-phase
+- [`job-pipeline-architecture.md`](job-pipeline-architecture.md): stage-by-stage
   pipeline execution, sequence diagrams, component diagrams, call paths,
   persistence, events, and failure behavior.
+- [`tailoring.md`](tailoring.md): resume tailoring prompt contract, generated
+  JSON shape, validation/judge loop, provenance, audit metadata, and safe change
+  points.
 - [`ddd-target.md`](ddd-target.md): canonical DDD + hexagonal architecture,
   domain language, and backend ownership rules.
 - [`frontend-target.md`](frontend-target.md): canonical frontend architecture,
@@ -53,4 +56,4 @@
 - [`decisions.md`](decisions.md): accepted architecture decision records.
 - [`delivered.md`](delivered.md): delivery history by PR.
 - [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
-- [`plans/`](plans/): proposal and implementation history.
+- [`plans/`](plans/): proposal and implementation records.

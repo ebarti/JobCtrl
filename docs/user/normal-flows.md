@@ -82,7 +82,7 @@ Eligible jobs receive tailored resumes and cover letters during Discover. You
 can also generate materials for a single job from the job detail drawer.
 
 Generated material records are preserved as audit history. Re-generation does
-not destroy the previously accepted material; replacement artifacts become
+not destroy the accepted material already in use; replacement artifacts become
 active only after validation and approval.
 
 ## 6. Review And Edit The Resume

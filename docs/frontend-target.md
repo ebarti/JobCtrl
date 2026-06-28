@@ -1,21 +1,21 @@
-# Frontend Target-State Architecture
+# Frontend Architecture
 
 ## 1. Purpose & Non-Goals
 
 ### Purpose
 
-This document defines the **canonical target-state architecture** for the
+This document defines the **canonical architecture** for the
 JobHunter web frontend (`apps/web`). It is the architectural twin of
 [`docs/ddd-target.md`](ddd-target.md) — where the backend doc models bounded
 contexts, aggregates, ports, and adapters for the Python worker and the TS
 API, this doc models the React/TypeScript single-page application that sits
 in front of them.
 
-The TanStack migration has landed. The current frontend is organized around
-TanStack Router, TanStack Query, TanStack Table, TanStack Form, shadcn/Radix
-primitives, context-owned hooks/components, and an SSE-fed invalidation router.
-This document now describes the canonical implemented architecture and the
-hosted-future extension points that must stay intact as the web app evolves.
+The frontend is organized around TanStack Router, TanStack Query, TanStack
+Table, TanStack Form, shadcn/Radix primitives, context-owned hooks/components,
+and an SSE-fed invalidation router. This document describes the implemented
+architecture and the hosted-future extension points that must stay intact as the
+web app evolves.
 
 This doc is the authoritative reference for:
 
@@ -27,7 +27,7 @@ This doc is the authoritative reference for:
   the API client, the event stream, persistence, and the host environment.
 - **Query-key conventions, route shapes, hook conventions, form patterns,
   primitives** per bounded context.
-- **Realtime architecture** — the SSE consumer pattern and the new
+- **Realtime architecture** — the SSE consumer pattern and the
   `GET /v1/events/stream` endpoint contract that `apps/api/` must expose for
   the frontend to consume.
 - **Cross-context invalidation** — how a mutation in one context fans out to
@@ -38,31 +38,28 @@ This doc is the authoritative reference for:
 - **The testing pyramid** — Vitest + React Testing Library + MSW for
   hooks/components, Playwright for end-to-end critical flows, Storybook for
   component-driven development.
-- **The final folder shape**, mirrored to backend bounded contexts.
+- **The folder shape**, mirrored to backend bounded contexts.
 
 Every choice includes rationale so a senior frontend engineer joining the
 project can re-derive the decision independently.
 
 **Cloud is the eventual target.** The frontend, like the backend, is built
 local-first but designed for hosted multi-tenant deployment. `TenantId` is
-first-class in the frontend domain language from day one (singleton
-`LOCAL_TENANT` until hosted mode arrives). Section 9 names every cloud
-adapter with a fitness function — it is not "compatibility," it is the target
-deployment model.
+first-class in the frontend domain language; local mode uses singleton
+`LOCAL_TENANT`, and hosted mode will resolve it from auth context. Section 9
+names every cloud adapter with a fitness function — it is not "compatibility,"
+it is the target deployment model.
 
 ### Non-Goals
 
-- **Migration plan.** This document does not prescribe phase ordering, file
-  moves, PR sequencing, or cutover scripts. The historical migration plan lives
-  at `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
-  Whenever this doc says "the target X replaces Y," it is a structural
-  statement, not an ordering constraint.
+- **Project history.** This document does not prescribe delivery ordering, file
+  moves, PR sequencing, or cutover scripts. Plan records live under
+  `docs/plans/`.
 - **Implementation listing.** Pseudocode and TypeScript signatures appear where
   they aid clarity; this document is not a generated inventory of production
   `.tsx`, tests, package scripts, or Vite configuration.
-- **Migration sequencing.** The historical migration was rip-and-replace and is
-  archived in the implemented plan. This document now models the resulting
-  architecture, not dual-mount compatibility paths.
+- **Delivery sequencing.** This document models the architecture, not branch
+  order, rollout sequencing, or dual-mount compatibility paths.
 - **Visual design / copy / iconography choices.** This doc constrains the
   *primitives* (shadcn/ui + Radix) and the *layout system* (Tailwind), not
   the visual identity, design tokens, or copy.
@@ -86,7 +83,7 @@ deployment model.
   hosting (cache headers for chunks, presigned-URL access to artifacts) but
   does not specify the hosting platform.
 - **Performance budgets.** Bundle-size targets, TTI thresholds, and
-  Lighthouse scores live in the QA gates of the migration plan, not here.
+  Lighthouse scores live in QA gates, not here.
 
 ---
 
@@ -229,9 +226,9 @@ stays simple but every choice has a clear seam.**
 
 > Evolutionary architecture means the next adapter is *named* (so the team
 > knows what swap is coming and the seam is shaped for it), not *built*
-> (so the codebase carries no speculative complexity). Migrations within
-> the codebase are still rip-and-replace; nothing is preserved across the
-> migration for safety.
+> (so the codebase carries no speculative complexity). Adapter swaps keep one
+> active implementation per seam unless an explicit compatibility path is part
+> of the product contract.
 
 | Principle | How the frontend applies it |
 |---|---|
@@ -403,7 +400,7 @@ exposed in the API.
 **Ubiquitous language** (matches backend):
 - **Job** — the `Job` aggregate root identified by `(TenantId, JobId)`.
 - **JobId** — the system-generated stable identifier (per
-  `ddd-target.md` §3.1 / §4.1; replaces URL-as-PK).
+  `ddd-target.md` §3.1 / §4.1).
 - **PostingUrl** — the original source URL.
 - **Source** — the board / employer site.
 - **Employer** — the hiring company (distinct from `Source`).
@@ -758,16 +755,10 @@ first cross-context invalidation. With factories:
 - **Discoverable.** `jobsKeys.*` is grep-able; "where is the jobs query
   key built?" is one search.
 
-**Why tenant-first-now (not tenant-later).** Adding `tenantId` as the
-first segment costs 12 characters today. Adding it later means rewriting
-every `useQuery({ queryKey })` call site, every
-`invalidateQueries({ queryKey })` call site, every persistence migration
-(if cache persistence ever ships), and every test mock. The cost of
-adding it later is unbounded and silent. The cost of adding it now is one
-parameter in every key factory function. We add it now. (See
-`feedback_no_strangler.md`: do not preserve a "tenant-less" code path
-during migration to multi-tenant; the day tenant becomes meaningful, the
-prefix already exists and only its source value changes.)
+**Tenant-first query keys.** `tenantId` is always the first query-key segment.
+This keeps cache entries scoped consistently in local mode and lets hosted mode
+change the tenant source without rewriting query factories, invalidation call
+sites, persistence adapters, or tests.
 
 **Tenant resolution.** Today: `useTenantId()` returns `LOCAL_TENANT` from
 `@jobhunter/domain-types`. Tomorrow: `useTenantId()` returns the active
@@ -942,9 +933,9 @@ separately in §4.5.
 |---|---|
 | Routes | None (mutation-only context; affordances surface in `views/jobs/` and `views/artifacts/`). |
 | Queries | None. |
-| Mutations | `useGenerateMaterialsMutation({ jobId })` — calls `POST /v1/jobs/:jobKey/actions/generate-materials`, which dispatches a `run_stage` command over the canonical material stages (tailor → cover) and returns 202 (queued) once the worker is ready. Per the §8.2 async-mutation pattern it applies an optimistic queued patch (marks the first material stage `running` on the cached job detail, with rollback on request failure) plus a small immediate invalidation on settle; the real terminal result arrives via the SSE stream when `ResumeApproved` / `CoverLetterGenerated` / `PdfRendered` invalidations fan out. It never removes the last accepted artifact — that is superseded by the worker only when a replacement is approved (INSPECT-06). `useSetJobResumeTemplateMutation({ jobKey, body })` sets/clears the per-job template override; `useEnsureCurrentResumeMaterialsMutation({ jobKey })` performs lazy render-only refresh when a selected/default template makes accepted resume materials stale. `useOpenArtifactMutation({ artifactId })` calls the local `OpenInOsPort`; the API may first refresh stale resume-template materials and open the newest same-type artifact. |
+| Mutations | `useGenerateMaterialsMutation({ jobId })` — calls `POST /v1/jobs/:jobKey/actions/generate-materials`, which dispatches a `run_stage` command over the canonical material stages (tailor → cover) and returns 202 (queued) once the worker is ready. Per the §8.2 async-mutation pattern it applies an optimistic queued patch (marks the first material stage `running` on the cached job detail, with rollback on request failure) plus a small immediate invalidation on settle; the real terminal result arrives via the SSE stream when `ResumeApproved` / `CoverLetterGenerated` / `PdfRendered` invalidations fan out. It never removes the last accepted artifact; the worker supersedes that artifact only when a replacement is approved. `useSetJobResumeTemplateMutation({ jobKey, body })` sets/clears the per-job template override; `useEnsureCurrentResumeMaterialsMutation({ jobKey })` performs lazy render-only refresh when a selected/default template makes accepted resume materials stale. `useOpenArtifactMutation({ artifactId })` calls the local `OpenInOsPort`; the API may first refresh stale resume-template materials and open the newest same-type artifact. |
 | SSE keys consumed | `ResumeApproved`, `ResumeFailed`, `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`, `JobResumeTemplateAssigned`, `ResumeTemplateRefreshCompleted`, `ResumeTemplateRefreshFailed`. |
-| Components | `<GenerateMaterialsButton jobId={...} />`, `<OpenArtifactButton artifactId={...} />`, and the tailoring inspector: `<EmployerAnalysisPanel analysis={...} />` (requirements + reasoned keywords with quoted JD evidence spans), `<BulletProvenanceList provenance={...} annotatedChanges={...} />` (per-bullet evidence × requirement × transform × control × rationale + original→tailored diff), `<TailoringExplanationSection explanation={...} />` (rationale, coverage, voice pass, composes `<BulletProvenanceList>`), and `<ArtifactTailoringInspector artifactId={...} />` (fetches artifact detail via the Operations read hook and renders the explanation; composed by `views/jobs/JobDetailDrawer` and `views/apply-review`). All render explicit missing/empty/covered/unmet states (INSPECT-05) — never a blank or a fabricated value. |
+| Components | `<GenerateMaterialsButton jobId={...} />`, `<OpenArtifactButton artifactId={...} />`, and the tailoring inspector: `<EmployerAnalysisPanel analysis={...} />` (requirements + reasoned keywords with quoted JD evidence spans), `<BulletProvenanceList provenance={...} annotatedChanges={...} />` (per-bullet evidence × requirement × transform × control × rationale + original→tailored diff), `<TailoringExplanationSection explanation={...} />` (rationale, coverage, voice pass, composes `<BulletProvenanceList>`), and `<ArtifactTailoringInspector artifactId={...} />` (fetches artifact detail via the Operations read hook and renders the explanation; composed by `views/jobs/JobDetailDrawer` and `views/apply-review`). All render explicit missing/empty/covered/unmet states — never a blank or a fabricated value. |
 | Notes | This is the canonical example of the **mutation invalidation strategy** decision (§6 question 5, resolved in §8.3): for *async* actions returning 202, apply the optimistic "queued" patch + a small immediate settle invalidation, then let the event stream invalidate again when the work is actually complete (the authoritative terminal refresh). The artifact-open mutation is materials-context surface (artifacts are owned by `MaterialsSet`) even though it's surfaced from the Artifacts view. |
 
 #### 4.4.7 Apply Automation
@@ -1022,9 +1013,8 @@ export function ProfileForm({ initial }: { initial: ProfileFormValues }) {
 
 **No "draft vs original" tracking by hand.** TanStack Form provides
 `form.state.isDirty`, `form.reset(initial)`, and per-field dirty
-tracking out of the box. The current `App.tsx` ConfigView pattern
-(`useState` per field, manual diff) is deleted in the same change that
-introduces TanStack Form.
+tracking out of the box. Settings forms should use TanStack Form state rather
+than hand-managed `useState` snapshots and manual diffs.
 
 ### 4.7 Component Primitives (shadcn/ui)
 
@@ -1075,9 +1065,9 @@ such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 light `:root` and dark `:root[data-theme="dark"]` shadcn semantic
 variables, chart tokens, sidebar/menu tokens, radius scale inputs,
 Fontsource-backed font stacks, and JobHunter status extensions
-(`success`, `warning`, `status-info`). The legacy Tailwind config bridge
-is not part of the target state; generated utilities come from
-`@theme inline` plus the active CSS variables.
+(`success`, `warning`, `status-info`). The Tailwind config bridge
+is not part of the active contract; generated utilities come from `@theme inline`
+plus the active CSS variables.
 
 The theme toggle (§4.10) flips a `data-theme="dark"` attribute on
 `<html>`; the app keeps that selector rather than switching to Tailwind's
@@ -1930,10 +1920,9 @@ built on the same router/query primitives).
 - Single-user app with cold-start once-per-day usage. SSR pays for itself
   when many cold loads compete for fast first paint or shareable links
   that need crawler indexing.
-- TanStack Start exists *exactly* for the migration path "we already use
-  TanStack Router + Query; we now want SSR / RSC." Same primitives, same
-  mental model. The migration cost is low *because* the architecture is
-  shaped around it.
+- TanStack Start keeps the same Router and Query primitives when SSR or RSC
+  becomes valuable. The upgrade cost stays low because the architecture is
+  shaped around those primitives.
 
 **Fitness function:** **Trigger when**
 - p50 cold-load Time-to-Interactive on the dashboard exceeds 1s on a
@@ -1943,9 +1932,9 @@ built on the same router/query primitives).
   filter view with a recruiter coach"), **OR**
 - SEO becomes a goal (currently no goal).
 
-**No-strangler note:** when this fires, the migration replaces the
-SPA bootstrap with the Start bootstrap in one PR. There is no
-"render both server-side and client-side during transition" period.
+**Bootstrap rule:** when this fires, the SPA bootstrap switches to the Start
+bootstrap in one change. There is no "render both server-side and client-side
+during transition" period.
 
 ### 9.2 React Server Components (RSC)
 
@@ -2029,7 +2018,7 @@ benefits from edge caching.
 
 **Why this is in the frontend doc:** because the frontend's `staleTime`
 defaults (§5.4) interact with the server's cache headers. We document
-the contract here so the migration plan's QA gates can verify both ends.
+the contract here so API and frontend QA gates can verify both ends.
 
 **Fitness function:** **Trigger when** dashboard or jobs-list median
 latency exceeds 200 ms p50 from the client.
@@ -2217,8 +2206,7 @@ violations" for these; defer broader audits to a dedicated phase.
 
 ### 10.9 CI Pipeline (Cross-Reference)
 
-This sits in the migration plan's CI gates section, but the architecture
-implies the pipeline:
+The architecture implies this CI pipeline:
 
 1. `pnpm -r check` (typecheck, including `apps/web`). Compile-time
    guards (`Record<DomainEvent["eventType"], InvalidationHandler>` etc.) fire
@@ -2694,8 +2682,8 @@ the query cache. A missed callsite means a button silently no-ops.
 - An ESLint rule (`no-restricted-syntax`) flags `CustomEvent`
   construction in feature code (allowing only `shared/ports/adapters/`).
 - The Playwright smoke flow exercises the dashboard-KPI →
-  jobs-filter-prefill flow that the legacy custom event powered;
-  deletion regression is caught in E2E.
+  jobs-filter-prefill flow that the custom event powered; deletion regression is
+  caught in E2E.
 
 ### R7. Drift between `@jobhunter/domain-types` Zod schemas and SSE payloads
 
@@ -2769,9 +2757,9 @@ The resume-import wizard stores draft state in Zustand+persist
 can leave a half-completed wizard in an unparseable state.
 
 **Mitigations:**
-- The Zustand `persist` middleware uses a `version` field; the migration
-  function discards the persisted state on schema change rather than
-  attempting to migrate (single-user app, the wizard is restartable).
+- The Zustand `persist` middleware uses a `version` field; the version handler
+  discards the persisted state on schema change rather than attempting to
+  transform it (single-user app, the wizard is restartable).
 - The wizard's first step (`/profile/import/upload`) clears the store
   on entry if `version` is stale.
 - The store's read path narrows the parsed shape with a Zod schema;
@@ -2793,11 +2781,11 @@ invalidation may be dropped because the cache key for the
   echoed in events; the frontend correlates by `runId`, not by
   request-response timing.
 
-### R13. JobId migration window — `apps/api` still accepts `jobKey: string`
+### R13. API job-key compatibility — `apps/api` still accepts `jobKey: string`
 
-The backend is migrating from URL-as-PK to `JobId` per `ddd-target.md`
-§4.1. During this window, the API client signature is `apiClient.deleteJob(jobKey: string, ...)`,
-even though the frontend's domain language is `JobId`.
+The frontend's domain language is `JobId` per `ddd-target.md` §4.1. The API
+client still accepts `jobKey: string` for compatibility:
+`apiClient.deleteJob(jobKey: string, ...)`.
 
 **Mitigations:**
 - The frontend ACL (§6.5) is the single mapping site:
@@ -2916,7 +2904,7 @@ called out in the briefing (§6) with the resolution location:
 | 7 | Profile preview pattern | **Plate editor fed by `/v1/profile/preview.html` keyed on a `cacheKey` derived from the profile mutation count** | §4.4.4 |
 | 8 | Resume import wizard: TanStack Form / Zustand wizard / nested route | **Nested route** for steps; **Zustand+persist** for draft state | §4.4.4 |
 | 9 | SSE consumer: `setQueryData` vs `invalidateQueries` | **Hybrid:** `invalidateQueries` by default; `setQueryData` only for high-frequency `ApplyRunEventRecorded` | §7.5 |
-| 10 | Tenant-scoping in query keys: now vs later | **Now** (`["tenant", tenantId, ...]`); add `LOCAL_TENANT` constant from `@jobhunter/domain-types` | §4.1 |
+| 10 | Tenant-scoping in query keys | **Always tenant-first** (`["tenant", tenantId, ...]`); use `LOCAL_TENANT` from `@jobhunter/domain-types` in local mode | §4.1 |
 | 11 | Error handling: global vs per-query | **Three layers:** global `QueryCache.onError` → toast; per-mutation `onError`; route error boundaries | §4.11 |
 | 12 | Bundle splitting | **Per-route via TanStack Router file-based** (free with the Vite plugin) | §4.3 |
 | 13 | TypeScript strictness for routes | **Strict mode +** `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess` + **route-level Zod schemas** | §2.5 / §4.3 |
@@ -2930,13 +2918,9 @@ called out in the briefing (§6) with the resolution location:
 To make the boundary with the planning team explicit, this doc does
 **not** decide:
 
-- Which phase introduces TanStack Router (the planning team owns
-  sequencing).
-- Whether the SSE endpoint ships in the same phase as the consumer or
-  before (the planning team owns the cross-team coordination with the
-  backend; this doc only specifies the contract).
-- Which feature is built first (the planning team owns the
-  user-experience milestone ordering).
+- Which change introduces TanStack Router.
+- Whether the SSE endpoint and consumer ship together or separately.
+- Which user-facing feature is built first.
 - The precise commit messages, branch names, or PR titles.
 - The CI step ordering (this doc names the steps; the plan owns the
   pipeline file).

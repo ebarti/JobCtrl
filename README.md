@@ -40,7 +40,7 @@ JobHunter has three local runtime components:
   discovery, scoring, materials, PDF rendering, and apply automation.
 
 SQLite and local files are the source of truth. Hosted accounts, billing,
-managed browsers, object storage, and SaaS deployment are deferred; see
+managed browsers, object storage, and SaaS deployment stay out of local mode; see
 [ROADMAP.md](ROADMAP.md).
 
 ## Quick Start
@@ -135,7 +135,7 @@ Common variables:
 - `LLM_MODEL`: choose the default model for the configured provider.
 - `VITE_GOOGLE_MAPS_API_KEY`: optional address search in the Profile form.
 - `CHROME_PATH`: override Chrome/Chromium detection.
-- `JOBHUNTER_RESUME_RENDERER=latex_pdf`: opt into the legacy LaTeX resume
+- `JOBHUNTER_RESUME_RENDERER=latex_pdf`: opt into the LaTeX resume compatibility
   renderer. The default is HTML/CSS printed by Playwright.
 - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`: optional
   OpenTelemetry/Langfuse export. Set `LANGFUSE_DISABLE=1` to opt out.
@@ -188,13 +188,13 @@ explains the disposable database, routes, and refresh process.
   reading path.
 - [docs/architecture.md](docs/architecture.md): current runtime architecture.
 - [docs/job-pipeline-architecture.md](docs/job-pipeline-architecture.md):
-  phase-by-phase pipeline sequence and class diagrams.
+  stage-by-stage pipeline sequence and class diagrams.
 - [docs/local-reliability-qa.md](docs/local-reliability-qa.md): regression
   matrix and QA gates.
 - [docs/decisions.md](docs/decisions.md): accepted architecture decisions.
 - [docs/delivered.md](docs/delivered.md): delivery history.
 - [docs/backlog.md](docs/backlog.md): detailed engineering backlog.
-- [docs/plans/](docs/plans/): historical proposal and implementation records.
+- [docs/plans/](docs/plans/): proposal and implementation records.
 
 ## License
 

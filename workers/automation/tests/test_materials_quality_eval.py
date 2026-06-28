@@ -87,7 +87,7 @@ def test_tailoring_quality_eval_covers_combined_failure_modes(
         "unsupported_metric_blocks",
         "seniority_mismatch_blocks_senior_role",
         "keyword_stuffing_blocks",
-        "ai_voice_blocks",
+        "stock_phrase_signal_warns",
         "missing_evidence_blocks",
     }
 
@@ -112,6 +112,11 @@ def test_tailoring_quality_eval_covers_combined_failure_modes(
         assert result.passed is expected["passed"], (case["id"], result.to_dict())
         for expected_error in expected.get("errors_contain", []):
             assert any(expected_error in error for error in result.errors), (
+                case["id"],
+                result.to_dict(),
+            )
+        for expected_warning in expected.get("warnings_contain", []):
+            assert any(expected_warning in warning for warning in result.warnings), (
                 case["id"],
                 result.to_dict(),
             )
