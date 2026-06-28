@@ -85,6 +85,7 @@ interface ResumePlateEditorProps {
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
   readonly onDraftGateChange?: (state: ResumeDraftGateState) => void;
+  readonly onPrepareApproval?: () => Promise<boolean>;
   readonly onRenderDraft?: () => void;
   readonly onReplyToThread?: (
     thread: ResumeCommentThread,
@@ -106,6 +107,9 @@ export interface ResumeDraftGateState {
   readonly draftId: string | null;
   readonly dirty: boolean;
   readonly hasSavedRevision: boolean;
+  readonly notice: string | null;
+  readonly prepareApproval?: (() => Promise<boolean>) | null;
+  readonly preparing: boolean;
   readonly rendered: boolean;
   readonly reason: string | null;
 }
@@ -911,7 +915,7 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   }
   if (!(node instanceof HTMLElement)) return null;
   const tagName = node.tagName.toLowerCase();
-  const className = node.getAttribute("class") || undefined;
+  const className = resumePlateClassNameFromDom(node);
   const isBlock = shouldRenderResumeElementAsBlock(tagName, className);
   const isInline = !isBlock && RESUME_PLATE_INLINE_TAGS.has(tagName);
   if (!isBlock && !isInline) {
@@ -927,6 +931,13 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
     tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
+}
+
+function resumePlateClassNameFromDom(node: HTMLElement): string | undefined {
+  const className = node.getAttribute("class")?.trim();
+  if (!className) return undefined;
+  const tokens = className.split(/\s+/).map((token) => token === "resume-document" ? "resume-page" : token);
+  return [...new Set(tokens)].join(" ");
 }
 
 function safeResumeHref(value: string | null): string | undefined {
@@ -1005,6 +1016,14 @@ function plateTagForKind(kind: ResumeLineEntry["kind"]): ResumePlateLine["tagNam
   if (kind === "section") return "h2";
   if (kind === "metadata") return "h3";
   return "div";
+}
+
+function resumeClassForLineKind(kind: ResumeLineEntry["kind"]): string {
+  if (kind === "name") return "resume-name";
+  if (kind === "contact") return "resume-contact";
+  if (kind === "section") return "resume-section-title";
+  if (kind === "metadata") return "resume-meta";
+  return "resume-line";
 }
 
 function layoutBoxForLine(
@@ -1734,6 +1753,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
   const showComment = Boolean(comment && (selected || comment.tone === "warn"));
   const className = [
     element.className,
+    lineEntry && !element.className ? resumeClassForLineKind(lineEntry.line.kind) : "",
     element.lineNumber ? "jobhunter-review-line" : "",
     comment ? "has-jobhunter-comment" : "",
     selected ? "jobhunter-selected-line" : "",
@@ -2364,6 +2384,7 @@ export function ResumePlateEditor({
   selectedLine,
   title,
   onDraftGateChange,
+  onPrepareApproval,
   onRenderDraft,
   onReplyToThread,
   onSaveDraft,
@@ -2428,19 +2449,28 @@ export function ResumePlateEditor({
   const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
   const hasSavedRevision = Boolean(draft?.latestRevision);
   const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
+  const savedDraftNeedsRender = hasSavedRevision && !draftRendered;
   const draftGateReason = draft
     ? draftDirty
       ? "Save and render the edited resume before approval."
-      : hasSavedRevision && !draftRendered
-        ? "Render the saved resume draft before approval."
+      : renderPending && savedDraftNeedsRender
+        ? "Rendering saved resume draft before approval."
         : renderResult && !renderResult.ok
           ? "Resolve draft validation errors before approval."
-          : null
+          : renderError && savedDraftNeedsRender
+            ? "Resume render failed; retry render before approval."
+            : savedDraftNeedsRender && !onPrepareApproval
+                ? "Render the saved resume draft before approval."
+                : null
     : null;
+  const draftGateNotice =
+    draft && savedDraftNeedsRender && !draftDirty && !renderPending && !renderError && !(renderResult && !renderResult.ok)
+      ? "Saved draft will render automatically before approval."
+      : null;
   const draftStatus = draftLoading
     ? "loading draft"
     : renderPending
-      ? "rendering replacement"
+      ? "rendering saved draft"
     : savePending
       ? "saving draft"
       : saveError || draftError || renderError || (renderResult && !renderResult.ok)
@@ -2469,10 +2499,24 @@ export function ResumePlateEditor({
       draftId: draft?.draftId ?? null,
       dirty: draftDirty,
       hasSavedRevision,
+      notice: draftGateNotice,
+      prepareApproval: draftGateNotice ? (onPrepareApproval ?? null) : null,
+      preparing: Boolean(renderPending && savedDraftNeedsRender),
       rendered: draftRendered,
       reason: draftGateReason,
     });
-  }, [draft?.draftId, draftDirty, draftGateReason, draftRendered, hasSavedRevision, onDraftGateChange]);
+  }, [
+    draft?.draftId,
+    draftDirty,
+    draftGateNotice,
+    draftGateReason,
+    draftRendered,
+    hasSavedRevision,
+    onDraftGateChange,
+    onPrepareApproval,
+    renderPending,
+    savedDraftNeedsRender,
+  ]);
 
   useEffect(() => {
     if (!seedKey || seededKey.current === seedKey || !seedThreads.length || !onSeedCommentThreads) return;

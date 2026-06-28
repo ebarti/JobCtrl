@@ -78,6 +78,15 @@ def _job_urls(params: dict[str, Any]) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in raw if str(item).strip())
 
 
+def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
+    raw = params.get("sourceIds") or params.get("source_ids") or ()
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise invalid_params("sourceIds must be an array")
+    return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+
+
 # ---------------------------------------------------------------------------
 # Simple state-transition handlers
 # ---------------------------------------------------------------------------
@@ -218,6 +227,7 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
         ),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         job_urls=_job_urls(params),
+        source_ids=_source_ids(params),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),

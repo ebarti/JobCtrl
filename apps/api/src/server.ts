@@ -489,6 +489,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       tailorModels: body.tailorModels,
       continuous: body.continuous,
     };
+    if (body.sourceIds?.length) {
+      command.sourceIds = body.sourceIds;
+    }
     if (body.tailorJudgeModel) {
       command.tailorJudgeModel = body.tailorJudgeModel;
     }

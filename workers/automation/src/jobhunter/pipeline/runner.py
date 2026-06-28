@@ -1140,10 +1140,18 @@ def _load_source_quality_snapshots() -> tuple[SourceQualitySnapshot, ...]:
     return tuple(snapshots)
 
 
-def _plan_discovery_schedule(limit: int) -> DiscoverySchedule:
+def _plan_discovery_schedule(
+    limit: int,
+    *,
+    source_ids: tuple[str, ...] = (),
+) -> DiscoverySchedule:
     scheduler = DiscoveryScheduler()
+    registry = config.load_source_registry()
+    if source_ids:
+        selected = set(source_ids)
+        registry = [entry for entry in registry if entry.source_id in selected]
     return scheduler.plan(
-        registry=config.load_source_registry(),
+        registry=registry,
         quality=_load_source_quality_snapshots(),
         global_limit=limit,
     )
@@ -1297,18 +1305,21 @@ def _run_discover(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    source_ids: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
+    selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
+    source_filter_active = bool(selected_source_ids)
     cancel_event = cancel_event or threading.Event()
     conn = init_db()
     try:
         seed_discovery_control_queues(conn, config.load_source_registry())
     except Exception:
         log.debug("Failed to seed discovery control queues", exc_info=True)
-    schedule = _plan_discovery_schedule(limit)
+    schedule = _plan_discovery_schedule(limit, source_ids=selected_source_ids)
     bounded_workers = max(1, workers)
     start_count = _pipeline_job_count() if limit > 0 else 0
     jobspy_sources = schedule.for_prefix("jobspy")
@@ -1319,7 +1330,13 @@ def _run_discover(
     )
     workday_sources = schedule.for_prefix("workday")
     smart_extract_sources = _smart_extract_sources(schedule)
-    progress_total = 3 + (1 if ats_sources else 0) + 2
+    source_step_count = (
+        (1 if (not source_filter_active or jobspy_sources) else 0)
+        + (1 if ats_sources else 0)
+        + (1 if (not source_filter_active or workday_sources) else 0)
+        + (1 if (not source_filter_active or smart_extract_sources) else 0)
+    )
+    progress_total = source_step_count + 2
     progress_completed = 0
 
     # JobSpy — skip if disabled in config or module not installed
@@ -1542,17 +1559,18 @@ def _run_discover(
         source_results["jobspy"] = run_discovery(**run_kwargs)
         return source_results["jobspy"]
 
-    stats["jobspy"] = _run_discovery_source(
-        "jobspy",
-        "JobSpy",
-        jobspy_sources,
-        run_jobspy,
-        progress_completed=progress_completed,
-        progress_total=progress_total,
-    )
-    progress_completed += 1
-    if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
-        console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
+    if not source_filter_active or jobspy_sources:
+        stats["jobspy"] = _run_discovery_source(
+            "jobspy",
+            "JobSpy",
+            jobspy_sources,
+            run_jobspy,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        progress_completed += 1
+        if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
+            console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
         if ats_sources:
             stats["ats_api"] = _skip_discovery_source(
@@ -1563,22 +1581,24 @@ def _run_discover(
                 progress_total=progress_total,
             )
             progress_completed += 1
-        stats["workday"] = _skip_discovery_source(
-            "workday",
-            "Workday scraper",
-            "limit reached",
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        progress_completed += 1
-        stats["smartextract"] = _skip_discovery_source(
-            "smartextract",
-            "Smart extract",
-            "limit reached",
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        progress_completed += 1
+        if not source_filter_active or workday_sources:
+            stats["workday"] = _skip_discovery_source(
+                "workday",
+                "Workday scraper",
+                "limit reached",
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            progress_completed += 1
+        if not source_filter_active or smart_extract_sources:
+            stats["smartextract"] = _skip_discovery_source(
+                "smartextract",
+                "Smart extract",
+                "limit reached",
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            progress_completed += 1
         return finish_discovery()
 
     if ats_sources:
@@ -1605,22 +1625,24 @@ def _run_discover(
         if isinstance(stats["ats_api"], str) and stats["ats_api"].startswith("error"):
             console.print(f"  [red]Canonical ATS API error:[/red] {stats['ats_api'][7:]}")
         if _discover_limit_consumed(start_count, limit, source_results.get("ats_api")):
-            stats["workday"] = _skip_discovery_source(
-                "workday",
-                "Workday scraper",
-                "limit reached",
-                progress_completed=progress_completed,
-                progress_total=progress_total,
-            )
-            progress_completed += 1
-            stats["smartextract"] = _skip_discovery_source(
-                "smartextract",
-                "Smart extract",
-                "limit reached",
-                progress_completed=progress_completed,
-                progress_total=progress_total,
-            )
-            progress_completed += 1
+            if not source_filter_active or workday_sources:
+                stats["workday"] = _skip_discovery_source(
+                    "workday",
+                    "Workday scraper",
+                    "limit reached",
+                    progress_completed=progress_completed,
+                    progress_total=progress_total,
+                )
+                progress_completed += 1
+            if not source_filter_active or smart_extract_sources:
+                stats["smartextract"] = _skip_discovery_source(
+                    "smartextract",
+                    "Smart extract",
+                    "limit reached",
+                    progress_completed=progress_completed,
+                    progress_total=progress_total,
+                )
+                progress_completed += 1
             return finish_discovery()
 
     # Workday corporate scraper
@@ -1635,27 +1657,29 @@ def _run_discover(
         )
         return source_results["workday"]
 
-    stats["workday"] = _run_discovery_source(
-        "workday",
-        "Workday scraper",
-        workday_sources,
-        run_workday,
-        progress_completed=progress_completed,
-        progress_total=progress_total,
-    )
-    progress_completed += 1
-    if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
-        console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
-    if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
-        stats["smartextract"] = _skip_discovery_source(
-            "smartextract",
-            "Smart extract",
-            "limit reached",
+    if not source_filter_active or workday_sources:
+        stats["workday"] = _run_discovery_source(
+            "workday",
+            "Workday scraper",
+            workday_sources,
+            run_workday,
             progress_completed=progress_completed,
             progress_total=progress_total,
         )
         progress_completed += 1
-        return finish_discovery()
+        if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
+            console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
+        if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
+            if not source_filter_active or smart_extract_sources:
+                stats["smartextract"] = _skip_discovery_source(
+                    "smartextract",
+                    "Smart extract",
+                    "limit reached",
+                    progress_completed=progress_completed,
+                    progress_total=progress_total,
+                )
+                progress_completed += 1
+            return finish_discovery()
 
     # Smart extract
     def run_smart_extract_source() -> dict:
@@ -1672,17 +1696,18 @@ def _run_discover(
         )
         return source_results["smartextract"]
 
-    stats["smartextract"] = _run_discovery_source(
-        "smartextract",
-        "Smart extract",
-        smart_extract_sources,
-        run_smart_extract_source,
-        progress_completed=progress_completed,
-        progress_total=progress_total,
-    )
-    progress_completed += 1
-    if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
-        console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
+    if not source_filter_active or smart_extract_sources:
+        stats["smartextract"] = _run_discovery_source(
+            "smartextract",
+            "Smart extract",
+            smart_extract_sources,
+            run_smart_extract_source,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        progress_completed += 1
+        if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
+            console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
 
     return finish_discovery()
 
@@ -1807,6 +1832,7 @@ def _build_stage_kwargs(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    source_ids: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Build the keyword arguments for a stage runner."""
@@ -1823,6 +1849,8 @@ def _build_stage_kwargs(
         kwargs["tailor_models"] = tailor_models
         kwargs["tailor_judge_model"] = tailor_judge_model
         kwargs["tailor_judge_min_score"] = tailor_judge_min_score
+        if source_ids:
+            kwargs["source_ids"] = source_ids
         if cancel_event is not None:
             kwargs["cancel_event"] = cancel_event
     elif stage == "score":
@@ -2127,6 +2155,7 @@ def _run_stage_streaming(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    source_ids: tuple[str, ...] = (),
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -2147,6 +2176,7 @@ def _run_stage_streaming(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
+        source_ids=source_ids,
         cancel_event=stop_event,
     )
     upstreams = _UPSTREAMS[stage]
@@ -2246,6 +2276,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     tailor_models: tuple[str, ...] = (),
                     tailor_judge_model: str | None = None,
                     tailor_judge_min_score: float | None = None,
+                    source_ids: tuple[str, ...] = (),
                     cancel_event: threading.Event | None = None) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
@@ -2283,6 +2314,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 tailor_models=tailor_models,
                 tailor_judge_model=tailor_judge_model,
                 tailor_judge_min_score=tailor_judge_min_score,
+                source_ids=source_ids,
                 cancel_event=cancel_event,
             )
             result, elapsed, status = _run_stage_observed(
@@ -2316,6 +2348,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    tailor_models: tuple[str, ...] = (),
                    tailor_judge_model: str | None = None,
                    tailor_judge_min_score: float | None = None,
+                   source_ids: tuple[str, ...] = (),
                    cancel_event: threading.Event | None = None) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
@@ -2341,7 +2374,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
             args=(name, tracker, stop_event, min_score, workers,
             validation_mode, limit, rescore, retailor,
             llm_model, tailor_models, tailor_judge_model,
-            tailor_judge_min_score),
+            tailor_judge_min_score, source_ids),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -2396,6 +2429,7 @@ def run_pipeline(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    source_ids: tuple[str, ...] = (),
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict:
@@ -2416,6 +2450,7 @@ def run_pipeline(
         tailor_models: Optional model specs for candidate generation.
         tailor_judge_model: Optional model spec for the structured judge.
         tailor_judge_min_score: Optional minimum judge score required for approval.
+        source_ids: Optional discovery source IDs to run when the discover stage is selected.
 
     Returns:
         Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
@@ -2440,6 +2475,7 @@ def run_pipeline(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            source_ids=source_ids,
             cancel_event=cancel_event,
         )
     finally:
@@ -2463,6 +2499,7 @@ def _run_pipeline_inner(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    source_ids: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
 ) -> dict:
     # Bootstrap
@@ -2537,6 +2574,7 @@ def _run_pipeline_inner(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            source_ids=source_ids,
             cancel_event=cancel_event,
         )
     else:
@@ -2552,6 +2590,7 @@ def _run_pipeline_inner(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            source_ids=source_ids,
             cancel_event=cancel_event,
         )
 

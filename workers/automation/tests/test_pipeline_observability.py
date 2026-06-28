@@ -57,31 +57,37 @@ def _scheduled_source(
     )
 
 
-def _standard_discovery_schedule(_limit: int) -> runner.DiscoverySchedule:
-    return runner.DiscoverySchedule(
-        (
-            _scheduled_source(
-                "jobspy:indeed",
-                kind=SourceKind.BROAD_BOARD,
-                adapter_config={"board": "indeed"},
-            ),
-            _scheduled_source(
-                "greenhouse:barcelona",
-                kind=SourceKind.ATS_API,
-                adapter_config={"ats_kind": "greenhouse", "board_token": "barcelona"},
-            ),
-            _scheduled_source(
-                "workday:acme",
-                kind=SourceKind.ATS_API,
-                adapter_config={"employer_key": "acme"},
-            ),
-            _scheduled_source(
-                "smart_extract:example",
-                kind=SourceKind.SMART_EXTRACT,
-                adapter_config={"name": "Example", "url": "https://example.test/jobs"},
-            ),
-        )
+def _standard_discovery_schedule(
+    _limit: int,
+    *,
+    source_ids: tuple[str, ...] = (),
+) -> runner.DiscoverySchedule:
+    sources = (
+        _scheduled_source(
+            "jobspy:indeed",
+            kind=SourceKind.BROAD_BOARD,
+            adapter_config={"board": "indeed"},
+        ),
+        _scheduled_source(
+            "greenhouse:barcelona",
+            kind=SourceKind.ATS_API,
+            adapter_config={"ats_kind": "greenhouse", "board_token": "barcelona"},
+        ),
+        _scheduled_source(
+            "workday:acme",
+            kind=SourceKind.ATS_API,
+            adapter_config={"employer_key": "acme"},
+        ),
+        _scheduled_source(
+            "smart_extract:example",
+            kind=SourceKind.SMART_EXTRACT,
+            adapter_config={"name": "Example", "url": "https://example.test/jobs"},
+        ),
     )
+    if source_ids:
+        selected = set(source_ids)
+        sources = tuple(source for source in sources if source.source_id in selected)
+    return runner.DiscoverySchedule(sources)
 
 
 @pytest.fixture(autouse=True)
@@ -470,7 +476,7 @@ def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
     monkeypatch.setattr(
         runner,
         "_plan_discovery_schedule",
-        lambda _limit: runner.DiscoverySchedule(
+        lambda _limit, **_kwargs: runner.DiscoverySchedule(
             (
                 scheduled_source(
                     "jobspy:linkedin",
@@ -530,6 +536,45 @@ def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
     runner._run_discover(workers=4, limit=0)
 
     assert calls == {"boards": ["linkedin"], "employers": ["acme"]}
+
+
+def test_discover_source_ids_run_only_selected_source_group(monkeypatch):
+    calls: list[tuple[str, list[str], int]] = []
+
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(
+        runner.config,
+        "load_employers_config",
+        lambda: {"employers": {"acme": {"name": "Acme"}}},
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.jobspy",
+        SimpleNamespace(run_discovery=lambda **_kwargs: pytest.fail("JobSpy should not run")),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(
+            run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: calls.append(
+                ("workday", sorted((employers or {}).keys()), workers)
+            )
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=lambda **_kwargs: pytest.fail("Smart extract should not run")),
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    result = runner._run_discover(workers=4, limit=10, source_ids=("workday:acme",))
+
+    assert calls == [("workday", ["acme"], 4)]
+    assert result["jobspy"] is None
+    assert result["workday"] == "ok"
+    assert result["smartextract"] is None
+    assert result["enrichment"] == "ok"
 
 
 def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:

@@ -18,6 +18,7 @@ export interface StageTriggerConfig {
   tailorModels: string;
   tailorJudgeModel: string;
   tailorJudgeMinScore: string;
+  discoverySourceId: string;
   headless: boolean;
   model: string;
   continuous: boolean;
@@ -44,6 +45,7 @@ const defaultConfig: StageTriggerConfig = {
   tailorModels: "",
   tailorJudgeModel: "",
   tailorJudgeMinScore: "",
+  discoverySourceId: "",
   headless: false,
   model: "default",
   continuous: false,

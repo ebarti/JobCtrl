@@ -63,6 +63,7 @@ class JobPipelineWorkflowInput:
     tailor_judge_min_score: float | None = None
     job_url: str | None = None
     job_urls: tuple[str, ...] = ()
+    source_ids: tuple[str, ...] = ()
     score_current_policy_only: bool = False
     tailor_current_policy_only: bool = False
     suppress_existing_artifacts: bool = False
@@ -171,6 +172,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
+                source_ids=payload.source_ids,
                 llm_model=payload.llm_model,
                 workflow_id=workflow_id,
             ),

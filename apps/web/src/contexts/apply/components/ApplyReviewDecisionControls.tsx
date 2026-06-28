@@ -1,4 +1,5 @@
 import type { ApplyReviewDecisionValue, ApplyReviewQueueItem } from "@jobhunter/contracts";
+import { useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations.js";
@@ -6,6 +7,9 @@ import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations
 export interface ApplyReviewDecisionControlsProps {
   readonly item: ApplyReviewQueueItem;
   readonly approvalDisabledReason?: string | null;
+  readonly approvalNotice?: string | null;
+  readonly approvalPreparing?: boolean;
+  readonly onPrepareApproval?: (() => Promise<boolean>) | null;
 }
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
@@ -40,15 +44,32 @@ function hasCompletedDryRun(item: ApplyReviewQueueItem): boolean {
 
 export function ApplyReviewDecisionControls({
   approvalDisabledReason = null,
+  approvalNotice = null,
+  approvalPreparing = false,
   item,
+  onPrepareApproval = null,
 }: ApplyReviewDecisionControlsProps) {
   const decision = useApplyReviewDecisionMutation();
-  const pending = decision.isPending;
+  const [preparingDecision, setPreparingDecision] = useState<ApplyReviewDecisionValue | null>(null);
+  const pending = decision.isPending || preparingDecision !== null || approvalPreparing;
   const primaryDecisions = PRIMARY_DECISIONS.filter(
     (value) => value !== "approve_submit" || hasCompletedDryRun(item),
   );
+  const approvalMessage = approvalDisabledReason ?? approvalNotice;
 
-  const submitDecision = (value: ApplyReviewDecisionValue) => {
+  const submitDecision = async (value: ApplyReviewDecisionValue) => {
+    if (pending) return;
+    if (value.startsWith("approve_") && onPrepareApproval) {
+      setPreparingDecision(value);
+      try {
+        const prepared = await onPrepareApproval();
+        if (!prepared) return;
+      } catch {
+        return;
+      } finally {
+        setPreparingDecision(null);
+      }
+    }
     decision.mutate({
       jobId: item.jobKey,
       body: {
@@ -69,15 +90,17 @@ export function ApplyReviewDecisionControls({
           variant={value === "decline" ? "outline" : value === "defer" ? "secondary" : "default"}
           disabled={pending || (approvalDisabledReason !== null && value.startsWith("approve_"))}
           aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
-          title={value.startsWith("approve_") ? approvalDisabledReason ?? undefined : undefined}
-          onClick={() => submitDecision(value)}
+          title={value.startsWith("approve_") ? approvalMessage ?? undefined : undefined}
+          onClick={() => {
+            void submitDecision(value);
+          }}
         >
-          {pending ? "Saving" : DECISION_LABELS[value]}
+          {preparingDecision === value ? "Rendering" : decision.isPending ? "Saving" : DECISION_LABELS[value]}
         </Button>
       ))}
-      {approvalDisabledReason ? (
+      {approvalMessage ? (
         <span className="apply-review-approval-block" role="status">
-          {approvalDisabledReason}
+          {approvalMessage}
         </span>
       ) : null}
       {item.review.state !== "pending" ? (

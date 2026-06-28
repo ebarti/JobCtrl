@@ -10,8 +10,8 @@ describe("DiscoveryProductControls", () => {
   it("renders source health, quarantine review, and manual capture queues", async () => {
     renderWithProviders(<DiscoveryProductControls />);
 
-    await screen.findByText("Greenhouse Example");
-    expect(screen.getByText("https://example.com/careers")).toBeInTheDocument();
+    await screen.findByText("LinkedIn");
+    expect(screen.getByText("jobspy:linkedin")).toBeInTheDocument();
     expect(screen.getByText("Engineering Manager")).toBeInTheDocument();
     expect(
       screen.getByText("https://example.com/protected/job"),
@@ -19,7 +19,7 @@ describe("DiscoveryProductControls", () => {
 
     const user = userEvent.setup();
     await user.click(
-      screen.getByRole("button", { name: /preview greenhouse example/i }),
+      screen.getByRole("button", { name: /preview linkedin/i }),
     );
     expect(await screen.findByText("Product Engineer")).toBeInTheDocument();
   });

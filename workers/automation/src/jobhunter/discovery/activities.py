@@ -30,6 +30,7 @@ class DiscoverActivityInput:
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
+    source_ids: tuple[str, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
@@ -69,6 +70,7 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
+            source_ids=payload.source_ids,
             llm_model=payload.llm_model,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,

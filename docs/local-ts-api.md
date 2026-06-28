@@ -470,11 +470,14 @@ The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, the default pipeline LLM model (`llmModel`, default
 `gemini:gemini-3.5-flash`), tailoring LLM controls (`tailorModels`,
 `tailorJudgeModel`, `tailorJudgeMinScore`), and apply flags (`headless`,
-`model`, `continuous`). `model` remains apply-only; scoring, tailoring, and
-cover generation use `llmModel` unless a tailoring generator or judge override
-is supplied. Low-level internal requests can still pass `rescore` and
-`retailor` flags for the `score` and `tailor` maintenance stages. The route
-dispatches the ordered stage list to JSON-RPC
+`model`, `continuous`). Discover requests may also pass `sourceIds`, a
+deduplicated list of source-registry IDs from `GET /v1/discovery/sources`; when
+present, the Python runner filters the discovery schedule before any provider
+crawl starts. `model` remains apply-only; scoring, tailoring, and cover
+generation use `llmModel` unless a tailoring generator or judge override is
+supplied. Low-level internal requests can still pass `rescore` and `retailor`
+flags for the `score` and `tailor` maintenance stages. The route dispatches the
+ordered stage list to JSON-RPC
 `run_stage`, which starts `JobPipelineWorkflow`; when `discover` runs, the
 Python runner discovers jobs, drains detail enrichment, and then drains
 internal preparation work for scoring, tailoring, cover generation for
@@ -516,10 +519,13 @@ fanout.
 The `limit` field is forwarded to every selected stage. For `discover`, the
 Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's
 internal detail-enrichment queue drain, and the preparation work-item drains.
-Bounded source crawls run sequentially, skipping remaining sources once the cap
-is reached so `limit: 1` is usable for local debugging. Detail enrichment uses
-the same `limit` and `workers` values as Discovery; `enrich` remains an
-internal retry/diagnostic stage, not a top-level product `run-stage` value.
+Bounded source crawls run sequentially, skipping remaining selected sources once
+the cap is reached so `limit: 1` is usable for local debugging. If `sourceIds`
+is provided, unselected provider groups are not executed or recorded as skipped;
+selected sources that the scheduler disables or quarantines still emit skipped
+source-run telemetry. Detail enrichment uses the same `limit` and `workers`
+values as Discovery; `enrich` remains an internal retry/diagnostic stage, not a
+top-level product `run-stage` value.
 
 Discovery preparation uses `preparation_work_items` to keep internal subwork
 durable and idempotent. The work item kinds are `score_job`, `tailor_resume`,
@@ -635,6 +641,9 @@ sets a larger window. Spain or Europe targets set JobSpy's Indeed country to
 Spain, reject America-only non-remote locations, and filter API-visible
 America-only source rows from `GET /v1/discovery/sources`. Discover limits are
 new-job budgets: duplicate/rediscovered observations do not consume the cap.
+The Pipelines tab uses the same source registry response to offer an optional
+source selector for manual Discover runs; leaving it blank keeps the existing
+all-runnable-source behavior.
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same

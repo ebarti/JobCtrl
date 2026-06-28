@@ -1100,11 +1100,20 @@ export const RunPipelineStagesRequestSchema = z
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
+    sourceIds: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
   })
   .strict()
   .refine((value) => new Set(value.stages).size === value.stages.length, {
     message: "stages must be unique.",
     path: ["stages"],
+  })
+  .refine((value) => !value.sourceIds || new Set(value.sourceIds).size === value.sourceIds.length, {
+    message: "sourceIds must be unique.",
+    path: ["sourceIds"],
+  })
+  .refine((value) => !value.sourceIds?.length || value.stages.includes("discover"), {
+    message: "sourceIds can only be used when running discover.",
+    path: ["sourceIds"],
   });
 export type RunPipelineStagesRequest = z.infer<typeof RunPipelineStagesRequestSchema>;
 
@@ -2494,6 +2503,7 @@ export interface ActionCommandPayload {
   suppressExistingArtifacts?: boolean;
   headless?: boolean;
   continuous?: boolean;
+  sourceIds?: string[];
   runId?: string;
   reason?: string;
   observationsJsonPath?: string;

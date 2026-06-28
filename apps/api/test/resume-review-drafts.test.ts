@@ -601,6 +601,12 @@ describe("resume review draft API", () => {
         status: "approved",
       });
       expect(replacementPdf?.metadata_json).toContain("html_path");
+      const replacementPdfMetadata = JSON.parse(replacementPdf?.metadata_json ?? "{}") as { html_path?: string };
+      const replacementHtml = fs.readFileSync(replacementPdfMetadata.html_path ?? "", "utf8");
+      expect(replacementHtml).toContain('class="resume-page"');
+      expect(replacementHtml).toContain('class="resume-name"');
+      expect(replacementHtml).toContain('class="resume-section-title"');
+      expect(replacementHtml).not.toContain('class="resume-document"');
       expect(replacementPdf?.path.endsWith(".pdf")).toBe(true);
       expect(replacementText?.path.endsWith(".txt")).toBe(true);
       expect(fs.existsSync(replacementPdf?.path ?? "")).toBe(true);

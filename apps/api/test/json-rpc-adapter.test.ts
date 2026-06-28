@@ -582,6 +582,33 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
+  it("passes selected discovery source IDs through global run-stage RPC", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "discover",
+        stages: ["discover"],
+        limit: 25,
+        sourceIds: ["jobspy:linkedin"],
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: expect.objectContaining({
+        stage: "discover",
+        stages: ["discover"],
+        limit: 25,
+        sourceIds: ["jobspy:linkedin"],
+      }),
+    });
+  });
+
   it("passes tailoring model controls through run-stage RPC without reusing apply model", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);

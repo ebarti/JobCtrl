@@ -43,7 +43,6 @@ type MaterialStatus = {
   readonly kind: ApplyReviewQueueItem["applyAudit"]["state"];
   readonly label: string;
   readonly tone: "ok" | "info" | "warn";
-  readonly summary: string;
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
@@ -61,7 +60,6 @@ function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
     kind: item.applyAudit.state,
     label: item.applyAudit.label,
     tone: auditTone(item.applyAudit.state),
-    summary: item.applyAudit.summary,
   };
 }
 
@@ -69,47 +67,6 @@ function auditTone(state: ApplyReviewQueueItem["applyAudit"]["state"]): Material
   if (state === "ready") return "ok";
   if (state === "preparing") return "info";
   return "warn";
-}
-
-function latestApplyContext(item: ApplyReviewQueueItem): string {
-  const run = item.latestApplyRun;
-  if (!run) {
-    return "No apply run yet.";
-  }
-  const mode = run.dryRun ? "Dry run" : "Submit";
-  const timestamp = run.startedAt ? ` · ${formatDateTime(run.startedAt)}` : "";
-  const reason = cleanRepairReason(run.result);
-  if (isFailedApplyRun(run)) {
-    return `${mode} failed${reason ? `: ${reason}` : ""}${timestamp}`;
-  }
-  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
-  if (status.includes("running")) {
-    return `${mode} running${timestamp}`;
-  }
-  if (status.includes("queued") || status.includes("pending")) {
-    return `${mode} queued${timestamp}`;
-  }
-  if (status.includes("succeeded") || status.includes("complete")) {
-    return `${mode} completed${timestamp}`;
-  }
-  return `${mode} recorded${timestamp}`;
-}
-
-function isFailedApplyRun(run: ApplyRun): boolean {
-  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
-  return status.includes("failed") || status.includes("skipped");
-}
-
-function cleanRepairReason(value: string | null | undefined): string | null {
-  const text = String(value ?? "")
-    .replace(/_/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^(blocked|failed|skipped|error)\s*:\s*/i, "");
-  if (!text || /^(blocked|failed|stale|error)$/i.test(text)) {
-    return null;
-  }
-  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function selectedItem(items: readonly ApplyReviewQueueItem[], selectedJobKey: string | null) {
@@ -656,6 +613,18 @@ function ResumeLineReview({
   const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
   const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
   const draftLoading = createDraft.isPending && !baseDraft;
+  const renderDraftAsync = renderDraft.mutateAsync;
+  const handleRenderDraft = useCallback(async () => {
+    if (!draft?.currentRevisionId) return false;
+    const result = await renderDraftAsync({
+      draftId: draft.draftId,
+      jobId: item.jobKey,
+      body: {
+        draftRevisionId: draft.currentRevisionId,
+      },
+    });
+    return result.ok;
+  }, [draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -704,15 +673,9 @@ function ResumeLineReview({
         selectedLine={selectedLine}
         title="Tailored resume preview"
         onDraftGateChange={onDraftGateChange}
+        onPrepareApproval={handleRenderDraft}
         onRenderDraft={() => {
-          if (!draft?.currentRevisionId) return;
-          renderDraft.mutate({
-            draftId: draft.draftId,
-            jobId: item.jobKey,
-            body: {
-              draftRevisionId: draft.currentRevisionId,
-            },
-          });
+          void handleRenderDraft();
         }}
         onReplyToThread={(thread, input) => {
           replyToComment.mutate({
@@ -811,26 +774,31 @@ function ResumeReviewSurface({
 }
 
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
-  const status = materialStatus(item);
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const templatesQuery = useResumeTemplatesQuery();
   const setJobTemplate = useSetJobResumeTemplateMutation();
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
+  const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
     dirty: false,
     hasSavedRevision: false,
+    notice: null,
+    preparing: false,
     rendered: false,
     reason: null,
   });
   const handleDraftGateChange = useCallback((next: ResumeDraftGateState) => {
+    prepareApprovalRef.current = next.prepareApproval ?? null;
     setDraftGate((previous) =>
       previous.draftId === next.draftId &&
       previous.dirty === next.dirty &&
       previous.hasSavedRevision === next.hasSavedRevision &&
+      previous.notice === next.notice &&
+      previous.preparing === next.preparing &&
       previous.rendered === next.rendered &&
       previous.reason === next.reason
         ? previous
@@ -843,10 +811,14 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       draftId: null,
       dirty: false,
       hasSavedRevision: false,
+      notice: null,
+      preparing: false,
       rendered: false,
       reason: null,
     });
+    prepareApprovalRef.current = null;
   }, [item.jobKey]);
+  const handlePrepareApproval = useCallback(() => prepareApprovalRef.current?.() ?? Promise.resolve(false), []);
   const templateMutationError =
     setJobTemplate.error instanceof Error
       ? setJobTemplate.error.message
@@ -855,29 +827,44 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         : null;
   const handleTemplateChange = useCallback(
     (templateId: string | null) => {
-      setJobTemplate.mutate({
-        jobKey: item.jobKey,
-        body: { templateId, versionId: null },
-      });
+      setJobTemplate.mutate(
+        {
+          jobKey: item.jobKey,
+          body: { templateId, versionId: null },
+        },
+        {
+          onSuccess: (_data, variables) => {
+            ensureCurrentMaterials.mutate({ jobKey: variables.jobKey, body: { force: true } });
+          },
+        },
+      );
     },
-    [item.jobKey, setJobTemplate],
+    [ensureCurrentMaterials, item.jobKey, setJobTemplate],
   );
-  const handleEnsureCurrent = useCallback(() => {
-    ensureCurrentMaterials.mutate({ jobKey: item.jobKey, body: { force: true } });
-  }, [ensureCurrentMaterials, item.jobKey]);
 
   return (
     <main className="apply-review-selected">
       <header className="apply-review-selected-head">
-        <div className="title-stack">
-          <span className="eyebrow">Selected application</span>
-          <b>{item.title}</b>
-          <span>
-            {item.company} · score {item.fitScore ?? "-"} · {latestApplyContext(item)}
-          </span>
+        <div
+          className="apply-review-selected-context"
+          aria-label={`Review controls and material facts for ${item.title}`}
+        >
+          {reviewState ? <span className="tag muted">Current decision: {reviewState}.</span> : null}
+          <CompensationSummaryStrip
+            summary={item.compensationSummary}
+            label="Compensation"
+          />
+          <ApplyAuditFacts item={item} />
+          <JobResumeTemplateSelect
+            current={item.materialsPreview.resumeTemplate}
+            disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+            onTemplateChange={handleTemplateChange}
+            refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+            templates={templatesQuery.data?.templates ?? []}
+          />
+          {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
         </div>
         <div className="apply-review-selected-actions">
-          <span className={`tag ${status.tone}`}>{status.label}</span>
           <button
             aria-label={`Open job detail for ${item.title}`}
             className="tab"
@@ -896,7 +883,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               ariaLabel={`Stop apply run for ${item.title}`}
             />
           ) : null}
-          <ApplyReviewDecisionControls item={item} approvalDisabledReason={draftGate.reason} />
+          <ApplyReviewDecisionControls
+            item={item}
+            approvalDisabledReason={draftGate.reason}
+            approvalNotice={draftGate.notice}
+            approvalPreparing={draftGate.preparing}
+            onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
+          />
         </div>
       </header>
 
@@ -906,25 +899,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           onClose={() => setDetailJobKey(null)}
         />
       ) : null}
-
-      <div className="apply-review-status-note">
-        <b>{status.summary}</b>
-        {reviewState ? <span>Current decision: {reviewState}.</span> : null}
-        <CompensationSummaryStrip
-          summary={item.compensationSummary}
-          label="Compensation"
-        />
-        <ApplyAuditFacts item={item} />
-        <JobResumeTemplateSelect
-          current={item.materialsPreview.resumeTemplate}
-          disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-          onEnsureCurrent={handleEnsureCurrent}
-          onTemplateChange={handleTemplateChange}
-          refreshing={ensureCurrentMaterials.isPending}
-          templates={templatesQuery.data?.templates ?? []}
-        />
-        {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
-      </div>
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>
         <article className="apply-review-pane">

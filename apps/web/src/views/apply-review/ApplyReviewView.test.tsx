@@ -1,14 +1,17 @@
 import type {
+  ApplyReviewDecisionRequest,
+  ApplyReviewDecisionResponse,
   ArtifactTailoringExplanation,
   ResumeCommentThread,
   ResumeReviewCommentThreadSeedRequest,
   ResumeReviewDraft,
+  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftRevision,
   ResumeReviewEditDelta,
 } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,6 +28,7 @@ import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
 
 let htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
+let htmlPreviewOverride: string | null = null;
 
 const TEST_RESUME_SECTION_HEADINGS = new Set([
   "core skills",
@@ -145,6 +149,17 @@ function buildPreviewHtmlFromText(text: string): string {
     .resume-bullets li { display: list-item; list-style: disc outside; }
     .resume-skills-list { list-style: none; margin: 1.1mm 0 0 0; padding: 0; }
   </style></head><body>${body}</body></html>`;
+}
+
+function buildLegacyPromotedDraftHtml(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body>
+    <main class="resume-document">
+      <h1 data-resume-layout-target="edited:line:1" data-resume-line-number="1" data-resume-page="1">Principal Platform Engineer</h1>
+      <p data-resume-layout-target="edited:line:2" data-resume-line-number="2" data-resume-page="1">principal@example.com | https://example.com/profile</p>
+      <h2 data-resume-layout-target="edited:line:3" data-resume-line-number="3" data-resume-page="1">Experience</h2>
+      <li data-resume-layout-target="edited:line:4" data-resume-line-number="4" data-resume-page="1">Restored incident response automation.</li>
+    </main>
+  </body></html>`;
 }
 
 async function findResumeShadowRoot(): Promise<HTMLElement> {
@@ -367,6 +382,7 @@ function jsonResponse(body: unknown) {
 
 beforeEach(() => {
   htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
+  htmlPreviewOverride = null;
   const originalFetch = globalThis.fetch.bind(globalThis);
   vi.stubGlobal(
     "fetch",
@@ -375,7 +391,7 @@ beforeEach(() => {
       if (url.includes("/preview.html")) {
         return {
           ok: true,
-          text: async () => buildPreviewHtmlFromText(htmlPreviewResumeText ?? ""),
+          text: async () => htmlPreviewOverride ?? buildPreviewHtmlFromText(htmlPreviewResumeText ?? ""),
         };
       }
       const draftRoute = url.match(/\/v1\/jobs\/([^/]+)\/resume-review\/draft/);
@@ -792,7 +808,18 @@ describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    const selectedHeader = document.querySelector(".apply-review-selected-head");
+    expect(selectedHeader).toBeInstanceOf(HTMLElement);
+    const header = within(selectedHeader as HTMLElement);
+    expect(header.queryByText("Selected application")).not.toBeInTheDocument();
+    expect(header.queryByText("Principal Platform Engineer")).not.toBeInTheDocument();
+    expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
+    expect(header.queryByText("materials ready")).not.toBeInTheDocument();
+    expect(document.querySelector(".apply-review-status-note")).not.toBeInTheDocument();
+    expect(header.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
+    expect(header.getByLabelText("Resume template")).toBeInTheDocument();
+    expect(header.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
@@ -830,7 +857,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/signals/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Derived from existing scoring evidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence groups/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Dry run completed/i)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
     expect(screen.getByText("reported company-role market")).toBeInTheDocument();
@@ -867,7 +894,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
-  it("assigns a resume template override for the selected job", async () => {
+  it("assigns a resume template override and refreshes materials automatically", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const setJobResumeTemplate = vi.fn(async (_jobKey: string, body: { templateId?: string | null }) => ({
       ok: true as const,
@@ -886,10 +913,19 @@ describe("<ApplyReviewView>", () => {
         : null,
       templateState: null,
     }));
+    const ensureCurrentResumeMaterials = vi.fn(async (_jobKey: string, _body: { force?: boolean }) => ({
+      ok: true as const,
+      jobKey,
+      status: "not_required" as const,
+      templateState: null,
+      attempt: null,
+      generation: null,
+      message: "Resume materials already use the effective template.",
+    }));
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
-        api: { setJobResumeTemplate },
+        api: { ensureCurrentResumeMaterials, setJobResumeTemplate },
       }),
     });
 
@@ -901,6 +937,12 @@ describe("<ApplyReviewView>", () => {
         versionId: null,
       }),
     );
+    await waitFor(() =>
+      expect(ensureCurrentResumeMaterials).toHaveBeenCalledWith(jobKey, {
+        force: true,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
   });
 
   it("restores the latest saved resume review draft in the Plate editor", async () => {
@@ -934,6 +976,28 @@ describe("<ApplyReviewView>", () => {
     );
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
     expect(screen.getByText("saved revision 1")).toBeInTheDocument();
+  });
+
+  it("renders promoted draft HTML through the same page classes as the profile preview", async () => {
+    htmlPreviewOverride = buildLegacyPromotedDraftHtml();
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const page = shadow.querySelector(".resume-page");
+
+    expect(page).toBeTruthy();
+    expect(page?.querySelector(".resume-name")).toHaveTextContent("Principal Platform Engineer");
+    expect(page?.querySelector(".resume-contact")).toHaveTextContent("principal@example.com");
+    expect(page?.querySelector(".resume-section-title")).toHaveTextContent("Experience");
+    expect(page?.querySelector(".resume-line")).toHaveTextContent("Restored incident response automation.");
+    expect(shadow.querySelector(".resume-document")).toBeNull();
   });
 
   it("normalizes saved entry heading rows so editing does not add spacer grid tracks", async () => {
@@ -1013,12 +1077,21 @@ describe("<ApplyReviewView>", () => {
 
     const sizeInput = screen.getByLabelText("Size");
     await userEvent.clear(sizeInput);
-    await userEvent.type(sizeInput, "1.1");
-    await waitFor(() => expect(bodyLine.style.fontSize).toBe("1.1em"));
-    expect(nameLine.style.fontSize).toBe("");
+    fireEvent.change(sizeInput, { target: { value: "1.1" } });
+    fireEvent.blur(sizeInput);
+    await waitFor(() =>
+      expect(shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").style.fontSize).toBe(
+        "1.1em",
+      ),
+    );
+    expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontSize).toBe("");
 
     await userEvent.click(document.body);
-    await waitFor(() => expect(bodyLine.className).not.toContain("jobhunter-selected-line"));
+    await waitFor(() =>
+      expect(
+        shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").className,
+      ).not.toContain("jobhunter-selected-line"),
+    );
   });
 
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
@@ -1050,7 +1123,7 @@ describe("<ApplyReviewView>", () => {
     expect(createResumeReviewDraft).toHaveBeenCalled();
   });
 
-  it("blocks approval until a saved draft is rendered into replacement artifacts", async () => {
+  it("renders a saved draft automatically when approval is requested", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
       editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
       plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
@@ -1060,7 +1133,7 @@ describe("<ApplyReviewView>", () => {
       state: "promoted",
       updatedAt: "2026-06-24T10:10:00.000Z",
     };
-    const renderResumeReviewDraft = vi.fn(async () => ({
+    const renderResponse = {
       ok: true as const,
       draft: promotedDraft,
       validation: { passed: true, errors: [], warnings: [] },
@@ -1079,13 +1152,34 @@ describe("<ApplyReviewView>", () => {
         },
       },
       layoutBoxCount: 3,
-    }));
+    } satisfies Extract<ResumeReviewDraftRenderResponse, { ok: true }>;
+    let resolveRender: ((response: typeof renderResponse) => void) | null = null;
+    const renderResumeReviewDraft = vi.fn(
+      () =>
+        new Promise<typeof renderResponse>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
+    const decideApplyReview = vi.fn(
+      async (jobKey: string, body: ApplyReviewDecisionRequest): Promise<ApplyReviewDecisionResponse> => ({
+        ok: true,
+        decision: {
+          decisionId: "decision-rendered-draft",
+          jobKey,
+          decision: body.decision,
+          reason: body.reason ?? null,
+          decidedBy: body.decidedBy,
+          decidedAt: "2026-06-24T10:15:00.000Z",
+        },
+      }),
+    );
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
           applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
           createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          decideApplyReview,
           renderResumeReviewDraft,
           seedResumeReviewCommentThreads: vi.fn(async () => ({
             ok: true as const,
@@ -1100,16 +1194,28 @@ describe("<ApplyReviewView>", () => {
 
     await findResumeShadowRoot();
     const approveDryRun = screen.getByRole("button", { name: /Approve dry run/i });
-    await waitFor(() => expect(approveDryRun).toBeDisabled());
-    expect(screen.getByText("Render the saved resume draft before approval.")).toBeInTheDocument();
+    await waitFor(() => expect(approveDryRun).not.toBeDisabled());
+    expect(screen.getByText("Saved draft will render automatically before approval.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Defer for Principal Platform Engineer/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /Decline for Principal Platform Engineer/i })).not.toBeDisabled();
 
-    await userEvent.click(screen.getByRole("button", { name: "render replacement" }));
-
+    await userEvent.click(approveDryRun);
     await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledWith(draft.draftId, {
       draftRevisionId: draft.currentRevisionId,
     }));
-    await waitFor(() => expect(approveDryRun).not.toBeDisabled());
-    expect(screen.queryByText("Render the saved resume draft before approval.")).not.toBeInTheDocument();
+    expect(approveDryRun).toBeDisabled();
+    expect(approveDryRun).toHaveTextContent("Rendering");
+
+    expect(resolveRender).not.toBeNull();
+    resolveRender!(renderResponse);
+    await waitFor(() =>
+      expect(decideApplyReview).toHaveBeenCalledWith(sampleApplyReviewQueue.items[0]!.jobKey, {
+        decision: "approve_dry_run",
+        reason: "Approved for dry-run validation from the review queue.",
+        decidedBy: "user",
+      }),
+    );
+    expect(screen.queryByText("Saved draft will render automatically before approval.")).not.toBeInTheDocument();
   });
 
   it("lets the user reply to a persisted JobHunter line comment without hiding source context", async () => {
@@ -2055,7 +2161,7 @@ describe("<ApplyReviewView>", () => {
 
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
-    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });

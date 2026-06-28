@@ -18,6 +18,33 @@ import type {
 import type { Ports } from "../shared/providers/PortsProvider.js";
 import { sampleResumeTemplateListResponse } from "./fixtures/projections.js";
 
+const sampleDiscoverySourceRegistry = {
+  ok: true as const,
+  sources: [
+    {
+      sourceId: "jobspy:linkedin",
+      kind: "broad_board" as const,
+      displayName: "LinkedIn",
+      owner: "system" as const,
+      priority: "standard" as const,
+      state: "active" as const,
+      policyId: "jobspy_default",
+      recommendedState: "normal" as const,
+      lastRunId: null,
+      lastRunCompletedAt: null,
+      lastErrorClass: null,
+      consecutiveFailures: 0,
+      observedJobs: 0,
+      newJobs: 0,
+      duplicateRate: null,
+      activeVerificationRate: null,
+      fullDescriptionSuccessRate: null,
+      applyUrlSuccessRate: null,
+      qualityTrend: "unknown" as const,
+    },
+  ],
+};
+
 export class FakeEventStreamPort implements EventStreamPort {
   status: EventStreamStatus = "open";
   readonly subscriptions: FakeSubscription[] = [];
@@ -145,6 +172,7 @@ export interface BuildTestPortsOptions {
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
   const baseApi = new FetchApiClientAdapter();
   const templateApiDefaults: Partial<Ports["api"]> = {
+    discoverySources: vi.fn(async () => sampleDiscoverySourceRegistry),
     resumeTemplates: vi.fn(async () => sampleResumeTemplateListResponse),
     saveResumeTemplate: vi.fn(async (body) => ({
       ok: true as const,
