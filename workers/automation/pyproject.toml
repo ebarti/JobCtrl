@@ -89,6 +89,10 @@ include = ["src", "tests"]
 pythonVersion = "3.11"
 
 [tool.uv]
+# python-jobspy 1.1.82 still caps markdownify below the patched 0.14.1
+# release. Keep this override until upstream loosens its dependency metadata.
+override-dependencies = ["markdownify==0.14.1"]
+
 # The workspace dependency cutoff (UV_EXCLUDE_NEWER) blocks google-antigravity
 # 0.1.2 (published 2026-06-04). The Antigravity (Gemini) ensemble leg needs it;
 # this per-package override (mirroring ~/Github/mestre) lets just this package

@@ -529,13 +529,24 @@ class _RecordingPdfRenderer:
     def __init__(self) -> None:
         self.calls = []
 
-    def render_resume_to_pdf(self, *, tailored_payload, profile_dict, output_path, created_at):
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ):
         self.calls.append(
             {
                 "tailored_payload": tailored_payload,
                 "profile_dict": profile_dict,
                 "output_path": output_path,
                 "created_at": created_at,
+                "resume_theme": resume_theme,
+                "resume_template": resume_template,
             }
         )
         Path(output_path).write_bytes(b"%PDF-tailored")
@@ -552,7 +563,16 @@ class _RecordingPdfRenderer:
 
 
 class _FailingPdfRenderer:
-    def render_resume_to_pdf(self, *, tailored_payload, profile_dict, output_path, created_at):
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ):
         raise RuntimeError("latex failed")
 
     def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):

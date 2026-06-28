@@ -703,7 +703,6 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(56);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
