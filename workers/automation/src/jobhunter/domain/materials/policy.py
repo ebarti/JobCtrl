@@ -239,6 +239,7 @@ def adapt_requirement_led_controls(
     *,
     tailoring_policy: MappingABC[str, Any] | None,
     writing_style: MappingABC[str, Any] | None,
+    revision_gates: MappingABC[str, Any] | None = None,
     required_experience_entry_ids: tuple[str, ...] = (),
     required_bullets_by_experience_id: MappingABC[str, Any] | None = None,
     required_skills_by_category_id: MappingABC[str, Any] | None = None,
@@ -318,6 +319,7 @@ def adapt_requirement_led_controls(
             keyword_emphasis=str(style.get("keyword_emphasis", style.get("keyword_density", "natural"))),
             avoid_first_person=bool(style.get("avoid_first_person", True)),
         ),
+        revision_gates=RevisionGatePolicy(**_clean_mapping(revision_gates or {})),
         additional_guidance=additional_guidance,
     )
 

@@ -190,6 +190,12 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
     rules["max_experience_bullets"] = _coerce_positive_int(rules.get("max_experience_bullets"), default=4)
     rules["tailoring_policy"] = _dict_or_empty(rules.get("tailoring_policy"))
     rules["writing_style"] = {**DEFAULT_WRITING_STYLE, **_dict_or_empty(rules.get("writing_style"))}
+    rules["revision_gates"] = {
+        "min_fit_score": 8,
+        "must_have_coverage": 0.85,
+        "max_revision_attempts": 1,
+        **_dict_or_empty(rules.get("revision_gates")),
+    }
     rules.setdefault("custom_tailoring_prompt", "")
     rules["tailoring_policy"] = get_tailoring_policy(profile)
 

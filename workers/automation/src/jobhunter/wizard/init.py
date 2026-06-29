@@ -211,6 +211,11 @@ def _setup_structured_resume(profile: dict) -> None:
                 "keyword_density": "natural",
                 "avoid_first_person": True,
             },
+            "revision_gates": {
+                "min_fit_score": 8,
+                "must_have_coverage": 0.85,
+                "max_revision_attempts": 1,
+            },
             "custom_tailoring_prompt": "",
         },
     }

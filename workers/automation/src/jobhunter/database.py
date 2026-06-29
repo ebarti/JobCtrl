@@ -732,6 +732,9 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             writing_avoid_first_person        INTEGER NOT NULL DEFAULT 1,
             max_experience_bullets            INTEGER NOT NULL DEFAULT 4,
             custom_tailoring_prompt           TEXT NOT NULL DEFAULT '',
+            revision_min_fit_score            INTEGER NOT NULL DEFAULT 8,
+            revision_must_have_coverage       REAL NOT NULL DEFAULT 0.85,
+            revision_max_attempts             INTEGER NOT NULL DEFAULT 1,
             resume_style_document_font_size   TEXT NOT NULL DEFAULT '11pt',
             resume_style_paper_size           TEXT NOT NULL DEFAULT 'a4paper',
             resume_style_font_family          TEXT NOT NULL DEFAULT 'sans',
@@ -936,6 +939,9 @@ _PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
     "tailoring_claim_mode": "TEXT NOT NULL DEFAULT 'evidence_reframing'",
     "tailoring_auto_approvable_claim_modes_json": "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
     "tailoring_allow_adjacent_achievement_drafts": "INTEGER NOT NULL DEFAULT 0",
+    "revision_min_fit_score": "INTEGER NOT NULL DEFAULT 8",
+    "revision_must_have_coverage": "REAL NOT NULL DEFAULT 0.85",
+    "revision_max_attempts": "INTEGER NOT NULL DEFAULT 1",
 }
 
 

@@ -1449,6 +1449,14 @@ const ProfileWritingStyleSchema = z
   })
   .partial();
 
+const ProfileRevisionGatesSchema = z
+  .object({
+    min_fit_score: z.number().int().min(1).max(10).default(8),
+    must_have_coverage: z.number().min(0).max(1).default(0.85),
+    max_revision_attempts: z.number().int().min(0).default(1),
+  })
+  .partial();
+
 const ProfileTailoringRulesSchema = z
   .object({
     required_experience_entry_ids: z.array(z.string()).default([]),
@@ -1460,6 +1468,7 @@ const ProfileTailoringRulesSchema = z
     custom_tailoring_prompt: z.string().default(""),
     tailoring_policy: ProfileTailoringPolicySchema,
     writing_style: ProfileWritingStyleSchema.default({}),
+    revision_gates: ProfileRevisionGatesSchema.default({}),
   })
   .partial();
 

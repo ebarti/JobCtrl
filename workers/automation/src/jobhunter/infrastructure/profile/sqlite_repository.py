@@ -246,6 +246,8 @@ class SqliteProfileRepository:
                     writing_tone, writing_bullet_style, writing_verbosity,
                     writing_keyword_density, writing_avoid_first_person,
                     max_experience_bullets, custom_tailoring_prompt,
+                    revision_min_fit_score, revision_must_have_coverage,
+                    revision_max_attempts,
                     resume_style_document_font_size, resume_style_paper_size,
                     resume_style_font_family, resume_style_moderncv_style,
                     resume_style_moderncv_color, resume_style_page_scale,
@@ -310,6 +312,9 @@ class SqliteProfileRepository:
                     writing_avoid_first_person = excluded.writing_avoid_first_person,
                     max_experience_bullets = excluded.max_experience_bullets,
                     custom_tailoring_prompt = excluded.custom_tailoring_prompt,
+                    revision_min_fit_score = excluded.revision_min_fit_score,
+                    revision_must_have_coverage = excluded.revision_must_have_coverage,
+                    revision_max_attempts = excluded.revision_max_attempts,
                     resume_style_document_font_size = excluded.resume_style_document_font_size,
                     resume_style_paper_size = excluded.resume_style_paper_size,
                     resume_style_font_family = excluded.resume_style_font_family,
@@ -698,6 +703,11 @@ class SqliteProfileRepository:
                 "keyword_density": row["writing_keyword_density"],
                 "avoid_first_person": _as_bool(row["writing_avoid_first_person"]),
             },
+            "revision_gates": {
+                "min_fit_score": int(row["revision_min_fit_score"]),
+                "must_have_coverage": float(row["revision_must_have_coverage"]),
+                "max_revision_attempts": int(row["revision_max_attempts"]),
+            },
         }
 
     def _achievement_evidence(
@@ -862,6 +872,14 @@ def _root_values(
         _bool_int(writing.get("avoid_first_person"), True),
         int(rules.get("max_experience_bullets") or 4),
         _text(rules.get("custom_tailoring_prompt")),
+        _bounded_int(_record(rules.get("revision_gates")).get("min_fit_score"), 8, 1, 10),
+        _bounded_float(
+            _record(rules.get("revision_gates")).get("must_have_coverage"),
+            0.85,
+            0.0,
+            1.0,
+        ),
+        _bounded_int(_record(rules.get("revision_gates")).get("max_revision_attempts"), 1, 0, 10),
         style["document_font_size"],
         style["paper_size"],
         style["font_family"],
@@ -921,6 +939,22 @@ def _bool_int(value: Any, default: bool) -> int:
     if isinstance(value, str):
         return 1 if value.strip().lower() in {"true", "yes", "y", "1", "on"} else 0
     return 1 if bool(value) else 0
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _bounded_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
 
 
 def _as_bool(value: Any) -> bool:

@@ -309,6 +309,11 @@ def test_explicit_claim_policy_wins_over_legacy_tailoring_mode() -> None:
         required_experience_entry_ids=("role_1",),
         required_bullets_by_experience_id={"role_1": ("Pinned bullet.",)},
         required_skills_by_category_id={"skills": ("Python",)},
+        revision_gates={
+            "min_fit_score": 9,
+            "must_have_coverage": 0.9,
+            "max_revision_attempts": 2,
+        },
         additional_guidance="Use backend positioning.",
     )
 
@@ -319,6 +324,9 @@ def test_explicit_claim_policy_wins_over_legacy_tailoring_mode() -> None:
     assert controls.generation_permissions.rewrite_summary is True
     assert controls.required_content_pins.experience_entry_ids == ("role_1",)
     assert controls.writing_style.keyword_emphasis == "high"
+    assert controls.revision_gates.min_fit_score == 9
+    assert controls.revision_gates.must_have_coverage == 0.9
+    assert controls.revision_gates.max_revision_attempts == 2
     assert controls.additional_guidance == "Use backend positioning."
     assert "mode" not in serialized
     assert "tailoring_mode" not in serialized

@@ -109,14 +109,27 @@ describe("<StructuredProfileEditor>", () => {
     );
   });
 
-  it("labels keyword density as advisory emphasis and shows revision defaults", () => {
-    render(<StatefulEditor mode="preferences" />);
+  it("labels keyword density as advisory emphasis and edits revision gates", () => {
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.queryByLabelText("Keyword density")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Keyword emphasis")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Revision policy" })).toHaveTextContent("8/10");
-    expect(screen.getByRole("group", { name: "Revision policy" })).toHaveTextContent("85%");
+    expect(screen.getByLabelText("Minimum fit score")).toHaveValue(8);
+    expect(screen.getByLabelText("Must-have coverage (%)")).toHaveValue(85);
+    expect(screen.getByLabelText("Revision attempts")).toHaveValue(1);
     expect(screen.getByLabelText("Additional guidance")).toHaveAttribute("maxlength", "1200");
+
+    fireEvent.change(screen.getByLabelText("Minimum fit score"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("Must-have coverage (%)"), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText("Revision attempts"), { target: { value: "2" } });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.revision_gates).toMatchObject({
+      min_fit_score: 9,
+      must_have_coverage: 0.9,
+      max_revision_attempts: 2,
+    });
   });
 
   it("keeps required content pins out of Preferences because Profile owns them", () => {

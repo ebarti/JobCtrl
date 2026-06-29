@@ -25,9 +25,11 @@ mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
 The Preferences Application configurations section owns the user-editable
 Location filter control and persists it through the local settings mutation;
-the Discovery page owns target search plus automation controls such as minimum
-fit score and auto apply. The Settings page keeps execution-only controls such
-as apply concurrency.
+the Preferences Tailoring controls section owns generated-material policy such
+as revision-gate minimum fit score, must-have coverage, and revision-attempt
+limits in the profile `tailoring_rules`. The Discovery page owns target search
+plus automation controls such as discovery minimum fit score and auto apply. The
+Settings page keeps execution-only controls such as apply concurrency.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,

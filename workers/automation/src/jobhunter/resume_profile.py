@@ -307,6 +307,13 @@ def get_custom_tailoring_prompt(profile: dict) -> str:
     return str(value).strip()
 
 
+def get_revision_gates(profile: dict) -> dict:
+    """Return configured requirement-led revision thresholds."""
+    rules = get_resume_master(profile).get("tailoring_rules", {})
+    value = rules.get("revision_gates", {})
+    return value if isinstance(value, dict) else {}
+
+
 def get_max_experience_bullets(profile: dict, default: int = 4) -> int:
     """Return the configured maximum bullet count for each experience entry."""
     rules = get_resume_master(profile).get("tailoring_rules", {})

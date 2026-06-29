@@ -493,6 +493,33 @@ class WritingStyle:
 
 
 @dataclass(frozen=True)
+class RevisionGates:
+    min_fit_score: int = 8
+    must_have_coverage: float = 0.85
+    max_revision_attempts: int = 1
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RevisionGates":
+        data = data or {}
+
+        def bounded_int(key: str, default: int, minimum: int, maximum: int) -> int:
+            try:
+                parsed = int(data.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return max(minimum, min(maximum, parsed))
+
+        return cls(
+            min_fit_score=bounded_int("min_fit_score", 8, 1, 10),
+            must_have_coverage=_float(data.get("must_have_coverage"), 0.85),
+            max_revision_attempts=bounded_int("max_revision_attempts", 1, 0, 10),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+
+@dataclass(frozen=True)
 class ResumeConstraints:
     """Hard truths the tailor must preserve verbatim — real metrics, etc."""
 
@@ -527,6 +554,7 @@ class TailoringRules:
     custom_tailoring_prompt: str = ""
     tailoring_policy: TailoringPolicy = field(default_factory=TailoringPolicy)
     writing_style: WritingStyle = field(default_factory=WritingStyle)
+    revision_gates: RevisionGates = field(default_factory=RevisionGates)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TailoringRules":
@@ -570,6 +598,7 @@ class TailoringRules:
             custom_tailoring_prompt=_str(data.get("custom_tailoring_prompt"), "").strip(),
             tailoring_policy=TailoringPolicy.from_dict(data.get("tailoring_policy")),
             writing_style=WritingStyle.from_dict(data.get("writing_style")),
+            revision_gates=RevisionGates.from_dict(data.get("revision_gates")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -588,5 +617,6 @@ class TailoringRules:
             "max_experience_bullets": self.max_experience_bullets,
             "tailoring_policy": self.tailoring_policy.to_dict(),
             "writing_style": self.writing_style.to_dict(),
+            "revision_gates": self.revision_gates.to_dict(),
             "custom_tailoring_prompt": self.custom_tailoring_prompt,
         }

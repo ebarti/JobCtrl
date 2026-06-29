@@ -597,6 +597,57 @@ export function StructuredProfileEditor({
     </label>
   );
 
+  const numberField = (
+    path: string,
+    label: string,
+    attrs: { min: number; max: number; step: number; defaultValue: number },
+  ) => {
+    const value = getPathValue(profile, path);
+    const displayedValue = value === undefined || value === null || value === "" ? attrs.defaultValue : value;
+    return (
+      <label className="field">
+        <span>{label}</span>
+        <input
+          type="number"
+          min={attrs.min}
+          max={attrs.max}
+          step={attrs.step}
+          value={textFrom(displayedValue)}
+          onChange={(event) => {
+            const parsed = constrainedNumberOrEmpty(event.target.value, attrs);
+            updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) : parsed);
+          }}
+        />
+      </label>
+    );
+  };
+
+  const percentField = (
+    path: string,
+    label: string,
+    attrs: { min: number; max: number; step: number; defaultValue: number },
+  ) => {
+    const rawValue = getPathValue(profile, path);
+    const ratioValue = rawValue === undefined || rawValue === null || rawValue === "" ? attrs.defaultValue : Number(rawValue);
+    const percentValue = Number.isFinite(ratioValue) ? Math.round(ratioValue * 100) : Math.round(attrs.defaultValue * 100);
+    return (
+      <label className="field">
+        <span>{label}</span>
+        <input
+          type="number"
+          min={attrs.min}
+          max={attrs.max}
+          step={attrs.step}
+          value={textFrom(percentValue)}
+          onChange={(event) => {
+            const parsed = constrainedNumberOrEmpty(event.target.value, attrs);
+            updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) / 100 : parsed);
+          }}
+        />
+      </label>
+    );
+  };
+
   const disabledCheckboxField = (label: string) => (
     <label className="field check disabled">
       <input type="checkbox" checked={false} disabled />
@@ -977,20 +1028,26 @@ export function StructuredProfileEditor({
   const revisionPolicyGroup = () => (
     <fieldset className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
       <legend>Revision policy</legend>
-      <dl>
-        <div>
-          <dt>Minimum fit score</dt>
-          <dd>8/10</dd>
-        </div>
-        <div>
-          <dt>Must-have coverage</dt>
-          <dd>85%</dd>
-        </div>
-        <div>
-          <dt>Revision attempts</dt>
-          <dd>1</dd>
-        </div>
-      </dl>
+      <div className="field-grid">
+        {numberField("resume.tailoring_rules.revision_gates.min_fit_score", "Minimum fit score", {
+          min: 1,
+          max: 10,
+          step: 1,
+          defaultValue: 8,
+        })}
+        {percentField("resume.tailoring_rules.revision_gates.must_have_coverage", "Must-have coverage (%)", {
+          min: 0,
+          max: 100,
+          step: 1,
+          defaultValue: 0.85,
+        })}
+        {numberField("resume.tailoring_rules.revision_gates.max_revision_attempts", "Revision attempts", {
+          min: 0,
+          max: 10,
+          step: 1,
+          defaultValue: 1,
+        })}
+      </div>
     </fieldset>
   );
 

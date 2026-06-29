@@ -5752,6 +5752,11 @@ describe("local TypeScript API", () => {
         auto_approvable_claim_modes: ["verified_only", "draft_requires_confirmation"],
         allow_adjacent_achievement_drafts: false,
       },
+      revision_gates: {
+        min_fit_score: 9,
+        must_have_coverage: 0.9,
+        max_revision_attempts: 2,
+      },
     };
 
     const response = await app.inject({
@@ -5773,18 +5778,27 @@ describe("local TypeScript API", () => {
       auto_approvable_claim_modes: ["verified_only"],
       allow_adjacent_achievement_drafts: true,
     });
+    expect(body.profile.resume.tailoring_rules.revision_gates).toMatchObject({
+      min_fit_score: 9,
+      must_have_coverage: 0.9,
+      max_revision_attempts: 2,
+    });
 
     const db = new Database(options.dbPath);
     try {
       expect(
         db.prepare(
           "SELECT tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json, "
-            + "tailoring_allow_adjacent_achievement_drafts FROM candidate_profiles",
+            + "tailoring_allow_adjacent_achievement_drafts, revision_min_fit_score, "
+            + "revision_must_have_coverage, revision_max_attempts FROM candidate_profiles",
         ).get(),
       ).toMatchObject({
         tailoring_claim_mode: "draft_requires_confirmation",
         tailoring_auto_approvable_claim_modes_json: '["verified_only"]',
         tailoring_allow_adjacent_achievement_drafts: 1,
+        revision_min_fit_score: 9,
+        revision_must_have_coverage: 0.9,
+        revision_max_attempts: 2,
       });
     } finally {
       db.close();

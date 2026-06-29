@@ -31,6 +31,7 @@ from jobhunter.resume_profile import (
     get_required_bullets_by_experience_id,
     get_required_experience_entry_ids,
     get_required_skills_by_category_id,
+    get_revision_gates,
     get_resume_master,
     get_resume_constraints,
     get_skill_categories,
@@ -486,6 +487,7 @@ def build_tailoring_plan(
     requirement_led_controls = adapt_requirement_led_controls(
         tailoring_policy=get_tailoring_policy(profile),
         writing_style=writing_style,
+        revision_gates=get_revision_gates(profile),
         required_experience_entry_ids=tuple(get_required_experience_entry_ids(profile)),
         required_bullets_by_experience_id=get_required_bullets_by_experience_id(profile),
         required_skills_by_category_id=get_required_skills_by_category_id(profile),

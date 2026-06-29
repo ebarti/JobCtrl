@@ -5395,29 +5395,6 @@ textarea:focus-visible {
   color: var(--muted-foreground);
 }
 
-.revision-policy-group dl {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-}
-
-.revision-policy-group dl > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.revision-policy-group dt {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-
-.revision-policy-group dd {
-  margin: 0;
-  font-weight: 600;
-}
-
 .advanced-policy-group {
   border: 1px solid var(--border);
   border-radius: 6px;
