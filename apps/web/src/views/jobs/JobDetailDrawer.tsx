@@ -1,5 +1,6 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
+import { Link } from "@tanstack/react-router";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
@@ -100,6 +101,22 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
           <>
             <JobOverview detail={detail} />
             <div className="job-detail-drawer-content">
+              <div className="job-detail-top-actions">
+                <JobActions
+                  jobId={detail.job.jobKey}
+                  currentStage={detail.job.currentSubstage}
+                  canRetryStage={canRetryStage(currentSubstage)}
+                  canRetailor={detail.artifacts.length > 0}
+                />
+                <Link
+                  aria-label={`Open Apply Review for ${detail.job.title}`}
+                  className="tab"
+                  search={{ jobKey: detail.job.jobKey }}
+                  to="/apply-review"
+                >
+                  Open Apply Review
+                </Link>
+              </div>
               <JobAuditTriage detail={detail} />
               <CompensationAuditSection
                 jobId={detail.job.jobKey}
@@ -111,12 +128,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <h3>Description</h3>
                 <JobDescription text={detail.job.descriptionPreview} />
               </section>
-              <JobActions
-                jobId={detail.job.jobKey}
-                currentStage={detail.job.currentSubstage}
-                canRetryStage={canRetryStage(currentSubstage)}
-                canRetailor={detail.artifacts.length > 0}
-              />
               <div className="job-detail-drawer-main">
                 <Section title="Preparation diagnostics">
                   <StageTimeline

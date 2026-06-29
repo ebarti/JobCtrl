@@ -3816,6 +3816,26 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.job-detail-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: safe center;
+  justify-content: space-between;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 16px 28px;
+}
+
+.job-detail-top-actions .action-panel {
+  flex: 1 1 620px;
+  margin: 0;
+}
+
+.job-detail-top-actions > .tab {
+  flex: 0 0 auto;
+}
+
 .job-detail-drawer-main {
   display: grid;
   min-width: 0;
@@ -5991,6 +6011,7 @@ textarea:focus-visible {
   }
 
   .section,
+  .job-detail-top-actions,
   .drawer-head {
     padding-right: 16px;
     padding-left: 16px;
