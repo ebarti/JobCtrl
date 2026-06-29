@@ -104,16 +104,28 @@ const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
 
 const CLAIM_MODE_OPTIONS: Array<[string, string]> = [
   ["verified_only", "Verified facts only"],
-  ["evidence_reframing", "Evidence reframing"],
-  ["adjacent_translation", "Adjacent expertise translation"],
-  ["draft_requires_confirmation", "Draft requires confirmation"],
+  ["evidence_reframing", "Reframe existing evidence"],
+  ["adjacent_translation", "Translate adjacent expertise"],
+  ["draft_requires_confirmation", "Draft claims require review"],
 ];
 
 const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
-  ["verified_only", "Verified facts only"],
+  ["verified_only", "Verified facts"],
   ["evidence_reframing", "Evidence reframing"],
   ["adjacent_translation", "Adjacent expertise translation"],
 ];
+
+const DEFAULT_CLAIM_MODE = "evidence_reframing";
+const DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
+const CLAIM_SCOPE_RANK: Record<string, number> = {
+  verified_only: 0,
+  evidence_reframing: 1,
+  adjacent_translation: 2,
+  draft_requires_confirmation: 3,
+};
+const CLAIM_MODE_PATH = "resume.tailoring_rules.tailoring_policy.claim_mode";
+const AUTO_APPROVABLE_CLAIM_MODES_PATH =
+  "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
 
 const KEYWORD_EMPHASIS_OPTIONS: Array<[string, string]> = [
   ["natural", "Natural"],
@@ -131,6 +143,23 @@ const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
+
+function normalizedClaimMode(value: string): string {
+  return value in CLAIM_SCOPE_RANK ? value : DEFAULT_CLAIM_MODE;
+}
+
+function allowedAutoApprovableClaimOptions(claimMode: string): Array<[string, string]> {
+  const fallbackLimit = CLAIM_SCOPE_RANK[DEFAULT_CLAIM_MODE] ?? 1;
+  const limit = CLAIM_SCOPE_RANK[normalizedClaimMode(claimMode)] ?? fallbackLimit;
+  return AUTO_APPROVABLE_CLAIM_MODE_OPTIONS.filter(
+    ([value]) => (CLAIM_SCOPE_RANK[value] ?? Number.POSITIVE_INFINITY) <= limit,
+  );
+}
+
+function defaultAutoApprovableClaimModes(claimMode: string): string[] {
+  const allowed = new Set(allowedAutoApprovableClaimOptions(claimMode).map(([value]) => value));
+  return DEFAULT_AUTO_APPROVABLE_CLAIM_MODES.filter((value) => allowed.has(value));
+}
 
 export interface StructuredProfileEditorProps {
   applicationConfigurationFields?: ReactNode;
@@ -255,16 +284,28 @@ export function StructuredProfileEditor({
     });
   };
 
-  const setTextArrayChoice = (path: string, value: string, checked: boolean) => {
-    updateProfileDraft((draft) => {
-      const values = new Set(textArrayAt(draft, path));
-      if (checked) {
-        values.add(value);
-      } else {
-        values.delete(value);
-      }
-      setPathValue(draft, path, Array.from(values));
-    });
+  const currentClaimMode = () => normalizedClaimMode(textAt(profile, CLAIM_MODE_PATH));
+
+  const selectedAutoApprovableClaimModes = (claimMode = currentClaimMode()) => {
+    const allowed = new Set(allowedAutoApprovableClaimOptions(claimMode).map(([value]) => value));
+    const rawValues = textArrayAt(profile, AUTO_APPROVABLE_CLAIM_MODES_PATH);
+    const values = rawValues.length ? rawValues : defaultAutoApprovableClaimModes(claimMode);
+    return new Set(values.filter((value) => allowed.has(value)));
+  };
+
+  const setAutoApprovableClaimModeChoice = (value: string, checked: boolean) => {
+    const claimMode = currentClaimMode();
+    const values = selectedAutoApprovableClaimModes(claimMode);
+    if (checked) {
+      values.add(value);
+    } else {
+      values.delete(value);
+    }
+    const allowedOrder = allowedAutoApprovableClaimOptions(claimMode).map(([optionValue]) => optionValue);
+    updateProfilePath(
+      AUTO_APPROVABLE_CLAIM_MODES_PATH,
+      allowedOrder.filter((optionValue) => values.has(optionValue)),
+    );
   };
 
   const addRepeatItem = (path: string) => {
@@ -557,13 +598,19 @@ export function StructuredProfileEditor({
 
   const claimPolicyField = () => (
     <label className="field">
-      <span>Claim policy</span>
+      <span>Broadest generated claim</span>
       <select
-        value={textAt(profile, "resume.tailoring_rules.tailoring_policy.claim_mode")}
+        value={currentClaimMode()}
         onChange={(event) => {
-          const value = event.target.value;
+          const value = normalizedClaimMode(event.target.value);
           updateProfileDraft((draft) => {
-            setPathValue(draft, "resume.tailoring_rules.tailoring_policy.claim_mode", value);
+            const previousAutoModes = textArrayAt(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH);
+            const previousSelected = previousAutoModes.length
+              ? previousAutoModes
+              : defaultAutoApprovableClaimModes(currentClaimMode());
+            const allowedAutoModes = allowedAutoApprovableClaimOptions(value).map(([optionValue]) => optionValue);
+            const nextAutoModes = allowedAutoModes.filter((optionValue) => previousSelected.includes(optionValue));
+            setPathValue(draft, CLAIM_MODE_PATH, value);
             setPathValue(
               draft,
               "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
@@ -573,6 +620,11 @@ export function StructuredProfileEditor({
               draft,
               "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts",
               value === "draft_requires_confirmation",
+            );
+            setPathValue(
+              draft,
+              AUTO_APPROVABLE_CLAIM_MODES_PATH,
+              nextAutoModes.length ? nextAutoModes : defaultAutoApprovableClaimModes(value),
             );
           });
         }}
@@ -934,18 +986,20 @@ export function StructuredProfileEditor({
   };
 
   const autoApprovableClaimModesField = () => {
-    const path = "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
-    const selected = new Set(textArrayAt(profile, path));
+    const claimMode = currentClaimMode();
+    const selected = selectedAutoApprovableClaimModes(claimMode);
+    const options = allowedAutoApprovableClaimOptions(claimMode);
     return (
       <fieldset className="field wide checkbox-group-field claim-mode-group">
-        <legend>Auto-approvable claim modes</legend>
+        <legend>Claims allowed to skip review</legend>
         <div className="checkbox-options">
-          {AUTO_APPROVABLE_CLAIM_MODE_OPTIONS.map(([value, label]) => (
+          {options.map(([value, label]) => (
             <label className="choice target-choice" key={value}>
               <input
                 type="checkbox"
                 checked={selected.has(value)}
-                onChange={(event) => setTextArrayChoice(path, value, event.target.checked)}
+                disabled={selected.has(value) && selected.size === 1}
+                onChange={(event) => setAutoApprovableClaimModeChoice(value, event.target.checked)}
               />
               <span>{label}</span>
             </label>
@@ -971,7 +1025,7 @@ export function StructuredProfileEditor({
 
   const claimPolicyGroup = () => (
     <fieldset className="field wide checkbox-group-field tailoring-control-group">
-      <legend>Claim policy</legend>
+      <legend>Generation claim scope</legend>
       <div className="field-grid one">
         {claimPolicyField()}
       </div>
@@ -1053,7 +1107,7 @@ export function StructuredProfileEditor({
 
   const advancedPolicyGroup = () => (
     <details className="field wide advanced-policy-group">
-      <summary>Advanced auto-approval policy</summary>
+      <summary>Review bypass rules</summary>
       {autoApprovableClaimModesField()}
     </details>
   );

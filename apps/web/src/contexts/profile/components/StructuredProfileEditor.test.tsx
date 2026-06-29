@@ -73,15 +73,17 @@ function StatefulEditor({
 }
 
 describe("<StructuredProfileEditor>", () => {
-  it("remaps visible claim policy controls away from legacy tailoring mode", () => {
+  it("remaps visible claim scope controls away from legacy tailoring mode", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.queryByLabelText("Tailoring mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("AI may make minor inferred phrasing")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Allow adjacent achievement drafts")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Generation claim scope" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Broadest generated claim")).toHaveValue("evidence_reframing");
 
-    fireEvent.change(screen.getByLabelText("Claim policy"), {
+    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
       target: { value: "draft_requires_confirmation" },
     });
 
@@ -93,20 +95,38 @@ describe("<StructuredProfileEditor>", () => {
     expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(true);
   });
 
-  it("keeps title changes disabled and moves adjacent auto-approval behind advanced policy", () => {
+  it("scopes review bypass choices to the selected generated claim scope", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
 
-    fireEvent.click(screen.getByText("Advanced auto-approval policy"));
+    fireEvent.click(screen.getByText("Review bypass rules"));
+    expect(screen.getByRole("group", { name: "Claims allowed to skip review" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Verified facts" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Evidence reframing" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Adjacent expertise translation" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
+      target: { value: "adjacent_translation" },
+    });
     fireEvent.click(screen.getByRole("checkbox", { name: "Adjacent expertise translation" }));
 
-    const profile = JSON.parse(latestProfile);
-    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toContain(
+    const adjacentProfile = JSON.parse(latestProfile);
+    expect(adjacentProfile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toContain(
       "adjacent_translation",
     );
+
+    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
+      target: { value: "evidence_reframing" },
+    });
+
+    const narrowedProfile = JSON.parse(latestProfile);
+    expect(narrowedProfile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
+      "verified_only",
+      "evidence_reframing",
+    ]);
   });
 
   it("labels keyword density as advisory emphasis and edits revision gates", () => {
