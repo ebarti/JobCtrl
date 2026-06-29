@@ -948,93 +948,6 @@ export function StructuredProfileEditor({
     </fieldset>
   );
 
-  const requiredContentPinsGroup = () => (
-    <fieldset className="field wide checkbox-group-field tailoring-control-group required-content-pins-group">
-      <legend>Required content pins</legend>
-      <div className="pin-group">
-        <fieldset>
-          <legend>Experience entries</legend>
-          <div className="checkbox-options vertical">
-            {experienceEntries.map((entry, index) => {
-              const entryId = textFrom(entry["id"]);
-              const label = textFrom(entry["title"]) || textFrom(entry["company"]) || `Experience ${index + 1}`;
-              return (
-                <label className="choice target-choice" key={`${entryId || "experience"}-${index}`}>
-                  <input
-                    type="checkbox"
-                    checked={requiredExperienceIds.has(entryId)}
-                    disabled={!entryId}
-                    onChange={(event) =>
-                      setRequiredId(
-                        "resume.tailoring_rules.required_experience_entry_ids",
-                        entryId,
-                        event.target.checked,
-                      )
-                    }
-                  />
-                  <span>{label}</span>
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>Experience bullets</legend>
-          <div className="checkbox-options vertical">
-            {experienceEntries.flatMap((entry, entryIndex) => {
-              const entryId = textFrom(entry["id"]);
-              const entryLabel = textFrom(entry["title"]) || `Experience ${entryIndex + 1}`;
-              const requiredBullets = new Set(
-                asTextArray(
-                  recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
-                ),
-              );
-              return editableTextArrayAt(profile, `resume.experience_entries.${entryIndex}.bullets`).map(
-                (bullet, bulletIndex) => (
-                  <label className="choice target-choice" key={`${entryId || entryIndex}-bullet-${bulletIndex}`}>
-                    <input
-                      type="checkbox"
-                      checked={requiredBullets.has(bullet)}
-                      disabled={!entryId || !bullet}
-                      onChange={(event) => setRequiredBullet(entryId, bullet, event.target.checked)}
-                    />
-                    <span>{`${entryLabel}: ${bullet}`}</span>
-                  </label>
-                ),
-              );
-            })}
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>Skill groups</legend>
-          <div className="checkbox-options vertical">
-            {skillCategories.map((category, index) => {
-              const categoryId = textFrom(category["id"]);
-              const label = textFrom(category["label"]) || `Skill group ${index + 1}`;
-              return (
-                <label className="choice target-choice" key={`${categoryId || "skills"}-${index}`}>
-                  <input
-                    type="checkbox"
-                    checked={requiredSkillIds.has(categoryId)}
-                    disabled={!categoryId}
-                    onChange={(event) =>
-                      setRequiredId(
-                        "resume.tailoring_rules.required_skill_category_ids",
-                        categoryId,
-                        event.target.checked,
-                      )
-                    }
-                  />
-                  <span>{label}</span>
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
-      </div>
-    </fieldset>
-  );
-
   const writingStyleGroup = () => (
     <fieldset className="field wide checkbox-group-field tailoring-control-group">
       <legend>Writing style</legend>
@@ -1619,7 +1532,6 @@ export function StructuredProfileEditor({
             <div className="tailoring-controls-grid">
               {claimPolicyGroup()}
               {generationPermissionsGroup()}
-              {requiredContentPinsGroup()}
               {writingStyleGroup()}
               {revisionPolicyGroup()}
               {advancedPolicyGroup()}

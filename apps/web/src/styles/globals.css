@@ -5437,22 +5437,6 @@ textarea:focus-visible {
   padding: 0;
 }
 
-.required-content-pins-group .pin-group {
-  display: grid;
-  gap: 10px;
-}
-
-.required-content-pins-group .pin-group fieldset {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px;
-}
-
-.required-content-pins-group .target-choice span {
-  overflow-wrap: anywhere;
-}
-
 .bullet-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -119,17 +119,21 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.getByLabelText("Additional guidance")).toHaveAttribute("maxlength", "1200");
   });
 
-  it("exposes required content pins in Preferences tailoring controls", () => {
-    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
-    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
+  it("keeps required content pins out of Preferences because Profile owns them", () => {
+    render(<StatefulEditor mode="preferences" />);
 
-    const pins = screen.getByRole("group", { name: "Required content pins" });
-    expect(pins).toHaveTextContent("Experience entries");
-    expect(pins).toHaveTextContent("Experience bullets");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Director of Platform" }));
+    expect(screen.queryByRole("group", { name: "Required content pins" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Experience entries")).not.toBeInTheDocument();
+    expect(screen.queryByText("Experience bullets")).not.toBeInTheDocument();
+    expect(screen.queryByText("Skill groups")).not.toBeInTheDocument();
+  });
 
-    const profile = JSON.parse(latestProfile);
-    expect(profile.resume.tailoring_rules.required_experience_entry_ids).toEqual(["exp-1"]);
+  it("keeps required content pins configurable from the Profile editor", () => {
+    render(<StatefulEditor />);
+
+    expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
+    expect(screen.getAllByText("must appear in final resume").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
   });
 
   it("renders bullet standards as a combined fixed set", () => {
