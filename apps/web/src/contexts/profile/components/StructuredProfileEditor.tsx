@@ -102,30 +102,15 @@ const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
   },
 ];
 
-const CLAIM_MODE_OPTIONS: Array<[string, string]> = [
-  ["verified_only", "Verified facts only"],
-  ["evidence_reframing", "Reframe existing evidence"],
-  ["adjacent_translation", "Translate adjacent expertise"],
-  ["draft_requires_confirmation", "Draft claims require review"],
-];
-
-const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
-  ["verified_only", "Verified facts"],
-  ["evidence_reframing", "Evidence reframing"],
-  ["adjacent_translation", "Adjacent expertise translation"],
-];
-
-const DEFAULT_CLAIM_MODE = "evidence_reframing";
+const BASELINE_NON_INVENTING_CLAIM_MODE = "adjacent_translation";
+const INVENTED_ADJACENT_CLAIM_MODE = "draft_requires_confirmation";
 const DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
-const CLAIM_SCOPE_RANK: Record<string, number> = {
-  verified_only: 0,
-  evidence_reframing: 1,
-  adjacent_translation: 2,
-  draft_requires_confirmation: 3,
-};
 const CLAIM_MODE_PATH = "resume.tailoring_rules.tailoring_policy.claim_mode";
 const AUTO_APPROVABLE_CLAIM_MODES_PATH =
   "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
+const ALLOW_MINOR_INFERENCE_PATH = "resume.tailoring_rules.tailoring_policy.allow_minor_inference";
+const ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH =
+  "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts";
 
 const KEYWORD_EMPHASIS_OPTIONS: Array<[string, string]> = [
   ["natural", "Natural"],
@@ -143,23 +128,6 @@ const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
-
-function normalizedClaimMode(value: string): string {
-  return value in CLAIM_SCOPE_RANK ? value : DEFAULT_CLAIM_MODE;
-}
-
-function allowedAutoApprovableClaimOptions(claimMode: string): Array<[string, string]> {
-  const fallbackLimit = CLAIM_SCOPE_RANK[DEFAULT_CLAIM_MODE] ?? 1;
-  const limit = CLAIM_SCOPE_RANK[normalizedClaimMode(claimMode)] ?? fallbackLimit;
-  return AUTO_APPROVABLE_CLAIM_MODE_OPTIONS.filter(
-    ([value]) => (CLAIM_SCOPE_RANK[value] ?? Number.POSITIVE_INFINITY) <= limit,
-  );
-}
-
-function defaultAutoApprovableClaimModes(claimMode: string): string[] {
-  const allowed = new Set(allowedAutoApprovableClaimOptions(claimMode).map(([value]) => value));
-  return DEFAULT_AUTO_APPROVABLE_CLAIM_MODES.filter((value) => allowed.has(value));
-}
 
 export interface StructuredProfileEditorProps {
   applicationConfigurationFields?: ReactNode;
@@ -219,9 +187,27 @@ export function StructuredProfileEditor({
     );
   }
 
+  const normalizePreferencesClaimPolicy = (draft: JsonRecord) => {
+    if (mode !== "preferences") {
+      return;
+    }
+    const allowsInventedAdjacent =
+      Boolean(getPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
+      textAt(draft, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
+    setPathValue(
+      draft,
+      CLAIM_MODE_PATH,
+      allowsInventedAdjacent ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
+    );
+    setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
+    setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, allowsInventedAdjacent);
+    setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
+  };
+
   const updateProfileDraft = (updater: (draft: JsonRecord) => void) => {
     const draft = cloneJsonRecord(profile);
     updater(draft);
+    normalizePreferencesClaimPolicy(draft);
     onProfileTextChange(JSON.stringify(draft, null, 2));
   };
 
@@ -284,28 +270,21 @@ export function StructuredProfileEditor({
     });
   };
 
-  const currentClaimMode = () => normalizedClaimMode(textAt(profile, CLAIM_MODE_PATH));
+  const allowsInventedAdjacentExperience = () =>
+    Boolean(getPathValue(profile, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
+    textAt(profile, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
 
-  const selectedAutoApprovableClaimModes = (claimMode = currentClaimMode()) => {
-    const allowed = new Set(allowedAutoApprovableClaimOptions(claimMode).map(([value]) => value));
-    const rawValues = textArrayAt(profile, AUTO_APPROVABLE_CLAIM_MODES_PATH);
-    const values = rawValues.length ? rawValues : defaultAutoApprovableClaimModes(claimMode);
-    return new Set(values.filter((value) => allowed.has(value)));
-  };
-
-  const setAutoApprovableClaimModeChoice = (value: string, checked: boolean) => {
-    const claimMode = currentClaimMode();
-    const values = selectedAutoApprovableClaimModes(claimMode);
-    if (checked) {
-      values.add(value);
-    } else {
-      values.delete(value);
-    }
-    const allowedOrder = allowedAutoApprovableClaimOptions(claimMode).map(([optionValue]) => optionValue);
-    updateProfilePath(
-      AUTO_APPROVABLE_CLAIM_MODES_PATH,
-      allowedOrder.filter((optionValue) => values.has(optionValue)),
-    );
+  const setInventedAdjacentExperienceAllowed = (checked: boolean) => {
+    updateProfileDraft((draft) => {
+      setPathValue(
+        draft,
+        CLAIM_MODE_PATH,
+        checked ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
+      );
+      setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
+      setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, checked);
+      setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
+    });
   };
 
   const addRepeatItem = (path: string) => {
@@ -596,45 +575,14 @@ export function StructuredProfileEditor({
     </label>
   );
 
-  const claimPolicyField = () => (
-    <label className="field">
-      <span>Broadest generated claim</span>
-      <select
-        value={currentClaimMode()}
-        onChange={(event) => {
-          const value = normalizedClaimMode(event.target.value);
-          updateProfileDraft((draft) => {
-            const previousAutoModes = textArrayAt(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH);
-            const previousSelected = previousAutoModes.length
-              ? previousAutoModes
-              : defaultAutoApprovableClaimModes(currentClaimMode());
-            const allowedAutoModes = allowedAutoApprovableClaimOptions(value).map(([optionValue]) => optionValue);
-            const nextAutoModes = allowedAutoModes.filter((optionValue) => previousSelected.includes(optionValue));
-            setPathValue(draft, CLAIM_MODE_PATH, value);
-            setPathValue(
-              draft,
-              "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
-              value !== "verified_only",
-            );
-            setPathValue(
-              draft,
-              "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts",
-              value === "draft_requires_confirmation",
-            );
-            setPathValue(
-              draft,
-              AUTO_APPROVABLE_CLAIM_MODES_PATH,
-              nextAutoModes.length ? nextAutoModes : defaultAutoApprovableClaimModes(value),
-            );
-          });
-        }}
-      >
-        {CLAIM_MODE_OPTIONS.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
+  const inventedAdjacentExperienceField = () => (
+    <label className="field check">
+      <input
+        type="checkbox"
+        checked={allowsInventedAdjacentExperience()}
+        onChange={(event) => setInventedAdjacentExperienceAllowed(event.target.checked)}
+      />
+      <span>Allow inventing adjacent experiences</span>
     </label>
   );
 
@@ -985,30 +933,6 @@ export function StructuredProfileEditor({
     );
   };
 
-  const autoApprovableClaimModesField = () => {
-    const claimMode = currentClaimMode();
-    const selected = selectedAutoApprovableClaimModes(claimMode);
-    const options = allowedAutoApprovableClaimOptions(claimMode);
-    return (
-      <fieldset className="field wide checkbox-group-field claim-mode-group">
-        <legend>Claims allowed to skip review</legend>
-        <div className="checkbox-options">
-          {options.map(([value, label]) => (
-            <label className="choice target-choice" key={value}>
-              <input
-                type="checkbox"
-                checked={selected.has(value)}
-                disabled={selected.has(value) && selected.size === 1}
-                onChange={(event) => setAutoApprovableClaimModeChoice(value, event.target.checked)}
-              />
-              <span>{label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-    );
-  };
-
   const bulletStandardsField = () => (
     <fieldset className="field wide checkbox-group-field bullet-standards-group">
       <legend>Bullet standards</legend>
@@ -1023,11 +947,11 @@ export function StructuredProfileEditor({
     </fieldset>
   );
 
-  const claimPolicyGroup = () => (
+  const adjacentExperienceClaimsGroup = () => (
     <fieldset className="field wide checkbox-group-field tailoring-control-group">
-      <legend>Generation claim scope</legend>
+      <legend>Adjacent experience claims</legend>
       <div className="field-grid one">
-        {claimPolicyField()}
+        {inventedAdjacentExperienceField()}
       </div>
     </fieldset>
   );
@@ -1103,13 +1027,6 @@ export function StructuredProfileEditor({
         })}
       </div>
     </fieldset>
-  );
-
-  const advancedPolicyGroup = () => (
-    <details className="field wide advanced-policy-group">
-      <summary>Review bypass rules</summary>
-      {autoApprovableClaimModesField()}
-    </details>
   );
 
   const additionalGuidanceGroup = () => (
@@ -1641,11 +1558,10 @@ export function StructuredProfileEditor({
           <section className="form-section">
             <h3>Tailoring controls</h3>
             <div className="tailoring-controls-grid">
-              {claimPolicyGroup()}
+              {adjacentExperienceClaimsGroup()}
               {generationPermissionsGroup()}
               {writingStyleGroup()}
               {revisionPolicyGroup()}
-              {advancedPolicyGroup()}
               {additionalGuidanceGroup()}
             </div>
           </section>

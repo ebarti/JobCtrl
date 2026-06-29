@@ -26,10 +26,15 @@ errors stay on the local form surface.
 The Preferences Application configurations section owns the user-editable
 Location filter control and persists it through the local settings mutation;
 the Preferences Tailoring controls section owns generated-material policy such
-as revision-gate minimum fit score, must-have coverage, and revision-attempt
-limits in the profile `tailoring_rules`. The Discovery page owns target search
-plus automation controls such as discovery minimum fit score and auto apply. The
-Settings page keeps execution-only controls such as apply concurrency.
+as the adjacent-experience invention toggle, revision-gate minimum fit score,
+must-have coverage, and revision-attempt limits in the profile
+`tailoring_rules`. Verified facts and evidence-backed reframing are baseline
+non-inventing behavior, along with supported adjacent-experience translation;
+the Preferences toggle only allows or forbids invented adjacent-experience
+drafts. Draft adjacent claims require review and are not user-configured as an
+auto-approval bypass. The Discovery page owns target search plus automation
+controls such as discovery minimum fit score and auto apply. The Settings page
+keeps execution-only controls such as apply concurrency.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,

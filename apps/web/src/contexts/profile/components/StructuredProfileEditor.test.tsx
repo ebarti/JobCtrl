@@ -73,60 +73,96 @@ function StatefulEditor({
 }
 
 describe("<StructuredProfileEditor>", () => {
-  it("remaps visible claim scope controls away from legacy tailoring mode", () => {
+  it("exposes only invented adjacent experience as the editable claim control", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.queryByLabelText("Tailoring mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("AI may make minor inferred phrasing")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Allow adjacent achievement drafts")).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Generation claim scope" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Broadest generated claim")).toHaveValue("evidence_reframing");
+    expect(screen.queryByRole("group", { name: "Generation claim scope" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Broadest generated claim")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review bypass rules")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Adjacent experience claims" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
-      target: { value: "draft_requires_confirmation" },
-    });
+    const toggle = screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
 
-    const profile = JSON.parse(latestProfile);
+    let profile = JSON.parse(latestProfile);
     expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
       "draft_requires_confirmation",
     );
     expect(profile.resume.tailoring_rules.tailoring_policy.allow_minor_inference).toBe(true);
     expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(true);
-  });
-
-  it("scopes review bypass choices to the selected generated claim scope", () => {
-    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
-    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
-
-    expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
-
-    fireEvent.click(screen.getByText("Review bypass rules"));
-    expect(screen.getByRole("group", { name: "Claims allowed to skip review" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Verified facts" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Evidence reframing" })).toBeChecked();
-    expect(screen.queryByRole("checkbox", { name: "Adjacent expertise translation" })).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
-      target: { value: "adjacent_translation" },
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Adjacent expertise translation" }));
-
-    const adjacentProfile = JSON.parse(latestProfile);
-    expect(adjacentProfile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toContain(
-      "adjacent_translation",
-    );
-
-    fireEvent.change(screen.getByLabelText("Broadest generated claim"), {
-      target: { value: "evidence_reframing" },
-    });
-
-    const narrowedProfile = JSON.parse(latestProfile);
-    expect(narrowedProfile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
+    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
       "verified_only",
       "evidence_reframing",
     ]);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" }));
+
+    profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
+      "adjacent_translation",
+    );
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_minor_inference).toBe(true);
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(false);
+    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
+      "verified_only",
+      "evidence_reframing",
+    ]);
+  });
+
+  it("checks invented adjacent experience for legacy adjacent draft policies", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.tailoring_rules.tailoring_policy = {
+      ...initialProfile.resume.tailoring_rules.tailoring_policy,
+      claim_mode: "draft_requires_confirmation",
+      allow_adjacent_achievement_drafts: true,
+    };
+
+    render(<StatefulEditor mode="preferences" initialProfile={initialProfile} />);
+
+    expect(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" })).toBeChecked();
+  });
+
+  it("normalizes legacy non-draft claim policies when editing other Preferences fields", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.tailoring_rules.tailoring_policy = {
+      ...initialProfile.resume.tailoring_rules.tailoring_policy,
+      claim_mode: "evidence_reframing",
+      allow_minor_inference: false,
+      allow_adjacent_achievement_drafts: false,
+      auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+    };
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+
+    render(
+      <StatefulEditor
+        mode="preferences"
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => { latestProfile = value; }}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Minimum fit score"), { target: { value: "9" } });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.tailoring_policy).toMatchObject({
+      claim_mode: "adjacent_translation",
+      allow_minor_inference: true,
+      allow_adjacent_achievement_drafts: false,
+      auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+    });
+  });
+
+  it("keeps experience title changes disabled in generation permissions", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
   });
 
   it("labels keyword density as advisory emphasis and edits revision gates", () => {
