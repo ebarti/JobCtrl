@@ -85,7 +85,7 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.queryByText("Review bypass rules")).not.toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Adjacent experience claims" })).toBeInTheDocument();
 
-    const toggle = screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" });
+    const toggle = screen.getByRole("checkbox", { name: "Enable profile enhancement" });
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
 
@@ -100,7 +100,7 @@ describe("<StructuredProfileEditor>", () => {
       "evidence_reframing",
     ]);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enable profile enhancement" }));
 
     profile = JSON.parse(latestProfile);
     expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
@@ -124,7 +124,7 @@ describe("<StructuredProfileEditor>", () => {
 
     render(<StatefulEditor mode="preferences" initialProfile={initialProfile} />);
 
-    expect(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Enable profile enhancement" })).toBeChecked();
   });
 
   it("normalizes legacy non-draft claim policies when editing other Preferences fields", () => {
@@ -146,7 +146,7 @@ describe("<StructuredProfileEditor>", () => {
       />,
     );
 
-    expect(screen.getByRole("checkbox", { name: "Allow inventing adjacent experiences" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Enable profile enhancement" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Minimum fit score"), { target: { value: "9" } });
 
     const profile = JSON.parse(latestProfile);

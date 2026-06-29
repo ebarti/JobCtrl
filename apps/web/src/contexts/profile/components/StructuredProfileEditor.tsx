@@ -582,7 +582,7 @@ export function StructuredProfileEditor({
         checked={allowsInventedAdjacentExperience()}
         onChange={(event) => setInventedAdjacentExperienceAllowed(event.target.checked)}
       />
-      <span>Allow inventing adjacent experiences</span>
+      <span>Enable profile enhancement</span>
     </label>
   );
 
