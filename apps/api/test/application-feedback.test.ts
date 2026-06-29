@@ -204,6 +204,41 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("keeps jobs in review queue while existing materials are being refreshed", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'running',
+             updated_at = '2026-06-01T11:30:00.000Z'
+       WHERE job_url = ?
+         AND stage = 'tailor'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "discover",
+      currentState: "running",
+      materialsPreview: {
+        resumeText: "tailored resume",
+        resumeTextArtifactId: "apply-ready-resume-text",
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+      },
+      applyAudit: {
+        state: "preparing",
+        label: "materials preparing",
+        summary: "tailor is running. Review evidence is still available where recorded.",
+      },
+    });
+
+    await app.close();
+  });
+
   it("uses stage error messages instead of generic blocker codes in the review queue", async () => {
     const db = new Database(options.dbPath);
     db.prepare(

@@ -278,6 +278,19 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
         WHERE tenant_id = ?
       )
       WHERE row_num = 1
+    ),
+    apply_stage AS (
+      SELECT job_url, state
+      FROM (
+        SELECT job_url, state,
+               ROW_NUMBER() OVER (
+                 PARTITION BY job_url
+                 ORDER BY COALESCE(updated_at, '') DESC, rowid DESC
+               ) AS row_num
+        FROM job_stage_states
+        WHERE stage = 'apply'
+      )
+      WHERE row_num = 1
     )
     ${employerAnalysisCte}
     SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source,
@@ -300,14 +313,14 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     LEFT JOIN job_detail_projections jdp ON jdp.tenant_id = jlp.tenant_id AND jdp.job_id = jlp.job_id
     LEFT JOIN latest_decision ON latest_decision.job_key = jlp.job_id
     LEFT JOIN latest_apply_run ON latest_apply_run.job_id = jlp.job_id
+    INNER JOIN apply_stage ON apply_stage.job_url = jlp.job_id
     ${employerAnalysisJoin}
     WHERE jlp.tenant_id = ?
       AND jlp.deleted_at IS NULL
       ${hiddenWhere}
       ${closedWhere}
       AND COALESCE(jlp.apply_status, '') != 'applied'
-      AND jlp.current_stage = 'apply'
-      AND jlp.current_state IN ('pending', 'blocked', 'failed', 'stale')
+      AND apply_stage.state IN ('pending', 'blocked', 'failed', 'stale')
       AND (
         jlp.has_resume = 1
         OR jlp.application_url IS NOT NULL
