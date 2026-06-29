@@ -157,7 +157,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 ) : null}
                 <EmployerAnalysisPanel
                   analysis={detail.employerAnalysis}
-                  className="section"
+                  className="section job-detail-role-analysis"
                   requirementFitReport={detail.requirementFitReport}
                 />
                 <Section title="Apply history">

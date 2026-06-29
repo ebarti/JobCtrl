@@ -333,6 +333,7 @@ describe("<JobDetailDrawer>", () => {
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Role Analysis" })).toHaveClass("job-detail-role-analysis");
     const description = screen.getByText("Description").closest("section");
     expect(description).not.toBeNull();
     expect(description).toHaveClass("job-detail-description");
