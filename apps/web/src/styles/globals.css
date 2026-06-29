@@ -5222,7 +5222,7 @@ textarea:focus-visible {
 
 .resume-template-shell {
   display: grid;
-  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
+  grid-template-columns: clamp(300px, 24%, 360px) minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
 }
@@ -5231,7 +5231,17 @@ textarea:focus-visible {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+}
+
+.resume-template-controls .field-grid {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  padding: 0;
+}
+
+.resume-template-controls .field {
+  gap: 4px;
 }
 
 .resume-template-actions,
