@@ -92,6 +92,46 @@ coverage optimization MUST NOT silently remove pinned content.
 - **THEN** the scorer reports the trade-off without authorizing removal of the
   pinned content
 
+### Requirement: Covered achievements are mandatory
+The system SHALL include every achievement that covers one or more job
+requirements in the final tailored resume. The configured maximum bullet count
+per experience entry MUST NOT cause covered achievements or user-pinned
+achievements to be removed.
+
+#### Scenario: Covered achievements exceed max bullets
+- **WHEN** an experience entry has more requirement-covered achievements than
+  the configured maximum bullet count
+- **THEN** the final resume includes all requirement-covered achievements for
+  that entry
+- **AND** audit metadata records that the bullet limit was exceeded for
+  requirement coverage
+
+#### Scenario: Enhancement produces covered achievements
+- **WHEN** a profile enhancement pass produces one or more achievements that
+  cover previously unmet requirements
+- **THEN** the final resume includes those enhancement-produced covered
+  achievements
+- **AND** the system does not remove already selected covered achievements to
+  make room under the configured bullet limit
+- **AND** audit metadata labels the added achievements with their enhancement
+  claim status and coverage reason
+
+#### Scenario: User-pinned achievement competes with covered achievements
+- **WHEN** an experience entry contains user-pinned achievements and additional
+  achievements that cover job requirements
+- **THEN** the final resume includes the user-pinned achievements under all
+  circumstances
+- **AND** the final resume also includes all requirement-covered achievements
+  even if the entry exceeds the configured bullet maximum
+
+#### Scenario: Optional achievements exceed max bullets
+- **WHEN** optional positioning achievements remain after all user-pinned and
+  requirement-covered achievements have been selected
+- **THEN** the configured maximum bullet count applies only to those optional
+  achievements
+- **AND** optional achievements may be omitted before any user-pinned or
+  requirement-covered achievement is removed
+
 ### Requirement: Claim policy controls factual expansion
 The system SHALL use explicit claim policy controls to decide which claim types
 are allowed and which claim types block auto-approval.
@@ -200,6 +240,12 @@ override deterministic validation failures.
   profile metrics, achievement evidence, or baseline bullets
 - **THEN** deterministic validation rejects the candidate
 
+#### Scenario: Mandatory achievement is missing
+- **WHEN** the assembled tailored resume omits a user-pinned achievement or an
+  achievement with one or more valid requirement coverage edges
+- **THEN** deterministic validation rejects the candidate even if the omission
+  keeps the experience entry within the configured bullet maximum
+
 #### Scenario: Invalid claim map appears
 - **WHEN** generated claim mapping references a missing coverage edge,
   unsupported claim label, missing requirement, or missing evidence item
@@ -220,7 +266,7 @@ local artifact paths, generated PDFs, browser data, logs, or SQLite databases.
 - **WHEN** a tailored resume has requirement-led audit metadata
 - **THEN** Apply Review can show covered requirements, uncovered requirements,
   evidence-backed generated claims, pinned content, adjacent or draft labels,
-  and review blockers using bounded safe excerpts
+  bullet-limit overflow reasons, and review blockers using bounded safe excerpts
 
 #### Scenario: Revision history is inspectable
 - **WHEN** the tailoring loop runs scorer-gated revision

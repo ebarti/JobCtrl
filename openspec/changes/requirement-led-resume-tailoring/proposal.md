@@ -21,6 +21,10 @@ profile achievement may cover zero or more job requirements.
 - Preserve user-pinned constraints: required experience entries and required
   bullets must remain in the final resume even when they do not cover any target
   requirement.
+- Require every achievement that covers one or more job requirements to appear
+  in the final resume, including enhancement-produced achievements that cover
+  previously unmet requirements. This requirement can exceed the configured
+  maximum bullet count for an experience entry.
 - Run a score-gated revision loop after the evidence-first draft. Revision is
   triggered by configured fit and must-have coverage thresholds, not by loose
   keyword counts.
@@ -30,8 +34,9 @@ profile achievement may cover zero or more job requirements.
 - Bind enhancement behavior to claim policy and review requirements rather than
   letting scattered checkboxes independently authorize factual expansion.
 - Persist and expose audit metadata for requirement coverage, uncovered
-  requirements, unused profile achievements, enhancement/draft claim status, and
-  scorer-driven revision decisions.
+  requirements, unused profile achievements, max-bullet overflows caused by
+  mandatory content, enhancement/draft claim status, and scorer-driven revision
+  decisions.
 - Align generator and verifier prompts with the local resume-content-writer and
   resume-fit-scorer skill contracts while keeping JobHunter's structured-output
   schemas and deterministic validators as the runtime contract.

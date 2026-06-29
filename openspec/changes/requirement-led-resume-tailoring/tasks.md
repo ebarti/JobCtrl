@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Add requirement-led tailoring policy version constants and policy-default revision gates for minimum fit score, must-have coverage, and max revision attempts.
 - [ ] 1.2 Add value objects for requirement nodes, achievement nodes, coverage edges, uncovered requirements, unused achievements, and generated claim mappings.
-- [ ] 1.3 Add deterministic validators for coverage graph IDs, edge kinds, claim labels, claim-policy compatibility, metric support, prohibited claims, and pinned content preservation.
+- [ ] 1.3 Add deterministic validators for coverage graph IDs, edge kinds, claim labels, claim-policy compatibility, metric support, prohibited claims, pinned content preservation, mandatory covered-achievement inclusion, and bullet-limit overflow reasons.
 - [ ] 1.4 Add compatibility adapter from existing profile tailoring controls to the new claim, generation, writing, and revision-gate control model.
 - [ ] 1.5 Add migration tests proving Tailoring mode is used only as migration input and no longer acts as independent runtime authority.
 
@@ -21,14 +21,14 @@
 - [ ] 3.3 Add evidence-first candidate generation that excludes adjacent or draft claims unless policy allows them.
 - [ ] 3.4 Integrate post-generation fit scoring against the assembled resume and target profile.
 - [ ] 3.5 Add scorer-threshold revision routing using prioritized fixes and uncovered requirements.
-- [ ] 3.6 Add minimal enhancement revision pass that labels every adjacent or draft claim and respects auto-approval policy.
-- [ ] 3.7 Add candidate selection tests for pass-on-first-draft, revise-after-low-score, no-enhancement-allowed, and review-blocked draft claims.
+- [ ] 3.6 Add minimal enhancement revision pass that labels every adjacent or draft claim, appends enhancement-produced covered achievements without evicting selected covered or pinned achievements, and respects auto-approval policy.
+- [ ] 3.7 Add candidate selection tests for pass-on-first-draft, revise-after-low-score, no-enhancement-allowed, review-blocked draft claims, covered achievements exceeding max bullets, and enhancement-added covered achievements.
 
 ## 4. Assembly, Provenance, And Audit
 
 - [ ] 4.1 Extend provenance annotations to include requirement IDs, evidence IDs, coverage edge IDs, claim labels, and pinned/positioning reasons.
-- [ ] 4.2 Preserve required experience entries, required bullets, and required skills even when they do not cover target requirements.
-- [ ] 4.3 Expose safe audit summaries for covered requirements, uncovered requirements, unused achievements, revision decisions, and review blockers.
+- [ ] 4.2 Preserve required experience entries, required bullets, required skills, and every requirement-covered achievement even when mandatory content exceeds configured max bullets.
+- [ ] 4.3 Expose safe audit summaries for covered requirements, uncovered requirements, unused achievements, bullet-limit overflow reasons, revision decisions, and review blockers.
 - [ ] 4.4 Ensure audit projections omit raw prompts, full profile payloads, full job descriptions, local paths, PDFs, logs, browser data, and SQLite contents.
 - [ ] 4.5 Add API/read-model tests for requirement-led audit metadata and review-blocking adjacent or draft claims.
 
@@ -45,6 +45,6 @@
 
 - [ ] 6.1 Update `docs/tailoring.md` to describe requirement-led coverage, claim policy, score-gated revision, and control migration.
 - [ ] 6.2 Update active requirements and local reliability QA entries for requirement-led tailoring and safe audit display.
-- [ ] 6.3 Add Python unit and evaluation fixtures covering coverage graph validation, claim-policy gates, pins, scorer thresholds, and low-quality advisory signals.
+- [ ] 6.3 Add Python unit and evaluation fixtures covering coverage graph validation, claim-policy gates, pins, mandatory covered-achievement inclusion, max-bullet overflow, scorer thresholds, and low-quality advisory signals.
 - [ ] 6.4 Add API tests for safe read-model exposure and Apply Review readiness with review-blocking enhanced claims.
 - [ ] 6.5 Add product-path QA for Preferences control migration and Apply Review coverage audit display.

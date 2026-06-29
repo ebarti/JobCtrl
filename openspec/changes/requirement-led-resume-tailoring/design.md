@@ -31,6 +31,8 @@ which profile achievements before writing the resume.
 - Link enhancement and auto-approval behavior to claim policy.
 - Preserve user-pinned required experiences and bullets even when they do not
   cover a target requirement.
+- Include every achievement that covers at least one target requirement, even
+  when that pushes an experience entry above the configured max bullet count.
 - Use post-generation scoring to decide whether revision/enhancement is needed.
 - Persist safe audit data that explains coverage, gaps, unused achievements,
   enhancement status, and revision decisions.
@@ -98,7 +100,32 @@ Alternative considered: ask the model to emit the full resume JSON. That would
 make assembly simpler superficially, but it expands the model's authority into
 fixed profile structure and makes accidental profile drift more likely.
 
-### 3. Define Controls By Behavioral Authority
+### 3. Mandatory Content Overrides Bullet Budgets
+
+The configured max bullet count is a normal layout budget, not permission to
+drop required evidence. Candidate assembly must include content in this order:
+
+1. User-pinned required bullets and required experience entries.
+2. All achievements with at least one valid coverage edge to a job requirement.
+3. Enhancement-produced achievements that cover previously unmet requirements,
+   if the enhancement pass is allowed by claim policy.
+4. Optional positioning achievements, only if space remains under the configured
+   max.
+
+If mandatory content exceeds the max bullet count for an experience entry, the
+entry is allowed to exceed the limit. The overflow must be recorded in audit
+metadata with the reason, such as `pinned_required_bullet`,
+`requirement_coverage`, or `enhancement_coverage`.
+
+Enhancement cannot replace already selected covered achievements just to make
+room. It may append new covered achievements and trigger a max-bullet overflow
+audit note.
+
+Alternative considered: treat max bullets as a hard validator. That would let a
+layout preference remove exactly the content the requirement-led flow is meant
+to preserve.
+
+### 4. Define Controls By Behavioral Authority
 
 The required controls are:
 
@@ -167,7 +194,7 @@ Alternative considered: preserve the current UI controls and bolt new behavior
 behind them. That would keep overlapping knobs whose authority is unclear,
 which is the problem this change is meant to fix.
 
-### 4. Run Evidence-First, Then Score-Gated Revision
+### 5. Run Evidence-First, Then Score-Gated Revision
 
 The generation loop should be:
 
@@ -187,14 +214,15 @@ The generation loop should be:
 Enhancement is not the default write strategy. It is a second-stage response to
 measured fit gaps.
 
-### 5. Treat Scoring As A Gate, Not A Substitute For Validators
+### 6. Treat Scoring As A Gate, Not A Substitute For Validators
 
 The scorer decides whether the resume is good enough relative to the job. It
 does not authorize unsupported facts. Deterministic validators still own:
 
 - schema shape,
 - known profile and requirement IDs,
-- max bullet counts,
+- max bullet counts for optional content, with mandatory-overflow reasons for
+  user pins and requirement-covered achievements,
 - required pins,
 - exact skill membership,
 - verified metrics,
@@ -205,7 +233,7 @@ does not authorize unsupported facts. Deterministic validators still own:
 The scorer output can trigger revision and explain gaps, but it cannot approve
 fabrication.
 
-### 6. Persist Audit Data Separately From Raw Sensitive Inputs
+### 7. Persist Audit Data Separately From Raw Sensitive Inputs
 
 Material metadata and read models should expose bounded, safe summaries:
 
@@ -213,6 +241,8 @@ Material metadata and read models should expose bounded, safe summaries:
 - covered and uncovered requirement IDs/text excerpts,
 - evidence IDs used per generated line,
 - unused but pinned achievements,
+- experience entries that exceed the configured bullet max because mandatory
+  covered or pinned achievements had to be included,
 - claim labels and review blockers,
 - scorer dimensions and prioritized fixes,
 - revision attempts and why they ran.
@@ -235,6 +265,10 @@ local file paths, generated PDFs, logs, browser profiles, or SQLite contents.
 - Must-include bullets can reduce fit when they do not match the target job.
   Mitigation: keep pins authoritative, label them as pinned/positioning rather
   than requirement coverage, and let the scorer report the trade-off.
+- Requirement coverage can force longer experience entries than the user's
+  configured max bullets. Mitigation: treat max bullets as a soft budget after
+  mandatory content, audit the overflow reason, and keep optional positioning
+  content subject to the max.
 - A fit scorer can become overly broad or subjective.
   Mitigation: require structured dimensions, must-have coverage, red flags, and
   prioritized fixes; deterministic validators remain the hard safety gate.
