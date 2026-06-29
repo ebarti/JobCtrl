@@ -5736,6 +5736,63 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps explicit claim policy when legacy strict mode is present", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Explicit Claim Policy Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    resume.tailoring_rules = {
+      tailoring_policy: {
+        mode: "strict",
+        allow_title_reframing: true,
+        allow_summary_rewrite: true,
+        allow_achievement_rewriting: true,
+        allow_skill_reordering: true,
+        allow_minor_inference: true,
+        claim_mode: "draft_requires_confirmation",
+        auto_approvable_claim_modes: ["verified_only", "draft_requires_confirmation"],
+        allow_adjacent_achievement_drafts: false,
+      },
+    };
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body.profile.resume.tailoring_rules.tailoring_policy).toMatchObject({
+      mode: "strict",
+      allow_title_reframing: false,
+      allow_summary_rewrite: true,
+      allow_achievement_rewriting: true,
+      allow_skill_reordering: true,
+      allow_minor_inference: true,
+      claim_mode: "draft_requires_confirmation",
+      auto_approvable_claim_modes: ["verified_only"],
+      allow_adjacent_achievement_drafts: true,
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare(
+          "SELECT tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json, "
+            + "tailoring_allow_adjacent_achievement_drafts FROM candidate_profiles",
+        ).get(),
+      ).toMatchObject({
+        tailoring_claim_mode: "draft_requires_confirmation",
+        tailoring_auto_approvable_claim_modes_json: '["verified_only"]',
+        tailoring_allow_adjacent_achievement_drafts: 1,
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("validates target-search locations before saving profile preferences", async () => {
     const placeValidator = vi.fn(async (place: string) => place === "Barcelona, Spain");
     const app = buildApp({ ...options, placeValidator });

@@ -73,22 +73,63 @@ function StatefulEditor({
 }
 
 describe("<StructuredProfileEditor>", () => {
-  it("edits claim mode and auto-approvable claim controls", () => {
+  it("remaps visible claim policy controls away from legacy tailoring mode", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
-    fireEvent.change(screen.getByLabelText("Claim mode"), {
+    expect(screen.queryByLabelText("Tailoring mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("AI may make minor inferred phrasing")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Allow adjacent achievement drafts")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Claim policy"), {
       target: { value: "draft_requires_confirmation" },
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Verified facts only" }));
 
     const profile = JSON.parse(latestProfile);
     expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
       "draft_requires_confirmation",
     );
-    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
-      "verified_only",
-    ]);
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_minor_inference).toBe(true);
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(true);
+  });
+
+  it("keeps title changes disabled and moves adjacent auto-approval behind advanced policy", () => {
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
+
+    fireEvent.click(screen.getByText("Advanced auto-approval policy"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Adjacent expertise translation" }));
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toContain(
+      "adjacent_translation",
+    );
+  });
+
+  it("labels keyword density as advisory emphasis and shows revision defaults", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByLabelText("Keyword density")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Keyword emphasis")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Revision policy" })).toHaveTextContent("8/10");
+    expect(screen.getByRole("group", { name: "Revision policy" })).toHaveTextContent("85%");
+    expect(screen.getByLabelText("Additional guidance")).toHaveAttribute("maxlength", "1200");
+  });
+
+  it("exposes required content pins in Preferences tailoring controls", () => {
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    const pins = screen.getByRole("group", { name: "Required content pins" });
+    expect(pins).toHaveTextContent("Experience entries");
+    expect(pins).toHaveTextContent("Experience bullets");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Director of Platform" }));
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.required_experience_entry_ids).toEqual(["exp-1"]);
   });
 
   it("renders bullet standards as a combined fixed set", () => {

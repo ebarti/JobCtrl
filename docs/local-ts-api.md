@@ -403,9 +403,13 @@ verification-code MCP server:
   DTO used by Apply Review. The materials preview includes the selected resume
   text artifact, selected resume PDF artifact, and `resumePdfLayoutBoxes` for
   generation-time line/page anchoring when the selected final PDF was rendered
-  through the HTML/CSS resume renderer. Apply Review uses the selected PDF
-  artifact to fetch the sibling HTML preview for the Plate editor and keeps the
-  PDF as the final file link.
+  through the HTML/CSS resume renderer. Requirement-led materials can also
+  include `requirementLedAudit`: bounded coverage, generated-claim, pinned
+  content, bullet-overflow, revision, and review-blocker summaries derived from
+  artifact metadata without projecting raw prompts, full profile/job text,
+  local paths, PDFs, logs, browser data, or SQLite contents. Apply Review uses
+  the selected PDF artifact to fetch the sibling HTML preview for the Plate
+  editor and keeps the PDF as the final file link.
 - `GET` / `POST /v1/jobs/:jobKey/resume-review/draft` loads or creates the
   separate editable draft for the selected resume artifact generation. Draft
   revisions, structured edit deltas, comment threads, comment replies, and

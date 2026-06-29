@@ -74,7 +74,7 @@ def test_tailoring_quality_eval_preserves_claim_safety_controls(
     )
 
     assert plan.claim_mode == "adjacent_translation"
-    assert plan.allow_adjacent_achievement_drafts is True
+    assert plan.allow_adjacent_achievement_drafts is False
     assert plan.auto_approvable_claim_modes == ("verified_only", "evidence_reframing")
     assert "draft_requires_confirmation" not in plan.auto_approvable_claim_modes
 

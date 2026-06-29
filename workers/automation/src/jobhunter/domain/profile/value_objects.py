@@ -372,7 +372,8 @@ class SkillCategory:
 
 TAILORING_MODES = ("strict", "balanced", "aggressive")
 CLAIM_MODES = ("verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation")
-AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
+AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing", "adjacent_translation")
+DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
 EVIDENCE_STRENGTHS = ("verified", "supported", "inferred", "draft")
 WRITING_TONES = ("direct", "executive", "technical", "confident", "warm")
 BULLET_STYLES = ("balanced", "impact", "technical_depth", "leadership")
@@ -390,7 +391,7 @@ class TailoringPolicy:
     allow_summary_rewrite: bool = True
     allow_minor_inference: bool = False
     claim_mode: str = "evidence_reframing"
-    auto_approvable_claim_modes: tuple[str, ...] = AUTO_APPROVABLE_CLAIM_MODES
+    auto_approvable_claim_modes: tuple[str, ...] = DEFAULT_AUTO_APPROVABLE_CLAIM_MODES
     allow_adjacent_achievement_drafts: bool = False
 
     @classmethod
@@ -399,44 +400,52 @@ class TailoringPolicy:
         mode = _str(data.get("mode"), "balanced")
         if mode not in TAILORING_MODES:
             mode = "balanced"
-        claim_mode = _str(data.get("claim_mode"), "evidence_reframing")
-        if claim_mode not in CLAIM_MODES:
+        raw_claim_mode = _str(data.get("claim_mode"), "")
+        if raw_claim_mode in CLAIM_MODES:
+            claim_mode = raw_claim_mode
+        elif mode == "strict":
+            claim_mode = "verified_only"
+        elif _bool(data.get("allow_adjacent_achievement_drafts"), False):
+            claim_mode = "draft_requires_confirmation"
+        elif _bool(data.get("allow_minor_inference"), False):
+            claim_mode = "adjacent_translation"
+        else:
             claim_mode = "evidence_reframing"
         auto_approvable = tuple(
             claim_mode
             for claim_mode in _str_tuple(data.get("auto_approvable_claim_modes"))
             if claim_mode in AUTO_APPROVABLE_CLAIM_MODES
-        ) or AUTO_APPROVABLE_CLAIM_MODES
-        allow_adjacent_drafts = mode == "aggressive" and _bool(
-            data.get("allow_adjacent_achievement_drafts"), False
         )
+        if not auto_approvable:
+            auto_approvable = (
+                ("verified_only",)
+                if mode == "strict" and "auto_approvable_claim_modes" not in data
+                else DEFAULT_AUTO_APPROVABLE_CLAIM_MODES
+            )
 
         policy = cls(
             mode=mode,
-            allow_title_reframing=_bool(data.get("allow_title_reframing"), False),
-            allow_achievement_rewriting=_bool(data.get("allow_achievement_rewriting"), True),
-            allow_skill_reordering=_bool(data.get("allow_skill_reordering"), True),
-            allow_summary_rewrite=_bool(data.get("allow_summary_rewrite"), True),
-            allow_minor_inference=_bool(data.get("allow_minor_inference"), False),
+            allow_title_reframing=False,
+            allow_achievement_rewriting=_bool(
+                data.get("allow_achievement_rewriting"),
+                mode != "strict",
+            ),
+            allow_skill_reordering=_bool(
+                data.get("allow_skill_reordering"),
+                mode != "strict",
+            ),
+            allow_summary_rewrite=_bool(
+                data.get("allow_summary_rewrite"),
+                mode != "strict",
+            ),
+            allow_minor_inference=_bool(
+                data.get("allow_minor_inference"),
+                False,
+            ),
             claim_mode=claim_mode,
             auto_approvable_claim_modes=auto_approvable,
-            allow_adjacent_achievement_drafts=allow_adjacent_drafts,
+            allow_adjacent_achievement_drafts=claim_mode == "draft_requires_confirmation",
         )
-        # Strict mode forces every flag to False — the policy makes the
-        # forbidden options unrepresentable rather than relying on consumers
-        # to remember the rule.
-        if policy.mode == "strict":
-            return cls(
-                mode="strict",
-                allow_title_reframing=False,
-                allow_achievement_rewriting=False,
-                allow_skill_reordering=False,
-                allow_summary_rewrite=False,
-                allow_minor_inference=False,
-                claim_mode="verified_only",
-                auto_approvable_claim_modes=("verified_only",),
-                allow_adjacent_achievement_drafts=False,
-            )
         return policy
 
     def to_dict(self) -> dict[str, Any]:

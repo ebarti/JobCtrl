@@ -539,11 +539,12 @@ function insertCanonicalMaterials(
     resumeTxt: string;
   },
 ): void {
+  const requirementLedMetadata = JSON.stringify(requirementLedAuditMetadata());
   db.prepare(
     `INSERT INTO job_materials (
       job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(QA_PLATFORM_JOB_URL, 1, "local", "approved", QA_NOW, QA_NOW, "{}");
+  ).run(QA_PLATFORM_JOB_URL, 1, "local", "approved", QA_NOW, QA_NOW, requirementLedMetadata);
   const insert = db.prepare(
     `INSERT INTO job_materials_artifacts (
       job_url, generation, artifact_type, artifact_id, status, path,
@@ -559,7 +560,7 @@ function insertCanonicalMaterials(
     paths.resumeTxt,
     "text",
     localFileSize(paths.resumeTxt),
-    "{}",
+    requirementLedMetadata,
     QA_NOW,
   );
   insert.run(
@@ -571,7 +572,7 @@ function insertCanonicalMaterials(
     paths.resumePdf,
     "html_pdf",
     localFileSize(paths.resumePdf),
-    JSON.stringify({ html_path: paths.resumeHtml }),
+    JSON.stringify({ ...requirementLedAuditMetadata(), html_path: paths.resumeHtml }),
     QA_NOW,
   );
   insert.run(
@@ -622,6 +623,98 @@ function insertCanonicalMaterials(
     "{}",
     QA_NOW,
   );
+}
+
+function requirementLedAuditMetadata(): Record<string, unknown> {
+  return {
+    system_prompt: "RAW PROMPT SECRET",
+    full_profile: "FULL PROFILE SECRET",
+    local_path: "/private/secret-resume.pdf",
+    quality_plan: {
+      target_profile: {
+        requirements: [
+          {
+            requirement_id: "r1",
+            text_excerpt: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+          },
+          {
+            requirement_id: "r2",
+            text_excerpt: "Improve developer experience and incident-response practices.",
+            tier: "nice_to_have",
+          },
+        ],
+      },
+      coverage_graph: {
+        requirement_count: 2,
+        achievement_count: 2,
+        coverage_edge_count: 2,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirements: [
+          {
+            requirement_id: "r2",
+            reason: "Adjacent developer-experience language needs review before approval.",
+          },
+        ],
+        unused_achievement_ids: ["ev-unused"],
+      },
+    },
+    change_annotations: [
+      {
+        section: "experience",
+        label: "Director of Platform Engineering",
+        source_text: ["FULL PROFILE SECRET source bullet"],
+        tailored_text: ["Owned platform reliability improvements for incident response."],
+        evidence_ids: ["ev-platform"],
+        requirement_ids: ["r1"],
+        coverage_edge_ids: ["edge-r1-ev-platform"],
+        claim_labels: ["evidence_reframed"],
+        positioning_reasons: ["Emphasized direct platform reliability ownership."],
+        review_required: false,
+      },
+      {
+        section: "summary",
+        label: "Professional summary",
+        tailored_text: ["Draft developer-experience translation requires confirmation."],
+        evidence_ids: ["ev-incident"],
+        requirement_ids: ["r2"],
+        coverage_edge_ids: ["edge-r2-ev-incident"],
+        claim_labels: ["draft_requires_confirmation"],
+        positioning_reasons: ["Manual confirmation required before approving adjacent developer-experience language."],
+        review_required: true,
+      },
+    ],
+    post_generation_fit: {
+      fit_score: {
+        score: 7,
+        must_have_coverage: 0.5,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirement_ids: ["r2"],
+        prioritized_fixes: ["Add direct developer experience proof."],
+        review_blockers: ["claim-draft: draft_requires_confirmation"],
+      },
+      revision_decision: {
+        threshold_failed: true,
+        should_revise: false,
+        review_blocked: true,
+        enhancement_allowed: true,
+        reason: "review_blocked_claims",
+        attempt: 1,
+        max_revision_attempts: 1,
+        prioritized_fixes: ["Add direct developer experience proof."],
+        review_blockers: ["claim-draft: draft_requires_confirmation"],
+      },
+    },
+    bullet_limit_overflows: [
+      {
+        experience_entry_id: "qa_platform",
+        max_bullets: 1,
+        actual_bullets: 2,
+        reason: "requirement_coverage",
+        evidence_ids: ["ev-platform"],
+      },
+    ],
+  };
 }
 
 function insertEmployerAnalysis(db: Database.Database): void {

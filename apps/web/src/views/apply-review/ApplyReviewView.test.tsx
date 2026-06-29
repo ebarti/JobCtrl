@@ -828,7 +828,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("Ideal profile from job post")).toBeInTheDocument();
     expect(screen.getByText(/principal engineer who can lead platform reliability/i)).toBeInTheDocument();
     expect(screen.getByText("Job needs from posting")).toBeInTheDocument();
-    expect(screen.getByText("Lead platform reliability improvements across critical services.")).toBeInTheDocument();
+    expect(screen.getAllByText("Lead platform reliability improvements across critical services.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Candidate fit").length).toBeGreaterThan(0);
     expect(screen.getByText("matched direct")).toBeInTheDocument();
     expect(screen.getByText("transferable")).toBeInTheDocument();
@@ -842,6 +842,34 @@ describe("<ApplyReviewView>", () => {
     expect(
       screen.getByText(/Tailored resume evidence: Owned platform reliability improvements/i),
     ).toBeInTheDocument();
+    const requirementLedAudit = within(
+      screen.getByRole("region", { name: "Requirement-led tailoring audit" }),
+    );
+    expect(requirementLedAudit.getByText("1/2 requirements covered")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("2 coverage edges")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("review blockers: 1")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("Covered requirements")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("Uncovered requirements")).toBeInTheDocument();
+    expect(
+      requirementLedAudit.getByText("Improve incident-response practices and developer experience."),
+    ).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("Review-blocking or draft claims")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("adjacent translation")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("draft")).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("review required")).toBeInTheDocument();
+    expect(
+      requirementLedAudit.getByText("Bridges incident leadership into developer-experience practice improvements."),
+    ).toBeInTheDocument();
+    expect(requirementLedAudit.getByText(/mandatory requirement coverage|requirement coverage/)).toBeInTheDocument();
+    expect(requirementLedAudit.getByText(/Fit gate:\s*7\.6\/10/)).toBeInTheDocument();
+    expect(requirementLedAudit.getByText(/Must-have coverage:\s*50%/)).toBeInTheDocument();
+    expect(requirementLedAudit.getByText("review blocked claims")).toBeInTheDocument();
+    expect(requirementLedAudit.getAllByText("claim-draft: draft requires confirmation").length).toBeGreaterThan(0);
+    expect(
+      requirementLedAudit.queryByText(
+        /mandatory_requirement_coverage|requirement_coverage|review_blocked_claims|draft_requires_confirmation/,
+      ),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Why fit score is 9/10")).toBeInTheDocument();
     expect(screen.getByText("Strong fit on platform reliability.")).toBeInTheDocument();
     expect(screen.getByText("Technical fit")).toBeInTheDocument();

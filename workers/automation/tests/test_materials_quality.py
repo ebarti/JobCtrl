@@ -321,9 +321,10 @@ def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -
     ]
     assert summary["controls"][:3] == [
         "target seniority: senior",
-        "claim mode: evidence_reframing",
-        "adjacent drafts blocked",
+        "claim policy: evidence_reframing",
+        "tone: direct",
     ]
+    assert "adjacent drafts blocked" not in summary["controls"]
 
     experience = next(item for item in annotations if item["section"] == "experience")
     assert experience["source_id"] == "acme_swe"
@@ -340,6 +341,41 @@ def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -
     assert "ev_latency" in plan.seniority_evidence_ids
     assert "python" in plan.job_keywords
     assert "latency" in plan.job_keywords
+
+
+def test_change_annotations_include_generated_claim_audit_fields() -> None:
+    profile = _profile()
+    job = _senior_job()
+    plan = build_tailoring_plan(
+        profile,
+        job,
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    payload = _payload(
+        bullet="Owned Python API reliability and reduced latency 35% using PostgreSQL."
+    )
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": "claim-python",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": "Owned Python API reliability and reduced latency 35% using PostgreSQL.",
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+            "requirement_ids": ["req_latency"],
+            "evidence_ids": ["ev_latency"],
+            "non_requirement_reason": "",
+            "review_required": False,
+        }
+    ]
+
+    annotations = build_tailoring_change_annotations(profile, job, payload, plan)
+
+    experience = next(item for item in annotations if item["section"] == "experience")
+    assert experience["coverage_edge_ids"] == ["edge_req_latency_ev_latency_direct"]
+    assert experience["requirement_ids"] == ["req_latency"]
+    assert experience["claim_labels"] == ["evidence_reframed"]
+    assert experience["review_required"] is False
 
 
 def test_build_tailoring_plan_sources_keywords_from_canonical_analysis() -> None:
@@ -392,6 +428,27 @@ def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
     assert prompt["requirement_directives"][1]["prohibited_claims"] == [
         "Direct Salesforce administration."
     ]
+
+
+def test_build_tailoring_plan_ignores_stale_requirement_fit_report_for_coverage() -> None:
+    analysis = _requirement_analysis()
+    stale_report = _requirement_fit_report("https://example.com/old-job")
+
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=stale_report,
+    )
+
+    assert plan.requirement_directives == ()
+    assert plan.target_profile is not None
+    assert [requirement.requirement_id for requirement in plan.target_profile.requirements] == [
+        "req_latency",
+        "req_salesforce",
+    ]
+    assert plan.coverage_graph is not None
+    assert plan.coverage_graph.coverage_edges == ()
 
 
 def test_quality_rejects_prohibited_missing_requirement_claim() -> None:

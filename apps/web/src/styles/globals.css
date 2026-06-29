@@ -546,6 +546,11 @@ textarea:focus-visible {
   gap: 8px 12px;
 }
 
+.checkbox-options.vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .target-choice {
   min-height: 28px;
 }
@@ -959,6 +964,79 @@ textarea:focus-visible {
 
 .apply-review-materials-scroll {
   gap: 14px;
+}
+
+.apply-review-requirement-led-audit {
+  gap: 10px;
+}
+
+.apply-review-audit-summary,
+.apply-review-audit-tags > span:last-child,
+.apply-review-audit-revision {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.apply-review-audit-section {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.apply-review-audit-section h4 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.apply-review-audit-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.apply-review-audit-list > li {
+  min-width: 0;
+}
+
+.apply-review-audit-list > li > b,
+.apply-review-claim-head > b {
+  overflow-wrap: anywhere;
+}
+
+.apply-review-claim-head {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.apply-review-audit-tags {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  margin-top: 4px;
+}
+
+.apply-review-audit-tags > span:first-child {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.apply-review-audit-excerpts {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--foreground);
 }
 
 .apply-review-resume-review {
@@ -5272,6 +5350,79 @@ textarea:focus-visible {
 
 .claim-mode-group {
   align-self: start;
+}
+
+.tailoring-controls-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.tailoring-control-group {
+  align-self: start;
+}
+
+.field.check.disabled {
+  color: var(--muted-foreground);
+}
+
+.revision-policy-group dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.revision-policy-group dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.revision-policy-group dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.revision-policy-group dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.advanced-policy-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 10px;
+}
+
+.advanced-policy-group summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.advanced-policy-group .claim-mode-group {
+  margin-top: 10px;
+  border: 0;
+  padding: 0;
+}
+
+.required-content-pins-group .pin-group {
+  display: grid;
+  gap: 10px;
+}
+
+.required-content-pins-group .pin-group fieldset {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.required-content-pins-group .target-choice span {
+  overflow-wrap: anywhere;
 }
 
 .bullet-row {

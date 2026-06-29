@@ -15,6 +15,7 @@ import type {
   ApplyReviewProfileSourceField,
   ApplyReviewQueueItem,
   ApplyReviewQueueResponse,
+  ApplyReviewRequirementLedAudit,
   JobCompensationSummary,
   JobApplicationOutcomeListResponse,
   ManualApplicationOutcomeRequest,
@@ -872,6 +873,17 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   }
 }
 
+function isReviewRequiredMaterialMetadata(value: string | null): boolean {
+  const metadata = parseJsonRecord(value);
+  if (!metadata) return false;
+  if (Boolean(recordValue(metadata, "reviewRequired", "review_required"))) return true;
+  const fit = asRecord(recordValue(metadata, "postGenerationFit", "post_generation_fit"));
+  const decision = asRecord(recordValue(fit, "revisionDecision", "revision_decision"));
+  if (Boolean(recordValue(decision, "reviewBlocked", "review_blocked"))) return true;
+  const fitScore = asRecord(recordValue(fit, "fitScore", "fit_score"));
+  return parseStringList(recordValue(fitScore, "reviewBlockers", "review_blockers")).length > 0;
+}
+
 function parseQueueCompensationSummary(value: string | null): JobCompensationSummary | null {
   if (!value) {
     return null;
@@ -885,6 +897,10 @@ function parseQueueCompensationSummary(value: string | null): JobCompensationSum
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function recordValue(
@@ -1409,6 +1425,7 @@ type ResumeMaterialPreview = Pick<
   | "resumeTextArtifactId"
   | "resumePdfArtifactId"
   | "resumePdfLayoutBoxes"
+  | "requirementLedAudit"
   | "resumeTemplate"
 >;
 
@@ -1416,7 +1433,9 @@ interface MaterialArtifactCandidate {
   readonly artifactId: string | null;
   readonly createdAt: string;
   readonly generation: number | null;
+  readonly metadataJson: string | null;
   readonly path: string;
+  readonly reviewRequired: boolean;
   readonly rowRank: number;
   readonly sourceRank: number;
 }
@@ -1450,6 +1469,23 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     binary: true,
     jobKey,
   }).filter((candidate) => candidate.artifactId);
+  const reviewRequiredText = textCandidates.find((candidate) => candidate.reviewRequired);
+  if (reviewRequiredText) {
+    const text = firstReadableTextCandidate([reviewRequiredText], {
+      byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT,
+      charLimit: null,
+    });
+    if (text) {
+      return {
+        resumeText: text.preview,
+        resumeTextArtifactId: text.candidate.artifactId,
+        resumePdfArtifactId: null,
+        resumePdfLayoutBoxes: [],
+        requirementLedAudit: requirementLedAuditForCandidates(text.candidate),
+        resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+      };
+    }
+  }
 
   for (const pdf of pdfCandidates) {
     const text = firstReadableTextCandidate(
@@ -1462,6 +1498,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
         resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
+        requirementLedAudit: requirementLedAuditForCandidates(text.candidate, pdf),
         resumeTemplate: resumeTemplateStateForJob(db, jobKey),
       };
     }
@@ -1474,6 +1511,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
       resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
+      requirementLedAudit: requirementLedAuditForCandidates(pdfOnly),
       resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
@@ -1485,6 +1523,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
       resumePdfLayoutBoxes: [],
+      requirementLedAudit: requirementLedAuditForCandidates(text.candidate),
       resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
@@ -1496,7 +1535,188 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
       ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
       : [],
+    requirementLedAudit: pdfCandidates[0] ? requirementLedAuditForCandidates(pdfCandidates[0]) : null,
     resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+  };
+}
+
+function requirementLedAuditForCandidates(
+  ...candidates: readonly MaterialArtifactCandidate[]
+): ApplyReviewRequirementLedAudit | null {
+  for (const candidate of candidates) {
+    const audit = parseRequirementLedAuditMetadata(candidate.metadataJson);
+    if (audit) {
+      return audit;
+    }
+  }
+  return null;
+}
+
+function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequirementLedAudit | null {
+  const metadata = parseJsonRecord(value);
+  const qualityPlan = asRecord(recordValue(metadata, "qualityPlan", "quality_plan"));
+  const coverageGraph = asRecord(recordValue(qualityPlan, "coverageGraph", "coverage_graph"));
+  if (!coverageGraph) {
+    return null;
+  }
+  const targetProfile = asRecord(recordValue(qualityPlan, "targetProfile", "target_profile"));
+  const requirementById = requirementAuditSummaries(targetProfile);
+  const coveredRequirementIds = parseStringList(recordValue(coverageGraph, "coveredRequirementIds", "covered_requirement_ids"));
+  const claims = parseAuditClaims(recordValue(metadata, "changeAnnotations", "change_annotations"));
+  const revision = parseAuditRevision(recordValue(metadata, "postGenerationFit", "post_generation_fit"));
+  const reviewBlockers = boundedEvidenceList([
+    ...(revision?.reviewBlockers ?? []),
+    ...claims
+      .filter((claim) => claim.reviewRequired)
+      .map((claim) => `${claim.label}: ${claim.claimLabels.join(", ") || "review required"}`),
+  ]);
+  return {
+    requirementCount: nonNegativeInteger(recordValue(coverageGraph, "requirementCount", "requirement_count")),
+    achievementCount: nonNegativeInteger(recordValue(coverageGraph, "achievementCount", "achievement_count")),
+    coverageEdgeCount: nonNegativeInteger(recordValue(coverageGraph, "coverageEdgeCount", "coverage_edge_count")),
+    coveredRequirements: coveredRequirementIds.map((id) => requirementAuditRequirement(id, requirementById, null)),
+    uncoveredRequirements: parseUncoveredAuditRequirements(
+      recordValue(coverageGraph, "uncoveredRequirements", "uncovered_requirements"),
+      requirementById,
+    ),
+    unusedAchievementIds: parseStringList(recordValue(coverageGraph, "unusedAchievementIds", "unused_achievement_ids")),
+    evidenceBackedClaims: claims.filter(
+      (claim) => claim.requirementIds.length > 0 || claim.evidenceIds.length > 0 || claim.coverageEdgeIds.length > 0,
+    ),
+    pinnedClaims: claims.filter(
+      (claim) => claim.claimLabels.includes("pinned") || claim.positioningReasons.includes("pinned"),
+    ),
+    adjacentOrDraftClaims: claims.filter(
+      (claim) =>
+        claim.reviewRequired ||
+        claim.claimLabels.includes("adjacent_translation") ||
+        claim.claimLabels.includes("draft_requires_confirmation"),
+    ),
+    bulletLimitOverflows: parseAuditOverflows(recordValue(metadata, "bulletLimitOverflows", "bullet_limit_overflows")),
+    revision,
+    reviewBlockers,
+  };
+}
+
+function requirementAuditSummaries(
+  targetProfile: Record<string, unknown> | null,
+): Map<string, { textExcerpt: string; tier: string | null }> {
+  const result = new Map<string, { textExcerpt: string; tier: string | null }>();
+  for (const item of arrayValue(targetProfile?.requirements)) {
+    const record = asRecord(item);
+    if (!record) continue;
+    const id = cleanLimitedText(recordValue(record, "requirementId", "requirement_id"), 80);
+    if (!id) continue;
+    result.set(id, {
+      textExcerpt: cleanLimitedText(recordValue(record, "textExcerpt", "text_excerpt"), IDEAL_REQUIREMENT_TEXT_LIMIT),
+      tier: cleanLimitedText(record.tier, 80) || null,
+    });
+  }
+  return result;
+}
+
+function requirementAuditRequirement(
+  id: string,
+  requirementById: Map<string, { textExcerpt: string; tier: string | null }>,
+  reason: string | null,
+): ApplyReviewRequirementLedAudit["coveredRequirements"][number] {
+  const summary = requirementById.get(id);
+  return {
+    id,
+    textExcerpt: summary?.textExcerpt || id,
+    tier: summary?.tier ?? null,
+    reason,
+  };
+}
+
+function parseUncoveredAuditRequirements(
+  value: unknown,
+  requirementById: Map<string, { textExcerpt: string; tier: string | null }>,
+): ApplyReviewRequirementLedAudit["uncoveredRequirements"] {
+  return arrayValue(value)
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) return null;
+      const id = cleanLimitedText(recordValue(record, "requirementId", "requirement_id"), 80);
+      if (!id) return null;
+      return requirementAuditRequirement(
+        id,
+        requirementById,
+        cleanLimitedText(record.reason, EVIDENCE_TEXT_LIMIT) || null,
+      );
+    })
+    .filter((item): item is ApplyReviewRequirementLedAudit["uncoveredRequirements"][number] => item !== null)
+    .slice(0, EVIDENCE_LIST_LIMIT);
+}
+
+function parseAuditClaims(value: unknown): ApplyReviewRequirementLedAudit["evidenceBackedClaims"] {
+  return arrayValue(value)
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) return null;
+      const section = cleanLimitedText(record.section, 80);
+      const label = cleanLimitedText(record.label, 160);
+      if (!section || !label) return null;
+      return {
+        section,
+        label,
+        textExcerpts: parseStringList(recordValue(record, "tailoredText", "tailored_text")).slice(0, 3),
+        requirementIds: parseStringList(recordValue(record, "requirementIds", "requirement_ids")),
+        evidenceIds: parseStringList(recordValue(record, "evidenceIds", "evidence_ids")),
+        coverageEdgeIds: parseStringList(recordValue(record, "coverageEdgeIds", "coverage_edge_ids")),
+        claimLabels: parseStringList(recordValue(record, "claimLabels", "claim_labels")),
+        positioningReasons: parseStringList(recordValue(record, "positioningReasons", "positioning_reasons")),
+        reviewRequired: Boolean(recordValue(record, "reviewRequired", "review_required")),
+      };
+    })
+    .filter((item): item is ApplyReviewRequirementLedAudit["evidenceBackedClaims"][number] => item !== null)
+    .slice(0, EVIDENCE_LIST_LIMIT);
+}
+
+function parseAuditOverflows(value: unknown): ApplyReviewRequirementLedAudit["bulletLimitOverflows"] {
+  return arrayValue(value)
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) return null;
+      const experienceEntryId = cleanLimitedText(recordValue(record, "experienceEntryId", "experience_entry_id"), 120);
+      const reason = cleanLimitedText(record.reason, 120);
+      const maxBullets = nonNegativeInteger(recordValue(record, "maxBullets", "max_bullets"));
+      const actualBullets = nonNegativeInteger(recordValue(record, "actualBullets", "actual_bullets"));
+      if (!experienceEntryId || !reason || actualBullets <= maxBullets) return null;
+      return {
+        experienceEntryId,
+        maxBullets,
+        actualBullets,
+        reason,
+        evidenceIds: parseStringList(recordValue(record, "evidenceIds", "evidence_ids")),
+      };
+    })
+    .filter((item): item is ApplyReviewRequirementLedAudit["bulletLimitOverflows"][number] => item !== null)
+    .slice(0, EVIDENCE_LIST_LIMIT);
+}
+
+function parseAuditRevision(value: unknown): ApplyReviewRequirementLedAudit["revision"] {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const fitScore = asRecord(recordValue(record, "fitScore", "fit_score"));
+  const decision = asRecord(recordValue(record, "revisionDecision", "revision_decision"));
+  if (!fitScore && !decision) {
+    return null;
+  }
+  return {
+    score: nullableNumber(fitScore?.score),
+    mustHaveCoverage: nullableNumber(recordValue(fitScore, "mustHaveCoverage", "must_have_coverage")),
+    thresholdFailed: Boolean(recordValue(decision, "thresholdFailed", "threshold_failed")),
+    shouldRevise: Boolean(recordValue(decision, "shouldRevise", "should_revise")),
+    reviewBlocked: Boolean(recordValue(decision, "reviewBlocked", "review_blocked")),
+    enhancementAllowed: Boolean(recordValue(decision, "enhancementAllowed", "enhancement_allowed")),
+    reason: cleanLimitedText(decision?.reason, EVIDENCE_TEXT_LIMIT) || null,
+    attempt: nullableInteger(decision?.attempt),
+    maxRevisionAttempts: nullableInteger(recordValue(decision, "maxRevisionAttempts", "max_revision_attempts")),
+    prioritizedFixes: parseStringList(recordValue(decision, "prioritizedFixes", "prioritized_fixes")),
+    reviewBlockers: parseStringList(recordValue(decision, "reviewBlockers", "review_blockers")),
   };
 }
 
@@ -1584,18 +1804,22 @@ function materialArtifactCandidates(
   const placeholders = artifactTypes.map(() => "?").join(", ");
 
   if (tableExists(db, "artifact_list_projections")) {
+    const columns = tableColumnSet(db, "artifact_list_projections");
+    const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
     const rows = allRows<{
       artifact_id: string | null;
       created_at: string | null;
       generation: number | null;
       local_path: string | null;
+      metadata_json: string | null;
+      status: string | null;
     }>(
       db,
-      `SELECT artifact_id, local_path, generation, created_at
+      `SELECT artifact_id, local_path, generation, created_at, status, ${metadataSelect}
        FROM artifact_list_projections
        WHERE job_id = ?
          AND artifact_type IN (${placeholders})
-         AND COALESCE(status, 'active') IN ('approved', 'active')
+         AND COALESCE(status, 'active') IN ('approved', 'active', 'candidate')
          AND local_path IS NOT NULL
          AND local_path != ''
        ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
@@ -1603,12 +1827,16 @@ function materialArtifactCandidates(
       [jobKey, ...artifactTypes],
     );
     for (const [index, row] of rows.entries()) {
+      const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
+      if (row.status === "candidate" && !reviewRequired) continue;
       pushMaterialCandidate(candidates, {
         artifactId: row.artifact_id,
         binary,
         createdAt: row.created_at,
         generation: row.generation,
+        metadataJson: row.metadata_json,
         path: row.local_path,
+        reviewRequired,
         rowRank: index,
         sourceRank: 0,
       });
@@ -1616,18 +1844,22 @@ function materialArtifactCandidates(
   }
 
   if (tableExists(db, "job_materials_artifacts")) {
+    const columns = tableColumnSet(db, "job_materials_artifacts");
+    const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
     const rows = allRows<{
       artifact_id: string | null;
       created_at: string | null;
       generation: number | null;
+      metadata_json: string | null;
       path: string | null;
+      status: string | null;
     }>(
       db,
-      `SELECT artifact_id, path, generation, created_at
+      `SELECT artifact_id, path, generation, created_at, status, ${metadataSelect}
        FROM job_materials_artifacts
        WHERE job_url = ?
          AND artifact_type IN (${placeholders})
-         AND COALESCE(status, 'approved') IN ('approved', 'active')
+         AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
          AND path IS NOT NULL
          AND path != ''
        ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
@@ -1635,12 +1867,16 @@ function materialArtifactCandidates(
       [jobKey, ...artifactTypes],
     );
     for (const [index, row] of rows.entries()) {
+      const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
+      if (row.status === "candidate" && !reviewRequired) continue;
       pushMaterialCandidate(candidates, {
         artifactId: row.artifact_id,
         binary,
         createdAt: row.created_at,
         generation: row.generation,
+        metadataJson: row.metadata_json,
         path: row.path,
+        reviewRequired,
         rowRank: index,
         sourceRank: 1,
       });
@@ -1671,7 +1907,9 @@ function materialArtifactCandidates(
         binary,
         createdAt: row.created_at,
         generation: null,
+        metadataJson: null,
         path: row.path,
+        reviewRequired: false,
         rowRank: index,
         sourceRank: 2,
       });
@@ -1689,7 +1927,9 @@ function materialArtifactCandidates(
       binary,
       createdAt: "",
       generation: null,
+      metadataJson: null,
       path: legacyRow?.path ?? null,
+      reviewRequired: false,
       rowRank: 0,
       sourceRank: 3,
     });
@@ -1705,7 +1945,9 @@ function pushMaterialCandidate(
     readonly binary: boolean;
     readonly createdAt: string | null | undefined;
     readonly generation: number | null | undefined;
+    readonly metadataJson: string | null | undefined;
     readonly path: string | null | undefined;
+    readonly reviewRequired?: boolean;
     readonly rowRank: number;
     readonly sourceRank: number;
   },
@@ -1718,7 +1960,9 @@ function pushMaterialCandidate(
     artifactId: input.artifactId ? String(input.artifactId) : null,
     createdAt: String(input.createdAt ?? ""),
     generation: nullableNumber(input.generation),
+    metadataJson: input.metadataJson ? String(input.metadataJson) : null,
     path,
+    reviewRequired: Boolean(input.reviewRequired),
     rowRank: input.rowRank,
     sourceRank: input.sourceRank,
   });
@@ -1921,6 +2165,11 @@ function nullableInteger(value: unknown): number | null {
   const parsed = nullableNumber(value);
   if (parsed === null) return null;
   return Number.isInteger(parsed) ? parsed : Math.trunc(parsed);
+}
+
+function nonNegativeInteger(value: unknown): number {
+  const parsed = nullableInteger(value);
+  return parsed !== null && parsed > 0 ? parsed : 0;
 }
 
 function positiveInteger(value: unknown): number | null {

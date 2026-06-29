@@ -36,7 +36,11 @@ describe("Profile types", () => {
       "adjacent_translation",
       "draft_requires_confirmation",
     ]);
-    expect(AUTO_APPROVABLE_CLAIM_MODES).toEqual(["verified_only", "evidence_reframing"]);
+    expect(AUTO_APPROVABLE_CLAIM_MODES).toEqual([
+      "verified_only",
+      "evidence_reframing",
+      "adjacent_translation",
+    ]);
     expect(EVIDENCE_STRENGTHS).toEqual(["verified", "supported", "inferred", "draft"]);
   });
 

@@ -10,7 +10,7 @@ from io import BytesIO
 from statistics import median
 from typing import Any
 
-from jobhunter.resume_profile import DEFAULT_TAILORING_POLICY, DEFAULT_WRITING_STYLE, get_tailoring_policy
+from jobhunter.resume_profile import DEFAULT_WRITING_STYLE, get_tailoring_policy
 from jobhunter.infrastructure.materials.latex_pdf import normalize_resume_style
 
 MAX_IMPORT_BYTES = 12 * 1024 * 1024
@@ -188,7 +188,7 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
     rules["required_bullets_by_experience_id"] = {}
     rules["required_skills_by_category_id"] = {}
     rules["max_experience_bullets"] = _coerce_positive_int(rules.get("max_experience_bullets"), default=4)
-    rules["tailoring_policy"] = {**DEFAULT_TAILORING_POLICY, **_dict_or_empty(rules.get("tailoring_policy"))}
+    rules["tailoring_policy"] = _dict_or_empty(rules.get("tailoring_policy"))
     rules["writing_style"] = {**DEFAULT_WRITING_STYLE, **_dict_or_empty(rules.get("writing_style"))}
     rules.setdefault("custom_tailoring_prompt", "")
     rules["tailoring_policy"] = get_tailoring_policy(profile)

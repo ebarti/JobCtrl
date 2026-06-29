@@ -207,7 +207,10 @@ def _bullet_transform(
     generated_lower = _normalize_space(generated_text).lower()
     source_lower = _normalize_space(source_text).lower()
 
-    if not source_lower and plan.allow_adjacent_achievement_drafts:
+    if (
+        not source_lower
+        and plan.requirement_led_controls.claim_policy == "draft_requires_confirmation"
+    ):
         return TransformType.SYNTHESIZE_FROM_RELATED
 
     introduced_metrics = [
@@ -406,7 +409,7 @@ def _summary_rationale(plan: TailoringPlan, transform: TransformType, matched: t
         return "Executive profile is the profile baseline, unchanged under the selected controls."
     base = (
         f"Executive profile was {transform.value.replace('_', ' ')} for a "
-        f"{plan.target_seniority} target using {plan.claim_mode}"
+        f"{plan.target_seniority} target using {plan.requirement_led_controls.claim_policy}"
     )
     return f"{base}; it serves the job signals {signals}." if signals else f"{base}."
 

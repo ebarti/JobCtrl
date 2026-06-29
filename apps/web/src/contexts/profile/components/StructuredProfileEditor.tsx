@@ -112,6 +112,13 @@ const CLAIM_MODE_OPTIONS: Array<[string, string]> = [
 const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
   ["verified_only", "Verified facts only"],
   ["evidence_reframing", "Evidence reframing"],
+  ["adjacent_translation", "Adjacent expertise translation"],
+];
+
+const KEYWORD_EMPHASIS_OPTIONS: Array<[string, string]> = [
+  ["natural", "Natural"],
+  ["moderate", "Moderate"],
+  ["high", "High"],
 ];
 
 const BULLET_STANDARD_OPTIONS: Array<[string, string]> = [
@@ -548,6 +555,37 @@ export function StructuredProfileEditor({
     </label>
   );
 
+  const claimPolicyField = () => (
+    <label className="field">
+      <span>Claim policy</span>
+      <select
+        value={textAt(profile, "resume.tailoring_rules.tailoring_policy.claim_mode")}
+        onChange={(event) => {
+          const value = event.target.value;
+          updateProfileDraft((draft) => {
+            setPathValue(draft, "resume.tailoring_rules.tailoring_policy.claim_mode", value);
+            setPathValue(
+              draft,
+              "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
+              value !== "verified_only",
+            );
+            setPathValue(
+              draft,
+              "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts",
+              value === "draft_requires_confirmation",
+            );
+          });
+        }}
+      >
+        {CLAIM_MODE_OPTIONS.map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   const checkboxField = (path: string, label: string) => (
     <label className="field check">
       <input
@@ -559,10 +597,23 @@ export function StructuredProfileEditor({
     </label>
   );
 
-  const textareaField = (path: string, label: string, placeholder = "") => (
+  const disabledCheckboxField = (label: string) => (
+    <label className="field check disabled">
+      <input type="checkbox" checked={false} disabled />
+      <span>{label}</span>
+    </label>
+  );
+
+  const textareaField = (
+    path: string,
+    label: string,
+    placeholder = "",
+    attrs: Record<string, unknown> = {},
+  ) => (
     <label className="field wide">
       <span>{label}</span>
       <textarea
+        {...attrs}
         placeholder={placeholder}
         value={textAt(profile, path)}
         onChange={(event) => updateProfilePath(path, event.target.value)}
@@ -865,6 +916,187 @@ export function StructuredProfileEditor({
         ))}
       </div>
     </fieldset>
+  );
+
+  const claimPolicyGroup = () => (
+    <fieldset className="field wide checkbox-group-field tailoring-control-group">
+      <legend>Claim policy</legend>
+      <div className="field-grid one">
+        {claimPolicyField()}
+      </div>
+    </fieldset>
+  );
+
+  const generationPermissionsGroup = () => (
+    <fieldset className="field wide checkbox-group-field tailoring-control-group">
+      <legend>Generation permissions</legend>
+      <div className="checkbox-options vertical">
+        {checkboxField(
+          "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
+          "Rewrite executive summary",
+        )}
+        {checkboxField(
+          "resume.tailoring_rules.tailoring_policy.allow_achievement_rewriting",
+          "Rewrite achievement bullets",
+        )}
+        {checkboxField(
+          "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
+          "Select and order existing skills",
+        )}
+        {disabledCheckboxField("Change experience titles")}
+      </div>
+    </fieldset>
+  );
+
+  const requiredContentPinsGroup = () => (
+    <fieldset className="field wide checkbox-group-field tailoring-control-group required-content-pins-group">
+      <legend>Required content pins</legend>
+      <div className="pin-group">
+        <fieldset>
+          <legend>Experience entries</legend>
+          <div className="checkbox-options vertical">
+            {experienceEntries.map((entry, index) => {
+              const entryId = textFrom(entry["id"]);
+              const label = textFrom(entry["title"]) || textFrom(entry["company"]) || `Experience ${index + 1}`;
+              return (
+                <label className="choice target-choice" key={`${entryId || "experience"}-${index}`}>
+                  <input
+                    type="checkbox"
+                    checked={requiredExperienceIds.has(entryId)}
+                    disabled={!entryId}
+                    onChange={(event) =>
+                      setRequiredId(
+                        "resume.tailoring_rules.required_experience_entry_ids",
+                        entryId,
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Experience bullets</legend>
+          <div className="checkbox-options vertical">
+            {experienceEntries.flatMap((entry, entryIndex) => {
+              const entryId = textFrom(entry["id"]);
+              const entryLabel = textFrom(entry["title"]) || `Experience ${entryIndex + 1}`;
+              const requiredBullets = new Set(
+                asTextArray(
+                  recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
+                ),
+              );
+              return editableTextArrayAt(profile, `resume.experience_entries.${entryIndex}.bullets`).map(
+                (bullet, bulletIndex) => (
+                  <label className="choice target-choice" key={`${entryId || entryIndex}-bullet-${bulletIndex}`}>
+                    <input
+                      type="checkbox"
+                      checked={requiredBullets.has(bullet)}
+                      disabled={!entryId || !bullet}
+                      onChange={(event) => setRequiredBullet(entryId, bullet, event.target.checked)}
+                    />
+                    <span>{`${entryLabel}: ${bullet}`}</span>
+                  </label>
+                ),
+              );
+            })}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Skill groups</legend>
+          <div className="checkbox-options vertical">
+            {skillCategories.map((category, index) => {
+              const categoryId = textFrom(category["id"]);
+              const label = textFrom(category["label"]) || `Skill group ${index + 1}`;
+              return (
+                <label className="choice target-choice" key={`${categoryId || "skills"}-${index}`}>
+                  <input
+                    type="checkbox"
+                    checked={requiredSkillIds.has(categoryId)}
+                    disabled={!categoryId}
+                    onChange={(event) =>
+                      setRequiredId(
+                        "resume.tailoring_rules.required_skill_category_ids",
+                        categoryId,
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      </div>
+    </fieldset>
+  );
+
+  const writingStyleGroup = () => (
+    <fieldset className="field wide checkbox-group-field tailoring-control-group">
+      <legend>Writing style</legend>
+      <div className="field-grid">
+        {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
+          ["direct", "Direct"],
+          ["executive", "Executive"],
+          ["technical", "Technical"],
+          ["confident", "Confident"],
+          ["warm", "Warm"],
+        ])}
+        {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
+          ["concise", "Concise"],
+          ["balanced", "Balanced"],
+          ["detailed", "Detailed"],
+        ])}
+        {selectField("resume.tailoring_rules.writing_style.keyword_density", "Keyword emphasis", KEYWORD_EMPHASIS_OPTIONS)}
+        {checkboxField(
+          "resume.tailoring_rules.writing_style.avoid_first_person",
+          "Avoid first-person language",
+        )}
+        {bulletStandardsField()}
+      </div>
+    </fieldset>
+  );
+
+  const revisionPolicyGroup = () => (
+    <fieldset className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
+      <legend>Revision policy</legend>
+      <dl>
+        <div>
+          <dt>Minimum fit score</dt>
+          <dd>8/10</dd>
+        </div>
+        <div>
+          <dt>Must-have coverage</dt>
+          <dd>85%</dd>
+        </div>
+        <div>
+          <dt>Revision attempts</dt>
+          <dd>1</dd>
+        </div>
+      </dl>
+    </fieldset>
+  );
+
+  const advancedPolicyGroup = () => (
+    <details className="field wide advanced-policy-group">
+      <summary>Advanced auto-approval policy</summary>
+      {autoApprovableClaimModesField()}
+    </details>
+  );
+
+  const additionalGuidanceGroup = () => (
+    <div className="field-grid one">
+      {textareaField(
+        "resume.tailoring_rules.custom_tailoring_prompt",
+        "Additional guidance",
+        "Writing and positioning guidance; evidence rules still apply.",
+        { maxLength: 1200 },
+      )}
+    </div>
   );
 
   const targetSearchSection = () => (
@@ -1384,67 +1616,14 @@ export function StructuredProfileEditor({
 
           <section className="form-section">
             <h3>Tailoring controls</h3>
-            <div className="field-grid">
-              {selectField("resume.tailoring_rules.tailoring_policy.mode", "Tailoring mode", [
-                ["strict", "Strict"],
-                ["balanced", "Balanced"],
-                ["aggressive", "Aggressive"],
-              ])}
-              {selectField("resume.tailoring_rules.tailoring_policy.claim_mode", "Claim mode", CLAIM_MODE_OPTIONS)}
-              {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
-                ["direct", "Direct"],
-                ["executive", "Executive"],
-                ["technical", "Technical"],
-                ["confident", "Confident"],
-                ["warm", "Warm"],
-              ])}
-              {bulletStandardsField()}
-              {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
-                ["concise", "Concise"],
-                ["balanced", "Balanced"],
-                ["detailed", "Detailed"],
-              ])}
-              {selectField("resume.tailoring_rules.writing_style.keyword_density", "Keyword density", [
-                ["natural", "Natural"],
-                ["moderate", "Moderate"],
-                ["high", "High"],
-              ])}
-              {checkboxField(
-                "resume.tailoring_rules.writing_style.avoid_first_person",
-                "Avoid first-person language",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
-                "AI may rewrite the executive summary",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_title_reframing",
-                "AI may reframe experience titles",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_achievement_rewriting",
-                "AI may rewrite achievement bullets",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
-                "AI may reorder or trim skill items",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
-                "AI may make minor inferred phrasing",
-              )}
-              {checkboxField(
-                "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts",
-                "Allow adjacent achievement drafts",
-              )}
-              {autoApprovableClaimModesField()}
-            </div>
-            <div className="field-grid one">
-              {textareaField(
-                "resume.tailoring_rules.custom_tailoring_prompt",
-                "Additional tailoring prompt",
-                "Optional guidance injected into every resume tailoring prompt.",
-              )}
+            <div className="tailoring-controls-grid">
+              {claimPolicyGroup()}
+              {generationPermissionsGroup()}
+              {requiredContentPinsGroup()}
+              {writingStyleGroup()}
+              {revisionPolicyGroup()}
+              {advancedPolicyGroup()}
+              {additionalGuidanceGroup()}
             </div>
           </section>
 

@@ -14,6 +14,7 @@ responses and in-memory fakes (mirrors ``test_materials_use_cases`` doubles):
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from jobhunter.domain.identifiers import JobId
@@ -67,20 +68,6 @@ class _FakeAnalyze:
                     tier="must_have",
                     weight=0.9,
                     evidence_span="improve API latency",
-                ),
-                Requirement(
-                    id="req_platform",
-                    text="operate Kubernetes platform",
-                    tier="must_have",
-                    weight=0.8,
-                    evidence_span="operate Kubernetes platform",
-                ),
-                Requirement(
-                    id="req_salesforce",
-                    text="direct Salesforce administration",
-                    tier="must_have",
-                    weight=0.7,
-                    evidence_span="direct Salesforce administration",
                 ),
             ],
             keywords=[
@@ -333,8 +320,8 @@ def _requirement_fit_report() -> RequirementFitReport:
             RequirementFitAssessment(
                 requirement_id="req_salesforce",
                 requirement_text="direct Salesforce administration",
-                tier="must_have",
-                weight=0.7,
+                tier="nice_to_have",
+                weight=0.0,
                 job_evidence_span="direct Salesforce administration",
                 fit=RequirementFitStatus(
                     kind="missing",
@@ -351,12 +338,90 @@ def _requirement_fit_report() -> RequirementFitReport:
     )
 
 
-def _payload(bullet: str) -> str:
+def _latency_requirement_fit_report() -> RequirementFitReport:
+    report = _requirement_fit_report()
+    return replace(
+        report,
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=report.assessments[:1],
+    )
+
+
+def _coverage_planner_response(
+    *,
+    include_latency: bool = True,
+    include_salesforce: bool = False,
+) -> str:
+    edges = []
+    if include_latency:
+        edges.append(
+            {
+                "requirement_id": "req_latency",
+                "achievement_evidence_id": "ev_latency",
+                "coverage_kind": "direct",
+                "strength": "direct",
+                "required_claim_policy": "verified_only",
+                "target_terms": ["latency", "python"],
+                "rationale": "Verified latency evidence supports the latency requirement.",
+            }
+        )
+    if include_salesforce:
+        edges.append(
+            {
+                "requirement_id": "req_salesforce",
+                "achievement_evidence_id": "ev_latency",
+                "coverage_kind": "direct",
+                "strength": "moderate",
+                "required_claim_policy": "evidence_reframing",
+                "target_terms": ["Salesforce administration"],
+                "rationale": "Synthetic fixture edge for requirement-led score-gate coverage.",
+            }
+        )
+    return json.dumps(
+        {
+            "coverage_edges": edges,
+            "uncovered_requirements": [],
+            "unused_achievements": [],
+        }
+    )
+
+
+def _claim_mapping(
+    bullet: str,
+    *,
+    requirement_ids: tuple[str, ...] = ("req_latency",),
+    coverage_edge_ids: tuple[str, ...] = ("edge_req_latency_ev_latency_direct",),
+) -> list[dict[str, object]]:
+    return [
+        {
+            "claim_id": "claim_latency",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": list(coverage_edge_ids),
+            "requirement_ids": list(requirement_ids),
+            "evidence_ids": ["ev_latency"],
+            "review_required": False,
+        }
+    ]
+
+
+def _payload(
+    bullet: str,
+    *,
+    requirement_ids: tuple[str, ...] = ("req_latency",),
+    coverage_edge_ids: tuple[str, ...] = ("edge_req_latency_ev_latency_direct",),
+) -> str:
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
+            "generated_claim_mappings": _claim_mapping(
+                bullet,
+                requirement_ids=requirement_ids,
+                coverage_edge_ids=coverage_edge_ids,
+            ),
         }
     )
 
@@ -390,6 +455,8 @@ def _use_case(
     publisher: _RecordingPublisher,
     requirement_fit_repo: _FakeRequirementFitRepo | None = None,
 ) -> TailorResumeUseCase:
+    if requirement_fit_repo is None:
+        requirement_fit_repo = _FakeRequirementFitRepo(_latency_requirement_fit_report())
     return TailorResumeUseCase(
         repository=materials_repo,
         llm=llm,
@@ -451,9 +518,10 @@ def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Pat
     provenance_repo = _FakeProvenanceRepo()
     requirement_fit_repo = _FakeRequirementFitRepo(_requirement_fit_report())
     publisher = _RecordingPublisher()
+    bullet = "Owned the API and cut latency 40% with Python by replacing synchronous calls."
     llm = _ScriptedLlm(
         [
-            _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls."),
+            _payload(bullet),
             _judge_pass(),
         ]
     )
@@ -504,7 +572,7 @@ def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_prov
     fabricated = _payload(
         "Owned the API, cut latency 40% with Python, and scaled it to 10M users."
     )
-    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)  # responses for every retry
+    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -535,7 +603,7 @@ def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenan
     # judge "passes" — so ONLY the deterministic never-fabricate detector
     # (independent of the prompt) can catch this. It must HARD-REJECT the resume.
     fabricated = _payload("Owned the API and cut latency 40% at Globex Corporation.")
-    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)  # responses for every retry
+    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )

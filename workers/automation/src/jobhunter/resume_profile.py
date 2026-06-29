@@ -166,7 +166,7 @@ DEFAULT_WRITING_STYLE = {
 }
 
 CLAIM_MODES = {"verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"}
-AUTO_APPROVABLE_CLAIM_MODES = {"verified_only", "evidence_reframing"}
+AUTO_APPROVABLE_CLAIM_MODES = {"verified_only", "evidence_reframing", "adjacent_translation"}
 EVIDENCE_STRENGTHS = {"verified", "supported", "inferred", "draft"}
 
 
@@ -176,14 +176,26 @@ def get_tailoring_policy(profile: dict) -> dict:
     raw = rules.get("tailoring_policy", {})
     if not isinstance(raw, dict):
         raw = {}
+    raw_keys = set(raw)
     policy = {**DEFAULT_TAILORING_POLICY, **raw}
     if policy["mode"] not in {"strict", "balanced", "aggressive"}:
         policy["mode"] = DEFAULT_TAILORING_POLICY["mode"]
     for key, default in DEFAULT_TAILORING_POLICY.items():
         if isinstance(default, bool):
             policy[key] = bool(policy.get(key, default))
-    if policy.get("claim_mode") not in CLAIM_MODES:
+
+    raw_claim_mode = str(raw.get("claim_mode") or "").strip()
+    if raw_claim_mode in CLAIM_MODES:
+        policy["claim_mode"] = raw_claim_mode
+    elif policy["mode"] == "strict":
+        policy["claim_mode"] = "verified_only"
+    elif bool(raw.get("allow_adjacent_achievement_drafts", False)):
+        policy["claim_mode"] = "draft_requires_confirmation"
+    elif bool(raw.get("allow_minor_inference", False)):
+        policy["claim_mode"] = "adjacent_translation"
+    elif policy.get("claim_mode") not in CLAIM_MODES:
         policy["claim_mode"] = DEFAULT_TAILORING_POLICY["claim_mode"]
+
     raw_auto = policy.get("auto_approvable_claim_modes")
     if isinstance(raw_auto, list):
         policy["auto_approvable_claim_modes"] = [
@@ -193,28 +205,24 @@ def get_tailoring_policy(profile: dict) -> dict:
         ] or list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
     else:
         policy["auto_approvable_claim_modes"] = list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
+    if "auto_approvable_claim_modes" not in raw_keys and policy["mode"] == "strict":
+        policy["auto_approvable_claim_modes"] = ["verified_only"]
+
     if policy["mode"] == "strict":
-        policy.update(
-            {
-                "allow_title_reframing": False,
-                "allow_achievement_rewriting": False,
-                "allow_skill_reordering": False,
-                "allow_summary_rewrite": False,
-                "allow_minor_inference": False,
-                "claim_mode": "verified_only",
-                "auto_approvable_claim_modes": ["verified_only"],
-                "allow_adjacent_achievement_drafts": False,
-            }
-        )
-    elif policy["mode"] == "aggressive":
-        policy.setdefault("allow_achievement_rewriting", True)
-        policy.setdefault("allow_skill_reordering", True)
-        policy.setdefault("allow_summary_rewrite", True)
-        policy["allow_adjacent_achievement_drafts"] = bool(
-            policy.get("allow_adjacent_achievement_drafts", False)
-        )
-    else:
-        policy["allow_adjacent_achievement_drafts"] = False
+        for key in (
+            "allow_title_reframing",
+            "allow_achievement_rewriting",
+            "allow_skill_reordering",
+            "allow_summary_rewrite",
+            "allow_minor_inference",
+        ):
+            if key not in raw_keys:
+                policy[key] = False
+
+    policy["allow_title_reframing"] = False
+    policy["allow_adjacent_achievement_drafts"] = (
+        policy["claim_mode"] == "draft_requires_confirmation"
+    )
     return policy
 
 
@@ -414,10 +422,17 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     if len(bullets) <= max_bullets:
         return bullets
 
+    # Overflow is validated before a candidate is accepted. Rendering must not
+    # trim requirement-covered or pinned bullets after that validator allows it.
+    if isinstance(update, dict) and update.get("_allow_mandatory_bullet_overflow"):
+        return bullets
+
     required_norm = {_normalize_text(bullet) for bullet in required}
     kept_required = [bullet for bullet in bullets if _normalize_text(bullet) in required_norm]
     kept_other = [bullet for bullet in bullets if _normalize_text(bullet) not in required_norm]
-    return (kept_required + kept_other)[:max_bullets]
+    if len(kept_required) >= max_bullets:
+        return kept_required
+    return kept_required + kept_other[: max_bullets - len(kept_required)]
 
 
 def tailored_skill_items(category: dict, update: dict, profile: dict) -> list[str]:
