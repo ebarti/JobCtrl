@@ -57,7 +57,7 @@ class MaterialsGenerationConflict(ValueError):
         self.expected = expected
         super().__init__(
             f"MaterialsSet generation conflict for job_id={job_id!r}: "
-            f"got generation={attempted}, expected {expected} (or current=={attempted - 1})"
+            f"got generation={attempted}, expected existing generation or next generation={expected}"
         )
 
 
@@ -433,9 +433,14 @@ class SqliteMaterialsRepository:
             (str(materials.job_id), str(materials.tenant_id)),
         ).fetchone()
         current_max = int(latest[0] if latest else 0)
-        # Allow either: append to current generation (re-save) OR mint
-        # the next one. Anything else is a conflict.
-        if materials.generation not in (current_max, current_max + 1):
+        existing = self._conn.execute(
+            "SELECT 1 FROM job_materials WHERE job_url = ? AND tenant_id = ? AND generation = ?",
+            (str(materials.job_id), str(materials.tenant_id), materials.generation),
+        ).fetchone()
+        # Allow either: update an existing generation or mint exactly the next one.
+        # Failed re-tailors can leave newer rejected generations while the last
+        # approved generation remains the current downstream material for cover/PDF.
+        if existing is None and materials.generation != current_max + 1:
             raise MaterialsGenerationConflict(
                 job_id=materials.job_id,
                 attempted=materials.generation,
