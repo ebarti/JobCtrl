@@ -14,6 +14,8 @@ describe("<EmployerAnalysisPanel>", () => {
   it("renders requirements with tier + importance and quoted evidence spans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
+    expect(screen.getByRole("region", { name: "Role Analysis" })).toBeInTheDocument();
+    expect(screen.queryByText("Employer analysis")).not.toBeInTheDocument();
     expect(screen.getByText("Lead platform reliability programs across multiple teams")).toBeInTheDocument();
     expect(screen.getByText("Must Have")).toBeInTheDocument();
     expect(screen.getByText("importance 90%")).toBeInTheDocument();
@@ -192,9 +194,9 @@ describe("<EmployerAnalysisPanel>", () => {
   it("renders an explicit not-recorded state when no analysis exists (never blank)", () => {
     render(<EmployerAnalysisPanel analysis={null} />);
 
-    expect(screen.getByText("Employer analysis")).toBeInTheDocument();
+    expect(screen.getByText("Role Analysis")).toBeInTheDocument();
     expect(
-      screen.getByText(/No employer analysis has been recorded for this job yet/i),
+      screen.getByText(/No role analysis has been recorded for this job yet/i),
     ).toBeInTheDocument();
   });
 });

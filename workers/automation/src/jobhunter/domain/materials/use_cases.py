@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterable, Mapping as MappingABC
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -98,6 +99,14 @@ from jobhunter.domain.materials.quality import (
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
+)
+from jobhunter.domain.materials.requirement_coverage import (
+    GeneratedClaimMapping,
+    bullet_limit_overflows,
+    decide_score_gated_revision,
+    score_generated_resume_against_target,
+    validate_generated_claim_mappings,
+    validate_mandatory_covered_achievements,
 )
 from jobhunter.domain.materials.services import (
     BANNED_WORDS,
@@ -176,7 +185,12 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
     "title": "TailoredResumePayload",
     "type": "object",
     "additionalProperties": False,
-    "required": ["executive_profile", "experience_updates", "skill_category_updates"],
+    "required": [
+        "executive_profile",
+        "experience_updates",
+        "skill_category_updates",
+        "generated_claim_mappings",
+    ],
     "properties": {
         "executive_profile": {"type": "string"},
         "experience_updates": {
@@ -211,6 +225,46 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                         "minItems": 1,
                         "items": {"type": "string"},
                     },
+                },
+            },
+        },
+        "generated_claim_mappings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "claim_id",
+                    "location",
+                    "text",
+                    "claim_label",
+                    "coverage_edge_ids",
+                    "requirement_ids",
+                    "evidence_ids",
+                    "non_requirement_reason",
+                    "review_required",
+                ],
+                "properties": {
+                    "claim_id": {"type": "string"},
+                    "location": {"type": "string"},
+                    "text": {"type": "string"},
+                    "claim_label": {
+                        "type": "string",
+                        "enum": [
+                            "verified",
+                            "evidence_reframed",
+                            "adjacent_translation",
+                            "draft_requires_confirmation",
+                            "pinned",
+                            "positioning",
+                            "structure",
+                        ],
+                    },
+                    "coverage_edge_ids": {"type": "array", "items": {"type": "string"}},
+                    "requirement_ids": {"type": "array", "items": {"type": "string"}},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "non_requirement_reason": {"type": "string"},
+                    "review_required": {"type": "boolean"},
                 },
             },
         },
@@ -413,6 +467,263 @@ def _as_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _claim_mappings_from_payload(payload: dict) -> tuple[GeneratedClaimMapping, tuple[str, ...]]:
+    raw_items = payload.get("generated_claim_mappings", ())
+    if not isinstance(raw_items, list):
+        return (), ("generated_claim_mappings must be an array",)
+    mappings: list[GeneratedClaimMapping] = []
+    errors: list[str] = []
+    for index, raw in enumerate(raw_items):
+        if not isinstance(raw, dict):
+            errors.append(f"generated_claim_mappings[{index}] must be an object")
+            continue
+        try:
+            mappings.append(
+                GeneratedClaimMapping(
+                    claim_id=str(raw.get("claim_id") or ""),
+                    location=str(raw.get("location") or ""),
+                    text=str(raw.get("text") or ""),
+                    claim_label=str(raw.get("claim_label") or ""),
+                    coverage_edge_ids=tuple(str(item) for item in raw.get("coverage_edge_ids", ()) or ()),
+                    requirement_ids=tuple(str(item) for item in raw.get("requirement_ids", ()) or ()),
+                    evidence_ids=tuple(str(item) for item in raw.get("evidence_ids", ()) or ()),
+                    non_requirement_reason=str(raw.get("non_requirement_reason") or ""),
+                    review_required=bool(raw.get("review_required", False)),
+                )
+            )
+        except ValueError as exc:
+            errors.append(f"generated_claim_mappings[{index}]: {exc}")
+    return tuple(mappings), tuple(errors)
+
+
+def _claim_mapping_binding_errors(
+    *,
+    payload: dict,
+    mappings: Iterable[GeneratedClaimMapping],
+) -> tuple[str, ...]:
+    surfaces = _generated_claim_surfaces(payload)
+    errors: list[str] = []
+    for mapping in mappings:
+        location = _canonical_claim_location(mapping.location)
+        actual_text = surfaces.get(location)
+        if actual_text is None:
+            errors.append(
+                f"Generated claim {mapping.claim_id} location {mapping.location!r} "
+                "does not exist in the generated payload."
+            )
+            continue
+        if not _claim_text_is_bound(actual_text, mapping.text):
+            errors.append(
+                f"Generated claim {mapping.claim_id} text is not present at "
+                f"generated payload location {mapping.location!r}."
+            )
+    return tuple(errors)
+
+
+def _generated_claim_surfaces(payload: dict) -> dict[str, str]:
+    surfaces: dict[str, str] = {}
+    executive_profile = str(payload.get("executive_profile") or "").strip()
+    if executive_profile:
+        for location in ("executive_profile", "summary", "resume.executive_profile"):
+            surfaces[location] = executive_profile
+    updates = payload.get("experience_updates")
+    for update in updates if isinstance(updates, list) else ():
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "").strip()
+        if not entry_id:
+            continue
+        bullets = update.get("bullets")
+        if not isinstance(bullets, list):
+            continue
+        for index, bullet in enumerate(bullets):
+            text = str(bullet or "").strip()
+            if not text:
+                continue
+            for location in (
+                f"experience.{entry_id}.bullets[{index}]",
+                f"experience_updates.{entry_id}.bullets[{index}]",
+            ):
+                surfaces[location] = text
+    skill_updates = payload.get("skill_category_updates")
+    for update in skill_updates if isinstance(skill_updates, list) else ():
+        if not isinstance(update, dict):
+            continue
+        category_id = str(update.get("id") or "").strip()
+        if not category_id:
+            continue
+        items = [str(item or "").strip() for item in update.get("items") or [] if str(item or "").strip()]
+        if not items:
+            continue
+        joined = ", ".join(items)
+        for location in (
+            f"skills.{category_id}",
+            f"skill_categories.{category_id}",
+            f"skill_category_updates.{category_id}",
+        ):
+            surfaces[location] = joined
+        for index, item in enumerate(items):
+            for location in (
+                f"skills.{category_id}.items[{index}]",
+                f"skill_categories.{category_id}.items[{index}]",
+                f"skill_category_updates.{category_id}.items[{index}]",
+            ):
+                surfaces[location] = item
+    return surfaces
+
+
+def _canonical_claim_location(location: str) -> str:
+    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", str(location or "").strip())
+
+
+def _claim_text_is_bound(actual_text: str, mapped_text: str) -> bool:
+    actual = _normalize_generated_claim_text(actual_text)
+    mapped = _normalize_generated_claim_text(mapped_text)
+    if not actual or not mapped:
+        return False
+    return mapped in actual or actual in mapped
+
+
+def _normalize_generated_claim_text(value: str) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def _claim_mapping_validation_errors(
+    *,
+    payload: dict,
+    tailoring_plan: TailoringPlan,
+) -> tuple[str, ...]:
+    mappings, parse_errors = _claim_mappings_from_payload(payload)
+    errors = list(parse_errors)
+    if not parse_errors:
+        errors.extend(_claim_mapping_binding_errors(payload=payload, mappings=mappings))
+    graph = tailoring_plan.coverage_graph
+    if graph is not None:
+        errors.extend(
+            validate_generated_claim_mappings(
+                mappings,
+                graph,
+                controls=tailoring_plan.requirement_led_controls,
+            )
+        )
+        errors.extend(
+            "Missing mandatory covered achievement in generated claims: " + evidence_id
+            for evidence_id in validate_mandatory_covered_achievements(graph, mappings)
+        )
+    return tuple(errors)
+
+
+def _post_generation_fit_gate(
+    *,
+    payload: dict,
+    tailoring_plan: TailoringPlan,
+    attempt: int,
+) -> tuple[dict[str, Any] | None, tuple[str, ...], tuple[str, ...]]:
+    target_profile = tailoring_plan.target_profile
+    if target_profile is None:
+        return None, (), ()
+    mappings, parse_errors = _claim_mappings_from_payload(payload)
+    if parse_errors or _claim_mapping_binding_errors(payload=payload, mappings=mappings):
+        return None, (), ()
+    fit_score = score_generated_resume_against_target(
+        target_profile=target_profile,
+        mappings=mappings,
+    )
+    decision = decide_score_gated_revision(
+        fit_score=fit_score,
+        controls=tailoring_plan.requirement_led_controls,
+        attempt=attempt,
+    )
+    record = {
+        "fit_score": fit_score.to_dict(),
+        "revision_decision": decision.to_dict(),
+    }
+    errors: list[str] = []
+    review_blockers = tuple(decision.review_blockers) if decision.review_blocked else ()
+    if decision.threshold_failed and not decision.review_blocked:
+        if decision.should_revise:
+            errors.append(
+                "Post-generation fit score below revision gate; revise using prioritized fixes: "
+                + "; ".join(decision.prioritized_fixes[:5])
+            )
+        else:
+            errors.append(
+                "Post-generation fit score below revision gate and enhancement is not allowed: "
+                + "; ".join(decision.prioritized_fixes[:5])
+            )
+    return record, tuple(errors), review_blockers
+
+
+def _candidate_requires_review(record: MappingABC[str, Any]) -> bool:
+    fit = record.get("post_generation_fit")
+    if not isinstance(fit, MappingABC):
+        return False
+    decision = fit.get("revision_decision")
+    if not isinstance(decision, MappingABC):
+        return False
+    return bool(decision.get("review_blocked"))
+
+
+def _bullet_limit_overflow_metadata(
+    *,
+    payload: dict,
+    profile_snapshot: ProfileSnapshot,
+) -> tuple[dict[str, Any], ...]:
+    profile = profile_snapshot.as_dict()
+    max_bullets = get_max_experience_bullets(profile)
+    if max_bullets <= 0:
+        return ()
+    mappings, parse_errors = _claim_mappings_from_payload(payload)
+    if parse_errors or _claim_mapping_binding_errors(payload=payload, mappings=mappings):
+        mappings = ()
+    required_bullets = get_required_bullets_by_experience_id(profile)
+    records: list[dict[str, Any]] = []
+    updates = payload.get("experience_updates")
+    if not isinstance(updates, list):
+        return ()
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "").strip()
+        bullets = [str(item).strip() for item in update.get("bullets") or [] if str(item).strip()]
+        if not entry_id or len(bullets) <= max_bullets:
+            continue
+        matching_mappings = tuple(
+            mapping
+            for mapping in mappings
+            if f".{entry_id}." in mapping.location or f"experience.{entry_id}" in mapping.location
+        )
+        covered_evidence_ids = tuple(
+            dict.fromkeys(
+                evidence_id
+                for mapping in matching_mappings
+                if mapping.coverage_edge_ids
+                for evidence_id in mapping.evidence_ids
+            )
+        )
+        enhancement_evidence_ids = tuple(
+            dict.fromkeys(
+                evidence_id
+                for mapping in matching_mappings
+                if mapping.coverage_edge_ids
+                and mapping.claim_label in {"adjacent_translation", "draft_requires_confirmation"}
+                for evidence_id in mapping.evidence_ids
+            )
+        )
+        records.extend(
+            overflow.to_dict()
+            for overflow in bullet_limit_overflows(
+                experience_entry_id=entry_id,
+                max_bullets=max_bullets,
+                actual_bullets=len(bullets),
+                pinned_required_bullet_count=len(required_bullets.get(entry_id, ())),
+                requirement_covered_evidence_ids=covered_evidence_ids,
+                enhancement_covered_evidence_ids=enhancement_evidence_ids,
+            )
+        )
+    return tuple(records)
+
+
 def _audit_prompt_messages(messages: list[LlmMessage]) -> tuple[dict[str, str], ...]:
     return tuple(
         {"role": message.role, "content": _audit_prompt_text(message.content)}
@@ -478,6 +789,8 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
         "validation": record.get("validator"),
         "judge": record.get("judge"),
         "parse_error": record.get("parse_error"),
+        "post_generation_fit": record.get("post_generation_fit"),
+        "bullet_limit_overflows": record.get("bullet_limit_overflows") or [],
         "summary": _candidate_payload_summary(payload),
     }
 
@@ -638,12 +951,10 @@ def build_master_tailor_prompt(
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
     banned_str = ", ".join(BANNED_WORDS)
     policy_lines = [
-        f"- Tailoring mode: {tailoring_policy['mode']}",
         f"- Rewrite executive profile: {'yes' if tailoring_policy['allow_summary_rewrite'] else 'no, preserve the baseline summary'}",
         "- Reframe experience titles: no, historical titles are source-controlled for safety",
         f"- Rewrite achievement bullets: {'yes' if tailoring_policy['allow_achievement_rewriting'] else 'no, preserve the original bullets'}",
         f"- Reorder or trim skills: {'yes' if tailoring_policy['allow_skill_reordering'] else 'no, preserve original skill order and wording'}",
-        f"- Minor inferred phrasing: {'allowed' if tailoring_policy['allow_minor_inference'] else 'not allowed'}",
     ]
     style_lines = [
         f"- Tone: {writing_style['tone']}",
@@ -703,6 +1014,16 @@ HARD RULES:
 - Max {max_bullets} bullets per experience entry
 - No em dashes
 - BANNED WORDS: {banned_str}
+- Use TARGET_PROFILE, COVERAGE_GRAPH, claim policy, generation permissions,
+  required content pins, writing style, and revision gates from TAILORING
+  QUALITY PLAN as the runtime authority for what may be claimed
+- For every generated summary sentence, experience bullet, and selected skill
+  group, emit a generated_claim_mappings entry that references valid
+  coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
+  only for pinned, positioning, or structure claims
+- Adjacent or draft claims must be labeled adjacent_translation or
+  draft_requires_confirmation and marked review_required unless the advanced
+  auto-approval policy explicitly allows the claim label
 
 WRITING METHOD:
 - Treat required evidence and required bullets as pinned must-include achievements:
@@ -756,6 +1077,19 @@ OUTPUT ONLY VALID JSON:
   ],
   "skill_category_updates": [
     {{"id": "{required_skill_ids[0] if required_skill_ids else 'skill_category_id'}", "items": ["item 1", "item 2"]}}
+  ],
+  "generated_claim_mappings": [
+    {{
+      "claim_id": "claim-1",
+      "location": "experience.{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}.bullets[0]",
+      "text": "bullet 1",
+      "claim_label": "evidence_reframed",
+      "coverage_edge_ids": ["edge id from COVERAGE_GRAPH"],
+      "requirement_ids": ["requirement id from TARGET_PROFILE"],
+      "evidence_ids": ["achievement evidence id from TARGET_PROFILE"],
+      "non_requirement_reason": "",
+      "review_required": false
+    }}
   ]
 }}"""
 
@@ -941,6 +1275,9 @@ class TailorOutcome:
     that rely on it for telemetry don't need to be touched:
 
       * ``approved``                    — validator + judge passed.
+      * ``review_required``             — validator + judge passed, but claim
+                                          policy requires human review before
+                                          this candidate can be approved.
       * ``failed_judge``                — validator passed but the structured
                                           judge did not approve a candidate.
       * ``failed_validation``           — validator never passed.
@@ -1042,6 +1379,11 @@ class TailorResumeUseCase:
         employer_analysis = self._run_analyze(
             job=job, tenant_id=tenant_id, employer_analysis=employer_analysis
         )
+        if requirement_fit_report is None and self._requirement_fit_repository is not None:
+            requirement_fit_report = self._requirement_fit_repository.load(
+                tenant_id,
+                job_id,
+            )
         previous = self._repository.load(tenant_id, job_id)
         created_at = _utc_now()
 
@@ -1172,6 +1514,10 @@ class TailorResumeUseCase:
             "judge_min_score": report.get("judge_min_score"),
             "quality_plan": report.get("quality_plan") or {},
             "quality_checks": report.get("quality_checks") or {},
+            "post_generation_fit": report.get("post_generation_fit"),
+            "review_required": bool(report.get("review_required")),
+            "review_blockers": report.get("review_blockers") or [],
+            "bullet_limit_overflows": report.get("bullet_limit_overflows") or [],
             "adversarial_review": report.get("adversarial_review") or {},
             "review_feedback": report.get("review_feedback") or {},
             "change_annotations": report.get("change_annotations") or [],
@@ -1197,10 +1543,12 @@ class TailorResumeUseCase:
             size_bytes=size_bytes,
             metadata=tailoring_metadata,
         )
+        review_required = str(report.get("status") or "") == "review_required"
         materials = materials.with_resume_attempt(
             artifact,
             validation=validation,
             verdict=verdict,
+            review_required=review_required,
             updated_at=_utc_now(),
         )
         materials = materials.with_metadata(
@@ -1239,7 +1587,7 @@ class TailorResumeUseCase:
         status = self._derive_status(report, validation, verdict)
         if materials.is_resume_approved:
             self._publish_approved(materials)
-        else:
+        elif not review_required:
             self._publish_failed(
                 materials,
                 validation_errors=tuple(validation.errors),
@@ -1354,6 +1702,8 @@ class TailorResumeUseCase:
             "job_text": _build_job_blob(job),
             "quality_plan": tailoring_plan.to_metadata(),
             "quality_checks": None,
+            "post_generation_fit": None,
+            "bullet_limit_overflows": [],
             "adversarial_review": None,
             "review_feedback": {
                 "warning_retry_attempted": False,
@@ -1370,20 +1720,26 @@ class TailorResumeUseCase:
         last_verdict: JudgeVerdict | None = None
         best_rejected: _TailorCandidate | None = None
         best_warned_approved: tuple[_TailorCandidate, tuple[str, ...]] | None = None
+        best_review_required: _TailorCandidate | None = None
 
         def accept_candidate(
             selected: _TailorCandidate,
             attempt_record: dict[str, Any] | None,
             *,
             warning_notes: tuple[str, ...] = (),
+            review_required: bool = False,
         ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
-            report["status"] = "approved"
+            report["status"] = "review_required" if review_required else "approved"
             report["validator"] = selected.validation.to_dict()
             report["judge"] = selected.record.get("judge")
             report["quality_checks"] = selected.record.get("quality_checks")
             report["adversarial_review"] = selected.record.get("adversarial_review")
             report["selected_candidate"] = selected.record.get("candidate_id")
             report["selected_model"] = selected.model
+            report["post_generation_fit"] = selected.record.get("post_generation_fit")
+            report["review_required"] = review_required
+            report["review_blockers"] = selected.record.get("review_blockers") or []
+            report["bullet_limit_overflows"] = selected.record.get("bullet_limit_overflows") or []
             report["change_annotations"] = list(
                 build_tailoring_change_annotations(
                     profile_snapshot.as_dict(),
@@ -1396,9 +1752,12 @@ class TailorResumeUseCase:
             feedback["accepted_with_residual_warnings"] = bool(warning_notes)
             feedback["accepted_warning_notes"] = list(warning_notes[:8])
             if attempt_record is not None:
-                attempt_record["status"] = (
-                    "approved_with_residual_warnings" if warning_notes else "approved"
-                )
+                if review_required:
+                    attempt_record["status"] = "review_required"
+                elif warning_notes:
+                    attempt_record["status"] = "approved_with_residual_warnings"
+                else:
+                    attempt_record["status"] = "approved"
                 attempt_record["selected_candidate"] = selected.record.get("candidate_id")
                 if warning_notes:
                     attempt_record["accepted_warning_notes"] = list(warning_notes[:8])
@@ -1443,6 +1802,7 @@ class TailorResumeUseCase:
                     tailoring_plan=tailoring_plan,
                     validation_mode=validation_mode,
                     job=job,
+                    attempt=attempt + 1,
                 )
                 attempt_record["candidates"].append(candidate.record)
                 report["candidate_summaries"].append(_safe_candidate_summary(candidate.record))
@@ -1453,7 +1813,14 @@ class TailorResumeUseCase:
                 if candidate.validation.passed and (
                     candidate.verdict is None or candidate.verdict.approved
                 ):
-                    approved_candidates.append(candidate)
+                    if _candidate_requires_review(candidate.record):
+                        if (
+                            best_review_required is None
+                            or candidate.judge_score > best_review_required.judge_score
+                        ):
+                            best_review_required = candidate
+                    else:
+                        approved_candidates.append(candidate)
                 elif candidate.validation.passed and candidate.verdict is not None:
                     if best_rejected is None or candidate.judge_score > best_rejected.judge_score:
                         best_rejected = candidate
@@ -1532,6 +1899,8 @@ class TailorResumeUseCase:
         if best_warned_approved is not None:
             selected, warning_notes = best_warned_approved
             return accept_candidate(selected, None, warning_notes=warning_notes)
+        if best_review_required is not None:
+            return accept_candidate(best_review_required, None, review_required=True)
         if best_rejected is not None:
             report["status"] = (
                 "failed_adversarial_review"
@@ -1595,6 +1964,7 @@ class TailorResumeUseCase:
         tailoring_plan: TailoringPlan,
         validation_mode: str,
         job: dict,
+        attempt: int,
     ) -> _TailorCandidate:
         candidate_id = f"candidate-{abs(hash((model, len(messages), messages[-1].content[:80]))) % 10_000_000}"
         record: dict[str, Any] = {
@@ -1649,12 +2019,53 @@ class TailorResumeUseCase:
                 tailoring_plan,
             )
             record["quality_checks"] = quality_result.to_dict()
+            claim_mapping_errors = _claim_mapping_validation_errors(
+                payload=payload,
+                tailoring_plan=tailoring_plan,
+            )
+            if claim_mapping_errors:
+                record["claim_mapping_validation"] = {
+                    "passed": False,
+                    "errors": list(claim_mapping_errors),
+                }
+                validation = ValidationResult.failure(
+                    tuple(validation.errors) + claim_mapping_errors,
+                    warnings=tuple(validation.warnings),
+                )
+            else:
+                record["claim_mapping_validation"] = {"passed": True, "errors": []}
+            fit_gate, fit_gate_errors, review_blockers = _post_generation_fit_gate(
+                payload=payload,
+                tailoring_plan=tailoring_plan,
+                attempt=attempt,
+            )
+            if fit_gate is not None:
+                record["post_generation_fit"] = fit_gate
+            if review_blockers:
+                record["review_required"] = True
+                record["review_blockers"] = list(review_blockers)
+                if validation.passed:
+                    validation = ValidationResult.success(
+                        warnings=tuple(validation.warnings)
+                        + tuple(f"Review required: {item}" for item in review_blockers)
+                    )
+            record["bullet_limit_overflows"] = list(
+                _bullet_limit_overflow_metadata(
+                    payload=payload,
+                    profile_snapshot=profile_snapshot,
+                )
+            )
+            if fit_gate_errors:
+                validation = ValidationResult.failure(
+                    tuple(validation.errors) + fit_gate_errors,
+                    warnings=tuple(validation.warnings),
+                )
             if quality_result.errors:
                 validation = ValidationResult.failure(
                     tuple(validation.errors) + tuple(quality_result.errors),
                     warnings=tuple(validation.warnings) + tuple(quality_result.warnings),
                 )
-            elif quality_result.warnings:
+            elif quality_result.warnings and validation.passed:
                 validation = ValidationResult.success(
                     warnings=tuple(validation.warnings) + tuple(quality_result.warnings)
                 )

@@ -25,9 +25,16 @@ mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
 The Preferences Application configurations section owns the user-editable
 Location filter control and persists it through the local settings mutation;
-the Discovery page owns target search plus automation controls such as minimum
-fit score and auto apply. The Settings page keeps execution-only controls such
-as apply concurrency.
+the Preferences Tailoring controls section owns generated-material policy such
+as the adjacent-experience invention toggle, revision-gate minimum fit score,
+must-have coverage, and revision-attempt limits in the profile
+`tailoring_rules`. Verified facts and evidence-backed reframing are baseline
+non-inventing behavior, along with supported adjacent-experience translation;
+the Preferences toggle only allows or forbids invented adjacent-experience
+drafts. Draft adjacent claims require review and are not user-configured as an
+auto-approval bypass. The Discovery page owns target search plus automation
+controls such as discovery minimum fit score and auto apply. The Settings page
+keeps execution-only controls such as apply concurrency.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,
@@ -403,9 +410,13 @@ verification-code MCP server:
   DTO used by Apply Review. The materials preview includes the selected resume
   text artifact, selected resume PDF artifact, and `resumePdfLayoutBoxes` for
   generation-time line/page anchoring when the selected final PDF was rendered
-  through the HTML/CSS resume renderer. Apply Review uses the selected PDF
-  artifact to fetch the sibling HTML preview for the Plate editor and keeps the
-  PDF as the final file link.
+  through the HTML/CSS resume renderer. Requirement-led materials can also
+  include `requirementLedAudit`: bounded coverage, generated-claim, pinned
+  content, bullet-overflow, revision, and review-blocker summaries derived from
+  artifact metadata without projecting raw prompts, full profile/job text,
+  local paths, PDFs, logs, browser data, or SQLite contents. Apply Review uses
+  the selected PDF artifact to fetch the sibling HTML preview for the Plate
+  editor and keeps the PDF as the final file link.
 - `GET` / `POST /v1/jobs/:jobKey/resume-review/draft` loads or creates the
   separate editable draft for the selected resume artifact generation. Draft
   revisions, structured edit deltas, comment threads, comment replies, and

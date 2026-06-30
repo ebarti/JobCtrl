@@ -2894,6 +2894,11 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   if (!metadata) return null;
 
   const qualityPlan = metadataRecord(metadata.quality_plan);
+  const requirementLedControls = metadataRecord(qualityPlan.requirement_led_controls);
+  const autoApprovalPolicy = metadataRecord(requirementLedControls.auto_approval_policy);
+  const requirementClaimPolicy = metadataText(requirementLedControls.claim_policy);
+  const autoApprovableClaimLabels = metadataTextList(autoApprovalPolicy.auto_approvable_claim_labels);
+  const legacyAllowAdjacentDrafts = metadataBoolean(qualityPlan.allow_adjacent_achievement_drafts);
   const qualityChecks = metadataRecord(metadata.quality_checks);
   const evidenceSupport = metadataRecord(qualityChecks.evidence_support);
   const judge = metadataRecord(metadata.judge);
@@ -2908,11 +2913,20 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
 
   const explanation: ArtifactTailoringExplanation = {
     targetSeniority: metadataText(qualityPlan.target_seniority),
-    claimMode: metadataText(qualityPlan.claim_mode),
+    claimMode:
+      requirementClaimPolicy ??
+      metadataText(qualityPlan.claim_mode),
     validationMode: metadataText(metadata.validation_mode),
     safety: {
-      autoApprovableClaimModes: metadataTextList(qualityPlan.auto_approvable_claim_modes),
-      allowAdjacentAchievementDrafts: metadataBoolean(qualityPlan.allow_adjacent_achievement_drafts),
+      autoApprovableClaimModes:
+        autoApprovableClaimLabels.length > 0
+          ? autoApprovableClaimLabels
+          : metadataTextList(qualityPlan.auto_approvable_claim_modes),
+      allowAdjacentAchievementDrafts:
+        legacyAllowAdjacentDrafts ??
+        (requirementClaimPolicy === null
+          ? null
+          : requirementClaimPolicy === "draft_requires_confirmation"),
       qualityPassed: metadataBoolean(qualityChecks.passed),
     },
     // Phase 4: populated from the canonical coverage audit

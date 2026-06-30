@@ -301,6 +301,62 @@ export interface ApplyReviewProfileSourceField {
   section: string;
 }
 
+export interface ApplyReviewRequirementLedAuditRequirement {
+  id: string;
+  textExcerpt: string;
+  tier: string | null;
+  reason: string | null;
+}
+
+export interface ApplyReviewRequirementLedAuditClaim {
+  section: string;
+  label: string;
+  textExcerpts: string[];
+  requirementIds: string[];
+  evidenceIds: string[];
+  coverageEdgeIds: string[];
+  claimLabels: string[];
+  positioningReasons: string[];
+  reviewRequired: boolean;
+}
+
+export interface ApplyReviewRequirementLedAuditOverflow {
+  experienceEntryId: string;
+  maxBullets: number;
+  actualBullets: number;
+  reason: string;
+  evidenceIds: string[];
+}
+
+export interface ApplyReviewRequirementLedAuditRevision {
+  score: number | null;
+  mustHaveCoverage: number | null;
+  thresholdFailed: boolean;
+  shouldRevise: boolean;
+  reviewBlocked: boolean;
+  enhancementAllowed: boolean;
+  reason: string | null;
+  attempt: number | null;
+  maxRevisionAttempts: number | null;
+  prioritizedFixes: string[];
+  reviewBlockers: string[];
+}
+
+export interface ApplyReviewRequirementLedAudit {
+  requirementCount: number;
+  achievementCount: number;
+  coverageEdgeCount: number;
+  coveredRequirements: ApplyReviewRequirementLedAuditRequirement[];
+  uncoveredRequirements: ApplyReviewRequirementLedAuditRequirement[];
+  unusedAchievementIds: string[];
+  evidenceBackedClaims: ApplyReviewRequirementLedAuditClaim[];
+  pinnedClaims: ApplyReviewRequirementLedAuditClaim[];
+  adjacentOrDraftClaims: ApplyReviewRequirementLedAuditClaim[];
+  bulletLimitOverflows: ApplyReviewRequirementLedAuditOverflow[];
+  revision: ApplyReviewRequirementLedAuditRevision | null;
+  reviewBlockers: string[];
+}
+
 export interface ApplyReviewMaterialsPreview {
   resumeText: string | null;
   resumeTextArtifactId: string | null;
@@ -308,6 +364,7 @@ export interface ApplyReviewMaterialsPreview {
   resumePdfLayoutBoxes: ResumeLayoutBox[];
   profileSourceFields: ApplyReviewProfileSourceField[];
   coverLetterText: string | null;
+  requirementLedAudit?: ApplyReviewRequirementLedAudit | null;
   resumeTemplate?: ResumeTemplateState | null;
 }
 
@@ -1207,7 +1264,7 @@ export type BulkRunPendingPreparationRequest = z.infer<typeof BulkRunPendingPrep
 
 export const TAILORING_MODES = ["strict", "balanced", "aggressive"] as const;
 export const CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"] as const;
-export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
+export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation"] as const;
 export const EVIDENCE_STRENGTHS = ["verified", "supported", "inferred", "draft"] as const;
 export const WRITING_TONES = ["direct", "executive", "technical", "confident", "warm"] as const;
 export const BULLET_STYLES = ["balanced", "impact", "technical_depth", "leadership"] as const;
@@ -1351,38 +1408,35 @@ function normalizeProfileTailoringPolicy(policy: {
   allow_adjacent_achievement_drafts?: boolean | undefined;
 }) {
   const mode = policy.mode ?? "balanced";
+  const hasExplicitClaimMode = policy.claim_mode !== undefined;
+  let claimMode: (typeof CLAIM_MODES)[number] = policy.claim_mode ?? "evidence_reframing";
+  if (!hasExplicitClaimMode && mode === "strict") {
+    claimMode = "verified_only";
+  } else if (!hasExplicitClaimMode && policy.allow_adjacent_achievement_drafts === true) {
+    claimMode = "draft_requires_confirmation";
+  } else if (!hasExplicitClaimMode && policy.allow_minor_inference === true) {
+    claimMode = "adjacent_translation";
+  }
   const autoApprovable = (policy.auto_approvable_claim_modes ?? ["verified_only", "evidence_reframing"]).filter(
     (claimMode): claimMode is (typeof AUTO_APPROVABLE_CLAIM_MODES)[number] =>
       (AUTO_APPROVABLE_CLAIM_MODES as readonly string[]).includes(claimMode),
   );
   const normalized = {
     mode,
-    allow_title_reframing: policy.allow_title_reframing ?? false,
-    allow_achievement_rewriting: policy.allow_achievement_rewriting ?? true,
-    allow_skill_reordering: policy.allow_skill_reordering ?? true,
-    allow_summary_rewrite: policy.allow_summary_rewrite ?? true,
+    allow_title_reframing: false,
+    allow_achievement_rewriting: policy.allow_achievement_rewriting ?? mode !== "strict",
+    allow_skill_reordering: policy.allow_skill_reordering ?? mode !== "strict",
+    allow_summary_rewrite: policy.allow_summary_rewrite ?? mode !== "strict",
     allow_minor_inference: policy.allow_minor_inference ?? false,
-    claim_mode: policy.claim_mode ?? "evidence_reframing",
+    claim_mode: claimMode,
     auto_approvable_claim_modes: autoApprovable.length
       ? autoApprovable
-      : (["verified_only", "evidence_reframing"] as const),
-    allow_adjacent_achievement_drafts:
-      mode === "aggressive" && (policy.allow_adjacent_achievement_drafts ?? false),
+      : mode === "strict" && policy.auto_approvable_claim_modes === undefined
+        ? (["verified_only"] as const)
+        : (["verified_only", "evidence_reframing"] as const),
+    allow_adjacent_achievement_drafts: claimMode === "draft_requires_confirmation",
   };
-  if (mode !== "strict") {
-    return normalized;
-  }
-  return {
-    ...normalized,
-    allow_title_reframing: false,
-    allow_achievement_rewriting: false,
-    allow_skill_reordering: false,
-    allow_summary_rewrite: false,
-    allow_minor_inference: false,
-    claim_mode: "verified_only" as const,
-    auto_approvable_claim_modes: ["verified_only"] as const,
-    allow_adjacent_achievement_drafts: false,
-  };
+  return normalized;
 }
 
 const ProfileWritingStyleSchema = z
@@ -1392,6 +1446,14 @@ const ProfileWritingStyleSchema = z
     verbosity: z.enum(VERBOSITY_LEVELS).default("balanced"),
     keyword_density: z.enum(KEYWORD_DENSITIES).default("natural"),
     avoid_first_person: z.boolean().default(true),
+  })
+  .partial();
+
+const ProfileRevisionGatesSchema = z
+  .object({
+    min_fit_score: z.number().int().min(1).max(10).default(8),
+    must_have_coverage: z.number().min(0).max(1).default(0.85),
+    max_revision_attempts: z.number().int().min(0).default(1),
   })
   .partial();
 
@@ -1406,6 +1468,7 @@ const ProfileTailoringRulesSchema = z
     custom_tailoring_prompt: z.string().default(""),
     tailoring_policy: ProfileTailoringPolicySchema,
     writing_style: ProfileWritingStyleSchema.default({}),
+    revision_gates: ProfileRevisionGatesSchema.default({}),
   })
   .partial();
 

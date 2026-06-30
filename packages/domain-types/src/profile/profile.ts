@@ -20,7 +20,7 @@ export type TailoringMode = (typeof TAILORING_MODES)[number];
 export const CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"] as const;
 export type ClaimMode = (typeof CLAIM_MODES)[number];
 
-export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
+export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation"] as const;
 export type AutoApprovableClaimMode = (typeof AUTO_APPROVABLE_CLAIM_MODES)[number];
 
 export const EVIDENCE_STRENGTHS = ["verified", "supported", "inferred", "draft"] as const;

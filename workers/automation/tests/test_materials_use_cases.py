@@ -32,6 +32,7 @@ from jobhunter.domain.materials import (
 )
 from jobhunter.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobhunter.domain.materials.aggregate import MaterialsLifecycle
+from jobhunter.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
     COVER_LETTER_COMPLETION_MARKER,
@@ -111,6 +112,15 @@ def _profile_with_evidence_dict() -> dict:
             "tags": ["latency", "backend", "performance"],
         }
     ]
+    return profile
+
+
+def _profile_with_draft_claim_policy_dict() -> dict:
+    profile = _profile_with_evidence_dict()
+    profile["resume"]["tailoring_rules"]["tailoring_policy"] = {
+        "claim_mode": "draft_requires_confirmation",
+        "auto_approvable_claim_modes": ["verified_only", "evidence_reframing"],
+    }
     return profile
 
 
@@ -273,8 +283,64 @@ def _good_json_payload() -> str:
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
+            "generated_claim_mappings": _positioning_claim_mappings("Cut latency 40%."),
         }
     )
+
+
+def _unbound_claim_mapping_payload() -> str:
+    payload = json.loads(_good_json_payload())
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": "claim-unbound",
+            "location": "experience.acme_swe.bullets[99]",
+            "text": "This text is not in the generated resume.",
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        }
+    ]
+    return json.dumps(payload)
+
+
+def _review_required_claim_payload() -> str:
+    payload = json.loads(_quality_json_payload())
+    payload["executive_profile"] = "Draft developer-experience translation requires confirmation."
+    bullet = payload["experience_updates"][0]["bullets"][0]
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": "claim-draft",
+            "location": "executive_profile",
+            "text": "Draft developer-experience translation requires confirmation.",
+            "claim_label": "draft_requires_confirmation",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": True,
+        },
+        *_positioning_claim_mappings(bullet),
+    ]
+    return json.dumps(payload)
+
+
+def _positioning_claim_mappings(text: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "claim_id": "claim-positioning-1",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": text,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        }
+    ]
 
 
 def _keyword_stuffed_json_payload() -> str:
@@ -288,6 +354,7 @@ def _keyword_stuffed_json_payload() -> str:
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
+            "generated_claim_mappings": _positioning_claim_mappings(f"Built {stuffed}."),
         }
     )
 
@@ -308,6 +375,9 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
+            "generated_claim_mappings": _positioning_claim_mappings(
+                f"Owned API latency improvements and reduced latency {metric} with Python."
+            ),
         }
     )
 
@@ -332,6 +402,9 @@ def _stock_phrase_json_payload() -> str:
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
+            "generated_claim_mappings": _positioning_claim_mappings(
+                "Owned results-driven backend initiatives, leveraged dynamic professional impactful solutions to drive value while reducing API latency 35% with Python."
+            ),
         }
     )
 
@@ -492,6 +565,7 @@ def _assert_openai_strict_schema(schema: dict[str, Any], path: str = "$") -> Non
     [
         TAILORED_RESUME_RESPONSE_SCHEMA,
         TAILORING_JUDGE_RESPONSE_SCHEMA,
+        COVERAGE_PLANNER_RESPONSE_SCHEMA,
         ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
     ],
 )
@@ -563,6 +637,8 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert outcome.status == "approved"
     assert "TAILORING QUALITY PLAN" in llm.calls[0][0].content
     assert "WRITING METHOD" in llm.calls[0][0].content
+    assert "Tailoring mode" not in llm.calls[0][0].content
+    assert "Minor inferred phrasing" not in llm.calls[0][0].content
     assert "pinned must-include achievements" in llm.calls[0][0].content
     assert "result-first CAR/PAR achievements" in llm.calls[0][0].content
     assert "select and order exact existing skill strings" in llm.calls[0][0].content
@@ -575,6 +651,12 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     metadata = outcome.materials.tailored_resume.metadata
     assert metadata["quality_plan"]["target_seniority"] == "senior"
     assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
+    assert "target_profile" in metadata["quality_plan"]
+    assert "coverage_graph" in metadata["quality_plan"]
+    quality_plan_json = json.dumps(metadata["quality_plan"]).lower()
+    assert "source_text" not in quality_plan_json
+    assert "system_prompt" not in quality_plan_json
+    assert "full_description" not in quality_plan_json
     assert metadata["quality_checks"]["passed"] is True
     assert metadata["change_annotations"][0]["section"] == "executive_profile"
     assert metadata["change_annotations"][0]["change_type"] == "summary_reframed"
@@ -582,6 +664,70 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert metadata["change_annotations"][1]["source_id"] == "acme_swe"
     assert metadata["change_annotations"][1]["evidence_ids"] == ["ev_latency"]
     assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
+
+
+def test_tailor_use_case_persists_review_required_draft_claim_as_candidate(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_draft_claim_policy_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "developer experience"],
+        "responsibilities": ["Improve developer experience for backend teams"],
+        "full_description": "Improve developer experience for Python backend services.",
+    }
+    repo = _FakeRepository()
+    publisher = _RecordingPublisher()
+    llm = _ScriptedLlm([_review_required_claim_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+        publisher=publisher,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "review_required"
+    assert outcome.materials is not None
+    assert not outcome.materials.is_resume_approved
+    assert outcome.materials.status == MaterialsLifecycle.RESUME_IN_PROGRESS
+    assert outcome.materials.tailored_resume is not None
+    assert outcome.materials.tailored_resume.status == ArtifactStatus.CANDIDATE
+    assert outcome.materials.last_validation is not None
+    assert outcome.materials.last_validation.passed is True
+    metadata = outcome.materials.tailored_resume.metadata
+    assert metadata["review_required"] is True
+    assert metadata["review_blockers"] == ["claim-draft: draft_requires_confirmation"]
+    assert metadata["post_generation_fit"]["revision_decision"]["review_blocked"] is True
+    assert not any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+    assert not any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
+
+
+def test_tailor_use_case_rejects_unbound_generated_claim_mapping(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_unbound_claim_mapping_payload()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["candidate_summaries"][0]["validation"]["passed"] is False
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any("does not exist in the generated payload" in error for error in errors)
 
 
 def test_tailor_use_case_labels_stock_phrases_without_retrying(

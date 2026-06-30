@@ -12,19 +12,24 @@ construction in `provenance_builder.py`.
 
 ## Short Version
 
-The model is not asked to write one resume section per job requirement.
+Requirement coverage is planned before writing. The model is not asked to write
+one resume section per job requirement.
 
 The model is asked:
 
 ```text
 Here is the candidate's canonical master resume, the target job, the tailoring
-policy, required profile evidence, allowed skills, verified metrics, and the
-quality plan.
+policy, target profile, requirement-achievement coverage graph, required
+profile evidence, allowed skills, verified metrics, and the quality plan.
 
-Rewrite only these mutable resume fields and return JSON:
+Rewrite only these mutable resume fields and return JSON plus generated claim
+mapping:
 - executive_profile
 - experience_updates for existing profile experience IDs
 - skill_category_updates for existing profile skill category IDs
+- generated_claim_mappings that link each generated claim to coverage edges,
+  requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
+  positioning content
 ```
 
 The target job and employer analysis decide what to emphasize. The existing
@@ -68,11 +73,12 @@ Tailoring combines several inputs. Each input has a different authority.
 | Input | Source | What It Controls |
 | --- | --- | --- |
 | Candidate master resume | `ProfileSnapshot` / profile aggregate | The only source of candidate facts: summary, experience, education, skill categories, required bullets, real metrics |
-| Tailoring policy | Profile tailoring rules | Which fields may be rewritten or reordered, max bullets, claim mode |
-| Writing style | Profile writing preferences | Tone, bullet standards, verbosity, keyword density, first-person preference |
+| Tailoring policy | Profile tailoring rules | Claim policy, generation permissions, required content pins, max bullets, and advanced auto-approval |
+| Writing style | Profile writing preferences | Tone, bullet standards, verbosity, advisory keyword emphasis, first-person preference |
 | Target job | Job record | The target role, description, responsibilities, skills, and company context |
 | Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
 | Requirement fit report | Scoring context, when available | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives |
+| Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
 | Previous attempt feedback | Tailoring retry loop | Validation errors, judge repair instructions, adversarial blockers, warning-retry notes |
 
 The target job is context, not candidate evidence. The prompt explicitly tells
@@ -113,8 +119,10 @@ The system prompt contains these sections:
 - Source-of-truth rules: profile data, required bullets, and real metrics are
   the only candidate evidence.
 - Hard rules: return every required profile ID exactly once, preserve required
-  bullets, do not add/remove experience, education, or skill categories, do not
-  invent skills or metrics, and obey max bullet count.
+  bullets, include every requirement-covered achievement, do not add/remove
+  experience, education, or skill categories, do not invent skills or metrics,
+  and treat max bullet count as a layout budget that mandatory covered/pinned
+  content may exceed with an audit reason.
 - Writing method: use pinned evidence, order bullets strongest-to-weakest inside
   each experience entry, write result-first CAR/PAR bullets, order existing
   skills by truthful target overlap, and write a concise grounded summary.
@@ -144,12 +152,26 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
       "id": "existing_profile_skill_category_id",
       "items": ["existing skill 1", "existing skill 2"]
     }
+  ],
+  "generated_claim_mappings": [
+    {
+      "claim_id": "claim_1",
+      "location": "experience.existing_profile_experience_id.bullets[0]",
+      "text": "Generated bullet text.",
+      "claim_label": "evidence_reframed",
+      "coverage_edge_ids": ["edge_req_1_ev_1_direct"],
+      "requirement_ids": ["req_1"],
+      "evidence_ids": ["ev_1"],
+      "non_requirement_reason": "",
+      "review_required": false
+    }
   ]
 }
 ```
 
-The model cannot return contact info, education rows, new sections, provenance
-fields, coverage fields, comments, warnings, or PDFs. Those are owned by code.
+The model cannot return contact info, education rows, new sections, comments,
+warnings, or PDFs. The claim map is a sidecar audit contract; code still owns
+assembly, provenance rows, final artifact metadata, and read models.
 
 ## What "Profile-Row Based" Means
 
@@ -190,6 +212,15 @@ The plan includes:
   and baseline bullets.
 - `prohibited_claims`: claims that must not appear because the requirement fit
   says they are missing/blocked or explicitly avoidable.
+- `requirement_led_controls`: claim policy, generation permissions, required
+  pins, writing style, revision gates, and advanced auto-approval policy after
+  migrating legacy Preferences values.
+- `target_profile`: must-have and nice-to-have requirements with safe excerpts,
+  weights, keywords, and profile achievement IDs.
+- `coverage_graph`: requirement nodes, achievement nodes, coverage edges,
+  uncovered requirements, and unused achievements. Existing
+  `RequirementFitReport.fit.evidence_ids` seed direct/transferable edges before
+  the constrained planner can add more.
 - `deterministic_checks`: a prompt-visible summary of important hard checks.
 
 Requirement directives are sorted by priority, weight, and requirement ID. They
@@ -251,7 +282,8 @@ profile contract:
 - `skill_category_updates` must exist and be non-empty.
 - Each required experience ID must appear exactly once.
 - Unknown or duplicate experience IDs are rejected.
-- Experience bullet count cannot exceed the profile max.
+- Experience bullet count cannot exceed the profile max unless every overflow
+  bullet is mapped as pinned or requirement-covered content.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.
@@ -314,7 +346,25 @@ It applies profile policy helpers:
 Quality errors fail the candidate. Quality warnings can trigger a retry unless
 they are label-only low-quality signals such as stock phrase markers.
 
-### 6. Structured Judge
+### 6. Post-Generation Fit Gate
+
+After assembly, requirement-led candidates are scored against the target
+profile. The scorer records:
+
+- final fit score,
+- must-have coverage ratio,
+- covered and uncovered requirement IDs,
+- prioritized fixes,
+- review blockers from adjacent or draft claims.
+
+The versioned default gates are minimum fit score 8/10, must-have coverage
+0.85, and one revision/enhancement attempt. If thresholds fail and claim policy
+allows adjacent translation or draft confirmation, the retry loop receives the
+prioritized fixes and uncovered requirements. Deterministic validators still
+own fact safety: scoring can request revision, but it cannot approve unsupported
+claims.
+
+### 7. Structured Judge
 
 `build_judge_prompt()` asks a separate judge model whether the tailored resume is
 safe to show the user. The judge receives canonical profile evidence, allowed
@@ -340,13 +390,13 @@ Approval requires:
 
 In `lenient` mode, the structured judge is skipped.
 
-### 7. Adversarial Review
+### 8. Adversarial Review
 
 High-fit jobs can run an additional adversarial review after the judge approves.
 If it finds blockers, the candidate becomes rejected and its blockers/repair
 instructions feed the retry loop.
 
-### 8. Optional Voice Pass
+### 9. Optional Voice Pass
 
 If a `VoicePort` is injected, the selected candidate can be rewritten for voice
 after selection but before final provenance and coverage. The voice pass is kept
@@ -369,6 +419,8 @@ Approved resume metadata includes:
 - judge model and judge threshold,
 - quality plan,
 - quality checks,
+- post-generation fit score and revision decision,
+- bullet-limit overflow reasons,
 - adversarial review,
 - retry/review feedback,
 - change annotations,
@@ -376,6 +428,13 @@ Approved resume metadata includes:
 - judge result,
 - voice pass result,
 - keyword coverage read model.
+
+Requirement-led audit data exposed to Apply Review is bounded and safe. It can
+show covered requirements, uncovered requirements, unused achievement IDs,
+evidence-backed generated claims, pinned claims, adjacent/draft claim labels,
+bullet-limit overflow reasons, revision decisions, and review blockers. It
+must not expose raw prompts, full profile payloads, full job descriptions, local
+paths, PDFs, logs, browser data, or SQLite contents.
 
 For accepted generations, `build_bullet_provenance()` records canonical
 provenance rows. These rows are computed against the same final payload that
@@ -423,12 +482,9 @@ artifact or provenance rows.
 
 The current schema is intentionally narrow. It does not let the model return:
 
-- per-bullet `maps_to`,
-- per-bullet `source`,
 - `has_metric`,
 - `dropped`,
 - `warnings`,
-- scorer-style `prioritized_fixes`,
 - requirement-row output,
 - new experience entries,
 - new skill categories,
@@ -444,6 +500,12 @@ The current implementation can safely:
 - rewrite and order bullets inside existing experience entries,
 - select and order existing skill strings inside existing skill categories,
 - preserve required bullets,
+- preserve every requirement-covered achievement even when that exceeds the max
+  bullet budget,
+- label generated claims with requirement/evidence coverage or pinned/
+  positioning reasons,
+- score generated output against the target profile and route one gated
+  revision/enhancement pass,
 - compute post-generation provenance and requirement coverage.
 
 The current implementation cannot safely:
@@ -464,7 +526,7 @@ The current implementation cannot safely:
 - missing required experience or skill category IDs,
 - unknown extra IDs,
 - duplicate IDs,
-- too many bullets for the profile max,
+- too many optional bullets for the profile max,
 - non-empty generated title that does not exactly match the source title,
 - fabricated skill,
 - LLM self-talk,

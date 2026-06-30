@@ -386,19 +386,18 @@ export function EmployerAnalysisPanel({
 }: EmployerAnalysisPanelProps): JSX.Element {
   if (!analysis) {
     return (
-      <section className={className} aria-label="Employer analysis">
-        <h3>Employer analysis</h3>
+      <section className={className} aria-label="Role Analysis">
+        <h3>Role Analysis</h3>
         <p className="muted">
-          No employer analysis has been recorded for this job yet. It is produced when materials are
-          generated.
+          No role analysis has been recorded for this job yet. It is produced when materials are generated.
         </p>
       </section>
     );
   }
 
   return (
-    <section className={className} aria-label="Employer analysis">
-      <h3>Employer analysis</h3>
+    <section className={className} aria-label="Role Analysis">
+      <h3>Role Analysis</h3>
       <div className="employer-analysis">
         <dl className="evidence-summary-grid">
           <div>

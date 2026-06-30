@@ -153,8 +153,17 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
     raw["resume"]["tailoring_rules"]["tailoring_policy"] = {
         "mode": "aggressive",
         "claim_mode": "draft_requires_confirmation",
-        "auto_approvable_claim_modes": ["verified_only", "draft_requires_confirmation"],
+        "auto_approvable_claim_modes": [
+            "verified_only",
+            "adjacent_translation",
+            "draft_requires_confirmation",
+        ],
         "allow_adjacent_achievement_drafts": True,
+    }
+    raw["resume"]["tailoring_rules"]["revision_gates"] = {
+        "min_fit_score": 9,
+        "must_have_coverage": 0.9,
+        "max_revision_attempts": 2,
     }
 
     repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
@@ -162,11 +171,18 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 1
     root = conn.execute(
         "SELECT tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json, "
-        "tailoring_allow_adjacent_achievement_drafts FROM candidate_profiles"
+        "tailoring_allow_adjacent_achievement_drafts, revision_min_fit_score, "
+        "revision_must_have_coverage, revision_max_attempts FROM candidate_profiles"
     ).fetchone()
     assert root["tailoring_claim_mode"] == "draft_requires_confirmation"
-    assert json.loads(root["tailoring_auto_approvable_claim_modes_json"]) == ["verified_only"]
+    assert json.loads(root["tailoring_auto_approvable_claim_modes_json"]) == [
+        "verified_only",
+        "adjacent_translation",
+    ]
     assert root["tailoring_allow_adjacent_achievement_drafts"] == 1
+    assert root["revision_min_fit_score"] == 9
+    assert root["revision_must_have_coverage"] == 0.9
+    assert root["revision_max_attempts"] == 2
 
     loaded = repo.load(LOCAL_TENANT)
     assert loaded is not None
@@ -174,7 +190,12 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
     assert loaded_entry["achievement_evidence"] == raw["resume"]["experience_entries"][0]["achievement_evidence"]
     assert loaded.to_dict()["resume"]["tailoring_rules"]["tailoring_policy"][
         "auto_approvable_claim_modes"
-    ] == ["verified_only"]
+    ] == ["verified_only", "adjacent_translation"]
+    assert loaded.to_dict()["resume"]["tailoring_rules"]["revision_gates"] == {
+        "min_fit_score": 9,
+        "must_have_coverage": 0.9,
+        "max_revision_attempts": 2,
+    }
 
 
 def test_stray_profile_export_is_ignored_and_writes_stay_in_sqlite(tmp_path):

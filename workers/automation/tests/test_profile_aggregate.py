@@ -174,6 +174,7 @@ def test_to_dict_round_trips_achievement_evidence_and_claim_controls():
         "auto_approvable_claim_modes": [
             "verified_only",
             "evidence_reframing",
+            "adjacent_translation",
             "draft_requires_confirmation",
         ],
         "allow_adjacent_achievement_drafts": True,
@@ -185,8 +186,12 @@ def test_to_dict_round_trips_achievement_evidence_and_claim_controls():
     assert evidence == original["resume"]["experience_entries"][0]["achievement_evidence"][0]
     policy = out["resume"]["tailoring_rules"]["tailoring_policy"]
     assert policy["claim_mode"] == "adjacent_translation"
-    assert policy["auto_approvable_claim_modes"] == ["verified_only", "evidence_reframing"]
-    assert policy["allow_adjacent_achievement_drafts"] is True
+    assert policy["auto_approvable_claim_modes"] == [
+        "verified_only",
+        "evidence_reframing",
+        "adjacent_translation",
+    ]
+    assert policy["allow_adjacent_achievement_drafts"] is False
 
 
 def test_to_dict_preserves_unknown_top_level_keys_for_forward_compat():
@@ -200,7 +205,21 @@ def test_to_dict_preserves_unknown_top_level_keys_for_forward_compat():
     assert out["custom_section"] == {"future": "thing"}
 
 
-def test_tailoring_policy_strict_mode_disables_every_flag():
+def test_tailoring_policy_strict_mode_migrates_missing_controls_to_verified_only():
+    policy = TailoringPolicy.from_dict({"mode": "strict"})
+
+    assert policy.mode == "strict"
+    assert not policy.allow_title_reframing
+    assert not policy.allow_summary_rewrite
+    assert not policy.allow_achievement_rewriting
+    assert not policy.allow_skill_reordering
+    assert not policy.allow_minor_inference
+    assert policy.claim_mode == "verified_only"
+    assert policy.auto_approvable_claim_modes == ("verified_only",)
+    assert policy.allow_adjacent_achievement_drafts is False
+
+
+def test_tailoring_policy_explicit_claim_policy_wins_over_legacy_mode():
     policy = TailoringPolicy.from_dict(
         {
             "mode": "strict",
@@ -216,13 +235,13 @@ def test_tailoring_policy_strict_mode_disables_every_flag():
     )
     assert policy.mode == "strict"
     assert not policy.allow_title_reframing
-    assert not policy.allow_summary_rewrite
-    assert not policy.allow_achievement_rewriting
-    assert not policy.allow_skill_reordering
-    assert not policy.allow_minor_inference
-    assert policy.claim_mode == "verified_only"
+    assert policy.allow_summary_rewrite
+    assert policy.allow_achievement_rewriting
+    assert policy.allow_skill_reordering
+    assert policy.allow_minor_inference
+    assert policy.claim_mode == "draft_requires_confirmation"
     assert policy.auto_approvable_claim_modes == ("verified_only",)
-    assert policy.allow_adjacent_achievement_drafts is False
+    assert policy.allow_adjacent_achievement_drafts is True
 
 
 def test_tailoring_policy_filters_draft_claims_from_auto_approval():
@@ -258,12 +277,12 @@ def test_resume_profile_helpers_return_normalized_evidence_controls():
         "allow_adjacent_achievement_drafts": True,
     }
 
-    assert get_claim_mode(profile) == "verified_only"
+    assert get_claim_mode(profile) == "draft_requires_confirmation"
     assert get_auto_approvable_claim_modes(profile) == ["verified_only"]
     assert get_tailoring_quality_controls(profile) == {
-        "claim_mode": "verified_only",
+        "claim_mode": "draft_requires_confirmation",
         "auto_approvable_claim_modes": ["verified_only"],
-        "allow_adjacent_achievement_drafts": False,
+        "allow_adjacent_achievement_drafts": True,
     }
     assert get_achievement_evidence(profile) == [
         {

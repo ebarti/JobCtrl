@@ -82,7 +82,10 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
     expect(screen.getByLabelText("Location filter")).toHaveValue("Remote");
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Revision policy" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum fit score")).toHaveValue(8);
+    expect(screen.getByLabelText("Must-have coverage (%)")).toHaveValue(85);
+    expect(screen.getByLabelText("Revision attempts")).toHaveValue(1);
     expect(screen.queryByText("Baseline resume editor")).not.toBeInTheDocument();
     expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
     const templatePreview = document.querySelector<HTMLElement>(".resume-template-plate-editor");

@@ -230,7 +230,11 @@ def _validate_master_json_fields(
         if not isinstance(bullets, list) or not bullets:
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
-        if len(bullets) > max_bullets:
+        if len(bullets) > max_bullets and not _bullet_overflow_is_mandatory(
+            data,
+            entry_id=entry_id,
+            bullet_count=len(bullets),
+        ):
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
         title = str(update.get("title") or "").strip()
         source_title = str(entry_by_id.get(entry_id, {}).get("title") or "").strip()
@@ -312,6 +316,32 @@ def _validate_master_json_fields(
     if errors:
         return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
     return ValidationResult.success(warnings=tuple(warnings))
+
+
+def _bullet_overflow_is_mandatory(data: dict, *, entry_id: str, bullet_count: int) -> bool:
+    mappings = data.get("generated_claim_mappings")
+    if not isinstance(mappings, list):
+        return False
+    mandatory_indexes: set[int] = set()
+    prefix = f"experience.{entry_id}.bullets["
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        location = str(mapping.get("location") or "")
+        if not location.startswith(prefix):
+            continue
+        try:
+            index = int(location.removeprefix(prefix).split("]", 1)[0])
+        except (TypeError, ValueError):
+            continue
+        coverage_edges = mapping.get("coverage_edge_ids")
+        non_requirement_reason = str(mapping.get("non_requirement_reason") or "")
+        if (
+            isinstance(coverage_edges, list)
+            and any(str(edge).strip() for edge in coverage_edges)
+        ) or non_requirement_reason == "pinned":
+            mandatory_indexes.add(index)
+    return len(mandatory_indexes) >= bullet_count
 
 
 # ---------------------------------------------------------------------------
@@ -522,8 +552,12 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
         if not required_skill_ids or category.get("id") in required_skill_ids
     ] or all_skill_categories
 
+    allow_mandatory_overflow = isinstance(data.get("generated_claim_mappings"), list)
     experience_updates = {
-        entry.get("id"): entry
+        entry.get("id"): {
+            **entry,
+            "_allow_mandatory_bullet_overflow": allow_mandatory_overflow,
+        }
         for entry in data.get("experience_updates", [])
         if isinstance(entry, dict) and entry.get("id")
     }

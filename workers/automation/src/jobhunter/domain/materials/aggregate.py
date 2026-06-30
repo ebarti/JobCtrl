@@ -216,13 +216,14 @@ class MaterialsSet:
         *,
         validation: ValidationResult,
         verdict: JudgeVerdict | None,
+        review_required: bool = False,
         updated_at: str,
     ) -> "MaterialsSet":
         """Record a tailor attempt — approved or rejected.
 
-        Status flips to ``RESUME_APPROVED`` only when both validator and
-        judge passed. Otherwise the artifact is stored with the supplied
-        :class:`ArtifactStatus` so callers retain the audit trail.
+        Status flips to ``RESUME_APPROVED`` only when validator + judge passed
+        and no policy review is required. Review-required attempts remain
+        inspectable candidate artifacts; failed attempts are rejected for audit.
 
         Round-2 review L1: when the new attempt is REJECTED on a
         same-generation re-save, downstream artifacts (cover_letter +
@@ -236,13 +237,20 @@ class MaterialsSet:
                 "with_resume_attempt requires an ArtifactType.TAILORED_RESUME artifact"
             )
         passed = validation.passed and (verdict is None or verdict.approved)
+        approved = passed and not review_required
         next_status = (
             MaterialsLifecycle.RESUME_APPROVED
-            if passed
+            if approved
             else MaterialsLifecycle.RESUME_IN_PROGRESS
         )
-        artifact_status = ArtifactStatus.APPROVED if passed else ArtifactStatus.REJECTED
-        if passed:
+        artifact_status = (
+            ArtifactStatus.APPROVED
+            if approved
+            else ArtifactStatus.CANDIDATE
+            if passed and review_required
+            else ArtifactStatus.REJECTED
+        )
+        if approved:
             # Approved attempt — the cover/PDFs (if any from a prior
             # state) stay valid because the new resume is the canonical
             # one for this generation.

@@ -73,22 +73,136 @@ function StatefulEditor({
 }
 
 describe("<StructuredProfileEditor>", () => {
-  it("edits claim mode and auto-approvable claim controls", () => {
+  it("exposes only invented adjacent experience as the editable claim control", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
 
-    fireEvent.change(screen.getByLabelText("Claim mode"), {
-      target: { value: "draft_requires_confirmation" },
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Verified facts only" }));
+    expect(screen.queryByLabelText("Tailoring mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("AI may make minor inferred phrasing")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Allow adjacent achievement drafts")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Generation claim scope" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Broadest generated claim")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review bypass rules")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Adjacent experience claims" })).toBeInTheDocument();
 
-    const profile = JSON.parse(latestProfile);
+    const toggle = screen.getByRole("checkbox", { name: "Enable profile enhancement" });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    let profile = JSON.parse(latestProfile);
     expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
       "draft_requires_confirmation",
     );
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_minor_inference).toBe(true);
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(true);
     expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
       "verified_only",
+      "evidence_reframing",
     ]);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enable profile enhancement" }));
+
+    profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.tailoring_policy.claim_mode).toBe(
+      "adjacent_translation",
+    );
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_minor_inference).toBe(true);
+    expect(profile.resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts).toBe(false);
+    expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
+      "verified_only",
+      "evidence_reframing",
+    ]);
+  });
+
+  it("checks invented adjacent experience for legacy adjacent draft policies", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.tailoring_rules.tailoring_policy = {
+      ...initialProfile.resume.tailoring_rules.tailoring_policy,
+      claim_mode: "draft_requires_confirmation",
+      allow_adjacent_achievement_drafts: true,
+    };
+
+    render(<StatefulEditor mode="preferences" initialProfile={initialProfile} />);
+
+    expect(screen.getByRole("checkbox", { name: "Enable profile enhancement" })).toBeChecked();
+  });
+
+  it("normalizes legacy non-draft claim policies when editing other Preferences fields", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.tailoring_rules.tailoring_policy = {
+      ...initialProfile.resume.tailoring_rules.tailoring_policy,
+      claim_mode: "evidence_reframing",
+      allow_minor_inference: false,
+      allow_adjacent_achievement_drafts: false,
+      auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+    };
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+
+    render(
+      <StatefulEditor
+        mode="preferences"
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => { latestProfile = value; }}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Enable profile enhancement" })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Minimum fit score"), { target: { value: "9" } });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.tailoring_policy).toMatchObject({
+      claim_mode: "adjacent_translation",
+      allow_minor_inference: true,
+      allow_adjacent_achievement_drafts: false,
+      auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+    });
+  });
+
+  it("keeps experience title changes disabled in generation permissions", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
+  });
+
+  it("labels keyword density as advisory emphasis and edits revision gates", () => {
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    expect(screen.queryByLabelText("Keyword density")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Keyword emphasis")).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum fit score")).toHaveValue(8);
+    expect(screen.getByLabelText("Must-have coverage (%)")).toHaveValue(85);
+    expect(screen.getByLabelText("Revision attempts")).toHaveValue(1);
+    expect(screen.getByLabelText("Additional guidance")).toHaveAttribute("maxlength", "1200");
+
+    fireEvent.change(screen.getByLabelText("Minimum fit score"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("Must-have coverage (%)"), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText("Revision attempts"), { target: { value: "2" } });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.tailoring_rules.revision_gates).toMatchObject({
+      min_fit_score: 9,
+      must_have_coverage: 0.9,
+      max_revision_attempts: 2,
+    });
+  });
+
+  it("keeps required content pins out of Preferences because Profile owns them", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByRole("group", { name: "Required content pins" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Experience entries")).not.toBeInTheDocument();
+    expect(screen.queryByText("Experience bullets")).not.toBeInTheDocument();
+    expect(screen.queryByText("Skill groups")).not.toBeInTheDocument();
+  });
+
+  it("keeps required content pins configurable from the Profile editor", () => {
+    render(<StatefulEditor />);
+
+    expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
+    expect(screen.getAllByText("must appear in final resume").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
   });
 
   it("renders bullet standards as a combined fixed set", () => {

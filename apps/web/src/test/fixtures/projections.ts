@@ -509,6 +509,78 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         ],
         coverLetterText:
           "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
+        requirementLedAudit: {
+          requirementCount: 2,
+          achievementCount: 2,
+          coverageEdgeCount: 2,
+          coveredRequirements: [
+            {
+              id: "r1",
+              textExcerpt: "Lead platform reliability improvements across critical services.",
+              tier: "must_have",
+              reason: "Covered by generated resume claim mappings.",
+            },
+          ],
+          uncoveredRequirements: [
+            {
+              id: "r2",
+              textExcerpt: "Improve incident-response practices and developer experience.",
+              tier: "important",
+              reason: "Requires review before claiming developer-experience coverage.",
+            },
+          ],
+          unusedAchievementIds: ["ev_public_company_scale"],
+          evidenceBackedClaims: [
+            {
+              section: "experience",
+              label: "Senior SWE at Acme",
+              textExcerpts: ["Owned platform reliability improvements for incident response."],
+              requirementIds: ["r1"],
+              evidenceIds: ["ev_platform_reliability"],
+              coverageEdgeIds: ["edge-r1-ev-platform"],
+              claimLabels: ["verified_only", "evidence_reframing"],
+              positioningReasons: ["Emphasized direct platform reliability ownership."],
+              reviewRequired: false,
+            },
+          ],
+          pinnedClaims: [],
+          adjacentOrDraftClaims: [
+            {
+              section: "summary",
+              label: "Professional summary",
+              textExcerpts: ["Bridges incident leadership into developer-experience practice improvements."],
+              requirementIds: ["r2"],
+              evidenceIds: ["ev_incident_leadership"],
+              coverageEdgeIds: ["edge-r2-ev-incident"],
+              claimLabels: ["adjacent_translation", "draft"],
+              positioningReasons: ["Manual confirmation required before approving adjacent developer-experience language."],
+              reviewRequired: true,
+            },
+          ],
+          bulletLimitOverflows: [
+            {
+              experienceEntryId: "exp-acme",
+              maxBullets: 2,
+              actualBullets: 3,
+              reason: "mandatory requirement coverage",
+              evidenceIds: ["ev_platform_reliability"],
+            },
+          ],
+          revision: {
+            score: 7.6,
+            mustHaveCoverage: 0.5,
+            thresholdFailed: true,
+            shouldRevise: true,
+            reviewBlocked: true,
+            enhancementAllowed: true,
+            reason: "review_blocked_claims",
+            attempt: 1,
+            maxRevisionAttempts: 1,
+            prioritizedFixes: ["Cover incident-response practices without overstating developer-experience ownership."],
+            reviewBlockers: ["claim-draft: draft_requires_confirmation"],
+          },
+          reviewBlockers: ["claim-draft: draft_requires_confirmation"],
+        },
       },
       latestApplyRun: {
         runId: "apply-run-2",

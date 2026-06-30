@@ -1434,7 +1434,11 @@ function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): strin
 }
 
 function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
-  if (!tableExists(db, "artifact_list_projections") || !tableExists(db, "job_materials_artifacts")) {
+  if (
+    !tableExists(db, "jobs") ||
+    !tableExists(db, "artifact_list_projections") ||
+    !tableExists(db, "job_materials_artifacts")
+  ) {
     return [];
   }
   if (
@@ -1446,39 +1450,22 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
 
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT DISTINCT p.job_id
-       FROM artifact_list_projections p
-      WHERE p.tenant_id = ?
-        AND p.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'tailored_resume_pdf')
-        AND EXISTS (
-          SELECT 1
-            FROM job_materials_artifacts a
-           WHERE a.job_url = p.job_id
-             AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
-             AND a.metadata_json IS NOT NULL
-             AND TRIM(a.metadata_json) != ''
-             AND TRIM(a.metadata_json) != '{}'
-             AND (
-               p.metadata_json IS NULL
-               OR TRIM(p.metadata_json) = ''
-               OR TRIM(p.metadata_json) = '{}'
-               OR (
-                 json_extract(p.metadata_json, '$.quality_plan.target_seniority') IS NULL
-                 AND json_extract(a.metadata_json, '$.quality_plan.target_seniority') IS NOT NULL
-               )
-               OR (
-                 json_extract(p.metadata_json, '$.selected_model') IS NULL
-                 AND json_extract(a.metadata_json, '$.selected_model') IS NOT NULL
-               )
-               OR (
-                 json_extract(p.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NULL
-                 AND json_extract(a.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NOT NULL
-               )
-               OR (
-                 COALESCE(json_array_length(json_extract(p.metadata_json, '$.change_annotations')), 0) = 0
-                 AND COALESCE(json_array_length(json_extract(a.metadata_json, '$.change_annotations')), 0) > 0
-               )
-             )
+    `SELECT DISTINCT a.job_url AS job_id
+       FROM job_materials_artifacts a
+       LEFT JOIN artifact_list_projections p
+         ON p.tenant_id = ?
+        AND p.job_id = a.job_url
+        AND p.artifact_id = COALESCE(NULLIF(a.artifact_id, ''), a.artifact_type || ':' || a.path)
+      WHERE a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND a.path IS NOT NULL
+        AND TRIM(a.path) != ''
+        AND a.metadata_json IS NOT NULL
+        AND TRIM(a.metadata_json) != ''
+        AND TRIM(a.metadata_json) != '{}'
+        AND (
+          p.artifact_id IS NULL
+          OR p.metadata_json IS NULL
+          OR TRIM(p.metadata_json) != TRIM(a.metadata_json)
         )`,
     [tenantId],
   );

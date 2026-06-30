@@ -13,14 +13,29 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from jobhunter.domain.materials.analysis import EmployerAnalysis
+from jobhunter.domain.materials.policy import (
+    RequirementLedTailoringControls,
+    adapt_requirement_led_controls,
+)
+from jobhunter.domain.materials.requirement_coverage import (
+    CoverageGraph,
+    TargetProfile,
+    build_target_profile,
+    seed_coverage_graph,
+)
 from jobhunter.domain.materials.value_objects import ValidationResult
 from jobhunter.resume_profile import (
     get_achievement_evidence,
-    get_claim_mode,
+    get_custom_tailoring_prompt,
     get_experience_entries,
+    get_required_bullets_by_experience_id,
+    get_required_experience_entry_ids,
+    get_required_skills_by_category_id,
+    get_revision_gates,
     get_resume_master,
     get_resume_constraints,
     get_skill_categories,
+    get_tailoring_policy,
     get_tailoring_quality_controls,
     get_writing_style,
     tailored_experience_bullets,
@@ -293,6 +308,11 @@ class TailoringPlan:
     evidence_items: tuple[EvidencePlanItem, ...] = ()
     requirement_directives: tuple[RequirementDirectivePlanItem, ...] = ()
     prohibited_claims: tuple[str, ...] = ()
+    requirement_led_controls: RequirementLedTailoringControls = field(
+        default_factory=RequirementLedTailoringControls
+    )
+    target_profile: TargetProfile | None = None
+    coverage_graph: CoverageGraph | None = None
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -301,9 +321,6 @@ class TailoringPlan:
     def to_prompt_dict(self) -> dict[str, Any]:
         required = self.evidence_by_id
         return {
-            "claim_mode": self.claim_mode,
-            "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
-            "allow_adjacent_achievement_drafts": self.allow_adjacent_achievement_drafts,
             "writing_style": dict(self.writing_style),
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
@@ -318,6 +335,13 @@ class TailoringPlan:
             "seniority_evidence_ids": list(self.seniority_evidence_ids),
             "verified_metrics": list(self.verified_metrics),
             "prohibited_claims": list(self.prohibited_claims),
+            "requirement_led_controls": self.requirement_led_controls.to_dict(),
+            "target_profile": self.target_profile.to_prompt_dict()
+            if self.target_profile is not None
+            else None,
+            "coverage_graph": self.coverage_graph.to_dict()
+            if self.coverage_graph is not None
+            else None,
             "deterministic_checks": [
                 "Use standard sections: EXECUTIVE PROFILE, EXPERIENCE, EDUCATION, SKILLS.",
                 "Use only verified profile metrics or evidence metrics.",
@@ -339,7 +363,6 @@ class TailoringPlan:
         return {
             "claim_mode": self.claim_mode,
             "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
-            "allow_adjacent_achievement_drafts": self.allow_adjacent_achievement_drafts,
             "writing_style": {
                 key: self.writing_style.get(key)
                 for key in ("tone", "bullet_style", "verbosity", "keyword_density")
@@ -354,6 +377,13 @@ class TailoringPlan:
                 directive.metadata_dict for directive in self.requirement_directives
             ],
             "prohibited_claims": list(self.prohibited_claims),
+            "requirement_led_controls": self.requirement_led_controls.to_dict(),
+            "target_profile": self.target_profile.to_safe_metadata()
+            if self.target_profile is not None
+            else None,
+            "coverage_graph": self.coverage_graph.to_safe_metadata()
+            if self.coverage_graph is not None
+            else None,
         }
 
 
@@ -409,6 +439,11 @@ class TailoringChangeAnnotation:
     job_signals: tuple[str, ...] = ()
     controls: tuple[str, ...] = ()
     evidence_ids: tuple[str, ...] = ()
+    requirement_ids: tuple[str, ...] = ()
+    coverage_edge_ids: tuple[str, ...] = ()
+    claim_labels: tuple[str, ...] = ()
+    positioning_reasons: tuple[str, ...] = ()
+    review_required: bool = False
     evidence_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -423,6 +458,11 @@ class TailoringChangeAnnotation:
             "job_signals": list(self.job_signals),
             "controls": list(self.controls),
             "evidence_ids": list(self.evidence_ids),
+            "requirement_ids": list(self.requirement_ids),
+            "coverage_edge_ids": list(self.coverage_edge_ids),
+            "claim_labels": list(self.claim_labels),
+            "positioning_reasons": list(self.positioning_reasons),
+            "review_required": self.review_required,
             "evidence_notes": list(self.evidence_notes),
         }
 
@@ -444,9 +484,23 @@ def build_tailoring_plan(
     """
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
+    requirement_led_controls = adapt_requirement_led_controls(
+        tailoring_policy=get_tailoring_policy(profile),
+        writing_style=writing_style,
+        revision_gates=get_revision_gates(profile),
+        required_experience_entry_ids=tuple(get_required_experience_entry_ids(profile)),
+        required_bullets_by_experience_id=get_required_bullets_by_experience_id(profile),
+        required_skills_by_category_id=get_required_skills_by_category_id(profile),
+        additional_guidance=get_custom_tailoring_prompt(profile),
+    )
     evidence_items = tuple(_evidence_item(item) for item in get_achievement_evidence(profile))
+    matched_requirement_fit_report = (
+        requirement_fit_report
+        if _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis)
+        else None
+    )
     requirement_directives = _requirement_directive_items(
-        requirement_fit_report=requirement_fit_report,
+        requirement_fit_report=matched_requirement_fit_report,
         job=job,
         employer_analysis=employer_analysis,
     )
@@ -474,9 +528,20 @@ def build_tailoring_plan(
             + _baseline_experience_metrics(profile)
         )
     )
+    target_profile = build_target_profile(
+        employer_analysis=employer_analysis,
+        requirement_fit_report=matched_requirement_fit_report,
+        job=job,
+        evidence_items=evidence_items,
+        pinned_evidence_ids=required_evidence_ids,
+    )
+    coverage_graph = seed_coverage_graph(
+        target_profile=target_profile,
+        requirement_fit_report=matched_requirement_fit_report,
+    )
 
     return TailoringPlan(
-        claim_mode=get_claim_mode(profile),
+        claim_mode=requirement_led_controls.claim_policy,
         auto_approvable_claim_modes=tuple(
             str(mode) for mode in controls.get("auto_approvable_claim_modes", [])
         ),
@@ -492,6 +557,9 @@ def build_tailoring_plan(
         evidence_items=evidence_items,
         requirement_directives=requirement_directives,
         prohibited_claims=_directive_prohibited_claims(requirement_directives),
+        requirement_led_controls=requirement_led_controls,
+        target_profile=target_profile,
+        coverage_graph=coverage_graph,
     )
 
 
@@ -505,12 +573,19 @@ def build_tailoring_change_annotations(
     resume = get_resume_master(profile)
     annotations: list[TailoringChangeAnnotation] = []
     controls = _annotation_controls(plan)
+    claim_mappings = _claim_mapping_items(tailored_payload)
 
     baseline_summary = _normalize_space(
         str(resume.get("executive_profile", {}).get("baseline_text", ""))
     )
     tailored_summary = _normalize_space(str(tailored_payload.get("executive_profile") or ""))
     if tailored_summary:
+        claim_audit = _claim_audit_for_text(
+            claim_mappings,
+            section="executive_profile",
+            source_id="executive_profile",
+            text=tailored_summary,
+        )
         annotations.append(
             TailoringChangeAnnotation(
                 section="executive_profile",
@@ -527,6 +602,11 @@ def build_tailoring_change_annotations(
                 job_signals=_annotation_job_signals(tailored_summary, plan, job),
                 controls=controls,
                 evidence_ids=tuple(plan.seniority_evidence_ids[:6]),
+                requirement_ids=claim_audit["requirement_ids"],
+                coverage_edge_ids=claim_audit["coverage_edge_ids"],
+                claim_labels=claim_audit["claim_labels"],
+                positioning_reasons=claim_audit["positioning_reasons"],
+                review_required=claim_audit["review_required"],
                 evidence_notes=_annotation_evidence_notes(
                     plan,
                     plan.seniority_evidence_ids,
@@ -566,6 +646,15 @@ def build_tailoring_change_annotations(
                 or _evidence_represented(_normalize_space("\n".join(tailored_lines)).lower(), item)
             )
         )
+        claim_audit = _claim_audit_for_text(
+            claim_mappings,
+            section="experience",
+            source_id=entry_id,
+            text="\n".join(tailored_lines),
+        )
+        audit_evidence_ids = tuple(
+            dict.fromkeys((*evidence_ids, *claim_audit["evidence_ids"]))
+        )
         annotations.append(
             TailoringChangeAnnotation(
                 section="experience",
@@ -577,10 +666,15 @@ def build_tailoring_change_annotations(
                 rationale=_experience_rationale(plan, job, entry, tailored_lines),
                 job_signals=_annotation_job_signals("\n".join(tailored_lines), plan, job),
                 controls=controls,
-                evidence_ids=evidence_ids[:6],
+                evidence_ids=audit_evidence_ids[:8],
+                requirement_ids=claim_audit["requirement_ids"],
+                coverage_edge_ids=claim_audit["coverage_edge_ids"],
+                claim_labels=claim_audit["claim_labels"],
+                positioning_reasons=claim_audit["positioning_reasons"],
+                review_required=claim_audit["review_required"],
                 evidence_notes=_annotation_evidence_notes(
                     plan,
-                    evidence_ids,
+                    audit_evidence_ids,
                     "\n".join(tailored_lines),
                 ),
             )
@@ -602,6 +696,12 @@ def build_tailoring_change_annotations(
         tailored_items = tailored_skill_items(category, update, profile)
         if not tailored_items:
             continue
+        claim_audit = _claim_audit_for_text(
+            claim_mappings,
+            section="skills",
+            source_id=category_id,
+            text=", ".join(tailored_items),
+        )
         annotations.append(
             TailoringChangeAnnotation(
                 section="skills",
@@ -618,6 +718,12 @@ def build_tailoring_change_annotations(
                 rationale=_skills_rationale(plan, job, tailored_items),
                 job_signals=_annotation_job_signals(", ".join(tailored_items), plan, job),
                 controls=controls,
+                evidence_ids=claim_audit["evidence_ids"],
+                requirement_ids=claim_audit["requirement_ids"],
+                coverage_edge_ids=claim_audit["coverage_edge_ids"],
+                claim_labels=claim_audit["claim_labels"],
+                positioning_reasons=claim_audit["positioning_reasons"],
+                review_required=claim_audit["review_required"],
             )
         )
 
@@ -944,21 +1050,80 @@ def _target_seniority(job: dict) -> str:
 
 
 def _annotation_controls(plan: TailoringPlan) -> tuple[str, ...]:
+    requirement_led_controls = plan.requirement_led_controls
+    auto_approval = requirement_led_controls.auto_approval_policy
     controls = [
         f"target seniority: {plan.target_seniority}",
-        f"claim mode: {plan.claim_mode}",
-        "adjacent drafts allowed" if plan.allow_adjacent_achievement_drafts else "adjacent drafts blocked",
+        f"claim policy: {requirement_led_controls.claim_policy}",
     ]
     for key in ("tone", "bullet_style", "verbosity", "keyword_density"):
         value = plan.writing_style.get(key)
         if value:
             controls.append(f"{key.replace('_', ' ')}: {value}")
-    if plan.auto_approvable_claim_modes:
+    if auto_approval.auto_approvable_claim_labels:
         controls.append(
-            "auto-approvable claims: "
-            + ", ".join(plan.auto_approvable_claim_modes[:4])
+            "auto-approvable claim labels: "
+            + ", ".join(auto_approval.auto_approvable_claim_labels[:4])
         )
+    if auto_approval.adjacent_translation_auto_approvable:
+        controls.append("advanced adjacent auto-approval enabled")
+    if auto_approval.draft_claims_require_confirmation:
+        controls.append("draft claims require confirmation")
     return tuple(controls)
+
+
+def _claim_mapping_items(payload: dict) -> tuple[dict[str, Any], ...]:
+    raw_items = payload.get("generated_claim_mappings")
+    if not isinstance(raw_items, list):
+        return ()
+    return tuple(item for item in raw_items if isinstance(item, dict))
+
+
+def _claim_audit_for_text(
+    mappings: tuple[dict[str, Any], ...],
+    *,
+    section: str,
+    source_id: str,
+    text: str,
+) -> dict[str, Any]:
+    normalized_text = _normalize_phrase(text)
+    matched: list[dict[str, Any]] = []
+    for mapping in mappings:
+        location = str(mapping.get("location") or "")
+        claim_text = _normalize_phrase(str(mapping.get("text") or ""))
+        location_matches = section in location and (source_id in location or source_id == section)
+        text_matches = bool(claim_text and claim_text in normalized_text)
+        if location_matches or text_matches:
+            matched.append(mapping)
+    return {
+        "evidence_ids": _claim_strings(matched, "evidence_ids"),
+        "requirement_ids": _claim_strings(matched, "requirement_ids"),
+        "coverage_edge_ids": _claim_strings(matched, "coverage_edge_ids"),
+        "claim_labels": tuple(
+            dict.fromkeys(
+                label
+                for mapping in matched
+                if (label := str(mapping.get("claim_label") or "").strip())
+            )
+        ),
+        "positioning_reasons": tuple(
+            dict.fromkeys(
+                reason
+                for mapping in matched
+                if (reason := str(mapping.get("non_requirement_reason") or "").strip())
+            )
+        ),
+        "review_required": any(bool(mapping.get("review_required", False)) for mapping in matched),
+    }
+
+
+def _claim_strings(mappings: list[dict[str, Any]], key: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for mapping in mappings:
+        raw = mapping.get(key)
+        if isinstance(raw, list):
+            values.extend(str(item).strip() for item in raw if str(item).strip())
+    return tuple(dict.fromkeys(values))
 
 
 def _annotation_lines(values: list[str] | tuple[str, ...], *, limit: int = 4) -> tuple[str, ...]:
@@ -987,11 +1152,12 @@ def _summary_rationale(plan: TailoringPlan, job: dict, tailored_summary: str) ->
     if signals:
         return (
             f"Summary was framed for a {plan.target_seniority} target and the "
-            f"job signals {signals}, using {plan.claim_mode} rather than new claims."
+            f"job signals {signals}, using {plan.requirement_led_controls.claim_policy} "
+            "rather than new claims."
         )
     return (
         f"Summary was framed for a {plan.target_seniority} target using "
-        f"{plan.claim_mode} and the selected writing controls."
+        f"{plan.requirement_led_controls.claim_policy} and the selected writing controls."
     )
 
 
@@ -1006,7 +1172,8 @@ def _experience_rationale(
     if signals:
         return (
             f"{company} was emphasized because it supports the target role through "
-            f"{signals}; wording is constrained by {plan.claim_mode} evidence controls."
+            f"{signals}; wording is constrained by "
+            f"{plan.requirement_led_controls.claim_policy} evidence controls."
         )
     return (
         f"{company} was carried into the tailored resume because it is selected "

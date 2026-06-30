@@ -142,6 +142,9 @@ const ROOT_COLUMNS = [
   "writing_avoid_first_person",
   "max_experience_bullets",
   "custom_tailoring_prompt",
+  "revision_min_fit_score",
+  "revision_must_have_coverage",
+  "revision_max_attempts",
   "resume_style_document_font_size",
   "resume_style_paper_size",
   "resume_style_font_family",
@@ -220,6 +223,9 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       writing_avoid_first_person INTEGER NOT NULL DEFAULT 1,
       max_experience_bullets INTEGER NOT NULL DEFAULT 4,
       custom_tailoring_prompt TEXT NOT NULL DEFAULT '',
+      revision_min_fit_score INTEGER NOT NULL DEFAULT 8,
+      revision_must_have_coverage REAL NOT NULL DEFAULT 0.85,
+      revision_max_attempts INTEGER NOT NULL DEFAULT 1,
       resume_style_document_font_size TEXT NOT NULL DEFAULT '11pt',
       resume_style_paper_size TEXT NOT NULL DEFAULT 'a4paper',
       resume_style_font_family TEXT NOT NULL DEFAULT 'sans',
@@ -362,6 +368,9 @@ const CANDIDATE_PROFILE_COLUMN_MIGRATIONS: Record<string, string> = {
   tailoring_claim_mode: "TEXT NOT NULL DEFAULT 'evidence_reframing'",
   tailoring_auto_approvable_claim_modes_json: "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
   tailoring_allow_adjacent_achievement_drafts: "INTEGER NOT NULL DEFAULT 0",
+  revision_min_fit_score: "INTEGER NOT NULL DEFAULT 8",
+  revision_must_have_coverage: "REAL NOT NULL DEFAULT 0.85",
+  revision_max_attempts: "INTEGER NOT NULL DEFAULT 1",
 };
 
 function ensureCandidateProfileColumns(db: SqliteDatabase): void {
@@ -773,6 +782,11 @@ function tailoringRules(db: SqliteDatabase, row: ProfileRow): Record<string, unk
       keyword_density: stringColumn(row.writing_keyword_density, "natural"),
       avoid_first_person: Boolean(Number(row.writing_avoid_first_person ?? 1)),
     },
+    revision_gates: {
+      min_fit_score: Number(row.revision_min_fit_score ?? 8),
+      must_have_coverage: Number(row.revision_must_have_coverage ?? 0.85),
+      max_revision_attempts: Number(row.revision_max_attempts ?? 1),
+    },
   };
 }
 
@@ -833,6 +847,7 @@ function rootValues(
   const rules = record(resume.tailoring_rules);
   const policy = record(rules.tailoring_policy);
   const writing = record(rules.writing_style);
+  const revisionGates = record(rules.revision_gates);
 
   return [
     TENANT_ID,
@@ -894,6 +909,9 @@ function rootValues(
     boolInt(writing.avoid_first_person, true),
     Number(rules.max_experience_bullets ?? 4),
     text(rules.custom_tailoring_prompt),
+    boundedInteger("revision_gates.min_fit_score", revisionGates.min_fit_score ?? 8, 1, 10),
+    boundedNumber("revision_gates.must_have_coverage", revisionGates.must_have_coverage ?? 0.85, 0, 1),
+    boundedInteger("revision_gates.max_revision_attempts", revisionGates.max_revision_attempts ?? 1, 0, 10),
     style.document_font_size,
     style.paper_size,
     style.font_family,
@@ -952,6 +970,17 @@ function boundedNumber(key: string, value: unknown, min: number, max: number): n
     throw new ProfileInputError(`${key} must be between ${min} and ${max}.`);
   }
   return Math.round(parsed * 100) / 100;
+}
+
+function boundedInteger(key: string, value: unknown, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new ProfileInputError(`${key} must be an integer.`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new ProfileInputError(`${key} must be between ${min} and ${max}.`);
+  }
+  return parsed;
 }
 
 function parseProfileInput(profile: unknown, profileText: string | undefined): ProfileShape {

@@ -1,5 +1,4 @@
 import type { ApplyAuditFact, ApplyAuditSource } from "@jobhunter/contracts";
-import { Link } from "@tanstack/react-router";
 
 import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
@@ -18,22 +17,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
   const factGroups = auditFactGroups(detail);
 
   return (
-    <section className="section job-audit-triage" aria-labelledby="job-audit-triage-title">
-      <div className="job-audit-triage-head">
-        <div>
-          <span className="eyebrow">Audit triage</span>
-          <h3 id="job-audit-triage-title">Why this job is here</h3>
-        </div>
-        <Link
-          aria-label={`Open Apply Review for ${job.title}`}
-          className="tab"
-          search={{ jobKey: job.jobKey }}
-          to="/apply-review"
-        >
-          Open Apply Review
-        </Link>
-      </div>
-
+    <section className="section job-audit-triage" aria-label="Job audit triage">
       <div className="job-audit-triage-grid">
         <div className="job-audit-triage-column">
           <div className="job-audit-triage-kicker">Ranking</div>

@@ -14,6 +14,7 @@ from jobhunter.domain.materials.services import (
     BANNED_WORDS,
     ContentValidator,
     LLM_LEAK_PHRASES,
+    ResumeAssembler,
     sanitize_text,
 )
 
@@ -24,6 +25,7 @@ from jobhunter.domain.materials.services import (
 
 
 _VALIDATOR = ContentValidator()
+_ASSEMBLER = ResumeAssembler()
 
 
 def _profile() -> dict:
@@ -109,6 +111,66 @@ def test_validate_json_fields_rejects_too_many_bullets() -> None:
     result = _VALIDATOR.validate_json_fields(payload, _profile())
     assert result.passed is False
     assert any("exceeds 4 bullets" in err for err in result.errors)
+
+
+def test_validate_json_fields_allows_mandatory_requirement_coverage_overflow() -> None:
+    payload = _good_payload()
+    payload["experience_updates"][0]["bullets"] = [
+        "Pinned bullet.",
+        "Covered requirement one.",
+        "Covered requirement two.",
+        "Covered requirement three.",
+        "Covered requirement four.",
+    ]
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": f"claim-{index}",
+            "location": f"experience.acme_swe.bullets[{index}]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": [f"edge-{index}"] if index else [],
+            "requirement_ids": [f"req-{index}"] if index else [],
+            "evidence_ids": [f"ev-{index}"] if index else [],
+            "non_requirement_reason": "pinned" if index == 0 else "",
+            "review_required": False,
+        }
+        for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
+    ]
+
+    result = _VALIDATOR.validate_json_fields(payload, _profile())
+
+    assert result.passed is True
+
+
+def test_resume_assembler_preserves_mandatory_requirement_coverage_overflow() -> None:
+    payload = _good_payload()
+    payload["experience_updates"][0]["bullets"] = [
+        "Pinned bullet.",
+        "Covered requirement one.",
+        "Covered requirement two.",
+        "Covered requirement three.",
+        "Covered requirement four.",
+    ]
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": f"claim-{index}",
+            "location": f"experience.acme_swe.bullets[{index}]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": [f"edge-{index}"] if index else [],
+            "requirement_ids": [f"req-{index}"] if index else [],
+            "evidence_ids": [f"ev-{index}"] if index else [],
+            "non_requirement_reason": "pinned" if index == 0 else "",
+            "review_required": False,
+        }
+        for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
+    ]
+
+    assert _VALIDATOR.validate_json_fields(payload, _profile()).passed is True
+
+    rendered = _ASSEMBLER.assemble_resume_text(payload, _profile())
+
+    assert "- Covered requirement four." in rendered
 
 
 def test_validate_json_fields_rejects_rewritten_experience_title() -> None:

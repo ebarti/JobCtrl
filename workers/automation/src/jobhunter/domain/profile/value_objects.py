@@ -372,7 +372,8 @@ class SkillCategory:
 
 TAILORING_MODES = ("strict", "balanced", "aggressive")
 CLAIM_MODES = ("verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation")
-AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
+AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing", "adjacent_translation")
+DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
 EVIDENCE_STRENGTHS = ("verified", "supported", "inferred", "draft")
 WRITING_TONES = ("direct", "executive", "technical", "confident", "warm")
 BULLET_STYLES = ("balanced", "impact", "technical_depth", "leadership")
@@ -390,7 +391,7 @@ class TailoringPolicy:
     allow_summary_rewrite: bool = True
     allow_minor_inference: bool = False
     claim_mode: str = "evidence_reframing"
-    auto_approvable_claim_modes: tuple[str, ...] = AUTO_APPROVABLE_CLAIM_MODES
+    auto_approvable_claim_modes: tuple[str, ...] = DEFAULT_AUTO_APPROVABLE_CLAIM_MODES
     allow_adjacent_achievement_drafts: bool = False
 
     @classmethod
@@ -399,44 +400,52 @@ class TailoringPolicy:
         mode = _str(data.get("mode"), "balanced")
         if mode not in TAILORING_MODES:
             mode = "balanced"
-        claim_mode = _str(data.get("claim_mode"), "evidence_reframing")
-        if claim_mode not in CLAIM_MODES:
+        raw_claim_mode = _str(data.get("claim_mode"), "")
+        if raw_claim_mode in CLAIM_MODES:
+            claim_mode = raw_claim_mode
+        elif mode == "strict":
+            claim_mode = "verified_only"
+        elif _bool(data.get("allow_adjacent_achievement_drafts"), False):
+            claim_mode = "draft_requires_confirmation"
+        elif _bool(data.get("allow_minor_inference"), False):
+            claim_mode = "adjacent_translation"
+        else:
             claim_mode = "evidence_reframing"
         auto_approvable = tuple(
             claim_mode
             for claim_mode in _str_tuple(data.get("auto_approvable_claim_modes"))
             if claim_mode in AUTO_APPROVABLE_CLAIM_MODES
-        ) or AUTO_APPROVABLE_CLAIM_MODES
-        allow_adjacent_drafts = mode == "aggressive" and _bool(
-            data.get("allow_adjacent_achievement_drafts"), False
         )
+        if not auto_approvable:
+            auto_approvable = (
+                ("verified_only",)
+                if mode == "strict" and "auto_approvable_claim_modes" not in data
+                else DEFAULT_AUTO_APPROVABLE_CLAIM_MODES
+            )
 
         policy = cls(
             mode=mode,
-            allow_title_reframing=_bool(data.get("allow_title_reframing"), False),
-            allow_achievement_rewriting=_bool(data.get("allow_achievement_rewriting"), True),
-            allow_skill_reordering=_bool(data.get("allow_skill_reordering"), True),
-            allow_summary_rewrite=_bool(data.get("allow_summary_rewrite"), True),
-            allow_minor_inference=_bool(data.get("allow_minor_inference"), False),
+            allow_title_reframing=False,
+            allow_achievement_rewriting=_bool(
+                data.get("allow_achievement_rewriting"),
+                mode != "strict",
+            ),
+            allow_skill_reordering=_bool(
+                data.get("allow_skill_reordering"),
+                mode != "strict",
+            ),
+            allow_summary_rewrite=_bool(
+                data.get("allow_summary_rewrite"),
+                mode != "strict",
+            ),
+            allow_minor_inference=_bool(
+                data.get("allow_minor_inference"),
+                False,
+            ),
             claim_mode=claim_mode,
             auto_approvable_claim_modes=auto_approvable,
-            allow_adjacent_achievement_drafts=allow_adjacent_drafts,
+            allow_adjacent_achievement_drafts=claim_mode == "draft_requires_confirmation",
         )
-        # Strict mode forces every flag to False — the policy makes the
-        # forbidden options unrepresentable rather than relying on consumers
-        # to remember the rule.
-        if policy.mode == "strict":
-            return cls(
-                mode="strict",
-                allow_title_reframing=False,
-                allow_achievement_rewriting=False,
-                allow_skill_reordering=False,
-                allow_summary_rewrite=False,
-                allow_minor_inference=False,
-                claim_mode="verified_only",
-                auto_approvable_claim_modes=("verified_only",),
-                allow_adjacent_achievement_drafts=False,
-            )
         return policy
 
     def to_dict(self) -> dict[str, Any]:
@@ -484,6 +493,33 @@ class WritingStyle:
 
 
 @dataclass(frozen=True)
+class RevisionGates:
+    min_fit_score: int = 8
+    must_have_coverage: float = 0.85
+    max_revision_attempts: int = 1
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RevisionGates":
+        data = data or {}
+
+        def bounded_int(key: str, default: int, minimum: int, maximum: int) -> int:
+            try:
+                parsed = int(data.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return max(minimum, min(maximum, parsed))
+
+        return cls(
+            min_fit_score=bounded_int("min_fit_score", 8, 1, 10),
+            must_have_coverage=_float(data.get("must_have_coverage"), 0.85),
+            max_revision_attempts=bounded_int("max_revision_attempts", 1, 0, 10),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+
+@dataclass(frozen=True)
 class ResumeConstraints:
     """Hard truths the tailor must preserve verbatim — real metrics, etc."""
 
@@ -518,6 +554,7 @@ class TailoringRules:
     custom_tailoring_prompt: str = ""
     tailoring_policy: TailoringPolicy = field(default_factory=TailoringPolicy)
     writing_style: WritingStyle = field(default_factory=WritingStyle)
+    revision_gates: RevisionGates = field(default_factory=RevisionGates)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TailoringRules":
@@ -561,6 +598,7 @@ class TailoringRules:
             custom_tailoring_prompt=_str(data.get("custom_tailoring_prompt"), "").strip(),
             tailoring_policy=TailoringPolicy.from_dict(data.get("tailoring_policy")),
             writing_style=WritingStyle.from_dict(data.get("writing_style")),
+            revision_gates=RevisionGates.from_dict(data.get("revision_gates")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -579,5 +617,6 @@ class TailoringRules:
             "max_experience_bullets": self.max_experience_bullets,
             "tailoring_policy": self.tailoring_policy.to_dict(),
             "writing_style": self.writing_style.to_dict(),
+            "revision_gates": self.revision_gates.to_dict(),
             "custom_tailoring_prompt": self.custom_tailoring_prompt,
         }

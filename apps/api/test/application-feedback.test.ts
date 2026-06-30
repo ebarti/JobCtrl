@@ -204,6 +204,41 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("keeps jobs in review queue while existing materials are being refreshed", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'running',
+             updated_at = '2026-06-01T11:30:00.000Z'
+       WHERE job_url = ?
+         AND stage = 'tailor'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "discover",
+      currentState: "running",
+      materialsPreview: {
+        resumeText: "tailored resume",
+        resumeTextArtifactId: "apply-ready-resume-text",
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+      },
+      applyAudit: {
+        state: "preparing",
+        label: "materials preparing",
+        summary: "tailor is running. Review evidence is still available where recorded.",
+      },
+    });
+
+    await app.close();
+  });
+
   it("uses stage error messages instead of generic blocker codes in the review queue", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
@@ -575,6 +610,152 @@ describe("application feedback API", () => {
         resumePdfArtifactId: "apply-ready-resume-pdf",
       },
     });
+
+    await app.close();
+  });
+
+  it("returns safe requirement-led audit metadata with review-blocking draft claims", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    expect(audit).toMatchObject({
+      requirementCount: 2,
+      achievementCount: 3,
+      coverageEdgeCount: 1,
+      coveredRequirements: [
+        {
+          id: "r1",
+          textExcerpt: "Lead platform reliability improvements across critical services.",
+          tier: "must_have",
+          reason: null,
+        },
+      ],
+      uncoveredRequirements: [
+        {
+          id: "r2",
+          textExcerpt: "Improve developer experience and incident-response practices.",
+          reason: "No confirmed developer-experience evidence.",
+        },
+      ],
+      unusedAchievementIds: ["ev-unused"],
+      bulletLimitOverflows: [
+        {
+          experienceEntryId: "exp-1",
+          maxBullets: 3,
+          actualBullets: 4,
+          reason: "requirement_coverage",
+          evidenceIds: ["ev-platform"],
+        },
+      ],
+      revision: {
+        score: 7,
+        mustHaveCoverage: 0.5,
+        thresholdFailed: true,
+        shouldRevise: false,
+        reviewBlocked: true,
+        enhancementAllowed: true,
+        reason: "review_blocked_claims",
+        reviewBlockers: ["claim-draft: draft_requires_confirmation"],
+      },
+      reviewBlockers: ["claim-draft: draft_requires_confirmation", "Acme Platform Engineer: draft_requires_confirmation"],
+    });
+    expect(audit?.evidenceBackedClaims).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Acme Platform Engineer",
+          requirementIds: ["r1"],
+          evidenceIds: ["ev-platform"],
+          coverageEdgeIds: ["edge-r1-ev-platform"],
+          claimLabels: ["evidence_reframed"],
+          reviewRequired: false,
+        }),
+      ]),
+    );
+    expect(audit?.adjacentOrDraftClaims).toEqual([
+      expect.objectContaining({
+        label: "Acme Platform Engineer",
+        requirementIds: ["r2"],
+        evidenceIds: ["ev-incident"],
+        claimLabels: ["draft_requires_confirmation"],
+        reviewRequired: true,
+      }),
+    ]);
+    expect(audit?.pinnedClaims).toEqual([
+      expect.objectContaining({
+        label: "Pinned leadership",
+        positioningReasons: ["pinned"],
+      }),
+    ]);
+    expect(JSON.stringify(audit)).not.toContain("RAW PROMPT SECRET");
+    expect(JSON.stringify(audit)).not.toContain("FULL PROFILE SECRET");
+    expect(JSON.stringify(audit)).not.toContain("/private/secret-resume.pdf");
+
+    await app.close();
+  });
+
+  it("surfaces review-required candidate material previews but ignores ordinary candidates", async () => {
+    const ignoredCandidatePath = path.join(tempDir, "ignored-candidate-resume.txt");
+    const reviewCandidatePath = path.join(tempDir, "review-candidate-resume.txt");
+    fs.writeFileSync(ignoredCandidatePath, "ordinary candidate should not be shown");
+    fs.writeFileSync(reviewCandidatePath, "review required candidate resume");
+    const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 3);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, metadata_json, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      3,
+      "ignored-candidate-resume",
+      "tailored_resume",
+      "candidate",
+      ignoredCandidatePath,
+      JSON.stringify({ review_required: false }),
+      "2026-06-01T12:00:00.000Z",
+      38,
+    );
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, metadata_json, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      2,
+      "review-candidate-resume",
+      "tailored_resume",
+      "candidate",
+      reviewCandidatePath,
+      JSON.stringify({ ...requirementLedAuditMetadata(), review_required: true }),
+      "2026-06-01T11:45:00.000Z",
+      32,
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)?.materialsPreview).toMatchObject({
+      resumeText: "review required candidate resume",
+      resumeTextArtifactId: "review-candidate-resume",
+      resumePdfArtifactId: null,
+    });
+    expect(queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit?.revision?.reason).toBe(
+      "review_blocked_claims",
+    );
 
     await app.close();
   });
@@ -1018,7 +1199,8 @@ function seedDatabase(dbPath: string): void {
       status TEXT,
       path TEXT,
       created_at TEXT,
-      size_bytes INTEGER
+      size_bytes INTEGER,
+      metadata_json TEXT
     );
     CREATE TABLE job_bullet_provenance (
       job_url TEXT NOT NULL,
@@ -1457,6 +1639,122 @@ function insertMaterials(
     "2026-06-01T11:00:00.000Z",
     22,
   );
+}
+
+function requirementLedAuditMetadata(): Record<string, unknown> {
+  return {
+    system_prompt: "RAW PROMPT SECRET",
+    job_text: "Full description with FULL PROFILE SECRET and unrelated details.",
+    local_path: "/private/secret-resume.pdf",
+    quality_plan: {
+      target_profile: {
+        requirements: [
+          {
+            requirement_id: "r1",
+            text_excerpt: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+          },
+          {
+            requirement_id: "r2",
+            text_excerpt: "Improve developer experience and incident-response practices.",
+            tier: "nice_to_have",
+          },
+        ],
+      },
+      coverage_graph: {
+        requirement_count: 2,
+        achievement_count: 3,
+        coverage_edge_count: 1,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirements: [
+          {
+            requirement_id: "r2",
+            reason: "No confirmed developer-experience evidence.",
+            prohibited_claims: ["owned developer experience end to end"],
+          },
+        ],
+        unused_achievement_ids: ["ev-unused"],
+        coverage_edges: [
+          {
+            edge_id: "edge-r1-ev-platform",
+            requirement_id: "r1",
+            achievement_evidence_id: "ev-platform",
+            coverage_kind: "direct",
+            strength: "direct",
+            required_claim_policy: "evidence_reframing",
+            target_terms: ["platform reliability"],
+            rationale: "Direct evidence supports platform reliability.",
+          },
+        ],
+      },
+    },
+    change_annotations: [
+      {
+        section: "experience",
+        label: "Acme Platform Engineer",
+        source_text: ["FULL PROFILE SECRET source bullet"],
+        tailored_text: ["Owned platform reliability improvements for incident response."],
+        evidence_ids: ["ev-platform"],
+        requirement_ids: ["r1"],
+        coverage_edge_ids: ["edge-r1-ev-platform"],
+        claim_labels: ["evidence_reframed"],
+        positioning_reasons: [],
+        review_required: false,
+      },
+      {
+        section: "experience",
+        label: "Acme Platform Engineer",
+        tailored_text: ["Draft developer experience translation requires confirmation."],
+        evidence_ids: ["ev-incident"],
+        requirement_ids: ["r2"],
+        coverage_edge_ids: ["edge-r2-ev-incident"],
+        claim_labels: ["draft_requires_confirmation"],
+        positioning_reasons: [],
+        review_required: true,
+      },
+      {
+        section: "experience",
+        label: "Pinned leadership",
+        tailored_text: ["Pinned community mentoring."],
+        evidence_ids: ["ev-pinned"],
+        requirement_ids: [],
+        coverage_edge_ids: [],
+        claim_labels: ["pinned"],
+        positioning_reasons: ["pinned"],
+        review_required: false,
+      },
+    ],
+    post_generation_fit: {
+      fit_score: {
+        score: 7,
+        must_have_coverage: 0.5,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirement_ids: ["r2"],
+        prioritized_fixes: ["Add direct developer experience proof."],
+        review_blockers: ["claim-draft: draft_requires_confirmation"],
+      },
+      revision_decision: {
+        threshold_failed: true,
+        should_revise: false,
+        review_blocked: true,
+        enhancement_allowed: true,
+        reason: "review_blocked_claims",
+        attempt: 1,
+        max_revision_attempts: 1,
+        prioritized_fixes: ["Add direct developer experience proof."],
+        review_blockers: ["claim-draft: draft_requires_confirmation"],
+      },
+    },
+    bullet_limit_overflows: [
+      {
+        experience_entry_id: "exp-1",
+        max_bullets: 3,
+        actual_bullets: 4,
+        reason: "requirement_coverage",
+        evidence_ids: ["ev-platform"],
+      },
+    ],
+  };
 }
 
 function insertRequirementFitReport(db: Database.Database, jobUrl: string): void {

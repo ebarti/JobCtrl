@@ -1,6 +1,7 @@
 import type {
   ApplyAuditFact,
   ApplyAuditSource,
+  ApplyReviewRequirementLedAudit,
   ApplyReviewQueueItem,
   ResumeCommentThread,
   ResumeReviewDraft,
@@ -240,8 +241,38 @@ function formatRequirementTailoring(requirement: ApplyReviewRequirement): {
   };
 }
 
+const AUDIT_TOKEN_LABELS: Record<string, string> = {
+  adjacent_translation: "adjacent translation",
+  draft_requires_confirmation: "draft requires confirmation",
+  evidence_reframed: "evidence reframed",
+  evidence_reframing: "evidence reframing",
+  enhancement_coverage: "enhancement coverage",
+  fit_score_and_must_have_coverage_below_threshold: "fit score and must-have coverage below threshold",
+  fit_score_below_threshold: "fit score below threshold",
+  mandatory_requirement_coverage: "mandatory requirement coverage",
+  must_have_coverage_below_threshold: "must-have coverage below threshold",
+  passed: "passed",
+  pinned_required_bullet: "pinned required bullet",
+  requirement_coverage: "requirement coverage",
+  review_blocked_claims: "review blocked claims",
+  verified_only: "verified only",
+};
+
 function formatReadableToken(value: string): string {
-  return value.replace(/[_-]+/g, " ").trim() || "not recorded";
+  const normalized = value.trim();
+  const fallback = normalized.replace(/[_-]+/g, " ").trim();
+  return AUDIT_TOKEN_LABELS[normalized] ?? (fallback || "not recorded");
+}
+
+function formatAuditMessage(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "not recorded";
+  }
+  return (
+    AUDIT_TOKEN_LABELS[normalized] ??
+    normalized.replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, (token) => formatReadableToken(token))
+  );
 }
 
 function formatPoints(value: number): string {
@@ -552,6 +583,233 @@ function TextPreview({
     <section className="apply-review-preview-block">
       <h3>{title}</h3>
       {text ? <div className="apply-review-document preformatted">{text}</div> : <Empty title={emptyTitle} />}
+    </section>
+  );
+}
+
+function RequirementLedAuditPanel({
+  audit,
+}: {
+  readonly audit: ApplyReviewRequirementLedAudit | null | undefined;
+}) {
+  if (!audit) {
+    return null;
+  }
+
+  const coveredLabel = `${audit.coveredRequirements.length}/${audit.requirementCount} requirements covered`;
+  const reviewBlockerLabel = `review blockers: ${audit.reviewBlockers.length}`;
+
+  return (
+    <section
+      className="apply-review-preview-block apply-review-requirement-led-audit"
+      aria-label="Requirement-led tailoring audit"
+    >
+      <h3>Requirement-led tailoring audit</h3>
+      <div className="apply-review-audit-summary" aria-label="Requirement-led audit summary">
+        <span className={`tag ${audit.uncoveredRequirements.length ? "warn" : "ok"}`}>{coveredLabel}</span>
+        <span className="tag muted">{audit.coverageEdgeCount} coverage edges</span>
+        <span className="tag muted">{audit.achievementCount} profile achievements</span>
+        {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
+      </div>
+      <RequirementAuditList
+        title="Covered requirements"
+        emptyTitle="No covered requirements were recorded."
+        requirements={audit.coveredRequirements}
+      />
+      <RequirementAuditList
+        title="Uncovered requirements"
+        emptyTitle="No uncovered requirements were recorded."
+        requirements={audit.uncoveredRequirements}
+      />
+      <ClaimAuditList
+        title="Evidence-backed claims"
+        emptyTitle="No evidence-backed claim mappings were recorded."
+        claims={audit.evidenceBackedClaims}
+      />
+      <ClaimAuditList
+        title="Review-blocking or draft claims"
+        emptyTitle="No adjacent or draft claim mappings were recorded."
+        claims={audit.adjacentOrDraftClaims}
+      />
+      <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
+      <RevisionAudit revision={audit.revision} reviewBlockers={audit.reviewBlockers} />
+    </section>
+  );
+}
+
+function RequirementAuditList({
+  title,
+  emptyTitle,
+  requirements,
+}: {
+  readonly title: string;
+  readonly emptyTitle: string;
+  readonly requirements: readonly ApplyReviewRequirementLedAudit["coveredRequirements"][number][];
+}) {
+  return (
+    <section className="apply-review-audit-section">
+      <h4>{title}</h4>
+      {requirements.length ? (
+        <ol className="apply-review-audit-list">
+          {requirements.map((requirement) => (
+            <li key={`${title}:${requirement.id}`}>
+              <b>{requirement.textExcerpt}</b>
+              <span>
+                {requirement.tier ? <span className="tag muted">{formatReadableToken(requirement.tier)}</span> : null}
+                {requirement.reason ? <span className="meta">{requirement.reason}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="meta">{emptyTitle}</p>
+      )}
+    </section>
+  );
+}
+
+function ClaimAuditList({
+  title,
+  emptyTitle,
+  claims,
+}: {
+  readonly title: string;
+  readonly emptyTitle: string;
+  readonly claims: readonly ApplyReviewRequirementLedAudit["evidenceBackedClaims"][number][];
+}) {
+  return (
+    <section className="apply-review-audit-section">
+      <h4>{title}</h4>
+      {claims.length ? (
+        <ol className="apply-review-audit-list">
+          {claims.map((claim, index) => (
+            <li key={`${title}:${claim.section}:${claim.label}:${index}`}>
+              <div className="apply-review-claim-head">
+                <b>{claim.label}</b>
+                <span className={`tag ${claim.reviewRequired ? "warn" : "ok"}`}>
+                  {claim.reviewRequired ? "review required" : "auto-approvable"}
+                </span>
+              </div>
+              <AuditTagGroup label="Claim labels" values={claim.claimLabels.map(formatReadableToken)} tone="muted" />
+              <AuditTagGroup label="Requirements" values={claim.requirementIds} tone="muted" />
+              <AuditTagGroup label="Evidence" values={claim.evidenceIds} tone="muted" />
+              <AuditTagGroup label="Coverage edges" values={claim.coverageEdgeIds} tone="muted" />
+              {claim.positioningReasons.length ? (
+                <p className="meta">{claim.positioningReasons.join("; ")}</p>
+              ) : null}
+              {claim.textExcerpts.length ? (
+                <ul className="apply-review-audit-excerpts">
+                  {claim.textExcerpts.map((excerpt) => (
+                    <li key={excerpt}>{excerpt}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="meta">{emptyTitle}</p>
+      )}
+    </section>
+  );
+}
+
+function AuditTagGroup({
+  label,
+  values,
+  tone,
+  formatValue = (value) => value,
+}: {
+  readonly label: string;
+  readonly values: readonly string[];
+  readonly tone: "muted" | "ok" | "warn";
+  readonly formatValue?: (value: string) => string;
+}) {
+  if (!values.length) {
+    return null;
+  }
+  return (
+    <div className="apply-review-audit-tags">
+      <span>{label}</span>
+      <span>
+        {values.map((value) => (
+          <span className={`tag ${tone}`} key={`${label}:${value}`}>
+            {formatValue(value)}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function BulletOverflowAudit({
+  overflows,
+}: {
+  readonly overflows: readonly ApplyReviewRequirementLedAudit["bulletLimitOverflows"][number][];
+}) {
+  return (
+    <section className="apply-review-audit-section">
+      <h4>Mandatory bullet-limit overflow</h4>
+      {overflows.length ? (
+        <ol className="apply-review-audit-list">
+          {overflows.map((overflow) => (
+            <li key={`${overflow.experienceEntryId}:${overflow.actualBullets}`}>
+              <b>{overflow.experienceEntryId}</b>
+              <span className="meta">
+                {overflow.actualBullets}/{overflow.maxBullets} bullets retained:{" "}
+                {formatReadableToken(overflow.reason)}
+              </span>
+              <AuditTagGroup label="Evidence" values={overflow.evidenceIds} tone="muted" />
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="meta">No mandatory bullet-limit overflow was recorded.</p>
+      )}
+    </section>
+  );
+}
+
+function RevisionAudit({
+  revision,
+  reviewBlockers,
+}: {
+  readonly revision: ApplyReviewRequirementLedAudit["revision"];
+  readonly reviewBlockers: readonly string[];
+}) {
+  if (!revision && !reviewBlockers.length) {
+    return null;
+  }
+
+  return (
+    <section className="apply-review-audit-section">
+      <h4>Revision gate</h4>
+      {revision ? (
+        <div className="apply-review-audit-revision">
+          <span className={`tag ${revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}`}>
+            Fit gate: {formatScoreValue(revision.score)}/10
+          </span>
+          {revision.mustHaveCoverage !== null ? (
+            <span className="tag muted">
+              Must-have coverage: {Math.round(revision.mustHaveCoverage * 100)}%
+            </span>
+          ) : null}
+          {revision.attempt !== null && revision.maxRevisionAttempts !== null ? (
+            <span className="tag muted">
+              Attempt {revision.attempt}/{revision.maxRevisionAttempts}
+            </span>
+          ) : null}
+          {revision.reason ? <p className="meta">{formatAuditMessage(revision.reason)}</p> : null}
+          <AuditTagGroup label="Prioritized fixes" values={revision.prioritizedFixes} tone="muted" />
+          <AuditTagGroup
+            label="Revision blockers"
+            values={revision.reviewBlockers}
+            tone="warn"
+            formatValue={formatAuditMessage}
+          />
+        </div>
+      ) : null}
+      <AuditTagGroup label="Review blockers" values={reviewBlockers} tone="warn" formatValue={formatAuditMessage} />
     </section>
   );
 }
@@ -934,7 +1192,8 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
-        <ResumeReviewSurface item={item} onDraftGateChange={handleDraftGateChange} />
+            <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
+            <ResumeReviewSurface item={item} onDraftGateChange={handleDraftGateChange} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

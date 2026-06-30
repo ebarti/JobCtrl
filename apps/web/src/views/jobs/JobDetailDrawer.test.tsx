@@ -179,7 +179,7 @@ describe("<JobDetailDrawer>", () => {
       within(compensation).getByText("The estimate uses reported compensation rows for the job company and role."),
     ).toBeInTheDocument();
 
-    const triage = screen.getByRole("region", { name: "Why this job is here" });
+    const triage = screen.getByRole("region", { name: "Job audit triage" });
     const drawer = screen.getByRole("dialog", { name: "Job details" });
     for (const text of [
       "source_conflict_with_posted_salary",
@@ -196,7 +196,7 @@ describe("<JobDetailDrawer>", () => {
     expect(within(drawer).getByLabelText("Apply readiness")).toHaveTextContent("missing apply link");
     expect(within(drawer).getByLabelText("Apply readiness")).not.toHaveTextContent(/compensation|salary|source conflict/i);
     expect(
-      within(triage).getByRole("link", { name: "Open Apply Review for Compensated Platform Role" }),
+      within(drawer).getByRole("link", { name: "Open Apply Review for Compensated Platform Role" }),
     ).not.toHaveTextContent(/compensation|salary|source conflict/i);
   });
 
@@ -295,12 +295,15 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
-    const triage = await screen.findByRole("region", { name: "Why this job is here" });
+    const triage = await screen.findByRole("region", { name: "Job audit triage" });
     const drawer = screen.getByRole("dialog", { name: "Job details" });
+    const toolbar = within(drawer).getByRole("toolbar", { name: "Job actions" });
     expect(drawer).toHaveClass("job-detail-drawer");
     expect(drawer.querySelector(".job-detail-drawer-content")).not.toBeNull();
     expect(drawer.querySelector(".job-detail-drawer-main")).not.toBeNull();
-    expect(within(triage).getByText("Audit triage")).toBeInTheDocument();
+    expect(within(drawer).queryByText("Audit triage")).not.toBeInTheDocument();
+    expect(within(drawer).queryByText("Why this job is here")).not.toBeInTheDocument();
+    expect(toolbar.compareDocumentPosition(triage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(triage).getByText("8/10")).toBeInTheDocument();
     expect(within(triage).getByText("strong")).toBeInTheDocument();
     expect(within(triage).getByText("high")).toBeInTheDocument();
@@ -323,13 +326,14 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(triage).getByText("Eligibility warning: Sponsorship requirements need review."),
     ).toBeInTheDocument();
-    const handoff = within(triage).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" });
+    const handoff = within(drawer).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" });
     const handoffUrl = new URL(handoff.getAttribute("href") ?? "", "http://localhost");
     expect(handoffUrl.pathname).toBe("/apply-review");
     expect(handoffUrl.searchParams.get("jobKey")).toBe("https://example.com/jobs/1");
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Role Analysis" })).toHaveClass("job-detail-role-analysis");
     const description = screen.getByText("Description").closest("section");
     expect(description).not.toBeNull();
     expect(description).toHaveClass("job-detail-description");

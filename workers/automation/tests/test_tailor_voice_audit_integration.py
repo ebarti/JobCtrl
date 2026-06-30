@@ -46,6 +46,15 @@ from jobhunter.domain.materials.voice import VoiceRequest, VoiceResult
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.ports.llm import LlmMessage
+from jobhunter.domain.scoring import (
+    FitScore,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.materials.latex_pdf import (
     _escape_latex_light,
@@ -147,6 +156,23 @@ class _FakeProvenanceRepo:
         if provenance.is_empty:
             return
         self.saved.append(provenance)
+
+
+class _FakeRequirementFitRepo:
+    def __init__(self, report: RequirementFitReport) -> None:
+        self._report = report
+        self.saved: list[RequirementFitReport] = []
+
+    def load(self, tenant_id, job_id, *, score_version=None) -> RequirementFitReport | None:
+        _ = tenant_id, score_version
+        if str(self._report.job_id) != str(job_id):
+            return None
+        return self._report
+
+    def save(self, tenant_id, report: RequirementFitReport) -> None:
+        _ = tenant_id
+        self._report = report
+        self.saved.append(report)
 
 
 class _ScriptedLlm:
@@ -259,12 +285,89 @@ def _job() -> dict:
     }
 
 
+def _requirement_fit_report() -> RequirementFitReport:
+    contribution = RequirementScoreContribution(
+        max_points=1.125,
+        awarded_points=1.125,
+        weighted_impact=1.125,
+    )
+    return RequirementFitReport(
+        job_id=JOB_URL,
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(8),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_latency",
+                requirement_text="improve API latency",
+                tier="must_have",
+                weight=0.9,
+                job_evidence_span="improve API latency",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=contribution,
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("latency", "python"),
+                ),
+            ),
+        ),
+    )
+
+
+def _coverage_planner_response() -> str:
+    return json.dumps(
+        {
+            "coverage_edges": [
+                {
+                    "requirement_id": "req_latency",
+                    "achievement_evidence_id": "ev_latency",
+                    "coverage_kind": "direct",
+                    "strength": "direct",
+                    "required_claim_policy": "verified_only",
+                    "target_terms": ["latency", "python"],
+                    "rationale": "Verified latency evidence supports the latency requirement.",
+                }
+            ],
+            "uncovered_requirements": [],
+            "unused_achievements": [],
+        }
+    )
+
+
+def _claim_mapping(bullet: str) -> list[dict[str, object]]:
+    return [
+        {
+            "claim_id": "claim_latency",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+            "requirement_ids": ["req_latency"],
+            "evidence_ids": ["ev_latency"],
+            "review_required": False,
+        }
+    ]
+
+
 def _payload(bullet: str, *, summary: str) -> str:
     return json.dumps(
         {
             "executive_profile": summary,
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
+            "generated_claim_mappings": _claim_mapping(bullet),
         }
     )
 
@@ -299,6 +402,7 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice) -> TailorR
         assembler=ResumeAssembler(),
         analyze_use_case=_FakeAnalyze(),
         provenance_repository=provenance_repo,
+        requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
         publisher=publisher,
         voice=voice,
     )
@@ -607,11 +711,12 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
-        analyze_use_case=_FakeAnalyze(),
-        provenance_repository=provenance_repo,
-        publisher=publisher,
-        # voice not injected
-    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+            analyze_use_case=_FakeAnalyze(),
+            provenance_repository=provenance_repo,
+            requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
+            publisher=publisher,
+            # voice not injected
+        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
 
     assert outcome.status == "approved"
     saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
