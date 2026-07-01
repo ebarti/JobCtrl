@@ -1060,6 +1060,55 @@ def test_constraint_checker_remote_work_model_mismatch_is_warning_not_hard_block
     assert any("remote" in warning for warning in assessment.warnings)
 
 
+def test_constraint_checker_weekly_pay_annualizes_and_does_not_false_block() -> None:
+    # Regression: the posted-comp parser classifies only hour/month/year, so a
+    # salary-field "$15,000/week" (~$780k/yr) was read as a raw annual $15k and
+    # could fabricate a below-minimum hard blocker. Weekly pay must annualize
+    # (x52) and never hard-block.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$15,000/week"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "eligible"
+    assert assessment.hard_blockers == ()
+    assert assessment.warnings == ()
+
+
+def test_constraint_checker_daily_rate_below_minimum_is_warning_not_hard_blocker() -> None:
+    # A daily rate annualizes under a fixed working-days assumption, so a
+    # below-minimum reading is a warning (never a hard blocker) and the audit
+    # trail records the annualized figure and the assumption.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$300/day"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "$78,000" in warning
+    assert "period day" in warning
+    assert "260" in warning
+
+
+def test_constraint_checker_bare_amount_without_period_is_still_read_as_annual() -> None:
+    # A bare salary-field amount with no sub-annual marker keeps the existing
+    # behavior: it is read as annual, so a below-minimum figure hard-blocks.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$13,000"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "blocked"
+    assert assessment.warnings == ()
+    assert len(assessment.hard_blockers) == 1
+    blocker = assessment.hard_blockers[0]
+    assert "$13,000" in blocker
+    assert "read as annual" in blocker
+
+
 def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snapshot) -> None:
     repo = _MemoryRepo()
     llm = _ScriptedLlm(

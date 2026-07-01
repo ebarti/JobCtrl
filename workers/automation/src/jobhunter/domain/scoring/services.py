@@ -646,6 +646,10 @@ def _first_number(value: Any) -> int | None:
 
 
 _ANNUAL_SALARY_FLOOR = 12_000
+_WORK_WEEKS_PER_YEAR = 52
+_WORK_DAYS_PER_YEAR = 260
+_WEEKLY_MARKER = re.compile(r"/\s*wk\b|/\s*week\b|\bper\s+week\b|\bweekly\b", re.IGNORECASE)
+_DAILY_MARKER = re.compile(r"/\s*day\b|\bper\s+day\b|\bday\s*rate\b|\bper\s+diem\b|\bdaily\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -710,7 +714,19 @@ def _signal_from_fact(
             reliable_annual=salary_field and fact.period == "year",
         )
     ceiling = fact.maximum_amount
-    if ceiling is None or ceiling < _ANNUAL_SALARY_FLOOR:
+    if ceiling is None:
+        return None
+    subannual = _subannual_from_text(fact.source_text)
+    if subannual is not None:
+        period, factor, assumption = subannual
+        return _PostedCompensationSignal(
+            annual_ceiling=ceiling * factor,
+            source_field=fact.source_field,
+            period=period,
+            assumption=assumption,
+            reliable_annual=False,
+        )
+    if ceiling < _ANNUAL_SALARY_FLOOR:
         return None
     return _PostedCompensationSignal(
         annual_ceiling=ceiling,
@@ -719,6 +735,23 @@ def _signal_from_fact(
         assumption="amount without an explicit pay period; read as annual",
         reliable_annual=salary_field,
     )
+
+
+def _subannual_from_text(source_text: str | None) -> tuple[str, int, str] | None:
+    """Detect a week/day pay marker the posted-comp parser leaves as unknown.
+
+    The shared parser only classifies hour/month/year; a salary-field figure
+    like "$15,000/week" would otherwise be read as a raw annual amount and
+    could fabricate a below-minimum hard blocker on a ~$780k/yr role. Weekly
+    and daily rates are annualized here and always kept as warnings, never
+    hard blockers, because they rely on a fixed-schedule assumption.
+    """
+    text = source_text or ""
+    if _DAILY_MARKER.search(text):
+        return ("day", _WORK_DAYS_PER_YEAR, "daily rate annualized by multiplying by 260 working days")
+    if _WEEKLY_MARKER.search(text):
+        return ("week", _WORK_WEEKS_PER_YEAR, "weekly rate annualized by multiplying by 52 weeks")
+    return None
 
 
 def _compensation_reason(signal: _PostedCompensationSignal, desired_min: int) -> str:
