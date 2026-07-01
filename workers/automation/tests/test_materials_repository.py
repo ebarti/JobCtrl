@@ -232,6 +232,39 @@ def test_save_idempotent_within_same_generation(conn: sqlite3.Connection) -> Non
     assert loaded.cover_letter.status is ArtifactStatus.APPROVED
 
 
+def test_save_allows_cover_update_to_preserved_approved_generation(
+    conn: sqlite3.Connection,
+) -> None:
+    """Cover generation can update the current approved resume after failed re-tailors."""
+    url = _seed_job(conn)
+    repo = SqliteMaterialsRepository(conn)
+    approved = _approved_with_pdf(url)
+    repo.save(approved)
+    repo.save(_rejected(url, generation=2))
+    repo.save(_rejected(url, generation=3))
+
+    current = repo.load_current_approved(LOCAL_TENANT, JobId(url))
+    assert current is not None
+    assert current.generation == 1
+
+    with_cover = current.with_cover_letter(
+        _make_artifact(ArtifactType.COVER_LETTER, path="/tmp/cover.txt"),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-04T00:00:00+00:00",
+    )
+    repo.save(with_cover)
+
+    loaded_current = repo.load_current_approved(LOCAL_TENANT, JobId(url))
+    assert loaded_current is not None
+    assert loaded_current.generation == 1
+    assert loaded_current.cover_letter is not None
+    assert loaded_current.cover_letter.status is ArtifactStatus.APPROVED
+
+    raw_latest = repo.load(LOCAL_TENANT, JobId(url))
+    assert raw_latest is not None
+    assert raw_latest.generation == 3
+
+
 def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
     conn: sqlite3.Connection,
 ) -> None:

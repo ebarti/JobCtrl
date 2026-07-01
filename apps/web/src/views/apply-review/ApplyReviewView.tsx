@@ -283,6 +283,27 @@ function formatBulletCount(count: number): string {
   return `${count} resume bullet${count === 1 ? "" : "s"}`;
 }
 
+function formatEvidenceReference(value: string, index: number): string {
+  const bullet = value.match(/(?:^|[_-])bullet[_-]?(\d+)(?:$|[_-])/i) ?? value.match(/(?:^|[_-])bullet[_-]?(\d+)$/i);
+  if (bullet?.[1]) {
+    return `bullet ${bullet[1]}`;
+  }
+  const evidence = value.match(/(?:^|[_-])ev(?:idence)?[_-]?([a-z0-9]+)$/i);
+  if (evidence?.[1]) {
+    return formatReadableToken(evidence[1]);
+  }
+  return `source ${index + 1}`;
+}
+
+function compactEvidenceReferences(values: readonly string[], limit = 4): string[] {
+  const references = values
+    .map((value, index) => formatEvidenceReference(value, index))
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .slice(0, limit);
+  const hidden = values.length - references.length;
+  return hidden > 0 ? [...references, `+${hidden} more`] : references;
+}
+
 function formatScoreValue(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "not scored";
@@ -490,11 +511,13 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                         </div>
                       </div>
                       {requirement.evidence ? (
-                        <p className="meta">Job post evidence: {requirement.evidence}</p>
+                        <p className="apply-review-requirement-evidence">
+                          <span>Job post evidence:</span> {requirement.evidence}
+                        </p>
                       ) : null}
                       {requirement.coverage.examples.length ? (
-                        <p className="meta">
-                          Tailored resume evidence: {requirement.coverage.examples.join("; ")}
+                        <p className="apply-review-requirement-evidence">
+                          <span>Tailored resume evidence:</span> {requirement.coverage.examples.join("; ")}
                         </p>
                       ) : null}
                     </li>
@@ -607,109 +630,10 @@ function RequirementLedAuditPanel({
       <h3>Requirement-led tailoring audit</h3>
       <div className="apply-review-audit-summary" aria-label="Requirement-led audit summary">
         <span className={`tag ${audit.uncoveredRequirements.length ? "warn" : "ok"}`}>{coveredLabel}</span>
-        <span className="tag muted">{audit.coverageEdgeCount} coverage edges</span>
-        <span className="tag muted">{audit.achievementCount} profile achievements</span>
         {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
       </div>
-      <RequirementAuditList
-        title="Covered requirements"
-        emptyTitle="No covered requirements were recorded."
-        requirements={audit.coveredRequirements}
-      />
-      <RequirementAuditList
-        title="Uncovered requirements"
-        emptyTitle="No uncovered requirements were recorded."
-        requirements={audit.uncoveredRequirements}
-      />
-      <ClaimAuditList
-        title="Evidence-backed claims"
-        emptyTitle="No evidence-backed claim mappings were recorded."
-        claims={audit.evidenceBackedClaims}
-      />
-      <ClaimAuditList
-        title="Review-blocking or draft claims"
-        emptyTitle="No adjacent or draft claim mappings were recorded."
-        claims={audit.adjacentOrDraftClaims}
-      />
       <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
       <RevisionAudit revision={audit.revision} reviewBlockers={audit.reviewBlockers} />
-    </section>
-  );
-}
-
-function RequirementAuditList({
-  title,
-  emptyTitle,
-  requirements,
-}: {
-  readonly title: string;
-  readonly emptyTitle: string;
-  readonly requirements: readonly ApplyReviewRequirementLedAudit["coveredRequirements"][number][];
-}) {
-  return (
-    <section className="apply-review-audit-section">
-      <h4>{title}</h4>
-      {requirements.length ? (
-        <ol className="apply-review-audit-list">
-          {requirements.map((requirement) => (
-            <li key={`${title}:${requirement.id}`}>
-              <b>{requirement.textExcerpt}</b>
-              <span>
-                {requirement.tier ? <span className="tag muted">{formatReadableToken(requirement.tier)}</span> : null}
-                {requirement.reason ? <span className="meta">{requirement.reason}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="meta">{emptyTitle}</p>
-      )}
-    </section>
-  );
-}
-
-function ClaimAuditList({
-  title,
-  emptyTitle,
-  claims,
-}: {
-  readonly title: string;
-  readonly emptyTitle: string;
-  readonly claims: readonly ApplyReviewRequirementLedAudit["evidenceBackedClaims"][number][];
-}) {
-  return (
-    <section className="apply-review-audit-section">
-      <h4>{title}</h4>
-      {claims.length ? (
-        <ol className="apply-review-audit-list">
-          {claims.map((claim, index) => (
-            <li key={`${title}:${claim.section}:${claim.label}:${index}`}>
-              <div className="apply-review-claim-head">
-                <b>{claim.label}</b>
-                <span className={`tag ${claim.reviewRequired ? "warn" : "ok"}`}>
-                  {claim.reviewRequired ? "review required" : "auto-approvable"}
-                </span>
-              </div>
-              <AuditTagGroup label="Claim labels" values={claim.claimLabels.map(formatReadableToken)} tone="muted" />
-              <AuditTagGroup label="Requirements" values={claim.requirementIds} tone="muted" />
-              <AuditTagGroup label="Evidence" values={claim.evidenceIds} tone="muted" />
-              <AuditTagGroup label="Coverage edges" values={claim.coverageEdgeIds} tone="muted" />
-              {claim.positioningReasons.length ? (
-                <p className="meta">{claim.positioningReasons.join("; ")}</p>
-              ) : null}
-              {claim.textExcerpts.length ? (
-                <ul className="apply-review-audit-excerpts">
-                  {claim.textExcerpts.map((excerpt) => (
-                    <li key={excerpt}>{excerpt}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="meta">{emptyTitle}</p>
-      )}
     </section>
   );
 }
@@ -754,12 +678,12 @@ function BulletOverflowAudit({
         <ol className="apply-review-audit-list">
           {overflows.map((overflow) => (
             <li key={`${overflow.experienceEntryId}:${overflow.actualBullets}`}>
-              <b>{overflow.experienceEntryId}</b>
+              <b>{formatReadableToken(overflow.experienceEntryId)}</b>
               <span className="meta">
                 {overflow.actualBullets}/{overflow.maxBullets} bullets retained:{" "}
                 {formatReadableToken(overflow.reason)}
               </span>
-              <AuditTagGroup label="Evidence" values={overflow.evidenceIds} tone="muted" />
+              <AuditTagGroup label="Evidence" values={compactEvidenceReferences(overflow.evidenceIds)} tone="muted" />
             </li>
           ))}
         </ol>

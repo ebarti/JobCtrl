@@ -312,6 +312,112 @@ function reconcileDependencyBlockers(db: SqliteDatabase): Set<string> {
   return repairedJobs;
 }
 
+function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<string> {
+  const repairedJobs = new Set<string>();
+  if (!tableExists(db, "job_stage_states") || !tableExists(db, "job_materials_artifacts")) {
+    return repairedJobs;
+  }
+
+  const columns = new Set(
+    allRows<{ name: string }>(db, "PRAGMA table_info(job_stage_states)").map((row) => row.name),
+  );
+  const rows = allRows<{
+    job_url: string;
+    error_message: string | null;
+    has_cover_letter: number | string | null;
+  }>(
+    db,
+    `
+    SELECT s.job_url,
+           s.error_message,
+           EXISTS (
+             SELECT 1
+               FROM job_materials_artifacts tr
+               JOIN job_materials_artifacts pdf
+                 ON pdf.job_url = tr.job_url
+                AND pdf.generation = tr.generation
+                AND pdf.artifact_type = 'resume_pdf'
+                AND pdf.status = 'approved'
+                AND COALESCE(TRIM(pdf.path), '') != ''
+               JOIN job_materials_artifacts cover
+                 ON cover.job_url = tr.job_url
+                AND cover.generation = tr.generation
+                AND cover.artifact_type = 'cover_letter'
+                AND cover.status = 'approved'
+                AND COALESCE(TRIM(cover.path), '') != ''
+              WHERE tr.job_url = s.job_url
+                AND tr.artifact_type = 'tailored_resume'
+                AND tr.status = 'approved'
+                AND COALESCE(TRIM(tr.path), '') != ''
+           ) AS has_cover_letter
+      FROM job_stage_states s
+     WHERE s.stage = 'cover'
+       AND s.state = 'failed'
+       AND s.error_code = 'COVER_FAILED'
+       AND s.error_message LIKE 'MaterialsSet generation conflict%'
+       AND s.error_message LIKE '%(or current==%'
+       AND EXISTS (
+             SELECT 1
+               FROM job_materials_artifacts tr
+               JOIN job_materials_artifacts pdf
+                 ON pdf.job_url = tr.job_url
+                AND pdf.generation = tr.generation
+                AND pdf.artifact_type = 'resume_pdf'
+                AND pdf.status = 'approved'
+                AND COALESCE(TRIM(pdf.path), '') != ''
+              WHERE tr.job_url = s.job_url
+                AND tr.artifact_type = 'tailored_resume'
+                AND tr.status = 'approved'
+                AND COALESCE(TRIM(tr.path), '') != ''
+           )
+    `,
+  );
+  if (rows.length === 0) return repairedJobs;
+
+  const assignments = [
+    "state = ?",
+    columns.has("updated_at") ? "updated_at = ?" : null,
+    columns.has("finished_at") ? "finished_at = ?" : null,
+    columns.has("error_code") ? "error_code = NULL" : null,
+    columns.has("error_message") ? "error_message = NULL" : null,
+    columns.has("retryable") ? "retryable = ?" : null,
+    columns.has("blocked_by_json") ? "blocked_by_json = NULL" : null,
+    columns.has("next_action") ? "next_action = NULL" : null,
+    columns.has("metadata_json") ? "metadata_json = ?" : null,
+  ].filter((assignment): assignment is string => Boolean(assignment));
+  const update = db.prepare(
+    `UPDATE job_stage_states
+        SET ${assignments.join(", ")}
+      WHERE job_url = ?
+        AND stage = 'cover'
+        AND state = 'failed'
+        AND error_code = 'COVER_FAILED'`,
+  );
+  const now = new Date().toISOString();
+
+  for (const row of rows) {
+    const targetState = Number(row.has_cover_letter ?? 0) > 0 ? "succeeded" : "pending";
+    const values: SqliteValue[] = [targetState];
+    if (columns.has("updated_at")) values.push(now);
+    if (columns.has("finished_at")) values.push(targetState === "succeeded" ? now : null);
+    if (columns.has("retryable")) values.push(targetState === "pending" ? 1 : 0);
+    if (columns.has("metadata_json")) {
+      values.push(
+        JSON.stringify({
+          repaired_at: now,
+          repair_reason: "obsolete_cover_generation_conflict",
+          target_state: targetState,
+          previous_error_message: row.error_message,
+        }),
+      );
+    }
+    update.run(...values, row.job_url);
+    repairedJobs.add(row.job_url);
+  }
+
+  return repairedJobs;
+}
+
 /** Idempotently create the projection tables. Mirrors the Python schema. */
 export function ensureProjectionTables(db: SqliteDatabase): boolean {
   db.exec(`
@@ -588,10 +694,11 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
   const repairedDependencyJobs = reconcileDependencyBlockers(db);
+  const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db);
 
   const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
 
-  let dirtyJobs = new Set<string>(repairedDependencyJobs);
+  let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {

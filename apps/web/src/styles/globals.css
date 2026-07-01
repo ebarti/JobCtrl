@@ -2103,6 +2103,21 @@ textarea:focus-visible {
   padding-left: 2px;
 }
 
+.apply-review-requirement-evidence {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.apply-review-requirement-evidence > span {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
 .apply-review-ideal-requirement-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;

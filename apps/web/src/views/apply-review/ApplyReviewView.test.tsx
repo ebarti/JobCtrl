@@ -840,26 +840,33 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
     expect(screen.getByText("2 resume bullets")).toBeInTheDocument();
     expect(
-      screen.getByText(/Tailored resume evidence: Owned platform reliability improvements/i),
+      screen.getByText((_, element) =>
+        Boolean(
+          element?.classList.contains("apply-review-requirement-evidence") &&
+            element.textContent?.includes("Tailored resume evidence: Owned platform reliability improvements"),
+        ),
+      ),
     ).toBeInTheDocument();
     const requirementLedAudit = within(
       screen.getByRole("region", { name: "Requirement-led tailoring audit" }),
     );
     expect(requirementLedAudit.getByText("1/2 requirements covered")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("2 coverage edges")).toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("2 coverage edges")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("3 profile achievements")).not.toBeInTheDocument();
     expect(requirementLedAudit.getByText("review blockers: 1")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("Covered requirements")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("Uncovered requirements")).toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("Covered requirements")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("Uncovered requirements")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("Evidence-backed claims")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("Review-blocking or draft claims")).not.toBeInTheDocument();
     expect(
-      requirementLedAudit.getByText("Improve incident-response practices and developer experience."),
-    ).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("Review-blocking or draft claims")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("adjacent translation")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("draft")).toBeInTheDocument();
-    expect(requirementLedAudit.getByText("review required")).toBeInTheDocument();
+      requirementLedAudit.queryByText("Improve incident-response practices and developer experience."),
+    ).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("ev_incident_leadership")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("edge-r2-ev-incident")).not.toBeInTheDocument();
+    expect(requirementLedAudit.queryByText("ev_platform_reliability")).not.toBeInTheDocument();
     expect(
-      requirementLedAudit.getByText("Bridges incident leadership into developer-experience practice improvements."),
-    ).toBeInTheDocument();
+      requirementLedAudit.queryByText("Bridges incident leadership into developer-experience practice improvements."),
+    ).not.toBeInTheDocument();
     expect(requirementLedAudit.getByText(/mandatory requirement coverage|requirement coverage/)).toBeInTheDocument();
     expect(requirementLedAudit.getByText(/Fit gate:\s*7\.6\/10/)).toBeInTheDocument();
     expect(requirementLedAudit.getByText(/Must-have coverage:\s*50%/)).toBeInTheDocument();
