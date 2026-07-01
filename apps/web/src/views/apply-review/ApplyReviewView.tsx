@@ -611,16 +611,6 @@ function RequirementLedAuditPanel({
         <span className="tag muted">{audit.achievementCount} profile achievements</span>
         {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
       </div>
-      <RequirementAuditList
-        title="Covered requirements"
-        emptyTitle="No covered requirements were recorded."
-        requirements={audit.coveredRequirements}
-      />
-      <RequirementAuditList
-        title="Uncovered requirements"
-        emptyTitle="No uncovered requirements were recorded."
-        requirements={audit.uncoveredRequirements}
-      />
       <ClaimAuditList
         title="Evidence-backed claims"
         emptyTitle="No evidence-backed claim mappings were recorded."
@@ -633,37 +623,6 @@ function RequirementLedAuditPanel({
       />
       <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
       <RevisionAudit revision={audit.revision} reviewBlockers={audit.reviewBlockers} />
-    </section>
-  );
-}
-
-function RequirementAuditList({
-  title,
-  emptyTitle,
-  requirements,
-}: {
-  readonly title: string;
-  readonly emptyTitle: string;
-  readonly requirements: readonly ApplyReviewRequirementLedAudit["coveredRequirements"][number][];
-}) {
-  return (
-    <section className="apply-review-audit-section">
-      <h4>{title}</h4>
-      {requirements.length ? (
-        <ol className="apply-review-audit-list">
-          {requirements.map((requirement) => (
-            <li key={`${title}:${requirement.id}`}>
-              <b>{requirement.textExcerpt}</b>
-              <span>
-                {requirement.tier ? <span className="tag muted">{formatReadableToken(requirement.tier)}</span> : null}
-                {requirement.reason ? <span className="meta">{requirement.reason}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="meta">{emptyTitle}</p>
-      )}
     </section>
   );
 }
