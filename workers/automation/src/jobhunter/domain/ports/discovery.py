@@ -212,6 +212,27 @@ class JobRepository(Protocol):
         """
         ...
 
+    def find_content_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        title: str,
+        company: str,
+        description: str,
+    ) -> JobId | None:
+        """Look up the canonical Job by content identity when identity checks miss.
+
+        Called by ``DiscoverJobsUseCase`` after ``find_canonical_owner`` returns
+        ``None`` so a posting re-discovered on a different source (different
+        native id AND canonical URL) collapses onto the existing Job instead of
+        creating a second aggregate. Matches the JobSpy content-dedup strictness:
+        an exact normalized title + company + description fingerprint, or a
+        substantial-description shingle match, both gated on title + company
+        equality so genuinely distinct roles stay separate. Returns ``None`` when
+        the posting cannot be fingerprinted or no existing Job matches.
+        """
+        ...
+
     def attach_source_observation(
         self,
         tenant_id: TenantId,

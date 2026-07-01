@@ -77,6 +77,17 @@ Boundary" failure mode "Canonicalization merges distinct jobs". The
 """
 
 
+CONTENT_MATCH_CONFIDENCE: float = 0.95
+"""Confidence recorded on a duplicate link resolved by content identity.
+
+When ``find_canonical_owner`` misses but ``find_content_owner`` matches an
+existing Job on the shared title + company + description fingerprint, the merge
+is authoritative regardless of the canonical-URL identity confidence. The 0.95
+value mirrors the JobSpy content-dedup path so cross-source collapses recorded
+by either intake share the same ``content_fingerprint_match`` audit weight.
+"""
+
+
 def default_canonical_identity(posting: ScrapedJobPosting) -> CanonicalJobIdentity:
     """Resolve a canonical identity for a ``ScrapedJobPosting``.
 
@@ -256,6 +267,17 @@ class DiscoverJobsUseCase:
             source_native_id=identity.source_native_id,
             canonical_url=identity.canonical_url,
         )
+        content_matched = False
+        if owner_id is None:
+            content_owner_id = self._repository.find_content_owner(
+                tenant_id,
+                title=posting.metadata.title,
+                company=posting.source.board,
+                description=posting.metadata.description,
+            )
+            if content_owner_id is not None:
+                owner_id = content_owner_id
+                content_matched = True
 
         with canonicalize_span(
             tenant_id=str(tenant_id),
@@ -296,6 +318,7 @@ class DiscoverJobsUseCase:
             run_id=run_id,
             observation_id=observation_id,
             observed_at=observed_at,
+            content_matched=content_matched,
         )
 
     def _create_new_job(
@@ -400,12 +423,13 @@ class DiscoverJobsUseCase:
         run_id: str,
         observation_id: str,
         observed_at: str,
+        content_matched: bool = False,
     ) -> DiscoveryDecision:
         observed_url = identity.canonical_url or posting.posting_url.value
         normalized_observed = normalize_observed_url(observed_url)
         is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
 
-        if identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
+        if not content_matched and identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
             duplicate_link_id = f"dup:{uuid.uuid4().hex}"
             with dedupe_span(
                 tenant_id=str(tenant_id),
@@ -529,12 +553,20 @@ class DiscoverJobsUseCase:
         duplicate_link_id: str | None = None
         if is_distinct_url:
             duplicate_link_id = f"dup:{uuid.uuid4().hex}"
+            if content_matched:
+                link_reason = "content_fingerprint_match"
+                link_confidence = CONTENT_MATCH_CONFIDENCE
+            else:
+                link_reason = (
+                    "canonical_url_match" if identity.canonical_url else "source_native_id_match"
+                )
+                link_confidence = identity.confidence
             link = DuplicateJobLink(
                 duplicate_link_id=duplicate_link_id,
                 surviving_job_id=str(owner_id),
                 superseded_job_or_observation_id=observation_id,
-                reason="canonical_url_match" if identity.canonical_url else "source_native_id_match",
-                confidence=identity.confidence,
+                reason=link_reason,
+                confidence=link_confidence,
                 linked_at=observed_at,
             )
             self._repository.record_duplicate_link(tenant_id, link)
@@ -546,7 +578,7 @@ class DiscoverJobsUseCase:
                         surviving_job_id=str(owner_id),
                         superseded_job_or_observation_id=observation_id,
                         reason=link.reason,
-                        confidence=identity.confidence,
+                        confidence=link_confidence,
                     ),
                 )
             )
@@ -641,6 +673,7 @@ def _policy_rejection_reason(acceptance: PostingAcceptance) -> str:
 
 
 __all__ = [
+    "CONTENT_MATCH_CONFIDENCE",
     "CanonicalIdentityResolver",
     "DiscoverJobsUseCase",
     "DiscoveryDecision",

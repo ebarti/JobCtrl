@@ -52,6 +52,11 @@ from jobhunter.domain.discovery.value_objects import (
     Source,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import (
+    descriptions_substantially_match,
+    job_content_fingerprint,
+    normalize_identity_text,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
 
@@ -426,6 +431,63 @@ class SqliteJobRepository:
                     if job_url:
                         return JobId(str(job_url))
 
+        return None
+
+    def find_content_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        title: str,
+        company: str,
+        description: str,
+    ) -> JobId | None:
+        """Resolve an existing Job by content identity after native-id / URL miss.
+
+        Mirrors the JobSpy content-dedup strictness: candidates are gated on an
+        exact (normalized) title + company match, then confirmed by the shared
+        ``job_content_fingerprint`` or a substantial-description shingle match.
+        The company key coalesces ``jobs.company`` (populated by JobSpy) with
+        ``jobs.site`` (the board, which is the employer for ATS-owned rows) so a
+        posting collapses onto the existing Job regardless of which source
+        discovered it first. Returns ``None`` when the posting cannot be
+        fingerprinted or no existing Job matches.
+        """
+
+        incoming_key = job_content_fingerprint(
+            title=title,
+            company=company,
+            description=description,
+        )
+        if incoming_key is None:
+            return None
+        rows = self._conn.execute(
+            """
+            SELECT j.url, j.title,
+                   COALESCE(NULLIF(j.company, ''), j.site) AS company,
+                   COALESCE(je.full_description, j.full_description, j.description)
+                       AS description,
+                   CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+            FROM jobs j
+            LEFT JOIN job_enrichments je ON je.job_url = j.url
+            LEFT JOIN jobhunter_deleted_jobs d
+              ON d.job_url = j.url
+             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+            WHERE lower(trim(COALESCE(j.title, ''))) = ?
+              AND lower(trim(COALESCE(NULLIF(j.company, ''), j.site, ''))) = ?
+            ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
+            """,
+            (normalize_identity_text(title), normalize_identity_text(company)),
+        ).fetchall()
+        for existing in rows:
+            existing_key = job_content_fingerprint(
+                title=existing["title"],
+                company=existing["company"],
+                description=existing["description"],
+            )
+            if existing_key == incoming_key:
+                return JobId(str(existing["url"]))
+            if descriptions_substantially_match(description, existing["description"]):
+                return JobId(str(existing["url"]))
         return None
 
     def attach_source_observation(
