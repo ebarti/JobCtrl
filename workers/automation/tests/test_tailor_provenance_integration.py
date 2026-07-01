@@ -18,6 +18,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials import (
+    Artifact,
+    ArtifactStatus,
+    ArtifactType,
+    RenderFormat,
+)
 from jobhunter.domain.materials.aggregate import MaterialsSet
 from jobhunter.domain.materials.analysis import (
     AnalysisAgreement,
@@ -95,17 +101,28 @@ class _FakeAnalyze:
 
 class _FakeMaterialsRepo:
     def __init__(self) -> None:
-        self.saved: list[MaterialsSet] = []
+        self.saved: list[MaterialsSet] = []  # every save call in order (audit log)
+
+    def _latest_by_generation(self, tenant_id, job_id) -> dict[int, MaterialsSet]:
+        # Model the real sqlite repo's per-generation overwrite: re-saving a
+        # generation replaces its row, so a superseded/rejected re-save hides the
+        # earlier approved state for that generation.
+        rows: dict[int, MaterialsSet] = {}
+        for m in self.saved:
+            if str(m.tenant_id) == str(tenant_id) and str(m.job_id) == str(job_id):
+                rows[m.generation] = m
+        return rows
 
     def load(self, tenant_id, job_id, *, generation=None) -> MaterialsSet | None:
-        candidates = [
-            m
-            for m in reversed(self.saved)
-            if str(m.tenant_id) == str(tenant_id)
-            and str(m.job_id) == str(job_id)
-            and (generation is None or m.generation == generation)
-        ]
-        return candidates[0] if candidates else None
+        rows = self._latest_by_generation(tenant_id, job_id)
+        if generation is not None:
+            return rows.get(generation)
+        return rows[max(rows)] if rows else None
+
+    def load_current_approved(self, tenant_id, job_id) -> MaterialsSet | None:
+        rows = self._latest_by_generation(tenant_id, job_id)
+        approved = [m for m in rows.values() if m.is_resume_approved]
+        return max(approved, key=lambda m: m.generation) if approved else None
 
     def save(self, materials: MaterialsSet) -> None:
         self.saved.append(materials)
@@ -185,6 +202,47 @@ class _RecordingPublisher:
 
     def publish(self, event) -> None:
         self.events.append(event)
+
+
+class _RecordingResumePdfRenderer:
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ) -> Artifact:
+        Path(output_path).write_bytes(b"%PDF-tailored")
+        return Artifact.create(
+            type=ArtifactType.RESUME_PDF,
+            path=output_path,
+            created_at=created_at,
+            render_format=RenderFormat.HTML_PDF,
+            size_bytes=len(b"%PDF-tailored"),
+        )
+
+    def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):
+        raise AssertionError("resume renderer must not render cover letters")
+
+
+class _FailingResumePdfRenderer:
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ) -> Artifact:
+        raise RuntimeError("latex failed")
+
+    def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):
+        raise AssertionError("resume renderer must not render cover letters")
 
 
 # --------------------------------------------------------------------------
@@ -621,3 +679,86 @@ def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenan
     # The fabrication is surfaced as the rejection reason on the validation errors.
     errors = " ".join(outcome.materials.last_validation.errors)
     assert "fabricate" in errors.lower() or "fabrication" in errors.lower()
+
+
+def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
+    tmp_path: Path,
+) -> None:
+    """A re-tailor whose PDF render FAILS must leave the prior approved
+    generation current (preservation invariant): ``load_current_approved``
+    still returns generation 1 with its resume PDF and provenance, the failed
+    re-tailor is rejected audit history in generation 2, no second
+    ``ResumeApproved`` fires, and no generation-2 provenance is orphaned."""
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    grounded_bullet = (
+        "Owned the API and cut latency 40% with Python by replacing synchronous calls."
+    )
+
+    def _use_case_with_renderer(llm: _ScriptedLlm, renderer) -> TailorResumeUseCase:
+        return TailorResumeUseCase(
+            repository=materials_repo,
+            llm=llm,
+            validator=ContentValidator(),
+            assembler=ResumeAssembler(),
+            analyze_use_case=_FakeAnalyze(),
+            provenance_repository=provenance_repo,
+            requirement_fit_repository=_FakeRequirementFitRepo(
+                _latency_requirement_fit_report()
+            ),
+            publisher=publisher,
+            pdf_renderer=renderer,
+        )
+
+    # Generation 1: a real accepted resume — records provenance AND a durable PDF.
+    gen1 = _use_case_with_renderer(
+        _ScriptedLlm([_payload(grounded_bullet), _judge_pass()]),
+        _RecordingResumePdfRenderer(),
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    assert gen1.status == "approved"
+    assert gen1.materials is not None and gen1.materials.generation == 1
+    assert gen1.materials.resume_pdf is not None
+    assert gen1.pdf_path is not None
+    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
+    assert (
+        sum(1 for e in publisher.events if getattr(e, "event_type", "") == "ResumeApproved")
+        == 1
+    )
+
+    # Generation 2: a re-tailor whose PDF render FAILS after the candidate passed.
+    gen2 = _use_case_with_renderer(
+        _ScriptedLlm([_payload(grounded_bullet), _judge_pass()]),
+        _FailingResumePdfRenderer(),
+    ).execute(
+        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, retailor=True
+    )
+
+    # The failed re-tailor approved nothing durable.
+    assert gen2.status == "error"
+    assert "PDF render failed" in gen2.error
+    assert gen2.pdf_path is None
+    assert gen2.materials is not None and gen2.materials.generation == 2
+    assert gen2.materials.tailored_resume is not None
+    assert gen2.materials.tailored_resume.status is ArtifactStatus.REJECTED
+
+    # Preservation invariant: generation 1 is STILL the current approved resume,
+    # with its PDF and provenance intact.
+    current = materials_repo.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    assert current is not None
+    assert current.generation == 1
+    assert current.is_resume_approved
+    assert current.resume_pdf is not None
+    assert current.tailored_resume is not None
+    assert current.tailored_resume.status is ArtifactStatus.APPROVED
+
+    # Generation 1 provenance survived; the failed generation 2 orphaned none.
+    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
+    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
+
+    # No dangling second ResumeApproved; the failed re-tailor published ResumeFailed.
+    assert (
+        sum(1 for e in publisher.events if getattr(e, "event_type", "") == "ResumeApproved")
+        == 1
+    )
+    assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)

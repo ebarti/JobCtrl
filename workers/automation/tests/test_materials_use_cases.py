@@ -273,6 +273,55 @@ class _RecordingPublisher:
         self.events.append(event)
 
 
+class _RecordingResumePdfRenderer:
+    """Writes a stub PDF and records what it was asked to render."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ) -> Artifact:
+        self.calls.append(
+            {"tailored_payload": tailored_payload, "output_path": output_path}
+        )
+        Path(output_path).write_bytes(b"%PDF-tailored")
+        return Artifact.create(
+            type=ArtifactType.RESUME_PDF,
+            path=output_path,
+            created_at=created_at,
+            render_format=RenderFormat.HTML_PDF,
+            size_bytes=len(b"%PDF-tailored"),
+        )
+
+    def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):
+        raise AssertionError("resume renderer must not render cover letters")
+
+
+class _FailingResumePdfRenderer:
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload,
+        profile_dict,
+        output_path,
+        created_at,
+        resume_theme=None,
+        resume_template=None,
+    ) -> Artifact:
+        raise RuntimeError("latex failed")
+
+    def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):
+        raise AssertionError("resume renderer must not render cover letters")
+
+
 def _good_json_payload() -> str:
     return json.dumps(
         {
@@ -1371,6 +1420,68 @@ def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
     assert previous is not None
     assert previous.tailored_resume is not None
     assert previous.tailored_resume.status is ArtifactStatus.APPROVED
+
+
+def test_tailor_use_case_renders_and_attaches_resume_pdf_when_renderer_present(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload(), _judge_pass()])
+    publisher = _RecordingPublisher()
+    renderer = _RecordingResumePdfRenderer()
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+        publisher=publisher,
+        pdf_renderer=renderer,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None and outcome.materials.is_resume_approved
+    # The PDF is durable on the persisted aggregate and surfaced on the outcome.
+    assert outcome.materials.resume_pdf is not None
+    assert outcome.pdf_path == str(Path(outcome.text_path).with_suffix(".pdf"))
+    assert renderer.calls and renderer.calls[0]["tailored_payload"] == outcome.final_payload
+    saved = repo.load(LOCAL_TENANT, JobId(job["url"]))
+    assert saved is not None and saved.resume_pdf is not None
+    assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+
+
+def test_tailor_use_case_first_generation_pdf_failure_leaves_nothing_current(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    # First-time tailoring behaviour is unchanged: a PDF failure rejects the new
+    # (and only) generation, so there is no current approved resume — but nothing
+    # was destroyed because none existed.
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload(), _judge_pass()])
+    publisher = _RecordingPublisher()
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+        publisher=publisher,
+        pdf_renderer=_FailingResumePdfRenderer(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "error"
+    assert "PDF render failed" in outcome.error
+    assert outcome.pdf_path is None
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    assert outcome.materials.tailored_resume.status is ArtifactStatus.REJECTED
+    assert repo.load_current_approved(LOCAL_TENANT, JobId(job["url"])) is None
+    assert not any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+    assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
 
 
 # ---------------------------------------------------------------------------

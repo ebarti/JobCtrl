@@ -1325,6 +1325,7 @@ class TailorResumeUseCase:
         requirement_fit_repository: "RequirementFitReportRepository | None" = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
         voice: VoicePort | None = None,
+        pdf_renderer: PdfRendererPort | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -1354,6 +1355,14 @@ class TailorResumeUseCase:
         # ships. When absent, the use case is exactly the Phase-2 flow (coverage is
         # still computed canonically, just over the un-voiced candidate).
         self._voice = voice
+        # Preservation invariant (architecture.md §5.5 / CLAUDE.md): when a PDF
+        # renderer is injected, an approved resume's PDF is rendered INSIDE the
+        # tailor transaction — BEFORE the prior approved generation is superseded
+        # and BEFORE ResumeApproved is published — so a transient render failure
+        # never strips the job of its last accepted resume. When absent (narrow
+        # unit tests that only exercise validate/judge), no PDF is produced and
+        # the flow is exactly the pre-render persist path.
+        self._pdf_renderer = pdf_renderer
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -1565,6 +1574,45 @@ class TailorResumeUseCase:
             },
             updated_at=materials.updated_at,
         )
+        # Render the replacement resume PDF BEFORE superseding the prior approved
+        # generation (preservation invariant — architecture.md §5.5 / CLAUDE.md).
+        # A transient render failure must leave the last accepted generation
+        # untouched, so on failure we neither supersede the prior nor publish
+        # ResumeApproved: the new generation is demoted to a rejected attempt
+        # (audit history) and the prior stays current for downstream stages.
+        pdf_path: str | None = None
+        if materials.is_resume_approved and self._pdf_renderer is not None:
+            render = self._render_resume_pdf(
+                materials=materials,
+                final_payload=final_payload,
+                profile_snapshot=profile_snapshot,
+                resume_template=resume_template,
+            )
+            if isinstance(render, str):
+                rejected = materials.with_resume_attempt(
+                    artifact,
+                    validation=ValidationResult.failure((render,)),
+                    verdict=verdict,
+                    updated_at=_utc_now(),
+                )
+                self._repository.save(rejected)
+                self._publish_failed(
+                    rejected,
+                    validation_errors=(render,),
+                    attempt=attempts,
+                )
+                return TailorOutcome(
+                    materials=rejected,
+                    status="error",
+                    attempts=attempts,
+                    text_path=str(text_path),
+                    report=report,
+                    error=render,
+                    final_payload=final_payload,
+                )
+            pdf_artifact, pdf_path = render
+            materials = materials.with_resume_pdf(pdf_artifact, updated_at=_utc_now())
+
         if materials.is_resume_approved and prior_generation is not None:
             self._repository.save(prior_generation)
         self._repository.save(materials)
@@ -1625,6 +1673,7 @@ class TailorResumeUseCase:
             status=status,
             attempts=attempts,
             text_path=str(text_path),
+            pdf_path=pdf_path,
             report=report,
             final_payload=final_payload,
         )
@@ -1632,6 +1681,50 @@ class TailorResumeUseCase:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _render_resume_pdf(
+        self,
+        *,
+        materials: MaterialsSet,
+        final_payload: dict,
+        profile_snapshot: ProfileSnapshot,
+        resume_template: dict[str, Any] | None,
+    ) -> tuple[Artifact, str] | str:
+        """Render the approved resume to PDF next to its text artifact.
+
+        Returns ``(pdf_artifact, pdf_path)`` on success or a
+        ``"PDF render failed: …"`` message on failure. Rendering happens before
+        the prior approved generation is superseded, so a failure here is
+        recoverable — the caller keeps the last accepted resume intact.
+        """
+        assert self._pdf_renderer is not None
+        assert materials.tailored_resume is not None
+        pdf_out = Path(materials.tailored_resume.path).with_suffix(".pdf")
+        try:
+            pdf_artifact = self._pdf_renderer.render_resume_to_pdf(
+                tailored_payload=final_payload,
+                profile_dict=profile_snapshot.as_dict(),
+                output_path=str(pdf_out),
+                created_at=_utc_now(),
+                resume_theme=(
+                    resume_template.get("theme")
+                    if isinstance(resume_template, dict)
+                    else None
+                ),
+                resume_template=(
+                    resume_template.get("metadata")
+                    if isinstance(resume_template, dict)
+                    else None
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — a render failure must not destroy the prior resume
+            log.error(
+                "Resume PDF generation failed for %s",
+                materials.tailored_resume.path,
+                exc_info=True,
+            )
+            return f"PDF render failed: {exc}"
+        return pdf_artifact, str(pdf_out)
 
     def _run_analyze(
         self,
