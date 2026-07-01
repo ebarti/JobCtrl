@@ -420,6 +420,43 @@ class TestTokenBoundaryGrounding:
             ground_and_snap(bad, jd)
         assert [(v.kind, v.ref_id) for v in exc.value.violations] == [("keyword", "Go")]
 
+    # --- Hardening: lock in the exact boundary semantics the fix relies on so a
+    # future switch to ``\b`` (treats "_" as a word char) or adding ``re.ASCII``
+    # (would stop counting non-ASCII letters/digits as alphanumeric) cannot
+    # silently reopen the sub-word hole. All pass against the current code. --- #
+
+    def test_digit_span_does_not_ground_inside_a_larger_number(self) -> None:
+        # A number is a token too: "5" must not ground inside "15", nor "24"
+        # inside "2024". Digits are alphanumeric boundaries just like letters.
+        assert is_grounded("5", "We had 15 incidents last year.") is False
+        assert is_grounded("24", "Founded in 2024 by two engineers.") is False
+
+    def test_digit_span_grounds_as_standalone_token(self) -> None:
+        jd = "We need 5 years of experience."
+        assert is_grounded("5", jd) is True
+        assert locate_grounded_span("5", jd) == "5"
+
+    def test_span_grounds_at_absolute_start_and_end_of_snapshot(self) -> None:
+        # The lookaround must treat the string edge as a boundary: a span flush
+        # against position 0 or against the final character still grounds.
+        start_jd = "Go is our primary backend language."
+        end_jd = "Our primary language is Rust"  # no trailing punctuation
+        assert is_grounded("Go", start_jd) is True
+        assert locate_grounded_span("Go", start_jd) == "Go"
+        assert is_grounded("Rust", end_jd) is True
+        assert locate_grounded_span("Rust", end_jd) == "Rust"
+
+    def test_letter_glued_span_is_rejected_including_non_ascii_glue(self) -> None:
+        # Glued to another letter -> part of a larger word -> rejected; bordered
+        # by a hyphen (non-alphanumeric) -> a whole token -> grounds. The
+        # non-ASCII cases pin the Unicode-aware boundary (str.isalnum), so an
+        # ASCII-only class would treat the accented letter as a non-boundary and
+        # wrongly ground the sub-word here.
+        assert is_grounded("AI", "We prefer naiveAI approaches here.") is False
+        assert is_grounded("AI", "We invest in AI-native tooling.") is True
+        assert is_grounded("AI", "Legacy stack AIür module.") is False  # U+00FC glue
+        assert is_grounded("Go", "The Goéland project.") is False  # U+00E9 glue
+
 
 # --------------------------------------------------------------------------- #
 # Cache key (D-11/D-12)
