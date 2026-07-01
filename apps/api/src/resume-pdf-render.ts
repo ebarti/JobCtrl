@@ -5,6 +5,14 @@ import { fileURLToPath } from "node:url";
 const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
 
+// The render is synchronous so it can run inside the better-sqlite3 write
+// transaction. Bound the subprocess so a hung `uv` resolve or Chromium launch
+// cannot freeze the Node event loop indefinitely; on timeout execFileSync throws
+// and the caller's catch turns it into a preserved-generation render failure.
+// Generous enough for a cold Chromium start.
+const RESUME_RENDER_TIMEOUT_MS = 120_000;
+const RESUME_RENDER_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
 export interface ResumeHtmlPdfRenderInput {
   readonly htmlPath: string;
   readonly pdfPath: string;
@@ -42,7 +50,11 @@ export const defaultResumeHtmlPdfRenderer: ResumeHtmlPdfRenderer = ({ htmlPath, 
         htmlPath,
         pdfPath,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: RESUME_RENDER_TIMEOUT_MS,
+        maxBuffer: RESUME_RENDER_MAX_BUFFER_BYTES,
+      },
     );
   } catch (error) {
     throw new Error(resumeRenderErrorMessage(error));
