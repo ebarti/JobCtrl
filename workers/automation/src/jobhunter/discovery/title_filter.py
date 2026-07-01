@@ -250,6 +250,7 @@ def title_matches_query(
         return False
     if _has_excluded_engineering_specialty(title_sequence, query_tokens):
         return False
+    force_adjudication = _business_function_needs_adjudication(title_sequence, query_tokens)
     if match_mode == _RECALL_MATCH_MODE:
         matched = _recall_title_matches_query(
             title_sequence,
@@ -259,6 +260,9 @@ def title_matches_query(
         )
         if not matched:
             return False
+        verbatim = _query_tokens_match_verbatim(query_tokens, title_sequence) or _query_alias_matches(
+            query_tokens, title_sequence
+        )
         return _adjudicate_loose_match(
             title=title,
             query=normalized_query,
@@ -266,8 +270,7 @@ def title_matches_query(
             target_track=target_track,
             seniority_floor=seniority_floor,
             role_matcher=role_matcher,
-            verbatim=_query_tokens_match_verbatim(query_tokens, title_sequence)
-            or _query_alias_matches(query_tokens, title_sequence),
+            verbatim=verbatim and not force_adjudication,
         )
     verbatim_match = _query_tokens_match_verbatim(query_tokens, title_sequence)
     alias_match = _query_alias_matches(query_tokens, title_sequence)
@@ -284,7 +287,7 @@ def title_matches_query(
         target_track=target_track,
         seniority_floor=seniority_floor,
         role_matcher=role_matcher,
-        verbatim=verbatim_match or alias_match,
+        verbatim=(verbatim_match or alias_match) and not force_adjudication,
     )
 
 
@@ -413,6 +416,22 @@ def _has_engineering_role_head(
             continue
         return True
     return False
+
+
+def _business_function_needs_adjudication(
+    title_sequence: Sequence[str],
+    query_tokens: Sequence[str],
+) -> bool:
+    # A non-adjacent business token beside an engineering head is ambiguous: it may be
+    # engineering-primary ("Staff Engineer, Pricing Platform") or business-primary
+    # ("Sales Director, Engineering"). We cannot tell deterministically, so route it to
+    # the LLM adjudicator for precision rather than verbatim-accepting it. When the
+    # adjudicator is unavailable the loose-match path accepts, preserving recall.
+    title_tokens = set(title_sequence)
+    excluded_tokens = _EXCLUDED_BUSINESS_FALSE_POSITIVE_TOKENS.difference(set(query_tokens))
+    return bool(title_tokens.intersection(excluded_tokens)) and _has_engineering_role_head(
+        title_sequence, excluded_tokens
+    )
 
 
 def _query_tokens_match_compactly(query_tokens: Sequence[str], title_sequence: Sequence[str]) -> bool:
