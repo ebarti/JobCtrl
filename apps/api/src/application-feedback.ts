@@ -1060,7 +1060,7 @@ function requirementsWithTailoredResumeCoverage(
   for (const row of rows) {
     const ids = parseStringListJson(row.requirement_ids_json).filter((id) => requirementIds.has(id));
     if (!ids.length) continue;
-    const example = cleanLimitedText(row.generated_text, EVIDENCE_TEXT_LIMIT);
+    const example = cleanText(row.generated_text);
     for (const id of ids) {
       const current = covered.get(id) ?? { bulletCount: 0, examples: [] };
       current.bulletCount += 1;
@@ -1149,11 +1149,15 @@ function cleanRequirementWeight(value: unknown): number | null {
 }
 
 function cleanLimitedText(value: unknown, limit: number): string {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = cleanText(value);
   if (!text) {
     return "";
   }
   return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+}
+
+function cleanText(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function boundedEvidenceList(values: readonly unknown[]): string[] {

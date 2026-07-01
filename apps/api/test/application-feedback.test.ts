@@ -14,6 +14,8 @@ const READY_JOB = "https://example.com/jobs/apply-ready";
 const DRY_RUN_JOB = "https://example.com/jobs/apply-dry-run";
 const APPLIED_JOB = "https://example.com/jobs/already-applied";
 const NOW = "2026-06-01T10:00:00.000Z";
+const LONG_TAILORED_REQUIREMENT_EVIDENCE =
+  "Owned platform reliability improvements for incident response across four production services, reduced high-severity repeat incidents through clearer ownership, and built review habits that kept customer-facing systems stable during launch pressure.";
 
 let tempDir = "";
 let options: BuildAppOptions;
@@ -139,7 +141,7 @@ describe("application feedback API", () => {
               state: "covered",
               source: "tailored_resume_bullet_provenance",
               bulletCount: 1,
-              examples: ["Owned platform reliability improvements for incident response."],
+              examples: [LONG_TAILORED_REQUIREMENT_EVIDENCE],
             },
           },
           {
@@ -1976,7 +1978,7 @@ function insertBulletProvenance(db: Database.Database): void {
     "rephrased",
     "rephrase_allowed",
     "Reframed the bullet toward platform reliability.",
-    "Owned platform reliability improvements for incident response.",
+    LONG_TAILORED_REQUIREMENT_EVIDENCE,
     1,
     NOW,
   );
