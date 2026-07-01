@@ -198,3 +198,37 @@ def test_approved_role_feedback_title_exclusions_apply(monkeypatch, tmp_path) ->
     assert title_matches_query("Engineering Manager", "Engineering Manager")
 
     reset_role_match_feedback_cache()
+
+
+def test_engineering_titles_survive_when_business_token_is_not_role_head() -> None:
+    assert title_matches_query("Staff Engineer, Pricing Platform", "Staff Engineer")
+    assert title_matches_query("Engineering Manager, Accounts", "Engineering Manager")
+    assert title_matches_query("Software Engineer, Sales Platform", "Software Engineer")
+    assert title_matches_query("Engineer, Commercial Systems", "Engineer")
+
+
+def test_engineering_titles_with_business_tokens_reach_role_adjudicator() -> None:
+    accepting = _FakeRoleMatcher(True)
+    assert title_matches_query(
+        "Engineer, Commercial Systems", "Systems Engineer", role_matcher=accepting
+    )
+    assert len(accepting.calls) == 1
+
+    rejecting = _FakeRoleMatcher(False)
+    assert not title_matches_query(
+        "Engineer, Commercial Systems", "Systems Engineer", role_matcher=rejecting
+    )
+    assert len(rejecting.calls) == 1
+
+
+def test_business_function_primary_roles_remain_rejected() -> None:
+    # Queries share the non-business head so a bypassed filter would verbatim-match;
+    # rejection therefore proves the business-function filter still fires before
+    # adjudication, and that an accepting matcher is never consulted.
+    matcher = _FakeRoleMatcher(True)
+    assert not title_matches_query("Account Executive", "Executive", role_matcher=matcher)
+    assert not title_matches_query("Sales Manager", "Manager", role_matcher=matcher)
+    assert not title_matches_query("Commercial Director", "Director", role_matcher=matcher)
+    assert not title_matches_query("Pricing Analyst", "Analyst", role_matcher=matcher)
+    assert not title_matches_query("Sales Engineer", "Engineer", role_matcher=matcher)
+    assert matcher.calls == []

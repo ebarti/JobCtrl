@@ -90,6 +90,14 @@ _EXCLUDED_BUSINESS_FALSE_POSITIVE_PHRASES = (
     frozenset(("customer", "success")),
     frozenset(("product", "management")),
 )
+_ENGINEERING_ROLE_HEAD_TOKENS = {
+    "architect",
+    "developer",
+    "engineer",
+    "engineering",
+    "sre",
+    "swe",
+}
 
 _RECALL_LEADERSHIP_TOKENS = {
     "chief",
@@ -382,12 +390,29 @@ def _has_business_function_false_positive(
     title_tokens = set(title_sequence)
     query_token_set = set(query_tokens)
     excluded_tokens = _EXCLUDED_BUSINESS_FALSE_POSITIVE_TOKENS.difference(query_token_set)
-    if title_tokens.intersection(excluded_tokens):
+    if title_tokens.intersection(excluded_tokens) and not _has_engineering_role_head(
+        title_sequence, excluded_tokens
+    ):
         return True
     return any(
         phrase.issubset(title_tokens) and not phrase.intersection(query_token_set)
         for phrase in _EXCLUDED_BUSINESS_FALSE_POSITIVE_PHRASES
     )
+
+
+def _has_engineering_role_head(
+    title_sequence: Sequence[str],
+    excluded_business_tokens: set[str],
+) -> bool:
+    for index, token in enumerate(title_sequence):
+        if token not in _ENGINEERING_ROLE_HEAD_TOKENS:
+            continue
+        # "Sales Engineer": a business token directly modifying the head keeps the
+        # role business-primary, so it does not count as a genuine engineering head.
+        if index > 0 and title_sequence[index - 1] in excluded_business_tokens:
+            continue
+        return True
+    return False
 
 
 def _query_tokens_match_compactly(query_tokens: Sequence[str], title_sequence: Sequence[str]) -> bool:
