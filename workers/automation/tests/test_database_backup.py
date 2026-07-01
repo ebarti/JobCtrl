@@ -8,12 +8,12 @@ readable standalone SQLite file holding the same tables and rows as the source.
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 
 import pytest
 
 from jobhunter.database import (
+    IncompatibleSchemaVersionError,
     SCHEMA_VERSION,
     backup_database,
     close_connection,
@@ -74,23 +74,57 @@ def test_legacy_version_zero_db_is_adopted_without_data_loss(tmp_path) -> None:
     assert row is not None and row[0] == "Engineer"
 
 
-def test_newer_schema_version_is_not_downgraded_and_warns(tmp_path, caplog) -> None:
+def test_newer_schema_version_fails_closed_before_migrations(tmp_path) -> None:
     db_path = tmp_path / "jobhunter.db"
-    init_db(db_path)
+    # A database stamped newer than this build, before any schema exists.
+    raw = sqlite3.connect(db_path)
+    raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    raw.commit()
+    raw.close()
+
+    with pytest.raises(IncompatibleSchemaVersionError):
+        init_db(db_path)
     close_connection(db_path)
 
-    future_version = SCHEMA_VERSION + 5
+    # The guard fired before any migration ran: the version is not downgraded
+    # and no tables were created (init_db never reached CREATE TABLE / ensure_*).
+    assert _user_version(db_path) == SCHEMA_VERSION + 1
+    check = sqlite3.connect(db_path)
+    try:
+        tables = {
+            row[0]
+            for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+    finally:
+        check.close()
+    assert tables == set()
+
+
+def test_newer_schema_version_on_populated_db_fails_closed_without_data_loss(tmp_path) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = init_db(db_path)
+    conn.execute("INSERT INTO jobs (url, title) VALUES (?, ?)", ("https://ex/keep", "Engineer"))
+    conn.commit()
+    close_connection(db_path)
+
+    future_version = SCHEMA_VERSION + 3
     raw = sqlite3.connect(db_path)
     raw.execute(f"PRAGMA user_version = {future_version}")
     raw.commit()
     raw.close()
 
-    with caplog.at_level(logging.WARNING, logger="jobhunter.database"):
+    with pytest.raises(IncompatibleSchemaVersionError):
         init_db(db_path)
     close_connection(db_path)
 
+    # Existing data is untouched and the version is not downgraded.
     assert _user_version(db_path) == future_version
-    assert "newer" in caplog.text.lower()
+    check = sqlite3.connect(db_path)
+    try:
+        row = check.execute("SELECT title FROM jobs WHERE url = ?", ("https://ex/keep",)).fetchone()
+    finally:
+        check.close()
+    assert row is not None and row[0] == "Engineer"
 
 
 def test_backup_copies_tables_and_rows_into_readable_sqlite(tmp_path) -> None:

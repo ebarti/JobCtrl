@@ -9,7 +9,6 @@ persistent run and event telemetry.
 """
 
 import json
-import logging
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -18,13 +17,16 @@ from typing import Any
 
 from jobhunter.config import DB_PATH, DEFAULTS
 
-log = logging.getLogger(__name__)
-
 # Schema version stamped into the SQLite ``user_version`` header. The ensure_*
 # helpers below are additive and idempotent, so this is a lightweight
-# forward-incompatibility guard (detect a DB written by a newer build), not a
+# forward-incompatibility guard (refuse a DB written by a newer build), not a
 # migration framework. Bump it only when the schema shape changes.
 SCHEMA_VERSION = 1
+
+
+class IncompatibleSchemaVersionError(RuntimeError):
+    """Raised when the database was written by a newer build than this code."""
+
 
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -105,6 +107,9 @@ def backup_database(
 
     src = sqlite3.connect(source)
     try:
+        # Match the app's lock-wait budget so a backup taken during transient
+        # DDL waits briefly instead of failing on "database is locked".
+        src.execute("PRAGMA busy_timeout=10000")
         src.execute("VACUUM INTO ?", (str(destination),))
     finally:
         src.close()
@@ -119,7 +124,7 @@ def _resolve_backup_destination(source: Path, output: Path | str | None) -> Path
         target_dir = candidate
     else:
         target_dir = source.parent / "backups"
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return target_dir / f"jobhunter-{timestamp}.db"
 
 
@@ -127,20 +132,20 @@ def _ensure_schema_version(conn: sqlite3.Connection) -> int:
     """Stamp ``PRAGMA user_version`` as a lightweight schema guard.
 
     Databases created before this guard report ``user_version == 0`` and are
-    adopted by stamping ``SCHEMA_VERSION``. A database whose version is newer
-    than this build is left untouched -- never silently downgraded -- and a
-    warning is logged so a stale build does not corrupt a forward-migrated file.
+    adopted by stamping ``SCHEMA_VERSION``; an equal version is a no-op. A
+    database whose version is newer than this build fails closed with
+    ``IncompatibleSchemaVersionError`` -- the caller (``init_db``) invokes this
+    before any table creation or migration, so a stale build never runs its
+    potentially destructive ``ensure_*`` migrations against a forward-migrated
+    file, and is never silently downgraded.
     """
     current = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if current > SCHEMA_VERSION:
-        log.warning(
-            "Database schema version %s is newer than this build's schema version %s; "
-            "the database was written by a newer JobHunter. Upgrade JobHunter before "
-            "writing to it, and keep a backup ('jobhunter backup').",
-            current,
-            SCHEMA_VERSION,
+        raise IncompatibleSchemaVersionError(
+            f"database was written by a newer JobHunter build "
+            f"(schema version {current} > code schema version {SCHEMA_VERSION}); "
+            f"upgrade JobHunter or restore a compatible backup ('jobhunter backup')."
         )
-        return current
     if current < SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
