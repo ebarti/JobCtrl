@@ -81,6 +81,9 @@ class JobListProjection:
     score_reasoning: str = ""
     score_version: int | None = None
     scored_at: str | None = None
+    score_criteria_json: str | None = None
+    score_trace_json: str | None = None
+    score_correction_json: str | None = None
     current_stage: str = "discover"
     current_substage: str = "discover"
     current_state: str = "pending"
@@ -144,6 +147,9 @@ class JobDetailProjection:
     score_reasoning: str = ""
     score_version: int | None = None
     scored_at: str | None = None
+    score_criteria_json: str | None = None
+    score_trace_json: str | None = None
+    score_correction_json: str | None = None
     stages: tuple[StageProjection, ...] = ()
     last_updated_at: str | None = None
     # Phase 1: the canonical employer-analysis read shape (JSON of the latest

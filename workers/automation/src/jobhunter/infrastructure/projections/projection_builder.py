@@ -549,6 +549,9 @@ class ProjectionBuilder:
         score_keywords_json = score.get("keywords_json") or "[]"
         score_version = score.get("version")
         scored_at = score.get("scored_at")
+        score_criteria_json = score.get("criteria_json")
+        score_trace_json = score.get("trace_json")
+        score_correction_json = score.get("correction_json")
 
         # Materials presence:
         tailor_path = materials.get("tailor_path") or _row_nullable_str(
@@ -611,6 +614,9 @@ class ProjectionBuilder:
             score_reasoning=score_reasoning,
             score_version=score_version,
             scored_at=scored_at,
+            score_criteria_json=score_criteria_json,
+            score_trace_json=score_trace_json,
+            score_correction_json=score_correction_json,
             current_stage=current_stage,
             current_substage=current_substage,
             current_state=current_state,
@@ -642,6 +648,9 @@ class ProjectionBuilder:
             score_reasoning=score_reasoning,
             score_version=score_version,
             scored_at=scored_at,
+            score_criteria_json=score_criteria_json,
+            score_trace_json=score_trace_json,
+            score_correction_json=score_correction_json,
             stages=tuple(stages),
             employer_analysis_json=employer_analysis_json,
             requirement_fit_report_json=requirement_fit_report_json,
@@ -896,7 +905,8 @@ class ProjectionBuilder:
             row = self._conn.execute(
                 """
                 SELECT s.version, s.fit_score, s.scored_at, s.breakdown_json,
-                       s.keywords_json
+                       s.keywords_json, s.criteria_json, s.trace_json,
+                       s.correction_json
                 FROM job_scores s
                 WHERE s.job_url = ?
                 ORDER BY s.version DESC
@@ -923,6 +933,9 @@ class ProjectionBuilder:
             "breakdown_json": None if legacy else json.dumps(_camel_score_breakdown(breakdown)),
             "keywords_json": json.dumps([] if legacy and keywords == ["legacy"] else keywords),
             "reasoning": reasoning,
+            "criteria_json": _row_nullable_str(row, "criteria_json"),
+            "trace_json": _row_nullable_str(row, "trace_json"),
+            "correction_json": _row_nullable_str(row, "correction_json"),
         }
 
     def _load_latest_materials(self, job_url: str) -> dict:
