@@ -1494,7 +1494,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: null,
         resumePdfLayoutBoxes: [],
-        requirementLedAudit: requirementLedAuditForCandidates(text.candidate),
+        requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate),
         resumeTemplate: resumeTemplateStateForJob(db, jobKey),
       };
     }
@@ -1511,7 +1511,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
         resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(text.candidate, pdf),
+        requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate, pdf),
         resumeTemplate: resumeTemplateStateForJob(db, jobKey),
       };
     }
@@ -1524,7 +1524,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
       resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
-      requirementLedAudit: requirementLedAuditForCandidates(pdfOnly),
+      requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, pdfOnly),
       resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
@@ -1536,7 +1536,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
       resumePdfLayoutBoxes: [],
-      requirementLedAudit: requirementLedAuditForCandidates(text.candidate),
+      requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate),
       resumeTemplate: resumeTemplateStateForJob(db, jobKey),
     };
   }
@@ -1548,21 +1548,117 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
       ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
       : [],
-    requirementLedAudit: pdfCandidates[0] ? requirementLedAuditForCandidates(pdfCandidates[0]) : null,
+    requirementLedAudit: pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobKey, pdfCandidates[0]) : null,
     resumeTemplate: resumeTemplateStateForJob(db, jobKey),
   };
 }
 
 function requirementLedAuditForCandidates(
+  db: SqliteDatabase,
+  jobKey: string,
   ...candidates: readonly MaterialArtifactCandidate[]
 ): ApplyReviewRequirementLedAudit | null {
   for (const candidate of candidates) {
     const audit = parseRequirementLedAuditMetadata(candidate.metadataJson);
     if (audit) {
-      return audit;
+      return reconcileRequirementLedAuditWithProvenance(db, jobKey, candidate, audit);
     }
   }
   return null;
+}
+
+function reconcileRequirementLedAuditWithProvenance(
+  db: SqliteDatabase,
+  jobKey: string,
+  candidate: MaterialArtifactCandidate,
+  audit: ApplyReviewRequirementLedAudit,
+): ApplyReviewRequirementLedAudit {
+  const requirementById = requirementSummariesFromAudit(audit);
+  if (!requirementById.size || !tableExists(db, "job_bullet_provenance")) {
+    return audit;
+  }
+
+  const rows = provenanceRowsForCandidate(db, jobKey, candidate);
+  if (!rows.length) {
+    return audit;
+  }
+
+  const coveredIds = new Set<string>();
+  for (const row of rows) {
+    for (const id of parseStringListJson(row.requirement_ids_json)) {
+      if (requirementById.has(id)) {
+        coveredIds.add(id);
+      }
+    }
+  }
+
+  const priorUncoveredReason = new Map(audit.uncoveredRequirements.map((requirement) => [requirement.id, requirement.reason]));
+  const coveredRequirements: ApplyReviewRequirementLedAudit["coveredRequirements"] = [];
+  const uncoveredRequirements: ApplyReviewRequirementLedAudit["uncoveredRequirements"] = [];
+  for (const id of requirementById.keys()) {
+    if (coveredIds.has(id)) {
+      coveredRequirements.push(requirementAuditRequirement(id, requirementById, null));
+    } else {
+      uncoveredRequirements.push(
+        requirementAuditRequirement(
+          id,
+          requirementById,
+          priorUncoveredReason.get(id) ?? "No provenance-linked bullet in the selected tailored resume.",
+        ),
+      );
+    }
+  }
+
+  return {
+    ...audit,
+    coveredRequirements,
+    uncoveredRequirements,
+  };
+}
+
+function requirementSummariesFromAudit(
+  audit: ApplyReviewRequirementLedAudit,
+): Map<string, { textExcerpt: string; tier: string | null }> {
+  const result = new Map<string, { textExcerpt: string; tier: string | null }>();
+  for (const requirement of [...audit.coveredRequirements, ...audit.uncoveredRequirements]) {
+    if (requirement.id && !result.has(requirement.id)) {
+      result.set(requirement.id, {
+        textExcerpt: requirement.textExcerpt,
+        tier: requirement.tier,
+      });
+    }
+  }
+  return result;
+}
+
+function provenanceRowsForCandidate(
+  db: SqliteDatabase,
+  jobKey: string,
+  candidate: MaterialArtifactCandidate,
+): Array<{ requirement_ids_json: string }> {
+  const rowsByArtifact = candidate.artifactId
+    ? allRows<{ requirement_ids_json: string }>(
+        db,
+        `SELECT requirement_ids_json
+           FROM job_bullet_provenance
+          WHERE tenant_id = ?
+            AND job_url = ?
+            AND artifact_id = ?`,
+        [DEFAULT_TENANT, jobKey, candidate.artifactId],
+      )
+    : [];
+  if (rowsByArtifact.length || candidate.generation === null) {
+    return rowsByArtifact;
+  }
+  return allRows<{ requirement_ids_json: string }>(
+    db,
+    `SELECT requirement_ids_json
+       FROM job_bullet_provenance
+      WHERE tenant_id = ?
+        AND job_url = ?
+        AND generation = ?`,
+    [DEFAULT_TENANT, jobKey, candidate.generation],
+  );
 }
 
 function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequirementLedAudit | null {

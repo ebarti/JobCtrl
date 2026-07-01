@@ -360,6 +360,78 @@ describe("application feedback API", () => {
     });
   });
 
+  it("self-heals obsolete cover generation conflicts before listing the review queue", async () => {
+    const staleConflict =
+      "MaterialsSet generation conflict for job_id='https://example.com/jobs/apply-ready': got generation=1, expected 2 (or current==0)";
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'failed',
+             error_code = 'COVER_FAILED',
+             error_message = ?,
+             retryable = 1,
+             next_action = ?,
+             updated_at = '2026-06-01T11:30:00.000Z'
+       WHERE job_url = ?
+         AND stage = 'cover'
+      `,
+    ).run(staleConflict, `jobhunter retry cover ${READY_JOB}`, READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const item = queueItem(response.json(), READY_JOB);
+    expect(item).toMatchObject({
+      currentStage: "apply",
+      currentState: "pending",
+      blockers: [],
+      applyAudit: {
+        state: "preparing",
+        label: "materials preparing",
+        summary: "cover is pending. Review evidence is still available where recorded.",
+        hardBlockers: [],
+      },
+    });
+    expect(JSON.stringify(item)).not.toContain("MaterialsSet generation conflict");
+    await app.close();
+
+    const readDb = new Database(options.dbPath, { readonly: true });
+    const stage = readDb
+      .prepare(
+        `
+        SELECT state, error_code, error_message, retryable, next_action, metadata_json
+          FROM job_stage_states
+         WHERE job_url = ?
+           AND stage = 'cover'
+        `,
+      )
+      .get(READY_JOB) as {
+      state: string;
+      error_code: string | null;
+      error_message: string | null;
+      retryable: number;
+      next_action: string | null;
+      metadata_json: string | null;
+    };
+    readDb.close();
+
+    expect(stage).toMatchObject({
+      state: "pending",
+      error_code: null,
+      error_message: null,
+      retryable: 1,
+      next_action: null,
+    });
+    expect(JSON.parse(stage.metadata_json ?? "{}")).toMatchObject({
+      repair_reason: "obsolete_cover_generation_conflict",
+      target_state: "pending",
+      previous_error_message: staleConflict,
+    });
+  });
+
   it("uses the posting URL as the review apply target when direct application URL is missing", async () => {
     const db = new Database(options.dbPath);
     db.prepare("UPDATE jobs SET application_url = NULL WHERE url = ?").run(READY_JOB);
@@ -700,6 +772,40 @@ describe("application feedback API", () => {
     expect(JSON.stringify(audit)).not.toContain("RAW PROMPT SECRET");
     expect(JSON.stringify(audit)).not.toContain("FULL PROFILE SECRET");
     expect(JSON.stringify(audit)).not.toContain("/private/secret-resume.pdf");
+
+    await app.close();
+  });
+
+  it("derives requirement-led coverage from selected artifact provenance rows", async () => {
+    const metadata = requirementLedAuditMetadata();
+    const qualityPlan = metadata.quality_plan as Record<string, unknown>;
+    const coverageGraph = qualityPlan.coverage_graph as Record<string, unknown>;
+    coverageGraph.covered_requirement_ids = ["r1", "r2"];
+    coverageGraph.uncovered_requirements = [];
+
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(metadata), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    expect(audit?.coveredRequirements.map((requirement) => requirement.id)).toEqual(["r1"]);
+    expect(audit?.uncoveredRequirements).toEqual([
+      {
+        id: "r2",
+        textExcerpt: "Improve developer experience and incident-response practices.",
+        tier: "nice_to_have",
+        reason: "No provenance-linked bullet in the selected tailored resume.",
+      },
+    ]);
 
     await app.close();
   });
@@ -1146,7 +1252,8 @@ function seedDatabase(dbPath: string): void {
       error_message TEXT,
       retryable INTEGER,
       blocked_by_json TEXT,
-      next_action TEXT
+      next_action TEXT,
+      metadata_json TEXT
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
