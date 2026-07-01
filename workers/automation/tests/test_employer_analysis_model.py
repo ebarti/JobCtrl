@@ -335,6 +335,93 @@ class TestNormalizedGroundingAndSnap:
 
 
 # --------------------------------------------------------------------------- #
+# Token-boundary grounding (Dimension 1 — the cardinal no-fabrication gate)
+#
+# Regression for the defect where the per-character locator had NO word/token
+# boundary, so a short fabricated keyword grounded INSIDE an unrelated word
+# ("Go" in "goals", "AI" in "email"/"detail", "R"/"C" in almost anything) and
+# snap-to-source then rewrote the stored evidence to a mid-word fragment ("go"),
+# slipping a hallucinated keyword past the one gate JSON Schema cannot enforce.
+# The fix requires the located match to border a non-alphanumeric (or the string
+# edge) at both OUTER edges of the whole (possibly multi-word) span.
+# --------------------------------------------------------------------------- #
+
+
+class TestTokenBoundaryGrounding:
+    def test_short_keyword_does_not_ground_inside_a_larger_word(self) -> None:
+        # "goals" must NOT ground the fabricated keyword "Go" (the exact bug).
+        jd = "Our goals are ambitious and the mission is clear."
+        assert is_grounded("Go", jd) is False
+        assert locate_grounded_span("Go", jd) is None
+
+    def test_short_keyword_grounds_on_standalone_token(self) -> None:
+        # The same keyword grounds when the JD carries it as a standalone token,
+        # and snap-to-source returns that verbatim token.
+        jd = "We build backend services in Go and Rust."
+        assert is_grounded("Go", jd) is True
+        assert locate_grounded_span("Go", jd) == "Go"
+
+    def test_standalone_token_still_snaps_to_jd_casing(self) -> None:
+        # Case-insensitive grounding is preserved: a "Go" quote grounds against a
+        # lowercase standalone "go" and snaps to the JD's actual casing.
+        jd = "We build backend services in go and rust."
+        assert is_grounded("Go", jd) is True
+        assert locate_grounded_span("Go", jd) == "go"
+
+    def test_ai_does_not_ground_inside_email_or_detail(self) -> None:
+        jd = "Send an email with every detail of the retention plan."
+        assert is_grounded("AI", jd) is False
+
+    def test_single_letter_keyword_does_not_ground_inside_words(self) -> None:
+        # "R" and "C" matched almost any word before the boundary anchor.
+        jd = "We care about reliability and craft in our services."
+        assert is_grounded("R", jd) is False
+        assert is_grounded("C", jd) is False
+
+    def test_single_letter_keyword_grounds_as_standalone_token(self) -> None:
+        jd = "Statistical modeling in R and low-level systems work in C."
+        assert is_grounded("R", jd) is True
+        assert is_grounded("C", jd) is True
+        assert locate_grounded_span("R", jd) == "R"
+        assert locate_grounded_span("C", jd) == "C"
+
+    def test_keyword_grounds_when_bordered_by_hyphen(self) -> None:
+        # A hyphen is a non-alphanumeric boundary, so "AI" is a whole token in the
+        # hyphenated compound "AI-native" and legitimately grounds.
+        jd = "We invest in AI-native tooling across the org."
+        assert is_grounded("AI", jd) is True
+        assert locate_grounded_span("AI", jd) == "AI"
+
+    def test_multi_word_span_grounds_across_internal_whitespace_and_snaps(self) -> None:
+        # The anchor constrains only the OUTER edges: a multi-word span still
+        # matches across its internal whitespace run and snaps to verbatim source.
+        jd = "You will operate production\n   Kubernetes clusters at scale."
+        assert is_grounded("production Kubernetes clusters", jd) is True
+        assert locate_grounded_span("production Kubernetes clusters", jd) == (
+            "production\n   Kubernetes clusters"
+        )
+
+    def test_sub_word_hit_before_standalone_token_snaps_to_the_real_token(self) -> None:
+        # "goals" precedes a standalone "Go"; the locator must skip the sub-word
+        # occurrence and snap to the real token, never the mid-word "go" fragment.
+        jd = "Our goals are ambitious and we ship Go services daily."
+        assert is_grounded("Go", jd) is True
+        assert locate_grounded_span("Go", jd) == "Go"
+
+    def test_ground_and_snap_rejects_keyword_grounded_only_by_a_sub_word(self) -> None:
+        # End-to-end hard gate: a hallucinated keyword whose only "evidence" is a
+        # sub-word fragment is rejected, not snapped to the fragment.
+        jd = "We set ambitious goals and value attention to detail."
+        bad = _analysis(
+            requirements=[_requirement(id="r1", text="mission", evidence_span="ambitious goals")],
+            keywords=[ReasonedKeyword(keyword="Go", evidence_span="Go", requirement_ref="r1")],
+        )
+        with pytest.raises(GroundingError) as exc:
+            ground_and_snap(bad, jd)
+        assert [(v.kind, v.ref_id) for v in exc.value.violations] == [("keyword", "Go")]
+
+
+# --------------------------------------------------------------------------- #
 # Cache key (D-11/D-12)
 # --------------------------------------------------------------------------- #
 

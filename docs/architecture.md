@@ -170,10 +170,13 @@ through the analysis draft/synthesizer ports, not the generic LLM client.
   folding formatting-insignificant variation (whitespace runs, Unicode
   hyphen/dash variants, smart quotes, case), then **snaps** the stored span to
   the JD's verbatim text at the match so persisted evidence is always
-  copy-paste-findable. A span whose WORDS are absent from the snapshot (a
-  paraphrase, synonym, or hallucination) is still rejected — the cardinal
-  correctness gate, run on every draft and on the synthesized canonical before
-  persistence. JSON Schema cannot express this, so it is a separate hard check.
+  copy-paste-findable. The match must align to whole-token boundaries (its outer
+  edges border a non-alphanumeric or the string edge), so a short span cannot
+  ground INSIDE a larger word (a fabricated `"Go"` against `"goals"`). A span
+  whose WORDS are absent from the snapshot (a paraphrase, synonym, or
+  hallucination) is still rejected — the cardinal correctness gate, run on every
+  draft and on the synthesized canonical before persistence. JSON Schema cannot
+  express this, so it is a separate hard check.
 - **Ports + adapters** (`domain/ports/materials.py`,
   `infrastructure/analysis/`): the use case depends on `AnalysisDraftPort` /
   `AnalysisSynthesizerPort`, never on a concrete SDK. The ensemble runs the legs
