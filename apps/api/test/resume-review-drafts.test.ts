@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureResumeReviewTables,
 } from "../src/resume-review-drafts.js";
+import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
@@ -16,12 +17,23 @@ const NOW = "2026-06-24T09:00:00.000Z";
 
 let tempDir = "";
 let options: BuildAppOptions;
+let renderedPdfInputs: ResumeHtmlPdfRenderInput[] = [];
+
+// Stand-in for the Playwright HTML-to-PDF subprocess: records the render inputs
+// and writes the exact HTML the flow built so tests inspect the full resume
+// content instead of spawning a browser.
+const resumePdfRenderer: ResumeHtmlPdfRenderer = (input) => {
+  renderedPdfInputs.push(input);
+  fs.writeFileSync(input.pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(input.htmlPath, "utf8")}`);
+};
 
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-resume-review-"));
+  renderedPdfInputs = [];
   options = {
     dbPath: path.join(tempDir, "jobhunter.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
+    resumePdfRenderer,
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "queued",
       runId: "unexpected-run",
@@ -625,6 +637,118 @@ describe("resume review draft API", () => {
         line_number: 3,
         text_excerpt: "- Led platform reliability work across 3 critical services.",
       });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("renders every line of a long edited resume into the promoted PDF without truncation", async () => {
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+
+    const longBullet =
+      "- Owned the end-to-end reliability roadmap across ingestion, streaming, storage, and serving tiers while mentoring a large distributed platform engineering organization.";
+    const editedLines = ["Eloi Example", "Experience"];
+    for (let index = 1; index <= 70; index += 1) {
+      editedLines.push(
+        index === 30 ? longBullet : `- Delivered platform outcome number ${index} across critical services.`,
+      );
+    }
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: { editedText: editedLines.join("\n"), editDeltas: [] },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const renderResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(renderResponse.statusCode, renderResponse.body).toBe(200);
+    const body = renderResponse.json();
+    expect(body.ok).toBe(true);
+    expect(body.artifacts.resumePdf.renderFormat).toBe("html_pdf");
+
+    expect(renderedPdfInputs).toHaveLength(1);
+    const renderedHtml = fs.readFileSync(renderedPdfInputs[0]!.htmlPath, "utf8");
+    expect(renderedHtml).toContain("Delivered platform outcome number 70 across critical services.");
+    expect(renderedHtml).toContain(longBullet.replace(/^- /, ""));
+
+    const db = new Database(options.dbPath);
+    try {
+      const replacementPdf = db
+        .prepare("SELECT path FROM job_materials_artifacts WHERE artifact_id = ?")
+        .get(body.artifacts.resumePdf.artifactId) as { path: string } | undefined;
+      const pdf = fs.readFileSync(replacementPdf?.path ?? "", "utf8");
+      expect(pdf).toContain("Delivered platform outcome number 70 across critical services.");
+      expect(pdf).toContain(longBullet.replace(/^- /, ""));
+      // The deleted hand-rolled writer emitted a fixed single-page text stream.
+      expect(pdf).not.toContain("72 750 Td");
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("fails the render and preserves prior approved artifacts when the PDF renderer throws", async () => {
+    const app = buildApp({
+      ...options,
+      resumePdfRenderer: () => {
+        throw new Error("chromium unavailable");
+      },
+    });
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: ["Eloi Example", "Experience", "- Led reliability work across services.", "Skills", "- TypeScript"].join(
+          "\n",
+        ),
+        editDeltas: [],
+      },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const renderResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(renderResponse.statusCode).toBe(500);
+
+    const db = new Database(options.dbPath);
+    try {
+      const artifacts = db
+        .prepare("SELECT artifact_id, status, generation FROM job_materials_artifacts ORDER BY artifact_id")
+        .all() as Array<{ artifact_id: string; status: string; generation: number }>;
+      expect(artifacts).toEqual([
+        { artifact_id: "resume-pdf-v1", status: "approved", generation: 1 },
+        { artifact_id: "resume-pdf-v2", status: "approved", generation: 2 },
+        { artifact_id: "resume-text-v1", status: "approved", generation: 1 },
+        { artifact_id: "resume-text-v2", status: "approved", generation: 2 },
+      ]);
+      const draftRow = db
+        .prepare("SELECT state FROM resume_review_drafts WHERE draft_id = ?")
+        .get(draftId) as { state: string };
+      expect(draftRow.state).toBe("active");
     } finally {
       db.close();
     }

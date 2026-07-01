@@ -23,6 +23,9 @@ beforeEach(() => {
       pdfBytes: Buffer.from("%PDF-1.4\n% QA preview\n"),
       htmlText: '<main class="resume-page">QA preview</main>',
     }),
+    resumePdfRenderer: ({ htmlPath, pdfPath }) => {
+      fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+    },
   };
 });
 

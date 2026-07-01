@@ -83,6 +83,9 @@ beforeEach(() => {
     dbPath: path.join(tempDir, "jobhunter.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
+    resumePdfRenderer: ({ htmlPath, pdfPath }) => {
+      fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+    },
   };
   strayProfileExportPath = path.join(tempDir, "candidate-profile-export.json");
   strayStyleExportPath = path.join(tempDir, "resume-rendering-export.json");

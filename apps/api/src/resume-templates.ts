@@ -28,6 +28,7 @@ import {
   ResumeTemplateThemeSchema,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
@@ -417,6 +418,7 @@ export function ensureCurrentResumeTemplateMaterials(
   db: SqliteDatabase,
   jobKey: string,
   options: { force?: boolean } = {},
+  renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): EnsureCurrentResumeMaterialsResponse {
   ensureResumeTemplateTables(db);
   assertJobExists(db, jobKey);
@@ -476,7 +478,7 @@ export function ensureCurrentResumeTemplateMaterials(
   });
 
   try {
-    const refreshed = persistRenderOnlyRefresh(db, jobKey, reusableMaterial, initialState.effective);
+    const refreshed = persistRenderOnlyRefresh(db, jobKey, reusableMaterial, initialState.effective, renderPdf);
     const attempt = recordRefreshAttempt(db, {
       jobKey,
       status: "completed",
@@ -541,7 +543,11 @@ export function ensureCurrentResumeTemplateMaterials(
   }
 }
 
-export function resolveCurrentResumeArtifactIdForOpen(db: SqliteDatabase, artifactId: string): string {
+export function resolveCurrentResumeArtifactIdForOpen(
+  db: SqliteDatabase,
+  artifactId: string,
+  renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
+): string {
   ensureResumeTemplateTables(db);
   if (!tableExists(db, "job_materials_artifacts")) return artifactId;
   const columns = tableColumnSet(db, "job_materials_artifacts");
@@ -568,7 +574,7 @@ export function resolveCurrentResumeArtifactIdForOpen(db: SqliteDatabase, artifa
     return artifactId;
   }
 
-  const refresh = ensureCurrentResumeTemplateMaterials(db, row.job_url);
+  const refresh = ensureCurrentResumeTemplateMaterials(db, row.job_url, {}, renderPdf);
   if (refresh.status !== "completed" && refresh.status !== "not_required") {
     return artifactId;
   }
@@ -1003,6 +1009,7 @@ function persistRenderOnlyRefresh(
   jobKey: string,
   material: { generation: number; text: MaterialArtifactRow; pdf: MaterialArtifactRow | null },
   effective: ResumeTemplateMetadata,
+  renderPdf: ResumeHtmlPdfRenderer,
 ): { generation: number } {
   if (!material.text.path || !fs.existsSync(material.text.path) || !fs.statSync(material.text.path).isFile()) {
     throw new ResumeTemplateInputError("Latest accepted resume text artifact is not readable.");
@@ -1028,7 +1035,7 @@ function persistRenderOnlyRefresh(
 
   fs.writeFileSync(textPath, text, "utf8");
   fs.writeFileSync(htmlPath, htmlForTemplateRefresh(text, effective), "utf8");
-  fs.writeFileSync(pdfPath, pdfBufferForText(text));
+  renderPdf({ htmlPath, pdfPath });
 
   insertDynamicRow(db, "job_materials", {
     job_url: jobKey,
@@ -1190,46 +1197,9 @@ function htmlForTemplateRefresh(text: string, effective: ResumeTemplateMetadata)
       li { margin-left: 18px; }
     </style>
   </head>
-  <body><main class="resume-document">${lines}</main></body>
+  <body><main class="resume-document" data-resume-page="1">${lines}</main></body>
 </html>
 `;
-}
-
-function pdfBufferForText(text: string): Buffer {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 58)
-    .map((line) => line.slice(0, 110));
-  const content = [
-    "BT",
-    "/F1 10 Tf",
-    "14 TL",
-    "72 750 Td",
-    ...lines.flatMap((line) => [`(${escapePdfText(line)}) Tj`, "T*"]),
-    "ET",
-  ].join("\n");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`,
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  for (const [index, object] of objects.entries()) {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  }
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets.slice(1)) {
-    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return Buffer.from(pdf, "utf8");
 }
 
 function noRefreshResponse(
@@ -1362,8 +1332,4 @@ function escapeHtml(value: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
-}
-
-function escapePdfText(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
