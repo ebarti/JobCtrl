@@ -362,6 +362,28 @@ def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
     assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "experience:acme_swe:bullet:1"
 
 
+def test_render_resume_html_to_pdf_passes_full_html_to_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_render(html_content: str, output_path: str) -> list[dict]:
+        captured["html"] = html_content
+        Path(output_path).write_bytes(b"%PDF-html")
+        return []
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", fake_render)
+
+    body = "<main data-resume-page='1'>" + "".join(f"<li>Line {index}</li>" for index in range(1, 71)) + "</main>"
+    out = tmp_path / "edited.pdf"
+    html_resume_pdf.render_resume_html_to_pdf(body, str(out))
+
+    assert out.exists()
+    assert captured["html"] == body
+    assert "Line 70" in captured["html"]
+
+
 def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

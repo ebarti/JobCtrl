@@ -835,6 +835,17 @@ def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[L
             browser.close()
 
 
+def render_resume_html_to_pdf(html_content: str, output_path: str) -> list[LayoutBox]:
+    """Render pre-built resume HTML to a paginated PDF via the shared Playwright path.
+
+    The TypeScript resume-review render and template-refresh flows build the resume
+    HTML themselves and need it rendered to a full multi-page PDF, not the truncated
+    single-page fallback they previously hand-rolled.
+    """
+
+    return _render_resume_pdf_playwright(html_content, output_path)
+
+
 class HtmlResumePdfAdapter:
     """Concrete ``PdfRendererPort`` that renders tailored resumes via HTML/CSS."""
 
@@ -900,4 +911,5 @@ __all__ = [
     "build_resume_document",
     "build_resume_html",
     "normalize_resume_date_range",
+    "render_resume_html_to_pdf",
 ]

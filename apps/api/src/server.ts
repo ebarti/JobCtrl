@@ -140,6 +140,7 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { refreshProjections } from "./projections.js";
+import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   createOrLoadResumeReviewDraft,
   getResumeReviewDraftForJob,
@@ -218,6 +219,7 @@ export interface BuildAppOptions {
   placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
+  resumePdfRenderer?: ResumeHtmlPdfRenderer;
   requireHealthyWorkerForActions?: boolean;
   logger?: boolean;
 }
@@ -233,6 +235,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const gmailFeedbackScanner = options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
+  const resumePdfRenderer = options.resumePdfRenderer ?? defaultResumeHtmlPdfRenderer;
   const actionContext = { appDir, dbPath: options.dbPath };
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
@@ -659,7 +662,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        ensureCurrentResumeTemplateMaterials(db, decodeRouteParam(request.params.jobKey), body),
+        ensureCurrentResumeTemplateMaterials(db, decodeRouteParam(request.params.jobKey), body, resumePdfRenderer),
       );
     },
   );
@@ -685,7 +688,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        createOrLoadResumeReviewDraft(db, decodeRouteParam(request.params.jobKey), body),
+        createOrLoadResumeReviewDraft(db, decodeRouteParam(request.params.jobKey), body, resumePdfRenderer),
       );
     },
   );
@@ -732,7 +735,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) => {
-        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body);
+        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
         if (result.ok) {
           refreshProjections(db);
         }
@@ -1664,7 +1667,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.post<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/open", async (request, reply) => {
     const resolvedArtifactId = await withWritableDb(reply, options.dbPath, (db) =>
-      resolveCurrentResumeArtifactIdForOpen(db, decodeRouteParam(request.params.artifactId)),
+      resolveCurrentResumeArtifactIdForOpen(db, decodeRouteParam(request.params.artifactId), resumePdfRenderer),
     );
     if (typeof resolvedArtifactId !== "string") {
       return resolvedArtifactId;

@@ -16,9 +16,17 @@ import {
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
 } from "../src/resume-templates.js";
+import type { ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 
 const JOB_KEY = "https://example.com/jobs/template-engineer";
 const NOW = "2026-06-24T10:00:00.000Z";
+
+// Stand-in for the Playwright HTML-to-PDF subprocess: it renders the exact HTML
+// the refresh built, so tests inspect the full resume content instead of spawning
+// a browser.
+const renderHtmlToPdf: ResumeHtmlPdfRenderer = ({ htmlPath, pdfPath }) => {
+  fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+};
 
 let tempDir = "";
 let db: Database.Database;
@@ -110,7 +118,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
     expect(refresh.generation).toBe(2);
     expect(refresh.templateState?.state).toBe("template_current");
@@ -154,7 +162,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const resolved = resolveCurrentResumeArtifactIdForOpen(db, "resume-pdf-v1");
+    const resolved = resolveCurrentResumeArtifactIdForOpen(db, "resume-pdf-v1", renderHtmlToPdf);
     expect(resolved).not.toBe("resume-pdf-v1");
     expect(resolved).toMatch(/^template_refresh_pdf_/);
   });
@@ -174,7 +182,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("unavailable");
     expect(refresh.generation).toBeNull();
     expect(refresh.templateState?.state).toBe("refresh_unavailable");
@@ -193,6 +201,75 @@ describe("resume template service", () => {
       .prepare("SELECT payload_json FROM job_events WHERE event_type = 'ResumeTemplateRefreshFailed'")
       .get() as { payload_json: string } | undefined;
     expect(event?.payload_json).toContain("unavailable");
+  });
+
+  it("renders every line of a long resume across the refreshed PDF without truncation", () => {
+    const longBullet =
+      "- Drove a company-wide reliability program spanning ingestion, streaming, and storage tiers while mentoring a distributed platform and product engineering team.";
+    const lines = ["Jordan Candidate", "Platform Engineering Leader", "Experience"];
+    for (let index = 1; index <= 70; index += 1) {
+      lines.push(
+        index === 42 ? longBullet : `- Delivered measurable platform outcome number ${index} for critical services.`,
+      );
+    }
+    fs.writeFileSync(path.join(tempDir, "resume-v1.txt"), lines.join("\n"));
+
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Long resume refresh",
+      theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
+      layout: {},
+    });
+    setDefaultResumeTemplate(db, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
+    expect(refresh.status).toBe("completed");
+
+    const refreshedPdf = db
+      .prepare("SELECT path FROM job_materials_artifacts WHERE artifact_type = 'resume_pdf' AND generation = ?")
+      .get(refresh.generation) as { path: string } | undefined;
+    const pdf = fs.readFileSync(refreshedPdf?.path ?? "", "utf8");
+    expect(pdf).toContain("Delivered measurable platform outcome number 70 for critical services.");
+    expect(pdf).toContain(longBullet.replace(/^- /, ""));
+    expect(pdf.length).toBeGreaterThan(longBullet.length);
+    // The deleted hand-rolled writer emitted a fixed single-page text stream.
+    expect(pdf).not.toContain("72 750 Td");
+  });
+
+  it("keeps the last accepted resume artifact when the PDF render fails", () => {
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Failing render template",
+      theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
+      layout: {},
+    });
+    setDefaultResumeTemplate(db, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+
+    const failingRenderer: ResumeHtmlPdfRenderer = () => {
+      throw new Error("chromium unavailable");
+    };
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, failingRenderer);
+    expect(refresh.status).toBe("failed");
+    expect(refresh.generation).toBeNull();
+    expect(refresh.templateState?.state).toBe("refresh_failed");
+
+    const materials = db
+      .prepare("SELECT generation FROM job_materials ORDER BY generation")
+      .all() as Array<{ generation: number }>;
+    expect(materials).toEqual([{ generation: 1 }]);
+    const pdf = db
+      .prepare("SELECT artifact_id, status FROM job_materials_artifacts WHERE artifact_type = 'resume_pdf'")
+      .get() as { artifact_id: string; status: string } | undefined;
+    expect(pdf).toEqual({ artifact_id: "resume-pdf-v1", status: "approved" });
+
+    const failedEvent = db
+      .prepare("SELECT payload_json FROM job_events WHERE event_type = 'ResumeTemplateRefreshFailed'")
+      .get() as { payload_json: string } | undefined;
+    expect(failedEvent?.payload_json).toContain("failed");
   });
 });
 

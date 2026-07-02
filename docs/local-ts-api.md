@@ -80,9 +80,12 @@ version, `PATCH /v1/resume-templates/default` selects the default template, and
 `PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
 render-only materials generation when the latest accepted resume text exists
-but was rendered with an older effective template. The endpoint preserves the
-existing accepted artifacts and records refresh status instead of modifying
-profile data or replacing reviewable output in place.
+but was rendered with an older effective template. The refreshed `resume_pdf`
+is rendered from the resume HTML through the same Playwright `HtmlResumePdfAdapter`
+(`render_format = 'html_pdf'`), so it is a full multi-page document rather than a
+truncated fallback. The endpoint preserves the existing accepted artifacts and
+records refresh status (including a `failed` attempt when the render fails)
+instead of modifying profile data or replacing reviewable output in place.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,
@@ -433,7 +436,12 @@ verification-code MCP server:
   `resume_pdf` artifacts plus layout boxes, and marks the draft promoted. It
   returns structured validation errors instead of replacing materials when the
   edited resume is empty, too short, renderer-incompatible, or carries explicit
-  unsupported-claim markers.
+  unsupported-claim markers. The `resume_pdf` artifact is produced by rendering
+  the edited resume HTML through the same Playwright `HtmlResumePdfAdapter` the
+  worker uses (`render_format = 'html_pdf'`), so it captures every edited
+  line/section across as many pages as the content needs rather than a truncated
+  single page. If that render fails the promotion is aborted and the previous
+  approved generation is left intact.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
   payloads so the Jobs drawer and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard

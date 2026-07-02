@@ -30,6 +30,7 @@ import type {
   TailoringFeedbackSourceKind,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import { ensureCurrentResumeTemplateMaterials } from "./resume-templates.js";
 import { InputError } from "./write-model.js";
 
@@ -289,9 +290,10 @@ export function createOrLoadResumeReviewDraft(
   db: SqliteDatabase,
   jobKey: string,
   request: ResumeReviewDraftCreateRequest = {},
+  renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): ResumeReviewDraftResponse {
   ensureResumeReviewTables(db);
-  const refresh = ensureCurrentResumeTemplateMaterials(db, jobKey);
+  const refresh = ensureCurrentResumeTemplateMaterials(db, jobKey, {}, renderPdf);
   if (refresh.status === "failed" || refresh.status === "unavailable") {
     throw new InputError(refresh.message ?? "Resume template refresh did not complete.");
   }
@@ -538,6 +540,7 @@ export function renderResumeReviewDraft(
   db: SqliteDatabase,
   draftId: string,
   request: ResumeReviewDraftRenderRequest = {},
+  renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): ResumeReviewDraftRenderResponse {
   ensureResumeReviewTables(db);
   const tx = db.transaction(() => {
@@ -558,7 +561,7 @@ export function renderResumeReviewDraft(
     }
 
     ensureMaterialStorageTables(db);
-    const artifacts = persistRenderedDraftArtifacts(db, draft, revision, validation);
+    const artifacts = persistRenderedDraftArtifacts(db, draft, revision, validation, renderPdf);
     const now = new Date().toISOString();
     markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
     db.prepare(
@@ -831,6 +834,7 @@ function persistRenderedDraftArtifacts(
   draft: ResumeReviewDraftRow,
   revision: ResumeReviewDraftRevisionRow,
   validation: ResumeReviewDraftValidation,
+  renderPdf: ResumeHtmlPdfRenderer,
 ): RenderedResumeArtifacts {
   const outputDir = renderOutputDirectory(db, draft);
   if (!outputDir) {
@@ -851,7 +855,7 @@ function persistRenderedDraftArtifacts(
 
   fs.writeFileSync(textPath, editedText, "utf8");
   fs.writeFileSync(htmlPath, htmlForEditedResume(editedText), "utf8");
-  fs.writeFileSync(pdfPath, pdfBufferForEditedResume(editedText));
+  renderPdf({ htmlPath, pdfPath });
 
   insertDynamicRow(db, "job_materials", {
     job_url: draft.job_key,
@@ -1184,48 +1188,6 @@ function contactLine(line: string): boolean {
 
 function metadataLine(line: string): boolean {
   return /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(line);
-}
-
-function pdfBufferForEditedResume(editedText: string): Buffer {
-  const lines = editedText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 58)
-    .map((line) => line.slice(0, 110));
-  const content = [
-    "BT",
-    "/F1 10 Tf",
-    "14 TL",
-    "72 750 Td",
-    ...lines.flatMap((line) => [`(${escapePdfText(line)}) Tj`, "T*"]),
-    "ET",
-  ].join("\n");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`,
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  for (const [index, object] of objects.entries()) {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  }
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  for (const offset of offsets.slice(1)) {
-    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return Buffer.from(pdf, "utf8");
-}
-
-function escapePdfText(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
 
 function escapeHtml(value: string): string {
