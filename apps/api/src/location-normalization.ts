@@ -1,3 +1,18 @@
+/**
+ * normalizeJobLocation — canonical location normalization for the read-model
+ * projections. Mirrored in Python at
+ * workers/automation/src/jobhunter/infrastructure/projections/location_normalization.py.
+ *
+ * The TS and Python projection builders both write ``job_list_projections.location``
+ * and MUST produce byte-identical output. Keep this module in lockstep with the
+ * Python ``normalize_job_location``; the shared cross-runtime location table
+ * (``packages/domain-types/test/fixtures/audit_projection_parity.json`` →
+ * ``locationCases``, exercised by both ``apps/api/test/location-normalization.test.ts``
+ * and ``workers/automation/tests/test_location_normalization.py``) fails if the two
+ * implementations drift. Any change to the Spain region labels, the country tokens,
+ * or the remote-token/marker patterns below must be mirrored in Python and covered
+ * by a shared ``locationCases`` entry.
+ */
 const SPAIN_REGION_LABELS: Record<string, string> = {
   AN: "Andalusia",
   CT: "Catalonia",

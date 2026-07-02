@@ -1,13 +1,128 @@
 {
-  "description": "Shared TS<->Python cross-runtime projection parity fixture for the Phase 4 audit tables (AUDIT-02). Both the Python builder test (workers/automation/tests/test_audit_projection_parity.py) and the TS builder test (apps/api/test/audit-projection-parity.test.ts) seed the SAME canonical rows, run their OWN projection builder, and assert the resulting projection-column JSON equals `expected` key-for-key. Because both builders are checked against one expectation, a schema/serialisation drift in either runtime fails its test. `rows` are the canonical SQL rows exactly as the Python repositories write them; `expected` is the projection-column JSON both builders own (snake_case, the read-model serves it verbatim for employer analysis and converts provenance/coverage/voice to camelCase DTOs).",
+  "description": "Shared TS<->Python cross-runtime projection parity fixture (AUDIT-02). Both the Python builder test (workers/automation/tests/test_audit_projection_parity.py) and the TS builder test (apps/api/test/audit-projection-parity.test.ts) seed the SAME canonical rows, run their OWN projection builder, and assert the resulting projection columns match. `rows` are the canonical SQL rows exactly as the Python repositories write them. `expected` is the audit read shape both builders own (employer analysis verbatim; provenance/coverage/voice converted to camelCase DTOs by the read model). `expectedProjections` is the FULL dual-written column set for job_list_projections / job_detail_projections / dashboard_projections: every deterministic column each builder writes, with *_json columns given as parsed objects (both runtimes serialise with different whitespace/key order, so the tests parse before comparing). `projectionParity.jsonColumns` marks which columns to parse; `projectionParity.nonDeterministicColumns` marks wall-clock columns (last_updated_at / generated_at) that are asserted present-and-non-null but excluded from value comparison. Each test also runs a column-set guard: the set of columns its builder emits must equal the expectedProjections keys plus the non-deterministic columns, so a one-sided column addition in EITHER builder's schema fails the shared fixture. This closes the gap that let the Python-omits-score-audit-columns drift ship: the earlier fixture only asserted 4 audit JSON columns and no column-set guard. `dashboardAggregateJobs` seeds extra tenant-level jobs that feed ONLY the dashboard aggregate (the job_list/job_detail assertions target the primary `job` only): a non-hidden apply/pending job with no resume (so dashboard.ready genuinely asserts the has_resume predicate) and a hidden applied job in jobhunter_hidden_jobs (so total_jobs/applied/by_source/score_distribution/funnel genuinely assert hidden-job exclusion). The primary job.location is a non-normalized value (\"Remote - Berlin, Germany\") whose expected job_list.location is the normalized form (\"Berlin, Germany (Remote)\"), so both builders must run the same location normalization. These three columns (location, ready, hidden-job totals) were previously worked around; both builders now converge on them (B2b). The top-level `locationCases` array is a shared TS<->Python table of raw->normalized location inputs consumed by BOTH apps/api/test/location-normalization.test.ts and workers/automation/tests/test_location_normalization.py (which replaced their previously hand-maintained, already-drifted case lists), so neither normalization implementation can change a Spain region label (AN/CT/MD), a country token (ES/ESP/Spain/Espana), or a remote token/marker (remote, en remoto, remoto, teletrabajo, work from home, wfh) without one of those tests going red. It exercises the region-label expansion branch (gated on a Spain country token being present) and the remote-marker branch (every remote token plus the parenthetical markers).",
   "job": {
     "url": "https://example.com/jobs/parity-developer-platform",
     "title": "Senior Platform Engineer",
-    "site": "ParityCo",
+    "company": "ParityCo",
+    "site": "linkedin",
+    "strategy": "jobspy",
+    "location": "Remote - Berlin, Germany",
+    "salary": "EUR 90000-120000/year",
+    "description": "Platform engineering role.",
+    "fullDescription": "Own the developer platform across the fleet. Build paved paths for product teams.",
+    "applicationUrl": "https://parityco.example.com/careers/platform-engineer",
+    "applyStatus": "applied",
+    "appliedAt": "2026-06-08T13:00:00+00:00",
+    "scoreReasoning": "Legacy reasoning column, superseded by job_scores.",
+    "discoveredAt": "2026-06-08T10:00:00+00:00",
     "generation": 2,
     "createdAt": "2026-06-08T12:00:00+00:00"
   },
   "rows": {
+    "jobScores": [
+      {
+        "version": 3,
+        "fit_score": 8,
+        "breakdown_json": "{\"technical_fit\": 8, \"experience_fit\": 7, \"role_fit\": 9, \"reasoning\": \"Strong platform match.\", \"fit_band\": \"strong\", \"confidence\": \"high\", \"eligibility\": {\"status\": \"eligible\", \"hard_blockers\": [], \"warnings\": [\"Visa sponsorship unclear.\"]}, \"matched_signals\": [\"kubernetes\", \"developer platform\"], \"missing_signals\": [\"kafka\"], \"transferable_signals\": [\"golang\"]}",
+        "keywords_json": "[\"developer platform\", \"kubernetes\"]",
+        "scored_at": "2026-06-08T12:05:00+00:00",
+        "criteria_json": "{\"formulaVersion\": \"weighted-v2\", \"weights\": {\"technical\": 0.4, \"experience\": 0.3, \"role\": 0.3}, \"mustHaves\": [\"5+ years platform engineering\"]}",
+        "trace_json": "{\"model\": \"claude-opus-4-8\", \"promptVersion\": \"score-v3\", \"inputTokens\": 1200, \"outputTokens\": 320}",
+        "correction_json": "{\"corrected\": true, \"reason\": \"Manual override after recruiter call.\", \"previousFitScore\": 6, \"correctedAt\": \"2026-06-08T12:30:00+00:00\"}"
+      }
+    ],
+    "jobStageStates": [
+      {
+        "stage": "discover",
+        "state": "succeeded",
+        "attempt_count": 1,
+        "max_attempts": 1,
+        "started_at": "2026-06-08T10:00:00+00:00",
+        "updated_at": "2026-06-08T10:00:05+00:00",
+        "finished_at": "2026-06-08T10:00:05+00:00",
+        "duration_ms": 5000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      },
+      {
+        "stage": "enrich",
+        "state": "succeeded",
+        "attempt_count": 1,
+        "max_attempts": 3,
+        "started_at": "2026-06-08T10:01:00+00:00",
+        "updated_at": "2026-06-08T10:01:10+00:00",
+        "finished_at": "2026-06-08T10:01:10+00:00",
+        "duration_ms": 10000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      },
+      {
+        "stage": "score",
+        "state": "succeeded",
+        "attempt_count": 1,
+        "max_attempts": 3,
+        "started_at": "2026-06-08T12:05:00+00:00",
+        "updated_at": "2026-06-08T12:05:30+00:00",
+        "finished_at": "2026-06-08T12:05:30+00:00",
+        "duration_ms": 30000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      },
+      {
+        "stage": "tailor",
+        "state": "succeeded",
+        "attempt_count": 2,
+        "max_attempts": 5,
+        "started_at": "2026-06-08T12:10:00+00:00",
+        "updated_at": "2026-06-08T12:12:00+00:00",
+        "finished_at": "2026-06-08T12:12:00+00:00",
+        "duration_ms": 120000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      },
+      {
+        "stage": "cover",
+        "state": "succeeded",
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "started_at": "2026-06-08T12:15:00+00:00",
+        "updated_at": "2026-06-08T12:16:00+00:00",
+        "finished_at": "2026-06-08T12:16:00+00:00",
+        "duration_ms": 60000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      },
+      {
+        "stage": "apply",
+        "state": "succeeded",
+        "attempt_count": 1,
+        "max_attempts": 3,
+        "started_at": "2026-06-08T13:00:00+00:00",
+        "updated_at": "2026-06-08T13:00:30+00:00",
+        "finished_at": "2026-06-08T13:00:30+00:00",
+        "duration_ms": 30000,
+        "error_code": null,
+        "error_message": null,
+        "retryable": 1,
+        "blocked_by_json": null,
+        "next_action": null
+      }
+    ],
     "jobEmployerAnalysis": [
       {
         "generation": 1,
@@ -114,6 +229,552 @@
       }
     ]
   },
+  "dashboardAggregateJobs": [
+    {
+      "note": "Non-hidden job parked at apply/pending with NO resume. Canonical (TS) excludes it from `ready` because has_resume != 1; the pre-fix Python builder counted any apply/pending job, so this row makes dashboard.ready a genuine cross-runtime assertion (canonical ready == 0, pre-fix Python == 1).",
+      "hidden": false,
+      "url": "https://example.com/jobs/parity-ready-no-resume",
+      "title": "Ready Pending No Resume",
+      "company": "ReadyCo",
+      "site": "linkedin",
+      "strategy": "jobspy",
+      "location": "Berlin, Germany",
+      "applyStatus": null,
+      "appliedAt": null,
+      "tailoredResumePath": null,
+      "discoveredAt": "2026-06-08T09:00:00+00:00",
+      "fitScore": null,
+      "stages": [
+        { "stage": "discover", "state": "succeeded" },
+        { "stage": "enrich", "state": "succeeded" },
+        { "stage": "score", "state": "succeeded" },
+        { "stage": "tailor", "state": "succeeded" },
+        { "stage": "cover", "state": "succeeded" },
+        { "stage": "apply", "state": "pending" }
+      ]
+    },
+    {
+      "note": "Hidden job with outcomes (applied). Canonical (TS) excludes hidden jobs (jobhunter_hidden_jobs, unhidden_at IS NULL) from every dashboard total; the pre-fix Python builder counted it, so this row makes total_jobs/applied/by_source/score_distribution/funnel genuine cross-runtime assertions.",
+      "hidden": true,
+      "url": "https://example.com/jobs/parity-hidden-applied",
+      "title": "Hidden Applied",
+      "company": "HiddenCo",
+      "site": "indeed",
+      "strategy": "jobspy",
+      "location": "Remote",
+      "applyStatus": "applied",
+      "appliedAt": "2026-06-07T13:00:00+00:00",
+      "tailoredResumePath": "/tmp/parity-hidden-resume.txt",
+      "discoveredAt": "2026-06-07T09:00:00+00:00",
+      "fitScore": 7,
+      "stages": [
+        { "stage": "discover", "state": "succeeded" },
+        { "stage": "enrich", "state": "succeeded" },
+        { "stage": "score", "state": "succeeded" },
+        { "stage": "tailor", "state": "succeeded" },
+        { "stage": "cover", "state": "succeeded" },
+        { "stage": "apply", "state": "succeeded" }
+      ]
+    }
+  ],
+  "projectionParity": {
+    "jsonColumns": {
+      "jobList": [
+        "compensation_summary_json",
+        "score_breakdown_json",
+        "score_keywords_json",
+        "score_criteria_json",
+        "score_trace_json",
+        "score_correction_json"
+      ],
+      "jobDetail": [
+        "compensation_summary_json",
+        "compensation_audit_json",
+        "score_breakdown_json",
+        "score_keywords_json",
+        "score_criteria_json",
+        "score_trace_json",
+        "score_correction_json",
+        "stages_json",
+        "employer_analysis_json",
+        "requirement_fit_report_json"
+      ],
+      "dashboard": [
+        "funnel_json",
+        "by_source_json",
+        "score_distribution_json"
+      ]
+    },
+    "nonDeterministicColumns": {
+      "jobList": [
+        "last_updated_at"
+      ],
+      "jobDetail": [
+        "last_updated_at"
+      ],
+      "dashboard": [
+        "generated_at"
+      ]
+    }
+  },
+  "expectedProjections": {
+    "jobList": {
+      "application_url": "https://parityco.example.com/careers/platform-engineer",
+      "applied_at": "2026-06-08T13:00:00+00:00",
+      "apply_status": "applied",
+      "artifact_count": 3,
+      "compensation_summary_json": {
+        "legacyRawSalary": "EUR 90000-120000/year",
+        "market": {
+          "confidenceBand": "none",
+          "confidenceInterval": null,
+          "confidenceScore": null,
+          "displayConfidenceInterval": null,
+          "displayRange": null,
+          "estimateState": "not_requested",
+          "range": null,
+          "recordStatus": "not_requested",
+          "sampleCount": null,
+          "sourceCount": 0,
+          "sourceKind": "reported_company_role_market",
+          "warningCount": 0
+        },
+        "posted": {
+          "confidence": "none",
+          "displayRange": null,
+          "parseState": null,
+          "range": null,
+          "recordStatus": "not_recorded",
+          "sourceKind": "posted",
+          "warningCount": 0
+        },
+        "projectionVersion": 1,
+        "warningCount": 0
+      },
+      "current_error_code": null,
+      "current_error_message": null,
+      "current_next_action": null,
+      "current_stage": "apply",
+      "current_state": "succeeded",
+      "current_substage": "apply",
+      "deleted_at": null,
+      "description": "Platform engineering role.",
+      "discovered_at": "2026-06-08T10:00:00+00:00",
+      "employer": "ParityCo",
+      "fit_score": 8,
+      "full_description": "Own the developer platform across the fleet. Build paved paths for product teams.",
+      "has_cover_letter": 0,
+      "has_pdf": 1,
+      "has_resume": 1,
+      "job_id": "https://example.com/jobs/parity-developer-platform",
+      "location": "Berlin, Germany (Remote)",
+      "salary": "EUR 90000-120000/year",
+      "score_breakdown_json": {
+        "confidence": "high",
+        "eligibility": {
+          "hardBlockers": [],
+          "status": "eligible",
+          "warnings": [
+            "Visa sponsorship unclear."
+          ]
+        },
+        "experienceFit": 7,
+        "fitBand": "strong",
+        "matchedSignals": [
+          "kubernetes",
+          "developer platform"
+        ],
+        "missingSignals": [
+          "kafka"
+        ],
+        "reasoning": "Strong platform match.",
+        "roleFit": 9,
+        "technicalFit": 8,
+        "transferableSignals": [
+          "golang"
+        ]
+      },
+      "score_correction_json": {
+        "corrected": true,
+        "correctedAt": "2026-06-08T12:30:00+00:00",
+        "previousFitScore": 6,
+        "reason": "Manual override after recruiter call."
+      },
+      "score_criteria_json": {
+        "formulaVersion": "weighted-v2",
+        "mustHaves": [
+          "5+ years platform engineering"
+        ],
+        "weights": {
+          "experience": 0.3,
+          "role": 0.3,
+          "technical": 0.4
+        }
+      },
+      "score_keywords_json": [
+        "developer platform",
+        "kubernetes"
+      ],
+      "score_reasoning": "Strong platform match.",
+      "score_trace_json": {
+        "inputTokens": 1200,
+        "model": "claude-opus-4-8",
+        "outputTokens": 320,
+        "promptVersion": "score-v3"
+      },
+      "score_version": 3,
+      "scored_at": "2026-06-08T12:05:00+00:00",
+      "source": "linkedin",
+      "strategy": "jobspy",
+      "tenant_id": "local",
+      "title": "Senior Platform Engineer"
+    },
+    "jobDetail": {
+      "compensation_audit_json": {
+        "market": {
+          "jobKey": "https://example.com/jobs/parity-developer-platform",
+          "ok": true,
+          "recordStatus": "not_requested"
+        },
+        "posted": {
+          "jobKey": "https://example.com/jobs/parity-developer-platform",
+          "legacyRawSalary": "EUR 90000-120000/year",
+          "ok": true,
+          "recordStatus": "not_recorded"
+        },
+        "projectionVersion": 1
+      },
+      "compensation_summary_json": {
+        "legacyRawSalary": "EUR 90000-120000/year",
+        "market": {
+          "confidenceBand": "none",
+          "confidenceInterval": null,
+          "confidenceScore": null,
+          "displayConfidenceInterval": null,
+          "displayRange": null,
+          "estimateState": "not_requested",
+          "range": null,
+          "recordStatus": "not_requested",
+          "sampleCount": null,
+          "sourceCount": 0,
+          "sourceKind": "reported_company_role_market",
+          "warningCount": 0
+        },
+        "posted": {
+          "confidence": "none",
+          "displayRange": null,
+          "parseState": null,
+          "range": null,
+          "recordStatus": "not_recorded",
+          "sourceKind": "posted",
+          "warningCount": 0
+        },
+        "projectionVersion": 1,
+        "warningCount": 0
+      },
+      "description_preview": "Own the developer platform across the fleet. Build paved paths for product teams.",
+      "employer_analysis_json": {
+        "agreement": {
+          "flagged_keywords": [
+            "kafka"
+          ],
+          "flagged_requirements": [],
+          "score": 0.8
+        },
+        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "created_at": "2026-06-08T12:00:00+00:00",
+        "ensemble_completeness": "1/2",
+        "failures": [
+          {
+            "error": "codex app-server timeout",
+            "model_id": "gpt-5.4",
+            "raw_output": null
+          }
+        ],
+        "generation": 2,
+        "ideal_candidate_narrative": "A hands-on platform owner.",
+        "inferred_seniority": "senior",
+        "is_degraded": true,
+        "keywords": [
+          {
+            "evidence_span": "building developer platforms",
+            "is_orphan": false,
+            "keyword": "developer platform",
+            "rationale": "",
+            "requirement_ref": "r1"
+          }
+        ],
+        "legs_attempted": 2,
+        "legs_succeeded": 1,
+        "prompt_version": "employer-analysis-v1",
+        "requirements": [
+          {
+            "evidence_span": "5+ years building developer platforms",
+            "id": "r1",
+            "text": "5+ years platform engineering",
+            "tier": "must_have",
+            "weight": 0.9
+          }
+        ],
+        "role_framing": "Own the developer platform.",
+        "sdk_set_version": "claude+codex-v1",
+        "snapshot_hash": "hash-new",
+        "sub_analyses": [
+          {
+            "ideal_candidate_narrative": "A hands-on platform owner.",
+            "inferred_seniority": "senior",
+            "keywords": [
+              {
+                "evidence_span": "building developer platforms",
+                "is_orphan": false,
+                "keyword": "developer platform",
+                "rationale": "",
+                "requirement_ref": "r1"
+              }
+            ],
+            "model_id": "claude-opus-4-8",
+            "requirements": [
+              {
+                "evidence_span": "5+ years building developer platforms",
+                "id": "r1",
+                "text": "5+ years platform engineering",
+                "tier": "must_have",
+                "weight": 0.9
+              }
+            ],
+            "role_framing": "Own the developer platform."
+          }
+        ]
+      },
+      "job_id": "https://example.com/jobs/parity-developer-platform",
+      "requirement_fit_report_json": null,
+      "score_breakdown_json": {
+        "confidence": "high",
+        "eligibility": {
+          "hardBlockers": [],
+          "status": "eligible",
+          "warnings": [
+            "Visa sponsorship unclear."
+          ]
+        },
+        "experienceFit": 7,
+        "fitBand": "strong",
+        "matchedSignals": [
+          "kubernetes",
+          "developer platform"
+        ],
+        "missingSignals": [
+          "kafka"
+        ],
+        "reasoning": "Strong platform match.",
+        "roleFit": 9,
+        "technicalFit": 8,
+        "transferableSignals": [
+          "golang"
+        ]
+      },
+      "score_correction_json": {
+        "corrected": true,
+        "correctedAt": "2026-06-08T12:30:00+00:00",
+        "previousFitScore": 6,
+        "reason": "Manual override after recruiter call."
+      },
+      "score_criteria_json": {
+        "formulaVersion": "weighted-v2",
+        "mustHaves": [
+          "5+ years platform engineering"
+        ],
+        "weights": {
+          "experience": 0.3,
+          "role": 0.3,
+          "technical": 0.4
+        }
+      },
+      "score_keywords_json": [
+        "developer platform",
+        "kubernetes"
+      ],
+      "score_reasoning": "Strong platform match.",
+      "score_trace_json": {
+        "inputTokens": 1200,
+        "model": "claude-opus-4-8",
+        "outputTokens": 320,
+        "promptVersion": "score-v3"
+      },
+      "score_version": 3,
+      "scored_at": "2026-06-08T12:05:00+00:00",
+      "stages_json": [
+        {
+          "attempt_count": 1,
+          "blocked_by": [],
+          "duration_ms": 5000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T10:00:05+00:00",
+          "max_attempts": 1,
+          "next_action": null,
+          "retryable": true,
+          "stage": "discover",
+          "started_at": "2026-06-08T10:00:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T10:00:05+00:00"
+        },
+        {
+          "attempt_count": 1,
+          "blocked_by": [],
+          "duration_ms": 10000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T10:01:10+00:00",
+          "max_attempts": 3,
+          "next_action": null,
+          "retryable": true,
+          "stage": "enrich",
+          "started_at": "2026-06-08T10:01:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T10:01:10+00:00"
+        },
+        {
+          "attempt_count": 1,
+          "blocked_by": [],
+          "duration_ms": 30000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T12:05:30+00:00",
+          "max_attempts": 3,
+          "next_action": null,
+          "retryable": true,
+          "stage": "score",
+          "started_at": "2026-06-08T12:05:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T12:05:30+00:00"
+        },
+        {
+          "attempt_count": 2,
+          "blocked_by": [],
+          "duration_ms": 120000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T12:12:00+00:00",
+          "max_attempts": 5,
+          "next_action": null,
+          "retryable": true,
+          "stage": "tailor",
+          "started_at": "2026-06-08T12:10:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T12:12:00+00:00"
+        },
+        {
+          "attempt_count": 1,
+          "blocked_by": [],
+          "duration_ms": 60000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T12:16:00+00:00",
+          "max_attempts": 5,
+          "next_action": null,
+          "retryable": true,
+          "stage": "cover",
+          "started_at": "2026-06-08T12:15:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T12:16:00+00:00"
+        },
+        {
+          "attempt_count": 1,
+          "blocked_by": [],
+          "duration_ms": 30000,
+          "error_code": null,
+          "error_message": null,
+          "finished_at": "2026-06-08T13:00:30+00:00",
+          "max_attempts": 3,
+          "next_action": null,
+          "retryable": true,
+          "stage": "apply",
+          "started_at": "2026-06-08T13:00:00+00:00",
+          "state": "succeeded",
+          "updated_at": "2026-06-08T13:00:30+00:00"
+        }
+      ],
+      "tenant_id": "local"
+    },
+    "dashboard": {
+      "applied": 1,
+      "blocked": 0,
+      "by_source_json": [
+        [
+          "linkedin",
+          2
+        ]
+      ],
+      "dry_runs": 0,
+      "failures": 0,
+      "funnel_json": [
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 0,
+          "running": 0,
+          "stage": "discover",
+          "succeeded": 2,
+          "total": 2
+        },
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 0,
+          "running": 0,
+          "stage": "enrich",
+          "succeeded": 2,
+          "total": 2
+        },
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 0,
+          "running": 0,
+          "stage": "score",
+          "succeeded": 2,
+          "total": 2
+        },
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 0,
+          "running": 0,
+          "stage": "tailor",
+          "succeeded": 2,
+          "total": 2
+        },
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 0,
+          "running": 0,
+          "stage": "cover",
+          "succeeded": 2,
+          "total": 2
+        },
+        {
+          "blocked": 0,
+          "failed": 0,
+          "pending": 1,
+          "running": 0,
+          "stage": "apply",
+          "succeeded": 1,
+          "total": 2
+        }
+      ],
+      "ready": 0,
+      "score_distribution_json": [
+        [
+          8,
+          1
+        ]
+      ],
+      "tenant_id": "local",
+      "total_jobs": 2
+    }
+  },
   "expected": {
     "employerAnalysisJson": {
       "generation": 2,
@@ -129,7 +790,9 @@
       "agreement": {
         "score": 0.8,
         "flagged_requirements": [],
-        "flagged_keywords": ["kafka"]
+        "flagged_keywords": [
+          "kafka"
+        ]
       },
       "role_framing": "Own the developer platform.",
       "inferred_seniority": "senior",
@@ -203,9 +866,15 @@
         "bullet_id": "experience:acme#0",
         "section": "experience",
         "source_id": "acme",
-        "evidence_ids": ["ev_platform"],
-        "requirement_ids": ["r1"],
-        "matched_keywords": ["developer platform"],
+        "evidence_ids": [
+          "ev_platform"
+        ],
+        "requirement_ids": [
+          "r1"
+        ],
+        "matched_keywords": [
+          "developer platform"
+        ],
         "transform_type": "voice",
         "control": "rephrase_allowed",
         "rationale": "Voiced.",
@@ -214,19 +883,54 @@
     ],
     "coverageAuditJson": {
       "computed_against": "rendered_text",
-      "planned": ["developer platform", "kafka"],
-      "covered": ["developer platform"],
-      "missing": ["kafka"],
-      "covered_by": { "developer platform": "experience:acme#0" },
-      "counts": { "planned": 2, "covered": 1, "missing": 1 }
+      "planned": [
+        "developer platform",
+        "kafka"
+      ],
+      "covered": [
+        "developer platform"
+      ],
+      "missing": [
+        "kafka"
+      ],
+      "covered_by": {
+        "developer platform": "experience:acme#0"
+      },
+      "counts": {
+        "planned": 2,
+        "covered": 1,
+        "missing": 1
+      }
     },
     "voicePassJson": {
       "ran": true,
       "accepted": true,
       "model": "claude-opus-4-8",
       "prompt_version": "voice-pass-v1",
-      "proxy_delta": { "improved": true },
+      "proxy_delta": {
+        "improved": true
+      },
       "reason": ""
     }
-  }
+  },
+  "locationCases": [
+    { "input": "ES (Remote)", "expected": "Spain (Remote)" },
+    { "input": "En remoto, ES (Remote)", "expected": "Spain (Remote)" },
+    { "input": "Barcelona, CT, ES (Remote)", "expected": "Barcelona, Catalonia, Spain (Remote)" },
+    { "input": "Madrid, MD, ES", "expected": "Madrid, Community of Madrid, Spain" },
+    { "input": "Málaga, AN, ESP", "expected": "Málaga, Andalusia, Spain" },
+    { "input": "Madrid, España", "expected": "Madrid, Spain" },
+    { "input": "Seville, AN", "expected": "Seville, AN" },
+    { "input": "Work from Home - Poland", "expected": "Poland (Remote)" },
+    { "input": "Work From Home - US", "expected": "US (Remote)" },
+    { "input": "UK - Remote", "expected": "UK (Remote)" },
+    { "input": "Remote - Berlin, Germany", "expected": "Berlin, Germany (Remote)" },
+    { "input": "Madrid, remoto", "expected": "Madrid (Remote)" },
+    { "input": "Valencia, teletrabajo", "expected": "Valencia (Remote)" },
+    { "input": "Sevilla (remoto)", "expected": "Sevilla (Remote)" },
+    { "input": "WFH", "expected": "Remote" },
+    { "input": "Berlin, Germany", "expected": "Berlin, Germany" },
+    { "input": "", "expected": "" },
+    { "input": null, "expected": "" }
+  ]
 }
