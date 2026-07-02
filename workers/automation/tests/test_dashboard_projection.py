@@ -337,6 +337,34 @@ def test_by_source_counts(conn: sqlite3.Connection) -> None:
     assert counts["TwoCo"] == 1
 
 
+def test_by_source_orders_ties_by_source_name(conn: sqlite3.Connection) -> None:
+    # Netflix leads on count; Acme and Wayfair tie at 2. The builder seeds
+    # source_counts from fetch_job_list, which returns rows ORDER BY job_id —
+    # so the URL prefixes below deliberately put Wayfair FIRST in job_id order
+    # (a-wayfair < m-netflix < z-acme) while the tie must render Acme first
+    # A->Z. A count-only sort would leak insertion order ([..., Wayfair, Acme])
+    # and fail; only the count-desc-then-source-asc tiebreak passes,
+    # byte-identical to the TS builder.
+    seeded = [
+        ("https://example.com/a-wayfair-1", "Wayfair"),
+        ("https://example.com/a-wayfair-2", "Wayfair"),
+        ("https://example.com/m-netflix-1", "Netflix"),
+        ("https://example.com/m-netflix-2", "Netflix"),
+        ("https://example.com/m-netflix-3", "Netflix"),
+        ("https://example.com/z-acme-1", "Acme"),
+        ("https://example.com/z-acme-2", "Acme"),
+    ]
+    for url, site in seeded:
+        _seed_job(conn, url, site=site)
+        record_job_event(conn, url, "discover", "JobDiscovered")
+    conn.commit()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = _dashboard(conn)
+    by_source = json.loads(_row_value(row, "by_source_json", "[]"))
+    assert by_source == [["Netflix", 3], ["Acme", 2], ["Wayfair", 2]]
+
+
 def _apply_job(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int) -> None:
     _seed_job(conn, url, site=site)
     conn.execute(

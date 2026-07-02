@@ -2611,7 +2611,9 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     const key = row.source || "unknown";
     sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
   }
-  const bySource = [...sourceCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const bySource = [...sourceCounts.entries()].sort(
+    (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+  );
 
   const scoreCounts = new Map<number, number>();
   for (const row of active) {

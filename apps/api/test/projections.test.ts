@@ -1596,6 +1596,62 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("orders dashboard by_source by count desc then source name ascending", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      const insert = db.prepare(
+        "INSERT INTO jobs (url, title, site, strategy, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      // seedSchema pre-seeds one ExampleCo job (count 1). Netflix leads on
+      // count; Acme and Wayfair tie at 2, seeded reverse-alphabetically so a
+      // count-only sort would leak insertion order. The tiebreak re-orders the
+      // tie A->Z, byte-identical to the Python builder.
+      const seeded: Array<[string, string]> = [
+        ["https://example.com/jobs/w1", "Wayfair"],
+        ["https://example.com/jobs/w2", "Wayfair"],
+        ["https://example.com/jobs/n1", "Netflix"],
+        ["https://example.com/jobs/n2", "Netflix"],
+        ["https://example.com/jobs/n3", "Netflix"],
+        ["https://example.com/jobs/a1", "Acme"],
+        ["https://example.com/jobs/a2", "Acme"],
+      ];
+      for (const [url, site] of seeded) {
+        insert.run(url, "Engineer", site, "jobspy", "Remote", "2026-05-06T09:00:00+00:00");
+      }
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readonlyDb = new Database(dbPath, { readonly: true });
+      try {
+        const row = readonlyDb
+          .prepare("SELECT by_source_json FROM dashboard_projections WHERE tenant_id = 'local'")
+          .get() as { by_source_json: string } | undefined;
+        expect(JSON.parse(row?.by_source_json ?? "[]")).toEqual([
+          ["Netflix", 3],
+          ["Acme", 2],
+          ["Wayfair", 2],
+          ["ExampleCo", 1],
+        ]);
+      } finally {
+        readonlyDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("uses explicit company from discovered jobs before source inference", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

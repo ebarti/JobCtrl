@@ -1548,7 +1548,7 @@ class ProjectionBuilder:
             source = _row_str(row, "source") or "unknown"
             source_counts[source] = source_counts.get(source, 0) + 1
         by_source = tuple(
-            sorted(source_counts.items(), key=lambda kv: kv[1], reverse=True)
+            sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))
         )
 
         # score_distribution — group by fit_score.
