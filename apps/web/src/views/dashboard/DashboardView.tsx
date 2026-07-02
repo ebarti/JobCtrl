@@ -4,6 +4,7 @@ import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDas
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
+import { ConversionPanel } from "./ConversionPanel.js";
 import { Funnel } from "./Funnel.js";
 import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
@@ -23,6 +24,7 @@ export function DashboardView() {
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}
       {summary ? (
         <div className="dashboard-grid">
+          <ConversionPanel summary={summary} />
           <Funnel summary={summary} />
           <SourceHealthCard summary={summary} />
           <ApplyRunsCard summary={summary} />
