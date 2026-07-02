@@ -74,6 +74,7 @@ from jobhunter.resume_profile import (
     get_education_entries,
     get_experience_entries,
     get_resume_constraints,
+    get_skill_categories,
 )
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -397,6 +398,33 @@ def _collect(value: Any, into: list[str]) -> None:
             into.append(text)
 
 
+def _corpus_from_fragments(fragments: list[str]) -> EvidenceCorpus:
+    """Tokenise joined profile ``fragments`` into an :class:`EvidenceCorpus`.
+
+    The shared assembly step for every grounding corpus (whole-resume and the
+    skills-only corpus): normalise the concatenated text, then pre-extract the
+    numeric/date/title/word-stem token sets so per-bullet checks stay cheap.
+    """
+    text = _normalize("\n".join(fragments))
+    numeric_keys = frozenset(
+        key for token in _NUMERIC_RE.findall(text) if (key := _normalize_numeric(token))
+    )
+    date_tokens = frozenset(
+        digits for token in _DATE_RE.findall(text) if (digits := _digits_only(token))
+    )
+    title_tokens = frozenset(_normalize(token) for token in _TITLE_TOKEN_RE.findall(text))
+    word_stems = frozenset(
+        stem for word in re.findall(r"[a-z0-9]+", text) if (stem := _word_form_stem(word))
+    )
+    return EvidenceCorpus(
+        text=text,
+        numeric_keys=numeric_keys,
+        title_tokens=title_tokens,
+        date_tokens=date_tokens,
+        word_stems=word_stems,
+    )
+
+
 def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
     """Assemble the grounded-fact corpus from canonical profile data.
 
@@ -409,6 +437,11 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
         scope, seniority signals;
       * resume constraints — the user's declared ``real_metrics``;
       * education entries — degrees, institutions, dates.
+
+    The SKILLS section is deliberately EXCLUDED: a declared skill's version numeric
+    ("Java 17", "OAuth 2.0") must not cross-ground an experience metric that merely
+    shares its digits. Skills-section rows are grounded separately against
+    :func:`build_skill_evidence_corpus` (their own declared items).
 
     Returns an :class:`EvidenceCorpus` whose token sets the detector checks each
     generated bullet against.
@@ -460,24 +493,27 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
                 fragments,
             )
 
-    text = _normalize("\n".join(fragments))
-    numeric_keys = frozenset(
-        key for token in _NUMERIC_RE.findall(text) if (key := _normalize_numeric(token))
-    )
-    date_tokens = frozenset(
-        digits for token in _DATE_RE.findall(text) if (digits := _digits_only(token))
-    )
-    title_tokens = frozenset(_normalize(token) for token in _TITLE_TOKEN_RE.findall(text))
-    word_stems = frozenset(
-        stem for word in re.findall(r"[a-z0-9]+", text) if (stem := _word_form_stem(word))
-    )
-    return EvidenceCorpus(
-        text=text,
-        numeric_keys=numeric_keys,
-        title_tokens=title_tokens,
-        date_tokens=date_tokens,
-        word_stems=word_stems,
-    )
+    return _corpus_from_fragments(fragments)
+
+
+def build_skill_evidence_corpus(profile: dict) -> EvidenceCorpus:
+    """Grounding corpus for the SKILLS section only — the declared skill items.
+
+    The whole-resume :func:`build_evidence_corpus` deliberately EXCLUDES skill
+    categories so a skills-line version numeric never cross-grounds an experience
+    metric. Skills-section rows still need a grounding source of their own: the
+    DECLARED skill category labels + items, which ARE canonical profile data. A
+    numeric/token in a shipped skills line that traces to a declared skill item
+    ("Java 17", "OAuth 2.0") is not a fabrication; one that traces to no declared
+    item (a renderer bug or an injected item) is still caught. Grounds against ALL
+    declared categories regardless of which ship, so the check is independent of
+    any downstream skills-row filtering.
+    """
+    fragments: list[str] = []
+    for category in get_skill_categories(profile):
+        if isinstance(category, dict):
+            _collect({"label": category.get("label"), "items": category.get("items")}, fragments)
+    return _corpus_from_fragments(fragments)
 
 
 @dataclass(frozen=True)
@@ -836,6 +872,7 @@ __all__ = [
     "FabricationError",
     "FabricationFinding",
     "build_evidence_corpus",
+    "build_skill_evidence_corpus",
     "build_skill_vocabulary",
     "employer_name_set",
     "find_fabricated_tokens",

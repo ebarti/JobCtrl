@@ -29,6 +29,7 @@ from jobhunter.domain.materials.analysis import (
 )
 from jobhunter.domain.materials.fabrication_detector import (
     build_evidence_corpus,
+    build_skill_evidence_corpus,
     build_skill_vocabulary,
     employer_name_set,
     find_fabricated_tokens,
@@ -1020,6 +1021,67 @@ def test_prose_skill_gate_grounds_homograph_tool_on_literal_token() -> None:
         corpus=corpus,
     )
     assert findings == []
+
+
+# --------------------------------------------------------------------------
+# Skills-row grounding against declared skill items (A6c) — the whole-resume
+# corpus excludes skill categories, so declared version numerics need their own
+# grounding source or they hard-reject the whole resume.
+# --------------------------------------------------------------------------
+
+
+def _profile_with_versioned_skills() -> dict:
+    profile = _profile()
+    profile["resume"]["skill_categories"] = [
+        {"id": "languages", "label": "Languages", "items": ["Python", "Java 17"]},
+        {"id": "protocols", "label": "Protocols", "items": ["OAuth 2.0"]},
+    ]
+    return profile
+
+
+def test_skill_evidence_corpus_grounds_declared_version_numerics() -> None:
+    """A declared skill's version numeric ("Java 17", "OAuth 2.0") is grounded by the
+    skills-only corpus, while the whole-resume corpus still EXCLUDES it (so a skills
+    number can never cross-ground an experience metric)."""
+    profile = _profile_with_versioned_skills()
+    skill_corpus = build_skill_evidence_corpus(profile)
+    assert skill_corpus.has_numeric("17")
+    assert skill_corpus.has_numeric("2.0")
+    # The exclusion invariant of the whole-resume corpus is preserved.
+    whole_resume = build_evidence_corpus(profile)
+    assert not whole_resume.has_numeric("17")
+    assert not whole_resume.has_numeric("2.0")
+
+
+def test_skills_row_scan_grounds_declared_versioned_items() -> None:
+    """The regression: scanning a skills line that renders DECLARED versioned items
+    against the skills-only corpus produces NO findings. Before the fix these rows
+    were scanned against the whole-resume corpus (which excludes skills), so "17" and
+    "2.0" were flagged and the whole resume was hard-rejected."""
+    profile = _profile_with_versioned_skills()
+    skill_corpus = build_skill_evidence_corpus(profile)
+    findings = scan_resume_bullets(
+        [
+            ("skills:languages#0", "Languages: Python, Java 17"),
+            ("skills:protocols#0", "Protocols: OAuth 2.0"),
+        ],
+        skill_corpus,
+    )
+    assert findings == []
+
+
+def test_skills_row_scan_flags_numeric_absent_from_declared_items() -> None:
+    """Grounding still catches a genuinely fabricated skills numeric: a version the
+    candidate never declared ("Java 25" vs a declared "Java 17") traces to no declared
+    item, so it is flagged even though the row is a skills line."""
+    profile = _profile_with_versioned_skills()
+    skill_corpus = build_skill_evidence_corpus(profile)
+    findings = scan_resume_bullets(
+        [("skills:languages#0", "Languages: Python, Java 25")],
+        skill_corpus,
+    )
+    assert [f.token for f in findings] == ["25"]
+    assert findings[0].kind == "numeric"
 
 
 # --------------------------------------------------------------------------

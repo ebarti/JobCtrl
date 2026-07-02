@@ -1674,6 +1674,53 @@ def test_tailor_use_case_approves_concept_keyword_prose(
     assert outcome.materials.is_resume_approved
 
 
+def _profile_with_versioned_skills_dict() -> dict:
+    profile = _profile_dict()
+    profile["resume"]["skill_categories"] = [
+        {"id": "languages", "label": "Languages", "items": ["Python", "Java 17"]},
+    ]
+    return profile
+
+
+def test_tailor_use_case_allows_versioned_declared_skill(tmp_path: Path, job: dict) -> None:
+    """A6c regression: a DECLARED versioned skill ("Java 17") rendered in the skills
+    line must not be a false fabrication. The whole-resume corpus excludes skill
+    categories, so before the fix the "17" was flagged and the resume was terminally
+    rejected; skills rows now ground against the declared skill items."""
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_versioned_skills_dict())
+    )
+    repo = _FakeRepository()
+    payload = json.dumps(
+        {
+            "executive_profile": "Senior engineer.",
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": ["Cut API latency 40% with Python."]}
+            ],
+            "skill_category_updates": [{"id": "languages", "items": ["Python", "Java 17"]}],
+            "generated_claim_mappings": _positioning_claim_mappings("Cut API latency 40% with Python."),
+        }
+    )
+    llm = _ScriptedLlm([payload, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency"]),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+
 # ---------------------------------------------------------------------------
 # GenerateCoverLetterUseCase
 # ---------------------------------------------------------------------------

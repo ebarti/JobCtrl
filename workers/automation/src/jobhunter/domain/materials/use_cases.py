@@ -79,6 +79,7 @@ from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.fabrication_detector import (
     FabricationError,
     build_evidence_corpus,
+    build_skill_evidence_corpus,
     build_skill_vocabulary,
     employer_name_set,
     scan_prose_skill_fabrications,
@@ -2547,10 +2548,11 @@ class TailorResumeUseCase:
 
         Returns ``(provenance_rows, fabrication_error)``. ``fabrication_error`` is
         a non-empty message when the candidate must be HARD-REJECTED — either it
-        fabricated a numeric/date/title/employer token (CONTROL-03 / GROUND-05) or
-        a provenance binding referenced a non-existent evidence/requirement id
-        (GROUND-05: FK bindings, not free text). On reject the rows are dropped so
-        no provenance is persisted for an unaccepted candidate.
+        fabricated a numeric/date/title/employer/skill token (CONTROL-03 /
+        GROUND-05) or a provenance binding referenced a non-existent
+        evidence/requirement id (GROUND-05: FK bindings, not free text). On reject
+        the rows are dropped so no provenance is persisted for an unaccepted
+        candidate.
 
         The detector runs INDEPENDENTLY of the tailoring prompt — it checks the
         actual generated bullet text against the canonical profile evidence corpus,
@@ -2573,10 +2575,24 @@ class TailorResumeUseCase:
 
         corpus = build_evidence_corpus(profile)
         employers = employer_name_set(profile)
+        # The whole-resume corpus EXCLUDES skill categories (so a skills-line
+        # version numeric never cross-grounds an experience metric). Ground the
+        # SKILLS rows against the declared skill items instead, so a canonical
+        # "Java 17" / "OAuth 2.0" is not a false fabrication while a skills numeric
+        # that traces to no declared item (a renderer bug / injected item) is still
+        # caught (A6c).
+        skill_corpus = build_skill_evidence_corpus(profile)
         findings = scan_resume_bullets(
-            [(row.bullet_id, row.generated_text) for row in rows],
+            [(row.bullet_id, row.generated_text) for row in rows if row.section != "skills"],
             corpus,
             employers=employers,
+        )
+        findings.extend(
+            scan_resume_bullets(
+                [(row.bullet_id, row.generated_text) for row in rows if row.section == "skills"],
+                skill_corpus,
+                employers=employers,
+            )
         )
         # Sibling gate: a job-target NAMED TECHNOLOGY woven into an experience
         # bullet or the executive summary that traces to neither the profile skill
