@@ -249,14 +249,21 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   tool, so a fabricated in-demand technology (Kubernetes, Terraform, Kafka, …)
   woven into an experience bullet or the executive summary would ship on the LLM
   judge alone. `scan_prose_skill_fabrications` closes that leak with an
-  **allowlist, not a denylist**: it flags a job-TARGET skill/tool keyword (from the
-  persisted `EmployerAnalysis` keywords) that appears in the generated prose but
-  grounds in NEITHER the candidate's profile-backed skill vocabulary
-  (`build_skill_vocabulary` = skill-category items + evidence tools) NOR the
-  evidence corpus. Only recognised target keywords are candidates and matching is
-  word-boundary anchored, so ordinary English words never false-fire; the skills
-  SECTION is out of scope (it is governed by the skills-section allowlist). A hit
-  is **hard-rejected exactly like an invented metric** (`NEVER_FABRICATE_SKILLS`).
+  **allowlist, not a denylist**, scoped to invented **named technologies** so it
+  never punishes concept keywords. It flags a job-TARGET keyword (from the
+  persisted `EmployerAnalysis` keywords) that is BOTH (1) a recognised named
+  technology in the curated `KNOWN_TECHNOLOGY_LEXICON` (languages/frameworks/cloud/
+  databases/tools) AND (2) grounds in NEITHER the candidate's profile-backed skill
+  vocabulary (`build_skill_vocabulary` = skill-category items + evidence tools +
+  evidence tags) NOR the evidence corpus. Grounding is **word-form tolerant**
+  (`scaled`/`scalable`/`scalability` mutually ground), so a concept keyword the
+  candidate demonstrated in a different word form is never a false positive; a
+  pure concept/qualification keyword (scalability, observability, microservices)
+  is never gated at all. A fabricated `Kubernetes` still has no stem variant in a
+  k8s-free profile, so it is still caught. Matching is word-boundary anchored, so
+  ordinary English words never false-fire; the skills SECTION is out of scope (it
+  is governed by the skills-section allowlist). A hit is **hard-rejected exactly
+  like an invented metric** (`NEVER_FABRICATE_SKILLS`).
 - **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
   after assembling the selected candidate's text. A fabrication downgrades
   validation so the resume is **not approved** (the last accepted generation's

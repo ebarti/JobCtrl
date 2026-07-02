@@ -2578,11 +2578,14 @@ class TailorResumeUseCase:
             corpus,
             employers=employers,
         )
-        # Sibling gate: a job-target skill/tool woven into an experience bullet or
-        # the executive summary that traces to neither the profile skill vocabulary
-        # nor the evidence corpus is a fabrication (the numeric detector has no
-        # concept of a tool). The skills SECTION is excluded — it is governed by the
-        # skills-section allowlist, not this prose gate.
+        # Sibling gate: a job-target NAMED TECHNOLOGY woven into an experience
+        # bullet or the executive summary that traces to neither the profile skill
+        # vocabulary nor the evidence corpus is a fabrication (the numeric detector
+        # has no concept of a tool). The gate scopes itself to named technologies
+        # and grounds word-form variants, so concept/qualification keywords are
+        # never hard-rejected; passing the full canonical keyword set is safe. The
+        # skills SECTION is excluded — it is governed by the skills-section
+        # allowlist, not this prose gate.
         prose_rows = [
             (row.bullet_id, row.generated_text)
             for row in rows

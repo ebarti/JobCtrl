@@ -1638,6 +1638,42 @@ def test_tailor_use_case_allows_profile_backed_tool_in_prose(
     assert outcome.materials.is_resume_approved
 
 
+def test_tailor_use_case_approves_concept_keyword_prose(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """Regression (PR #218 discussion_r3509803795): the JD screens on CONCEPT
+    keywords (scalability / reliability / observability / microservices) and the
+    generator weaves them into grounded prose. Concept keywords are not named
+    technologies, so the prose skill gate must NOT hard-reject them — a first-time
+    tailor still yields an APPROVED resume instead of the terminal rejection the
+    unfiltered gate produced on the reviewer's fixture."""
+    repo = _FakeRepository()
+    payload = _payload_with_bullet(
+        "Improved observability and moved to microservices.",
+        summary="Backend owner focused on scalability and reliability.",
+    )
+    llm = _ScriptedLlm([payload, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(
+            job, ["scalability", "reliability", "observability", "microservices"]
+        ),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+
 # ---------------------------------------------------------------------------
 # GenerateCoverLetterUseCase
 # ---------------------------------------------------------------------------

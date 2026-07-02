@@ -798,12 +798,14 @@ def test_prose_skill_gate_allows_profile_backed_tool() -> None:
 
 
 def test_prose_skill_gate_grounds_concept_keyword_present_in_evidence_corpus() -> None:
-    """Near-zero false positives: a target keyword that is not a listed skill but
-    appears in the candidate's real evidence (``latency`` in a bullet/tags) is
-    grounded by the corpus and must NOT be flagged — only named tools absent from
-    every profile source are interview-fatal fabrications."""
-    profile = _profile()  # evidence bullet + tags mention "latency"; "latency" not a skill item
-    assert "latency" not in build_skill_vocabulary(profile)
+    """Near-zero false positives: a concept keyword the candidate demonstrably
+    wrote about (``latency`` in a bullet + on the evidence tags) must NOT be
+    flagged. It is both folded into the vocabulary (achievement-evidence tags are
+    the bullet's FK) AND a concept keyword the gate never scopes in — only named
+    tools absent from every profile source are interview-fatal fabrications."""
+    profile = _profile()  # evidence bullet + tags mention "latency"
+    # Achievement-evidence tags are folded into the vocabulary (the bullet's FK).
+    assert "latency" in build_skill_vocabulary(profile)
     corpus = build_evidence_corpus(profile)
     findings = scan_prose_skill_fabrications(
         [("experience:acme_swe#0", "Reduced API latency further under load.")],
@@ -863,6 +865,117 @@ def test_prose_skill_gate_skips_one_and_two_char_targets() -> None:
     findings = scan_prose_skill_fabrications(
         [("experience:acme_swe#0", "Go to market motions with AI and R analysis.")],
         target_skill_terms=["Go", "AI", "R"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
+
+
+def test_build_skill_vocabulary_includes_evidence_tags() -> None:
+    """Achievement-evidence ``tags`` are the bullet's FK data, so they are folded
+    into the trusted vocabulary alongside skill-category items and evidence tools."""
+    vocab = build_skill_vocabulary(_profile())
+    # _profile() evidence tags: latency, backend, performance.
+    assert {"latency", "backend", "performance"} <= vocab
+
+
+def _reviewer_scenario_profile() -> dict:
+    """The reviewer's exact false-positive fixture (PR #218 discussion_r3509803795).
+
+    The candidate demonstrably built "reliable, scalable services" and
+    re-architected a monolith into "independent services"; the JD screens on the
+    concept keywords scalability / reliability / observability / microservices in
+    a different WORD FORM than the evidence uses.
+    """
+    return {
+        "personal": {"full_name": "Dana Ops", "email": "dana@example.com"},
+        "resume_constraints": {"real_metrics": []},
+        "resume": {
+            "executive_profile": {
+                "baseline_text": "Backend engineer who ships reliable, scalable services."
+            },
+            "experience_entries": [
+                {
+                    "id": "acme_swe",
+                    "date_range": "2020-Present",
+                    "title": "Senior SWE",
+                    "company": "Acme Corp",
+                    "location": "Remote",
+                    "bullets": ["Scaled the platform to serve a large user base."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_arch",
+                            "source_text": "Re-architected the monolith into independent services.",
+                            "scope": "owned platform",
+                            "action": "re-architected the monolith",
+                            "tools": ["Python"],
+                            "outcome": "more resilient platform",
+                            "tags": ["backend"],
+                        }
+                    ],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python"]}],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["acme_swe"],
+                "required_skill_category_ids": ["languages"],
+                "max_experience_bullets": 4,
+            },
+        },
+    }
+
+
+def test_prose_skill_gate_passes_reviewer_concept_word_form_scenario() -> None:
+    """Regression (PR #218 discussion_r3509803795): a legitimate resume that weaves
+    the JD's CONCEPT keywords into grounded prose — in a different WORD FORM than the
+    profile evidence — must NOT be hard-rejected. ``scalability``/``reliability``
+    ground by word form (``scalable``/``reliable`` are in the evidence);
+    ``observability``/``microservices`` are pure concepts the gate never scopes in.
+    Before the fix all three of scalability/observability/microservices were flagged
+    and the whole resume was terminally rejected."""
+    profile = _reviewer_scenario_profile()
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [
+            ("executive_profile#0", "Backend owner focused on scalability and reliability."),
+            ("experience:acme_swe#0", "Improved observability and moved to microservices."),
+        ],
+        target_skill_terms=["scalability", "reliability", "observability", "microservices"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
+
+
+def test_corpus_grounds_word_form_variant_but_not_distinct_tools() -> None:
+    """Word-form-tolerant grounding: a stem variant present in the evidence grounds
+    the JD keyword (``scalable`` grounds ``scalability``), but a distinct named tool
+    with no stem variant anywhere in the profile stays ungrounded — so a fabricated
+    ``Kubernetes`` is still caught and ``Java`` never grounds against ``JavaScript``."""
+    profile = _reviewer_scenario_profile()
+    profile["resume"]["executive_profile"]["baseline_text"] = (
+        "Built JavaScript tooling for reliable, scalable services."
+    )
+    corpus = build_evidence_corpus(profile)
+    # Same-root word forms mutually ground.
+    assert corpus.contains_term_variant("scalability")
+    assert corpus.contains_term_variant("reliability")
+    # Distinct proper-noun tools are never collapsed into one another / conjured.
+    assert not corpus.contains_term_variant("java")  # must not match inside "javascript"
+    assert not corpus.contains_term_variant("kubernetes")
+
+
+def test_prose_skill_gate_scopes_out_concepts_absent_from_corpus() -> None:
+    """Scoping: a concept/qualification keyword that appears NOWHERE in the profile
+    is still never flagged, because it is not a named technology — only invented
+    named tools are interview-fatal fabrications. This is the arm word-form
+    tolerance alone cannot cover (there is no variant to ground against)."""
+    profile = _profile()  # no observability / resilience / microservices anywhere
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Drove observability, resilience, and microservices.")],
+        target_skill_terms=["observability", "resilience", "microservices"],
         allowed_skill_terms=build_skill_vocabulary(profile),
         corpus=corpus,
     )
