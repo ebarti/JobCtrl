@@ -267,14 +267,23 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   words never false-fire; the skills SECTION is out of scope (it is governed by
   the skills-section allowlist). A hit is **hard-rejected exactly like an invented
   metric** (`NEVER_FABRICATE_SKILLS`).
-- **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
-  after assembling the selected candidate's text. A fabrication downgrades
-  validation so the resume is **not approved** (the last accepted generation's
-  artifact + provenance are preserved); an accepted generation persists its rows
-  through `BulletProvenanceRepository` transactionally with the artifact and
-  publishes `BulletProvenanceRecorded` (a `job_events` row → projection rebuild →
-  SSE invalidation). Persistence is canonical rows (`job_bullet_provenance`),
-  never `metadata_json`.
+- **Lifecycle**: the gates (provenance FK bindings + never-fabricate numeric +
+  prose skill/tool) run at **two points**. First, **per candidate inside
+  `TailorResumeUseCase._run_attempts`**: a candidate that clears the LLM judge but
+  trips a gate is stamped `failed_fabrication_gate`, dropped from selection, and
+  its per-token findings are rendered as `avoid_notes` fed into the next attempt —
+  the same retry channel the judge/adversarial rejections use — so the remaining
+  retry budget is spent steering the generator off the exact fabricated token
+  instead of failing the run outright. Second, **after the selected candidate is
+  voiced** the same gate re-confirms against the rendered text (see the voice
+  re-validation below). When the retry budget is exhausted with no clean candidate
+  the tailor **fails closed**: validation is downgraded so the resume is **not
+  approved** (the last accepted generation's artifact + provenance are preserved)
+  and each rejected candidate's gate findings stay as repair-loop audit history.
+  An accepted generation persists its rows through `BulletProvenanceRepository`
+  transactionally with the artifact and publishes `BulletProvenanceRecorded` (a
+  `job_events` row → projection rebuild → SSE invalidation). Persistence is
+  canonical rows (`job_bullet_provenance`), never `metadata_json`.
 - **Read path**: the single projection owner serves provenance on the artifact's
   tailoring explanation (`artifact_list_projections.bullet_provenance_json`),
   built identically by the Python projection builder and
