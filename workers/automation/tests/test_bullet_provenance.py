@@ -514,7 +514,10 @@ def test_strict_subset_provenance_and_coverage_reflect_only_shipped_entries() ->
     assert not any(row.bullet_id.startswith("experience:omitted_co") for row in rows)
     assert all("kubernetes" not in row.generated_text.lower() for row in rows)
 
-    coverage = compute_keyword_coverage(analysis, rows)
+    # The full-profile corpus DOES contain "Kubernetes" (it lives in the omitted
+    # entry) -- corpus grounding alone must not credit a keyword the shipped text
+    # never renders.
+    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
     assert "kubernetes" in coverage.missing
     assert "kubernetes" not in coverage.covered
     # The shipped entry's real coverage is untouched.
@@ -534,7 +537,7 @@ def test_default_all_entries_still_audited_when_no_strict_subset_pinned() -> Non
 
     experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
     assert experience_source_ids == {"acme_swe", "omitted_co"}
-    coverage = compute_keyword_coverage(analysis, rows)
+    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
     assert "kubernetes" in coverage.covered
     assert "kubernetes" not in coverage.missing
 
@@ -551,7 +554,7 @@ def _profile_with_omitted_skill_category(*, required_skill_category_ids: list[st
     shipped subset; ``None`` leaves it unpinned (the default-all path)."""
     profile = _profile()
     profile["resume"]["skill_categories"].append(
-        {"id": "cloud", "label": "Cloud", "items": ["AWS", "Performance tuning"]}
+        {"id": "cloud", "label": "Cloud", "items": ["Performance tuning", "Terraform", "PostgreSQL"]}
     )
     rules = profile["resume"]["tailoring_rules"]
     if required_skill_category_ids is None:
@@ -589,6 +592,20 @@ def _analysis_with_performance_requirement() -> EmployerAnalysis:
                 weight=0.7,
                 evidence_span="performance tuning",
             ),
+            Requirement(
+                id="req_iac",
+                text="Terraform infrastructure-as-code",
+                tier="nice_to_have",
+                weight=0.4,
+                evidence_span="Terraform infrastructure-as-code",
+            ),
+            Requirement(
+                id="req_db",
+                text="PostgreSQL operations",
+                tier="nice_to_have",
+                weight=0.4,
+                evidence_span="PostgreSQL operations",
+            ),
         ],
         keywords=[
             ReasonedKeyword(keyword="Python", evidence_span="5+ years of Python", requirement_ref="req_python"),
@@ -597,6 +614,16 @@ def _analysis_with_performance_requirement() -> EmployerAnalysis:
                 keyword="performance",
                 evidence_span="performance tuning",
                 requirement_ref="req_perf",
+            ),
+            ReasonedKeyword(
+                keyword="Terraform",
+                evidence_span="Terraform infrastructure-as-code",
+                requirement_ref="req_iac",
+            ),
+            ReasonedKeyword(
+                keyword="PostgreSQL",
+                evidence_span="PostgreSQL operations",
+                requirement_ref="req_db",
             ),
         ],
     )
@@ -620,9 +647,13 @@ def test_strict_subset_provenance_and_coverage_reflect_only_shipped_skill_catego
     assert not any(row.bullet_id.startswith("skills:cloud") for row in rows)
     assert all("performance" not in row.generated_text.lower() for row in rows)
 
-    coverage = compute_keyword_coverage(analysis, rows)
+    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
     assert "performance" in coverage.missing
     assert "performance" not in coverage.covered
+    # Even a corpus-grounded keyword (PostgreSQL lives in evidence tools) stays
+    # missing when its only rendered home is the omitted category's line.
+    assert "postgresql" in coverage.missing
+    assert "terraform" in coverage.missing
     # The shipped category's + experience real coverage is untouched.
     assert "python" in coverage.covered
     assert "latency" in coverage.covered
@@ -630,8 +661,15 @@ def test_strict_subset_provenance_and_coverage_reflect_only_shipped_skill_catego
 
 def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned() -> None:
     """The default-all path (no ``required_skill_category_ids`` pinned) is unchanged:
-    every skill category is audited, so a keyword grounded only in the second
-    category ("performance") is legitimately covered."""
+    every skill category is audited (rows exist for both), and the second category's
+    line can legitimately credit a corpus-grounded keyword (PostgreSQL, backed by
+    evidence tools). A keyword declared ONLY as a skills item and demonstrated in no
+    evidence (Terraform) reports ``declared`` (A6b): it genuinely ships in the Cloud
+    skills line, so reporting it ``missing`` would lie against the artifact, but it is
+    NOT ``covered`` because no evidence demonstrates it. "performance" is deliberately
+    NOT asserted here: it flips ``declared`` -> ``covered`` once the #218 prose-gate
+    stack adds evidence ``tags`` to the corpus, so the test pins only corpus-stable
+    keywords (Terraform never appears in any evidence text or ``tags`` field)."""
     profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
     analysis = _analysis_with_performance_requirement()
     payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
@@ -640,9 +678,15 @@ def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned
 
     skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
     assert skill_source_ids == {"languages", "cloud"}
-    coverage = compute_keyword_coverage(analysis, rows)
-    assert "performance" in coverage.covered
-    assert "performance" not in coverage.missing
+    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
+    assert "postgresql" in coverage.covered  # corpus-grounded, shipped on the cloud line
+    assert coverage.covered_by["postgresql"] == "skills:cloud#0"
+    # Declared-only: shipped in the Cloud skills line, never demonstrated in evidence.
+    assert "terraform" in coverage.declared
+    assert "terraform" not in coverage.missing
+    assert "terraform" not in coverage.covered
+    assert coverage.declared_by["terraform"] == "skills:cloud#0"
+    assert "python" in coverage.covered  # demonstrated: evidence tools + shipped text
 
 
 # --------------------------------------------------------------------------

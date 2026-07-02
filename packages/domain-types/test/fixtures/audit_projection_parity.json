@@ -206,7 +206,7 @@
         "generated_text": "Senior platform engineer.",
         "position": 0,
         "created_at": "2026-06-08T12:10:00+00:00",
-        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"counts\": {\"planned\": 2, \"covered\": 1, \"missing\": 1}}",
+        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
         "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
       },
       {
@@ -224,7 +224,7 @@
         "generated_text": "Owned the developer platform across the fleet.",
         "position": 1,
         "created_at": "2026-06-08T12:10:00+00:00",
-        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"counts\": {\"planned\": 2, \"covered\": 1, \"missing\": 1}}",
+        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
         "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
       }
     ],
@@ -977,24 +977,13 @@
     ],
     "coverageAuditJson": {
       "computed_against": "rendered_text",
-      "planned": [
-        "developer platform",
-        "kafka"
-      ],
-      "covered": [
-        "developer platform"
-      ],
-      "missing": [
-        "kafka"
-      ],
-      "covered_by": {
-        "developer platform": "experience:acme#0"
-      },
-      "counts": {
-        "planned": 2,
-        "covered": 1,
-        "missing": 1
-      }
+      "planned": ["developer platform", "kafka"],
+      "covered": ["developer platform"],
+      "declared": [],
+      "missing": ["kafka"],
+      "covered_by": { "developer platform": "experience:acme#0" },
+      "declared_by": {},
+      "counts": { "planned": 2, "covered": 1, "declared": 0, "missing": 1 }
     },
     "voicePassJson": {
       "ran": true,

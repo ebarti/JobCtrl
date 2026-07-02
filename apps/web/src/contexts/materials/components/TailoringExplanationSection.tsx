@@ -464,7 +464,7 @@ export function TailoringExplanationSection({
                   <dt>Resume match audit</dt>
                   <dd>
                     {hasResumeKeywordAudit
-                      ? `${explanation.keywords.counts.covered}/${explanation.keywords.counts.planned} found in resume`
+                      ? `${explanation.keywords.counts.covered}/${explanation.keywords.counts.planned} demonstrated in resume`
                       : "not recorded for this artifact"}
                   </dd>
                 </div>
@@ -484,6 +484,10 @@ export function TailoringExplanationSection({
               {hasResumeKeywordAudit ? (
                 <>
                   <EvidenceRow label="Found in tailored resume" items={explanation.keywords.covered} />
+                  <EvidenceRow
+                    label="Declared in skills (not demonstrated)"
+                    items={explanation.keywords.declared}
+                  />
                   <EvidenceRow label="No resume keyword match found" items={explanation.keywords.missing} />
                 </>
               ) : null}

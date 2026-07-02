@@ -2272,22 +2272,27 @@ function keywordsBlockFromCoverageAudit(
   const displayLimit = 32;
   const planned = coverageAudit?.planned ?? [];
   const covered = coverageAudit?.covered ?? [];
+  const declared = coverageAudit?.declared ?? [];
   const missing = coverageAudit?.missing ?? [];
   const displayedPlanned = planned.slice(0, displayLimit);
   const displayedCovered = covered.slice(0, displayLimit);
+  const displayedDeclared = declared.slice(0, displayLimit);
   const displayedMissing = missing.slice(0, displayLimit);
   return {
     coverageRecorded: coverageAudit !== null,
     planned: displayedPlanned,
     covered: displayedCovered,
+    declared: displayedDeclared,
     missing: displayedMissing,
     filtered: { planned: [], covered: [], missing: [] },
     counts: {
       planned: planned.length,
       covered: covered.length,
+      declared: declared.length,
       missing: missing.length,
       displayedPlanned: displayedPlanned.length,
       displayedCovered: displayedCovered.length,
+      displayedDeclared: displayedDeclared.length,
       displayedMissing: displayedMissing.length,
       filteredPlanned: 0,
       filteredCovered: 0,
@@ -2841,26 +2846,37 @@ function parseCoverageAudit(value: string | null): BulletCoverageAudit | null {
   }
   const record = metadataRecord(parsed);
   const covered = metadataTextList(record.covered, 256, 160);
+  // ``declared`` / ``declared_by`` are absent on pre-A6b persisted rows: default to
+  // empty so an old two-bucket generation still reads cleanly.
+  const declared = metadataTextList(record.declared, 256, 160);
   const missing = metadataTextList(record.missing, 256, 160);
   const planned = metadataTextList(record.planned, 256, 160);
-  const coveredByRaw = metadataRecord(record.covered_by);
-  const coveredBy: Record<string, string> = {};
-  for (const [key, val] of Object.entries(coveredByRaw)) {
-    const text = metadataText(val, 160);
-    if (text) coveredBy[key] = text;
-  }
+  const coveredBy = parseKeywordBulletMap(record.covered_by);
+  const declaredBy = parseKeywordBulletMap(record.declared_by);
   return {
     computedAgainst: metadataText(record.computed_against, 64) ?? "rendered_text",
     planned,
     covered,
+    declared,
     missing,
     coveredBy,
+    declaredBy,
     counts: {
       planned: planned.length,
       covered: covered.length,
+      declared: declared.length,
       missing: missing.length,
     },
   };
+}
+
+function parseKeywordBulletMap(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, val] of Object.entries(metadataRecord(value))) {
+    const text = metadataText(val, 160);
+    if (text) out[key] = text;
+  }
+  return out;
 }
 
 /**

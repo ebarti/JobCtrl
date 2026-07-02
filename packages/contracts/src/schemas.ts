@@ -2328,24 +2328,31 @@ export interface BulletProvenanceEntry {
  * Phase 3 — honest generation-time keyword coverage (GROUND-06 / success
  * criterion 4).
  *
- * Mirrors the Python ``KeywordCoverage.to_read_model()`` projection: covered +
- * missing computed against the actual rendered (voiced) resume text both renderers
- * consume, where a keyword counts as covered ONLY when it appears in a
- * provenance-backed grounded bullet. ``coveredBy`` maps each covered keyword to the
- * ``bulletId`` that demonstrates it (per-keyword, per-bullet inspectability).
- * ``computedAgainst`` records that coverage was computed against rendered text, not
- * the job description. Served exclusively from the canonical ``coverage_audit_json``
- * projection column.
+ * Mirrors the Python ``KeywordCoverage.to_read_model()`` projection. Planned
+ * keywords partition into three honestly-labeled buckets computed against the actual
+ * rendered (voiced) resume text both renderers consume: ``covered`` (demonstrated —
+ * appears in an evidence-backed bullet), ``declared`` (rendered in a skills-section
+ * line, which is the canonical profile declaration, but not demonstrated in
+ * experience/evidence), and ``missing`` (rendered in no shipped line). ``coveredBy``
+ * maps each covered keyword to the ``bulletId`` that demonstrates it; ``declaredBy``
+ * maps each declared keyword to the skills ``bulletId`` that declares it (per-keyword,
+ * per-bullet inspectability). ``computedAgainst`` records that coverage was computed
+ * against rendered text, not the job description. Served exclusively from the
+ * canonical ``coverage_audit_json`` projection column. ``declared`` / ``declaredBy``
+ * are absent on pre-A6b persisted rows and default to empty on read.
  */
 export interface BulletCoverageAudit {
   computedAgainst: string;
   planned: string[];
   covered: string[];
+  declared: string[];
   missing: string[];
   coveredBy: Record<string, string>;
+  declaredBy: Record<string, string>;
   counts: {
     planned: number;
     covered: number;
+    declared: number;
     missing: number;
   };
 }
@@ -2383,6 +2390,7 @@ export interface ArtifactTailoringExplanation {
     coverageRecorded: boolean;
     planned: string[];
     covered: string[];
+    declared: string[];
     missing: string[];
     filtered: {
       planned: string[];
@@ -2392,9 +2400,11 @@ export interface ArtifactTailoringExplanation {
     counts: {
       planned: number;
       covered: number;
+      declared: number;
       missing: number;
       displayedPlanned: number;
       displayedCovered: number;
+      displayedDeclared: number;
       displayedMissing: number;
       filteredPlanned: number;
       filteredCovered: number;
@@ -2501,10 +2511,11 @@ export interface ArtifactTailoringExplanation {
   // or [] when no provenance was recorded for this artifact's generation.
   bulletProvenance: BulletProvenanceEntry[];
   // Phase 3: honest generation-time keyword coverage computed against the actual
-  // rendered (voiced) resume text both renderers consume — covered counts only
-  // when a keyword appears in a provenance-backed grounded bullet (GROUND-06 /
-  // success criterion 4). ``null`` when no Phase-3 coverage was recorded for this
-  // artifact's generation. Served from the canonical ``coverage_audit_json``
+  // rendered (voiced) resume text both renderers consume — three buckets: covered
+  // (demonstrated in an evidence-backed bullet), declared (rendered in the profile's
+  // skills line but not demonstrated), missing (rendered nowhere) (GROUND-06 /
+  // success criterion 4 / A6b). ``null`` when no Phase-3 coverage was recorded for
+  // this artifact's generation. Served from the canonical ``coverage_audit_json``
   // projection column — never recomputed from the JD at read time.
   coverageAudit: BulletCoverageAudit | null;
   // Phase 3: the voice-pass audit (VOICE-02) — whether the de-buzzword/vary pass

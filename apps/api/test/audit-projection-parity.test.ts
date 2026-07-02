@@ -622,9 +622,11 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           computedAgainst: "rendered_text",
           planned: ["developer platform", "kafka"],
           covered: ["developer platform"],
+          declared: [],
           missing: ["kafka"],
           coveredBy: { "developer platform": "experience:acme#0" },
-          counts: { planned: 2, covered: 1, missing: 1 },
+          declaredBy: {},
+          counts: { planned: 2, covered: 1, declared: 0, missing: 1 },
         });
         expect(explanation.voicePass).toEqual({
           ran: true,
@@ -634,13 +636,15 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           proxyDelta: { improved: true },
           reason: "",
         });
-        // (4) The derived keyword block mirrors the canonical coverage (Phase 4).
+        // (4) The derived keyword block mirrors the canonical coverage (Phase 4),
+        // including the A6b declared bucket (empty here — no skills-only keyword).
         expect(explanation.keywords).toMatchObject({
           coverageRecorded: true,
           planned: ["developer platform", "kafka"],
           covered: ["developer platform"],
+          declared: [],
           missing: ["kafka"],
-          counts: { planned: 2, covered: 1, missing: 1 },
+          counts: { planned: 2, covered: 1, declared: 0, missing: 1 },
         });
       } finally {
         await app.close();

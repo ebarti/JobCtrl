@@ -77,6 +77,7 @@ from jobhunter.domain.materials.coverage_audit import (
 )
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.fabrication_detector import (
+    EvidenceCorpus,
     FabricationError,
     FabricationFinding,
     build_evidence_corpus,
@@ -2782,12 +2783,13 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
         )
+        corpus = build_evidence_corpus(profile_snapshot.as_dict())
 
         # No voice port, or the pre-voice candidate is already ungrounded: keep the
         # pre-voice payload (the fabrication gate will reject it upstream if needed).
         # Coverage is still computed canonically over whatever grounded rows exist.
         if self._voice is None or base_error is not None:
-            coverage = self._coverage_for(base_rows, employer_analysis, base_error)
+            coverage = self._coverage_for(base_rows, employer_analysis, base_error, corpus)
             record = (
                 VoicePassRecord.skipped("no_voice_port")
                 if self._voice is None
@@ -2800,7 +2802,7 @@ class TailorResumeUseCase:
         )
         if voiced_payload is None:
             # Voice did not run / errored / no-op — ship the pre-voice candidate.
-            coverage = self._coverage_for(base_rows, employer_analysis, None)
+            coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
             return tailored_payload, base_rows, coverage, voice_record, None
 
         voiced_rows, voiced_error, _voiced_findings = self._compute_provenance(
@@ -2822,7 +2824,7 @@ class TailorResumeUseCase:
                 proxy_delta=voice_record.proxy_delta,
                 reason=f"voice_introduced_fabrication: {voiced_error}",
             )
-            coverage = self._coverage_for(base_rows, employer_analysis, None)
+            coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
             return tailored_payload, base_rows, coverage, rejected, None
 
         # The voiced payload is grounded AND improved the proxies — adopt it. Mark
@@ -2830,7 +2832,7 @@ class TailorResumeUseCase:
         # the shipped wording is the voiced wording (VOICE-02), then compute coverage
         # over the voiced grounded rows (the text that actually ships).
         marked_rows = _mark_voiced_rows(base_rows, voiced_rows)
-        coverage = self._coverage_for(marked_rows, employer_analysis, None)
+        coverage = self._coverage_for(marked_rows, employer_analysis, None, corpus)
         return voiced_payload, marked_rows, coverage, voice_record, None
 
     def _run_voice(
@@ -2896,16 +2898,20 @@ class TailorResumeUseCase:
         rows: tuple[BulletProvenance, ...],
         employer_analysis: EmployerAnalysis,
         error: str | None,
+        corpus: EvidenceCorpus,
     ) -> KeywordCoverage | None:
         """Compute generation-time coverage over the rows, or None when ungrounded.
 
         Coverage is meaningful only when there is grounded text to compute it
         against; a rejected candidate (``error`` set) has no shippable rows, so
-        coverage is ``None`` rather than a misleading zero.
+        coverage is ``None`` rather than a misleading zero. ``corpus`` is the
+        profile evidence corpus a keyword must trace to when its bullet carries no
+        evidence FK, so a stuffed keyword is never credited off a requirement FK the
+        provenance builder bound purely because the keyword appears in the line.
         """
         if error is not None or not rows:
             return None
-        return compute_keyword_coverage(employer_analysis, rows)
+        return compute_keyword_coverage(employer_analysis, rows, corpus)
 
     def _persist_provenance_set(
         self,
