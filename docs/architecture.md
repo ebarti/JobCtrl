@@ -244,6 +244,19 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   bullet must trace to recorded profile evidence; a token that does not is a
   fabrication and is **hard-rejected at generation time**. A metrics-hungry job
   paired with a numberless profile yields zero unsourced numerics in the output.
+- **Deterministic prose skill/tool gate** (same module, sibling of the numeric
+  detector): the numeric/date/title/employer arms have no concept of a skill or
+  tool, so a fabricated in-demand technology (Kubernetes, Terraform, Kafka, …)
+  woven into an experience bullet or the executive summary would ship on the LLM
+  judge alone. `scan_prose_skill_fabrications` closes that leak with an
+  **allowlist, not a denylist**: it flags a job-TARGET skill/tool keyword (from the
+  persisted `EmployerAnalysis` keywords) that appears in the generated prose but
+  grounds in NEITHER the candidate's profile-backed skill vocabulary
+  (`build_skill_vocabulary` = skill-category items + evidence tools) NOR the
+  evidence corpus. Only recognised target keywords are candidates and matching is
+  word-boundary anchored, so ordinary English words never false-fire; the skills
+  SECTION is out of scope (it is governed by the skills-section allowlist). A hit
+  is **hard-rejected exactly like an invented metric** (`NEVER_FABRICATE_SKILLS`).
 - **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
   after assembling the selected candidate's text. A fabrication downgrades
   validation so the resume is **not approved** (the last accepted generation's

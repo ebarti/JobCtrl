@@ -79,7 +79,9 @@ from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.fabrication_detector import (
     FabricationError,
     build_evidence_corpus,
+    build_skill_vocabulary,
     employer_name_set,
+    scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
 from jobhunter.domain.materials.policy import TailoringPolicy
@@ -2576,12 +2578,32 @@ class TailorResumeUseCase:
             corpus,
             employers=employers,
         )
+        # Sibling gate: a job-target skill/tool woven into an experience bullet or
+        # the executive summary that traces to neither the profile skill vocabulary
+        # nor the evidence corpus is a fabrication (the numeric detector has no
+        # concept of a tool). The skills SECTION is excluded — it is governed by the
+        # skills-section allowlist, not this prose gate.
+        prose_rows = [
+            (row.bullet_id, row.generated_text)
+            for row in rows
+            if row.section in ("executive_profile", "experience")
+        ]
+        findings.extend(
+            scan_prose_skill_fabrications(
+                prose_rows,
+                target_skill_terms=[
+                    keyword.keyword
+                    for keyword in employer_analysis.canonical.keywords
+                    if keyword.keyword.strip()
+                ],
+                allowed_skill_terms=build_skill_vocabulary(profile),
+                corpus=corpus,
+            )
+        )
         if findings:
-            try:
-                raise FabricationError(findings)
-            except FabricationError as exc:
-                log.warning("Never-fabricate detector rejected %s: %s", job.get("url"), exc)
-                return (), f"Never-fabricate detector failed: {exc}"
+            error = FabricationError(findings)
+            log.warning("Never-fabricate detector rejected %s: %s", job.get("url"), error)
+            return (), f"Never-fabricate detector failed: {error}"
         return rows, None
 
     # ------------------------------------------------------------------

@@ -29,8 +29,10 @@ from jobhunter.domain.materials.analysis import (
 )
 from jobhunter.domain.materials.fabrication_detector import (
     build_evidence_corpus,
+    build_skill_vocabulary,
     employer_name_set,
     find_fabricated_tokens,
+    scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
 from jobhunter.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
@@ -742,6 +744,129 @@ def test_detector_flags_fabricated_date() -> None:
         corpus,
     )
     assert any(f.kind == "date" and f.control is ControlRule.NEVER_FABRICATE_DATES for f in findings)
+
+
+# --------------------------------------------------------------------------
+# Deterministic prose skill/tool gate (allowlist) — the #1 truthfulness leak
+# --------------------------------------------------------------------------
+
+
+def test_build_skill_vocabulary_includes_skill_categories_and_evidence_tools() -> None:
+    # skill_categories items: Python, Go; evidence tools: Python, PostgreSQL.
+    vocab = build_skill_vocabulary(_profile())
+    assert {"python", "go", "postgresql"} <= vocab
+    # A job-target tool the candidate never listed is NOT in the allowlist.
+    assert "kubernetes" not in vocab
+    assert "terraform" not in vocab
+
+
+def test_prose_skill_gate_flags_target_tool_absent_from_profile() -> None:
+    """A job-target tool woven into an experience bullet OR the executive summary
+    that traces to neither the skill vocabulary nor the evidence corpus is a
+    fabrication (kind ``skill`` / control ``NEVER_FABRICATE_SKILLS``)."""
+    profile = _profile()  # no Kubernetes/Terraform anywhere in the profile
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [
+            ("executive_profile#0", "Backend owner who standardized on Terraform."),
+            ("experience:acme_swe#0", "Automated deployments with Kubernetes."),
+        ],
+        target_skill_terms=["Python", "latency", "Kubernetes", "Terraform"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    flagged = {f.token for f in findings}
+    assert flagged == {"Kubernetes", "Terraform"}
+    assert all(f.kind == "skill" for f in findings)
+    assert all(f.control is ControlRule.NEVER_FABRICATE_SKILLS for f in findings)
+    # The finding names the bullet it came from (summary vs experience).
+    assert {f.bullet_id for f in findings} == {"executive_profile#0", "experience:acme_swe#0"}
+
+
+def test_prose_skill_gate_allows_profile_backed_tool() -> None:
+    """A tool that IS in the profile allowlist is never a false reject, even though
+    it is also a job-target keyword (success criterion 2 + 4)."""
+    profile = _profile()  # skills include Python
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Built resilient services in Python.")],
+        target_skill_terms=["Python", "Kubernetes"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []  # Python grounded; Kubernetes never appears in the prose
+
+
+def test_prose_skill_gate_grounds_concept_keyword_present_in_evidence_corpus() -> None:
+    """Near-zero false positives: a target keyword that is not a listed skill but
+    appears in the candidate's real evidence (``latency`` in a bullet/tags) is
+    grounded by the corpus and must NOT be flagged — only named tools absent from
+    every profile source are interview-fatal fabrications."""
+    profile = _profile()  # evidence bullet + tags mention "latency"; "latency" not a skill item
+    assert "latency" not in build_skill_vocabulary(profile)
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Reduced API latency further under load.")],
+        target_skill_terms=["latency", "api"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
+
+
+def test_prose_skill_gate_never_flags_ordinary_english_words() -> None:
+    """Only recognised target skill/tool keywords are candidates, so ordinary
+    English prose is never flagged even when it is dense with common words."""
+    profile = _profile()
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [
+            (
+                "executive_profile#0",
+                "Pragmatic engineer who ships reliable, well-tested software with clear goals.",
+            )
+        ],
+        target_skill_terms=["Kubernetes", "Terraform", "Snowflake"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
+
+
+def test_prose_skill_gate_matches_on_word_boundaries_not_substrings() -> None:
+    """Mirrors the grounding gate's boundary approach: a fabricated ``Java`` fires as
+    a standalone word but never inside ``JavaScript`` (the ``go`` in ``goals`` case)."""
+    profile = _profile()  # Java is absent from the profile -> a fabrication candidate
+    corpus = build_evidence_corpus(profile)
+    substring_only = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Built JavaScript tooling for the frontend.")],
+        target_skill_terms=["Java"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert substring_only == []  # "java" must NOT match inside "javascript"
+
+    standalone = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Shipped Java services for the platform.")],
+        target_skill_terms=["Java"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert [f.token for f in standalone] == ["Java"]
+
+
+def test_prose_skill_gate_skips_one_and_two_char_targets() -> None:
+    """Single/two-character targets (``go`` / ``r`` / ``ai``) are too ambiguous to
+    flag deterministically, mirroring the skills-section watchlist length guard."""
+    profile = _profile()
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Go to market motions with AI and R analysis.")],
+        target_skill_terms=["Go", "AI", "R"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
 
 
 # --------------------------------------------------------------------------
