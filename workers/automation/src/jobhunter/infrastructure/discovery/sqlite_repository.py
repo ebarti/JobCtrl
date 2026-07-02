@@ -58,6 +58,7 @@ from jobhunter.domain.job_content_identity import (
     job_content_fingerprint,
     normalize_identity_text,
 )
+from jobhunter.domain.ports.discovery import ContentOwnerMatch
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
 
@@ -441,12 +442,14 @@ class SqliteJobRepository:
         title: str,
         company: str,
         description: str,
-    ) -> JobId | None:
+    ) -> ContentOwnerMatch | None:
         """Resolve an existing Job by content identity after native-id / URL miss.
 
         Mirrors the JobSpy content-dedup strictness: candidates are gated on an
         exact (normalized) title + employer match, then confirmed by the shared
         ``job_content_fingerprint`` or a substantial-description shingle match.
+        The returned :class:`ContentOwnerMatch` records which of the two paths
+        matched so the write boundary logs an honest duplicate-link reason.
 
         Content merges MUST key on a genuine employer on BOTH sides, otherwise
         two DISTINCT employers' postings would collapse into one Job (silent
@@ -500,9 +503,9 @@ class SqliteJobRepository:
                 description=existing["description"],
             )
             if existing_key == incoming_key:
-                return JobId(str(existing["url"]))
+                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis="fingerprint")
             if descriptions_substantially_match(description, existing["description"]):
-                return JobId(str(existing["url"]))
+                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis="shingle")
         return None
 
     def attach_source_observation(

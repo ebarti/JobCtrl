@@ -12,7 +12,7 @@ PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Iterable, Literal, Protocol
 
 from jobhunter.domain.discovery.aggregate import Job
 from jobhunter.domain.discovery.identity import (
@@ -59,6 +59,29 @@ class ScrapedJobPosting:
     source_native_id: str
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
+
+
+ContentMatchBasis = Literal["fingerprint", "shingle"]
+"""How ``find_content_owner`` matched an incoming posting to an existing Job.
+
+``fingerprint`` is an exact normalised title + company + description hash match;
+``shingle`` is a substantial description-shingle similarity match. The Discovery
+write boundary records a distinct ``DuplicateJobLink`` reason per basis so the
+audit trail never overstates a fuzzy shingle match as an exact fingerprint one.
+"""
+
+
+@dataclass(frozen=True)
+class ContentOwnerMatch:
+    """An existing Job resolved by content identity, plus how it matched.
+
+    ``find_content_owner`` returns this (rather than a bare ``JobId``) so the
+    caller can record an honest duplicate-link reason: the fingerprint and
+    shingle paths carry different confidence and must not be conflated.
+    """
+
+    job_id: JobId
+    basis: ContentMatchBasis
 
 
 class JobBoardScraperPort(Protocol):
@@ -219,7 +242,7 @@ class JobRepository(Protocol):
         title: str,
         company: str,
         description: str,
-    ) -> JobId | None:
+    ) -> ContentOwnerMatch | None:
         """Look up the canonical Job by content identity when identity checks miss.
 
         Called by ``DiscoverJobsUseCase`` after ``find_canonical_owner`` returns
@@ -234,8 +257,11 @@ class JobRepository(Protocol):
         ``Unknown`` / platform-sentinel employer (a job board, the manual-capture
         board, or the Workday fallback) is shared across employers, so the
         implementation returns ``None`` rather than collapse two distinct
-        employers' postings. Returns ``None`` when either side lacks a genuine
-        employer, the posting cannot be fingerprinted, or no existing Job matches.
+        employers' postings. On a match it returns a :class:`ContentOwnerMatch`
+        carrying the surviving ``JobId`` and the ``basis`` (fingerprint vs
+        shingle) so the caller records an honest duplicate-link reason. Returns
+        ``None`` when either side lacks a genuine employer, the posting cannot be
+        fingerprinted, or no existing Job matches.
         """
         ...
 

@@ -17,7 +17,9 @@ this use case which:
 * publishes ``CanonicalJobIdentityResolved`` whenever the canonical
   identity changes,
 * publishes ``DuplicateJobLinkRejected`` when the identity is too
-  low-confidence to merge automatically.
+  low-confidence to merge automatically, or when a DISTINCT posting that
+  content-matched an existing owner is declined by the current acceptance
+  policy (the owner is kept; only the incoming duplicate is dropped).
 
 The use case is pure orchestration — it depends only on the typed
 ports (``JobRepository``, ``EventPublisher``) and the
@@ -59,7 +61,11 @@ from jobhunter.domain.events import (
 )
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import is_genuine_employer_identity
-from jobhunter.domain.ports.discovery import JobRepository, ScrapedJobPosting
+from jobhunter.domain.ports.discovery import (
+    ContentOwnerMatch,
+    JobRepository,
+    ScrapedJobPosting,
+)
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.tenant import TenantId
 from jobhunter.infrastructure.observability.adapter_spans import (
@@ -79,13 +85,24 @@ Boundary" failure mode "Canonicalization merges distinct jobs". The
 
 
 CONTENT_MATCH_CONFIDENCE: float = 0.95
-"""Confidence recorded on a duplicate link resolved by content identity.
+"""Confidence recorded on a duplicate link resolved by an exact content fingerprint.
 
 When ``find_canonical_owner`` misses but ``find_content_owner`` matches an
 existing Job on the shared title + company + description fingerprint, the merge
 is authoritative regardless of the canonical-URL identity confidence. The 0.95
 value mirrors the JobSpy content-dedup path so cross-source collapses recorded
 by either intake share the same ``content_fingerprint_match`` audit weight.
+"""
+
+
+CONTENT_SHINGLE_MATCH_CONFIDENCE: float = 0.85
+"""Confidence recorded on a duplicate link resolved by description shingle similarity.
+
+A shingle match (``descriptions_substantially_match``) confirms the same posting
+across reworded board copies, but it is fuzzier than an exact fingerprint, so it
+carries a lower audit weight. The 0.85 value sits above ``MIN_AUTO_MERGE_CONFIDENCE``
+(the merge is still authoritative) yet below ``CONTENT_MATCH_CONFIDENCE`` so the
+audit trail never overstates a shingle match as an exact fingerprint match.
 """
 
 
@@ -268,17 +285,16 @@ class DiscoverJobsUseCase:
             source_native_id=identity.source_native_id,
             canonical_url=identity.canonical_url,
         )
-        content_matched = False
+        content_match: ContentOwnerMatch | None = None
         if owner_id is None and is_genuine_employer_identity(posting.source.board):
-            content_owner_id = self._repository.find_content_owner(
+            content_match = self._repository.find_content_owner(
                 tenant_id,
                 title=posting.metadata.title,
                 company=posting.source.board,
                 description=posting.metadata.description,
             )
-            if content_owner_id is not None:
-                owner_id = content_owner_id
-                content_matched = True
+            if content_match is not None:
+                owner_id = content_match.job_id
 
         with canonicalize_span(
             tenant_id=str(tenant_id),
@@ -319,7 +335,7 @@ class DiscoverJobsUseCase:
             run_id=run_id,
             observation_id=observation_id,
             observed_at=observed_at,
-            content_matched=content_matched,
+            content_match=content_match,
         )
 
     def _create_new_job(
@@ -424,8 +440,9 @@ class DiscoverJobsUseCase:
         run_id: str,
         observation_id: str,
         observed_at: str,
-        content_matched: bool = False,
+        content_match: ContentOwnerMatch | None = None,
     ) -> DiscoveryDecision:
+        content_matched = content_match is not None
         observed_url = identity.canonical_url or posting.posting_url.value
         normalized_observed = normalize_observed_url(observed_url)
         is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
@@ -462,6 +479,15 @@ class DiscoverJobsUseCase:
             )
 
         acceptance = self._acceptance_policy(posting)
+        if content_matched and not acceptance.accepted:
+            return self._reject_content_matched_duplicate(
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+                observation_id=observation_id,
+                confidence=identity.confidence,
+                acceptance=acceptance,
+                rejected_at=observed_at,
+            )
         with dedupe_span(
             tenant_id=str(tenant_id),
             job_id=str(owner_id),
@@ -554,9 +580,13 @@ class DiscoverJobsUseCase:
         duplicate_link_id: str | None = None
         if is_distinct_url:
             duplicate_link_id = f"dup:{uuid.uuid4().hex}"
-            if content_matched:
-                link_reason = "content_fingerprint_match"
-                link_confidence = CONTENT_MATCH_CONFIDENCE
+            if content_match is not None:
+                if content_match.basis == "fingerprint":
+                    link_reason = "content_fingerprint_match"
+                    link_confidence = CONTENT_MATCH_CONFIDENCE
+                else:
+                    link_reason = "content_shingle_match"
+                    link_confidence = CONTENT_SHINGLE_MATCH_CONFIDENCE
             else:
                 link_reason = (
                     "canonical_url_match" if identity.canonical_url else "source_native_id_match"
@@ -592,6 +622,55 @@ class DiscoverJobsUseCase:
             rejected_reason=None,
             rejected_kind=None,
             confidence=identity.confidence,
+        )
+
+    def _reject_content_matched_duplicate(
+        self,
+        *,
+        tenant_id: TenantId,
+        owner_id: JobId,
+        observation_id: str,
+        confidence: float,
+        acceptance: PostingAcceptance,
+        rejected_at: str,
+    ) -> DiscoveryDecision:
+        """Decline a DISTINCT content-matched posting without touching the owner.
+
+        The incoming posting resolved to ``owner_id`` only by content identity, so
+        it is a different posting (different canonical URL, typically another
+        source and location) rather than a re-observation of the owner. A
+        current-policy rejection must therefore NOT soft-delete the accepted owner,
+        and must NOT attach the rejected posting as an owner observation: doing so
+        would let ``find_canonical_owner`` resurface it as a same-identity
+        re-observation on a later run and delete the owner then. The declined
+        duplicate is recorded as ``DuplicateJobLinkRejected`` audit and the owner
+        is left untouched.
+        """
+        duplicate_link_id = f"dup:{uuid.uuid4().hex}"
+        with dedupe_span(
+            tenant_id=str(tenant_id),
+            job_id=str(owner_id),
+            stage="content_identity",
+            result="policy_rejected",
+            confidence=confidence,
+        ):
+            pass
+        self._publisher.publish(
+            create_duplicate_job_link_rejected(
+                tenant_id,
+                DuplicateJobLinkRejectedPayload(
+                    duplicate_link_id=duplicate_link_id,
+                    candidate_ids=(str(owner_id), observation_id),
+                    reason=f"content_match_policy_rejected: {_policy_rejection_reason(acceptance)}",
+                    rejected_at=rejected_at,
+                ),
+            )
+        )
+        return self._policy_rejected_decision(
+            job_id=owner_id,
+            observation_id=observation_id,
+            confidence=confidence,
+            acceptance=acceptance,
         )
 
     def _publish_source_observed(
@@ -675,6 +754,7 @@ def _policy_rejection_reason(acceptance: PostingAcceptance) -> str:
 
 __all__ = [
     "CONTENT_MATCH_CONFIDENCE",
+    "CONTENT_SHINGLE_MATCH_CONFIDENCE",
     "CanonicalIdentityResolver",
     "DiscoverJobsUseCase",
     "DiscoveryDecision",

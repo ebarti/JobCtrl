@@ -882,9 +882,119 @@ def test_discover_jobs_use_case_collapses_reworded_cross_source_description(
         ).job_id
         == JobId(survivor)
     )
-    link = conn.execute("SELECT surviving_job_id, reason FROM job_duplicate_links").fetchone()
+    link = conn.execute(
+        "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
+    ).fetchone()
     assert link["surviving_job_id"] == survivor
-    assert link["reason"] == "content_fingerprint_match"
+    assert link["reason"] == "content_shingle_match"
+    assert link["confidence"] == 0.85
+
+
+def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_rejected(
+    conn: sqlite3.Connection,
+) -> None:
+    """A rejected cross-source content duplicate must not delete the accepted owner.
+
+    An employer posts the same role in two locations. The accepted "Remote - US"
+    copy is already in the funnel. A distinct "Bengaluru, India" copy arrives from
+    another source (different URL / source / native id), content-matches the owner
+    (location is not part of the fingerprint), and is rejected by current policy
+    for location_mismatch. The rejection must drop only the incoming duplicate and
+    leave the accepted owner active and visible in ``list_recent`` — re-running the
+    rejected duplicate must not resurface it as a same-identity re-observation and
+    delete the owner on a later run.
+    """
+
+    def reject_india(posting: ScrapedJobPosting) -> PostingAcceptance:
+        if "india" in (posting.metadata.location or "").casefold():
+            return PostingAcceptance.reject(
+                reason="current_policy_mismatch",
+                rejection_reasons=("location_mismatch",),
+            )
+        return PostingAcceptance.accept()
+
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        acceptance_policy=reject_india,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+
+    owner_url = "https://boards.greenhouse.io/acme/jobs/remote-us"
+    description = "Own the platform engineering roadmap for local-first developer tooling."
+    accepted = _posting(
+        canonical_url=owner_url,
+        source_native_id="gh-remote",
+        source_id="greenhouse:acme",
+        ats_kind=AtsKind.GREENHOUSE,
+        board="Acme",
+        metadata=JobMetadata(
+            title="Staff Platform Engineer",
+            description=description,
+            location="Remote - US",
+        ),
+    )
+    india_duplicate = _posting(
+        canonical_url="https://jobs.lever.co/acme/staff-platform-engineer-india",
+        source_native_id="lever-india",
+        source_id="lever:acme",
+        ats_kind=AtsKind.LEVER,
+        board="Acme",
+        metadata=JobMetadata(
+            title="Staff Platform Engineer",
+            description=description,
+            location="Bengaluru, India",
+        ),
+    )
+
+    created = use_case.execute(
+        tenant_id=LOCAL_TENANT, postings=[accepted], run_id="run-owner"
+    )
+    assert created.new_jobs == 1
+    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    assert owner is not None and owner.is_deleted is False
+    publisher.events.clear()
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate"
+    )
+
+    assert summary.total == 1
+    assert summary.new_jobs == 0
+    assert summary.observed == 0
+    assert summary.duplicates_linked == 0
+    assert summary.duplicates_rejected == 0
+
+    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    assert owner is not None
+    assert owner.is_deleted is False
+    assert owner.metadata.location == "Remote - US"
+    assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+    # The rejected distinct posting is recorded as declined-duplicate audit, and is
+    # NOT attached as an owner observation (which would re-trigger the delete later).
+    assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
+    rejected = publisher.events[-1]
+    assert rejected.payload["candidate_ids"][0] == owner_url
+    assert "location_mismatch" in rejected.payload["reason"]
+    assert [obs.source_id for obs in repo.list_observations(LOCAL_TENANT, JobId(owner_url))] == [
+        "greenhouse:acme"
+    ]
+
+    # Re-running the rejected duplicate must be stable: the owner stays active and
+    # visible, proving the rejection left no re-observation trail to delete it.
+    publisher.events.clear()
+    resummary = use_case.execute(
+        tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate-2"
+    )
+    assert resummary.observed == 0
+    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    assert owner is not None and owner.is_deleted is False
+    assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
+    assert "JobDeleted" not in [event.event_type for event in publisher.events]
 
 
 def test_discover_jobs_use_case_keeps_distinct_roles_at_same_company_separate(
