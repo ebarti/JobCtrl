@@ -180,15 +180,17 @@ describe("Discovery events", () => {
     expect(event.payload.supersededJobOrObservationId).toBe("observation-2");
   });
 
-  it("DuplicateJobLinkRejected carries rejected duplicate candidates", () => {
+  it("DuplicateJobLinkRejected attributes the rejected link to the surviving owner", () => {
     const event = createDuplicateJobLinkRejected(LOCAL_TENANT, {
       duplicateLinkId: "duplicate-link-rejected-1",
-      candidateIds: ["j1", "j2"],
+      jobId: "owner-1",
+      candidateJobId: "candidate-1",
       reason: "low_confidence",
       rejectedAt: "2026-05-12T00:00:00Z",
     });
     expect(event.eventType).toBe("DuplicateJobLinkRejected");
-    expect(event.payload.candidateIds).toEqual(["j1", "j2"]);
+    expect(event.payload.jobId).toBe("owner-1");
+    expect(event.payload.candidateJobId).toBe("candidate-1");
   });
 
   it("DiscoveryFeedbackRecorded carries the feedback kind without raw text", () => {
@@ -799,7 +801,8 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       }).eventType,
       createDuplicateJobLinkRejected(LOCAL_TENANT, {
         duplicateLinkId: "duplicate-link-rejected-1",
-        candidateIds: ["j", "j2"],
+        jobId: "j",
+        candidateJobId: "j2",
         reason: "low_confidence",
         rejectedAt: "t",
       }).eventType,

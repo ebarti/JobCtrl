@@ -7,6 +7,40 @@ import pytest
 from jobhunter import config
 from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import smartextract
+from jobhunter.domain.discovery import (
+    AtsKind,
+    JobMetadata,
+    PostingUrl,
+    SearchStrategy,
+    Source,
+)
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.ports.discovery import ScrapedJobPosting
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.discovery import SqliteJobRepository
+from jobhunter.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+
+
+def _ats_posting(
+    *,
+    canonical_url: str,
+    description: str,
+    board: str = "Acme",
+    title: str = "Staff Platform Engineer",
+    source_id: str = "greenhouse:acme",
+    source_native_id: str = "gh-1",
+    location: str = "Remote - US",
+) -> ScrapedJobPosting:
+    return ScrapedJobPosting(
+        posting_url=PostingUrl(value=canonical_url),
+        source=Source(board=board),
+        metadata=JobMetadata(title=title, description=description, location=location),
+        strategy=SearchStrategy.WORKDAY_API,
+        source_id=source_id,
+        source_native_id=source_native_id,
+        canonical_url=canonical_url,
+        ats_kind=AtsKind.GREENHOUSE,
+    )
 
 
 def test_smart_extract_store_filters_title_and_location(
@@ -442,6 +476,199 @@ def test_smart_extract_store_normalizes_relative_urls(
         row = conn.execute("SELECT url, company FROM jobs").fetchone()
         assert row["url"] == "https://startup.jobs/head-of-platform-engineering-dlocal-7946484"
         assert row["company"] == "dLocal"
+    finally:
+        close_connection(db_path)
+
+
+def test_smart_extract_dedups_against_ats_first_content_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Smart Extract must merge onto an ATS-first owner instead of double-storing.
+
+    The ATS row is created by the use case with ``jobs.company`` NULL and the
+    employer in ``jobs.site``; Smart Extract then rediscovers the same posting
+    from a different URL. Without a content-owner check the direct-SQL insert
+    would create a second aggregate (double scoring/tailoring spend).
+    """
+    db_path = tmp_path / "jobhunter.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    try:
+        description = "Own the platform engineering roadmap for local-first developer tooling."
+        owner_url = "https://boards.greenhouse.io/acme/jobs/staff-eng"
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[_ats_posting(canonical_url=owner_url, description=description)],
+            run_id="run-ats",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+        result = smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": "https://careers.acme.com/staff-platform-engineer",
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": description,
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Staff Platform Engineer",
+        )
+
+        assert result == (0, 1)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        link = conn.execute(
+            "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == owner_url
+        assert link["reason"] == "content_fingerprint_match"
+        assert link["confidence"] == 0.95
+        linked_events = conn.execute(
+            "SELECT job_url FROM job_events WHERE event_type = 'DuplicateJobLinked'"
+        ).fetchall()
+        assert len(linked_events) == 1
+        assert linked_events[0]["job_url"] == owner_url
+        observations = repository.list_observations(LOCAL_TENANT, owner_url)
+        assert "smartextract:Acme Careers" in {obs.source_id for obs in observations}
+    finally:
+        close_connection(db_path)
+
+
+def test_ats_dedups_against_smart_extract_first_content_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reverse direction: a later ATS scrape must merge onto a Smart Extract owner."""
+    db_path = tmp_path / "jobhunter.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    try:
+        description = "Own the platform engineering roadmap for local-first developer tooling."
+        smart_url = "https://careers.acme.com/staff-platform-engineer"
+        result = smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": smart_url,
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": description,
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Staff Platform Engineer",
+        )
+        assert result == (1, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        summary = use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[
+                _ats_posting(
+                    canonical_url="https://boards.greenhouse.io/acme/jobs/staff-eng",
+                    description=description,
+                )
+            ],
+            run_id="run-ats",
+        )
+
+        assert summary.new_jobs == 0
+        assert summary.duplicates_linked == 1
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        link = conn.execute(
+            "SELECT surviving_job_id, reason FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == smart_url
+        assert link["reason"] == "content_fingerprint_match"
+    finally:
+        close_connection(db_path)
+
+
+def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Distinct roles at one employer must not merge through the Smart Extract route.
+
+    The content-owner lookup gates on normalized title AND employer, so two
+    genuinely different roles stay separate even when their descriptions are
+    near-identical (well above the 0.83 shingle threshold): the title gate must
+    short-circuit before any description match. If it did not, the shared
+    description would fingerprint- or shingle-match and wrongly collapse the two
+    roles into one aggregate. Regression guard for the direct-SQL skip-insert path.
+    """
+    db_path = tmp_path / "jobhunter.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    try:
+        shared_description = (
+            "Lead platform reliability, security, and delivery initiatives "
+            "across Spain and the wider EMEA region. " * 12
+        )
+        owner_url = "https://boards.greenhouse.io/acme/jobs/staff-platform-eng"
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[
+                _ats_posting(
+                    canonical_url=owner_url,
+                    description=shared_description,
+                    title="Staff Platform Engineer",
+                )
+            ],
+            run_id="run-ats",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+        result = smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": "https://careers.acme.com/staff-data-scientist",
+                    "title": "Staff Data Scientist",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": shared_description,
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Staff Data Scientist",
+        )
+
+        assert result == (1, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 

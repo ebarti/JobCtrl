@@ -8,7 +8,19 @@ import pytest
 
 from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import jobspy, smartextract, workday
+from jobhunter.domain.discovery import (
+    AtsKind,
+    JobMetadata,
+    PostingUrl,
+    SearchStrategy,
+    Source,
+)
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.ports.discovery import ScrapedJobPosting
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobhunter.infrastructure.discovery import SqliteJobRepository
+from jobhunter.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -363,6 +375,141 @@ def test_jobspy_linkedin_location_parser_tolerates_unknown_country():
     location = LinkedIn()._get_location(metadata)
 
     assert location.display_location() == "Sarajevo, Federation, Bosnia and Herzegovina"
+
+
+def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
+    """JobSpy's pre-use-case dedup must tolerate an ATS-first owner with NULL company.
+
+    Use-case-created ATS rows leave ``jobs.company`` NULL and carry the employer
+    in ``jobs.site``. JobSpy supplies the employer in its ``company`` column, so a
+    dedup that filters on ``jobs.company`` alone misses the ATS owner and stores a
+    duplicate. The pre-filter must coalesce ``company`` -> ``site`` like the
+    use-case content-owner lookup.
+    """
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        owner_url = "https://boards.greenhouse.io/acme/jobs/staff-eng"
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[
+                ScrapedJobPosting(
+                    posting_url=PostingUrl(value=owner_url),
+                    source=Source(board="Acme"),
+                    metadata=JobMetadata(
+                        title="Staff Platform Engineer",
+                        description=_JOBSPY_DESCRIPTION,
+                        location="Remote",
+                    ),
+                    strategy=SearchStrategy.WORKDAY_API,
+                    source_id="greenhouse:acme",
+                    source_native_id="gh-1",
+                    canonical_url=owner_url,
+                    ats_kind=AtsKind.GREENHOUSE,
+                )
+            ],
+            run_id="run-ats",
+        )
+        stored = conn.execute(
+            "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
+        ).fetchone()
+        assert (stored["company"] or "") == ""
+        assert stored["site"] == "Acme"
+
+        frame = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/1",
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, frame, "Staff Platform Engineer", limit=10) == (0, 1)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        link = conn.execute(
+            "SELECT surviving_job_id FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == owner_url
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_keeps_distinct_roles_at_same_null_company_owner_separate(tmp_path):
+    """Distinct roles must not merge onto a NULL-company ATS owner via JobSpy.
+
+    The company->site coalescing lets JobSpy find an ATS-first owner whose
+    ``jobs.company`` is NULL, but the content match still gates on normalized
+    title AND employer. Two genuinely different roles at the same employer with
+    near-identical (well above 0.83 shingle) descriptions must remain separate
+    Jobs -- the title gate short-circuits before the shared description could
+    fingerprint- or shingle-match. Regression guard for the null-company path.
+    """
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        shared_description = (
+            "Lead platform reliability, security, and delivery initiatives "
+            "across Spain and the wider EMEA region. " * 12
+        )
+        owner_url = "https://boards.greenhouse.io/acme/jobs/staff-platform-eng"
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[
+                ScrapedJobPosting(
+                    posting_url=PostingUrl(value=owner_url),
+                    source=Source(board="Acme"),
+                    metadata=JobMetadata(
+                        title="Staff Platform Engineer",
+                        description=shared_description,
+                        location="Remote",
+                    ),
+                    strategy=SearchStrategy.WORKDAY_API,
+                    source_id="greenhouse:acme",
+                    source_native_id="gh-1",
+                    canonical_url=owner_url,
+                    ats_kind=AtsKind.GREENHOUSE,
+                )
+            ],
+            run_id="run-ats",
+        )
+        stored = conn.execute(
+            "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
+        ).fetchone()
+        assert (stored["company"] or "") == ""
+        assert stored["site"] == "Acme"
+
+        frame = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/2",
+                    "title": "Staff Data Scientist",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                    "description": shared_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, frame, "Staff Data Scientist", limit=10) == (1, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+    finally:
+        close_connection(db_path)
 
 
 def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):

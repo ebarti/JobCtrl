@@ -5,6 +5,17 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from typing import Iterable, Literal
+
+ContentMatchBasis = Literal["fingerprint", "shingle"]
+"""How an incoming posting matched an existing Job by content identity.
+
+``fingerprint`` is an exact normalised title + employer + description hash
+match; ``shingle`` is a substantial description-shingle similarity match. The
+Discovery write boundary records a distinct ``DuplicateJobLink`` reason per
+basis so the audit trail never overstates a fuzzy shingle match as an exact
+fingerprint one.
+"""
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -50,6 +61,42 @@ def normalize_description_text(value: object) -> str:
     text = _MARKDOWN_ESCAPE_RE.sub(r"\1", text)
     text = _MARKDOWN_MARKER_RE.sub("", text)
     return _WHITESPACE_RE.sub(" ", text).strip()
+
+
+_NON_EMPLOYER_IDENTITY_LABELS: frozenset[str] = frozenset(
+    {
+        # ``Employer.unknown()`` sentinel + the SqliteJobRepository row fallback.
+        "unknown",
+        # Manual-capture board (production_wiring._manual_capture_posting).
+        "user-mediated capture",
+        # Workday board fallback used when the employer name is missing.
+        "workday",
+        # JobSpy platform boards (jobspy.model.Site): a board, never an employer.
+        "linkedin",
+        "indeed",
+        "zip_recruiter",
+        "glassdoor",
+        "google",
+        "bayt",
+        "naukri",
+        "bdjobs",
+    }
+)
+
+
+def is_genuine_employer_identity(value: object) -> bool:
+    """Return true when ``value`` names one specific hiring employer.
+
+    Content dedup keys on the employer so DISTINCT employers' postings never
+    collapse into one Job. Empty values, the ``Unknown`` sentinel, and
+    non-employer platform/board labels (job boards plus the manual-capture and
+    Workday fallbacks) are shared across many employers, so they must never be
+    used as an employer key: a caller that hits one falls through to creating a
+    distinct Job (a safe under-merge rather than a lossy cross-employer merge).
+    """
+
+    normalized = normalize_identity_text(value)
+    return bool(normalized) and normalized not in _NON_EMPLOYER_IDENTITY_LABELS
 
 
 def normalize_role_title_for_repost_match(value: object) -> str:
@@ -111,6 +158,46 @@ def job_content_fingerprint(
         return None
     payload = "\x1f".join((normalized_title, normalized_company, normalized_description))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def content_match_basis(
+    *,
+    incoming_key: str,
+    incoming_description: object,
+    candidate_title: object,
+    candidate_employer: object,
+    candidate_descriptions: Iterable[object],
+) -> ContentMatchBasis | None:
+    """Return how an incoming posting matches a stored Job, or ``None``.
+
+    The incoming posting is a raw board LISTING. Discovery stores the listing
+    text in ``jobs.description`` and, once enriched, a much longer full text in
+    ``job_enrichments.full_description``. Comparing the incoming listing only
+    against the enriched text drops below the shingle threshold once the owner is
+    enriched, so cross-source dedup silently stops working post-enrichment.
+
+    Comparing like-for-like against BOTH stored texts (the listing and, if
+    present, the enriched full text) and taking the strongest basis keeps dedup
+    working before and after enrichment without lowering any threshold. An exact
+    fingerprint against either stored text beats a shingle match against either.
+    """
+
+    texts: list[object] = []
+    for text in candidate_descriptions:
+        if normalize_description_text(text) and text not in texts:
+            texts.append(text)
+    for text in texts:
+        candidate_key = job_content_fingerprint(
+            title=candidate_title,
+            company=candidate_employer,
+            description=text,
+        )
+        if candidate_key is not None and candidate_key == incoming_key:
+            return "fingerprint"
+    for text in texts:
+        if descriptions_substantially_match(incoming_description, text):
+            return "shingle"
+    return None
 
 
 def descriptions_substantially_match(left: object, right: object) -> bool:

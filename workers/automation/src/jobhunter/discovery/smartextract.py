@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 import time
+import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -30,10 +31,23 @@ from playwright.sync_api import sync_playwright
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
 from jobhunter.database import get_stats, init_db, resurface_deleted_job
+from jobhunter.domain.discovery.identity import DuplicateJobLink, JobSourceObservation
+from jobhunter.domain.discovery.use_cases import (
+    CONTENT_MATCH_CONFIDENCE,
+    CONTENT_SHINGLE_MATCH_CONFIDENCE,
+)
+from jobhunter.domain.events import (
+    DuplicateJobLinkedPayload,
+    create_duplicate_job_linked,
+)
+from jobhunter.domain.ports.discovery import ContentOwnerMatch
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.discovery.target_queries import (
     query_specs_for_source,
     title_matches_any_query,
@@ -88,6 +102,71 @@ def load_sites() -> list[dict]:
     return data.get("sites", [])
 
 
+def _merge_smart_extract_content_duplicate(
+    conn: sqlite3.Connection,
+    repository: SqliteJobRepository,
+    publisher: DurableJobEventPublisher,
+    owner_match: ContentOwnerMatch,
+    *,
+    url: str,
+    site: str,
+    observed_at: str,
+) -> None:
+    """Attach a content-matched Smart Extract posting to its existing owner.
+
+    Smart Extract writes rows with direct SQL, so without this check the same
+    posting discovered by another source (ATS or JobSpy) would create a second
+    ``Job`` aggregate and double the scoring/tailoring spend. Mirrors the JobSpy
+    content-dedup merge: record the duplicate link + a source observation against
+    the surviving owner, resurface it if it was soft-deleted, and skip the
+    insert.
+    """
+    owner_url = str(owner_match.job_id)
+    if owner_match.basis == "fingerprint":
+        reason = "content_fingerprint_match"
+        confidence = CONTENT_MATCH_CONFIDENCE
+    else:
+        reason = "content_shingle_match"
+        confidence = CONTENT_SHINGLE_MATCH_CONFIDENCE
+    duplicate_link_id = f"dup:{uuid.uuid4().hex}"
+    repository.record_duplicate_link(
+        LOCAL_TENANT,
+        DuplicateJobLink(
+            duplicate_link_id=duplicate_link_id,
+            surviving_job_id=owner_url,
+            superseded_job_or_observation_id=url,
+            reason=reason,
+            confidence=confidence,
+            linked_at=observed_at,
+        ),
+    )
+    repository.attach_source_observation(
+        LOCAL_TENANT,
+        owner_match.job_id,
+        JobSourceObservation(
+            source_observation_id=f"obs:{uuid.uuid4().hex}",
+            source_id=f"smartextract:{site}",
+            source_native_id=url,
+            observed_url=url,
+            run_id="smartextract",
+            observed_at=observed_at,
+        ),
+    )
+    publisher.publish(
+        create_duplicate_job_linked(
+            LOCAL_TENANT,
+            DuplicateJobLinkedPayload(
+                duplicate_link_id=duplicate_link_id,
+                surviving_job_id=owner_url,
+                superseded_job_or_observation_id=url,
+                reason=reason,
+                confidence=confidence,
+            ),
+        )
+    )
+    resurface_deleted_job(conn, owner_url, resurfaced_at=observed_at)
+
+
 def _store_jobs_filtered(
     conn: sqlite3.Connection,
     jobs: list[dict],
@@ -105,6 +184,8 @@ def _store_jobs_filtered(
     existing = 0
     filtered = 0
     missing_description = 0
+    repository = SqliteJobRepository(conn)
+    publisher = DurableJobEventPublisher(conn, stage="discover")
 
     for job in jobs:
         if limit > 0 and new >= limit:
@@ -121,6 +202,24 @@ def _store_jobs_filtered(
         description = _job_description_text(job)
         if not description:
             missing_description += 1
+            continue
+        content_owner = repository.find_content_owner(
+            LOCAL_TENANT,
+            title=str(job.get("title") or ""),
+            company=str(job.get("company") or ""),
+            description=description,
+        )
+        if content_owner is not None and str(content_owner.job_id) != url:
+            _merge_smart_extract_content_duplicate(
+                conn,
+                repository,
+                publisher,
+                content_owner,
+                url=url,
+                site=site,
+                observed_at=now,
+            )
+            existing += 1
             continue
         try:
             conn.execute(

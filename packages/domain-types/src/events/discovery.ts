@@ -318,9 +318,16 @@ export function createDuplicateJobLinked(
 
 // -- DuplicateJobLinkRejected ----------------------------------------------
 
+/**
+ * A proposed duplicate link was rejected by Discovery dedupe. Attributed to
+ * the surviving `jobId` (the accepted owner the candidate matched) so the
+ * rejected link shows in that job's audit history; `candidateJobId` is the
+ * distinct posting that was declined.
+ */
 export interface DuplicateJobLinkRejectedPayload {
   readonly duplicateLinkId: string;
-  readonly candidateIds: readonly string[];
+  readonly jobId: string;
+  readonly candidateJobId: string;
   readonly reason: string;
   readonly rejectedAt: string;
 }

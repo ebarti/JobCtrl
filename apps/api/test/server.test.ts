@@ -1172,6 +1172,99 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("attributes rejected duplicate links to the surviving owner's audit history", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const candidateUrl = "https://jobs.lever.co/acme/staff-platform-engineer-india";
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      jobUrl,
+      "discover",
+      "DuplicateJobLinkRejected",
+      "info",
+      "DuplicateJobLinkRejected",
+      "2026-04-29T10:06:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        duplicate_link_id: "dup:policy-1",
+        job_id: jobUrl,
+        candidate_job_id: candidateUrl,
+        reason: "content_match_policy_rejected: current_policy_mismatch: location_mismatch",
+        rejected_at: "2026-04-29T10:06:00+00:00",
+      }),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    const rejected = body.auditHistory.find(
+      (entry: { title: string }) => entry.title === "Duplicate link rejected",
+    );
+    expect(rejected, JSON.stringify(body.auditHistory)).toBeDefined();
+    expect(rejected.category).toBe("discovery");
+    expect(rejected.details).toEqual(
+      expect.arrayContaining([{ label: "Candidate", value: candidateUrl }]),
+    );
+    // The event carries no confidence, so no empty Confidence row should render.
+    expect(rejected.details.map((detail: { label: string }) => detail.label)).not.toContain("Confidence");
+
+    await app.close();
+  });
+
+  it("attributes accepted duplicate links to the surviving owner's audit history", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const supersededUrl = "https://careers.acme.com/staff-platform-engineer";
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      null,
+      "discover",
+      "DuplicateJobLinked",
+      "info",
+      "DuplicateJobLinked",
+      "2026-04-29T10:07:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        duplicate_link_id: "dup:linked-1",
+        surviving_job_id: jobUrl,
+        superseded_job_or_observation_id: supersededUrl,
+        reason: "content_fingerprint_match",
+        confidence: 0.95,
+      }),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    const linked = body.auditHistory.find(
+      (entry: { title: string }) => entry.title === "Duplicate linked",
+    );
+    expect(linked, JSON.stringify(body.auditHistory)).toBeDefined();
+    expect(linked.category).toBe("discovery");
+    expect(linked.details).toEqual(
+      expect.arrayContaining([
+        { label: "Reason", value: "Content Fingerprint Match" },
+        { label: "Confidence", value: "95%" },
+      ]),
+    );
+
+    await app.close();
+  });
+
   it("soft-deletes jobs, hides them from active lists, and restores them", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent("https://example.com/jobs/ready");

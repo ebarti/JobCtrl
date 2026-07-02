@@ -22,7 +22,8 @@ from jobhunter.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, 
 from jobhunter.domain.discovery.identity import normalize_observed_url
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.job_content_identity import (
-    descriptions_substantially_match,
+    content_match_basis,
+    is_genuine_employer_identity,
     job_content_fingerprint,
     normalize_identity_text,
 )
@@ -664,7 +665,7 @@ def _find_existing_content_duplicate(
 def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: str) -> str | None:
     row = conn.execute(
         """
-        SELECT j.title, j.company,
+        SELECT j.title, j.company, j.site,
                COALESCE(je.full_description, j.full_description, j.description) AS description
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
@@ -674,11 +675,12 @@ def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: st
     ).fetchone()
     if row is None:
         return None
+    stored_company = row["company"]
     return _find_content_duplicate_survivor(
         conn,
         url=url,
         title=row["title"],
-        company=row["company"],
+        company=stored_company if stored_company else row["site"],
         description=row["description"],
         include_self=True,
     )
@@ -693,6 +695,8 @@ def _find_content_duplicate_survivor(
     description: str | None,
     include_self: bool,
 ) -> str | None:
+    if not is_genuine_employer_identity(company):
+        return None
     incoming_key = job_content_fingerprint(
         title=title,
         company=company,
@@ -701,6 +705,7 @@ def _find_content_duplicate_survivor(
     if incoming_key is None:
         return None
     _ensure_deleted_jobs_table(conn)
+    conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
     self_filter = "" if include_self else "AND j.url != ?"
     params: tuple[object, ...] = (
         normalize_identity_text(title),
@@ -710,8 +715,9 @@ def _find_content_duplicate_survivor(
         params = (url, *params)
     rows = conn.execute(
         f"""
-        SELECT j.url, j.title, j.company,
-               COALESCE(je.full_description, j.full_description, j.description) AS description,
+        SELECT j.url, j.title, j.company, j.site,
+               j.description AS listing_description,
+               COALESCE(je.full_description, j.full_description) AS enriched_description,
                CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
@@ -720,21 +726,27 @@ def _find_content_duplicate_survivor(
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
         WHERE 1 = 1
           {self_filter}
-          AND lower(trim(COALESCE(j.title, ''))) = ?
-          AND lower(trim(COALESCE(j.company, ''))) = ?
+          AND jh_normalize_identity(COALESCE(j.title, '')) = ?
+          AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
         ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
         """,
         params,
     ).fetchall()
     for existing in rows:
-        existing_key = job_content_fingerprint(
-            title=existing["title"],
-            company=existing["company"],
-            description=existing["description"],
-        )
-        if existing_key == incoming_key:
-            return str(existing["url"])
-        if descriptions_substantially_match(description, existing["description"]):
+        stored_company = existing["company"]
+        stored_employer = stored_company if stored_company else existing["site"]
+        if not is_genuine_employer_identity(stored_employer):
+            continue
+        if content_match_basis(
+            incoming_key=incoming_key,
+            incoming_description=description,
+            candidate_title=existing["title"],
+            candidate_employer=stored_employer,
+            candidate_descriptions=(
+                existing["listing_description"],
+                existing["enriched_description"],
+            ),
+        ) is not None:
             return str(existing["url"])
     return None
 

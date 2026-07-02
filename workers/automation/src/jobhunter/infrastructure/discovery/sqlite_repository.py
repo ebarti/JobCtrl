@@ -52,6 +52,13 @@ from jobhunter.domain.discovery.value_objects import (
     Source,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import (
+    content_match_basis,
+    is_genuine_employer_identity,
+    job_content_fingerprint,
+    normalize_identity_text,
+)
+from jobhunter.domain.ports.discovery import ContentOwnerMatch
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
 
@@ -428,6 +435,89 @@ class SqliteJobRepository:
 
         return None
 
+    def find_content_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        title: str,
+        company: str,
+        description: str,
+    ) -> ContentOwnerMatch | None:
+        """Resolve an existing Job by content identity after native-id / URL miss.
+
+        Mirrors the JobSpy content-dedup strictness: candidates are gated on an
+        exact (normalized) title + employer match, then confirmed by the shared
+        ``job_content_fingerprint`` or a substantial-description shingle match.
+        The returned :class:`ContentOwnerMatch` records which of the two paths
+        matched so the write boundary logs an honest duplicate-link reason.
+
+        Content merges MUST key on a genuine employer on BOTH sides, otherwise
+        two DISTINCT employers' postings would collapse into one Job (silent
+        data loss). ``jobs.company`` is empty for use-case-created rows, so the
+        stored employer coalesces to ``jobs.site`` (the board, which is the real
+        employer for ATS-owned rows) — but a platform/sentinel board
+        ("User-mediated capture", the "Workday" fallback, a JobSpy board, or the
+        ``Unknown`` sentinel) is shared across employers and must not be treated
+        as an employer key. When either side lacks a genuine employer this falls
+        through to ``None`` (a safe under-merge). Returns ``None`` when the
+        posting cannot be fingerprinted or no existing Job matches.
+
+        The incoming posting is a raw LISTING, so the match compares it against
+        BOTH the stored listing (``jobs.description``) and the stored enriched
+        full text like-for-like. Comparing only against the enriched text drops a
+        listing below the shingle threshold once the owner is enriched, silently
+        turning off cross-source dedup post-enrichment.
+        """
+
+        if not is_genuine_employer_identity(company):
+            return None
+        incoming_key = job_content_fingerprint(
+            title=title,
+            company=company,
+            description=description,
+        )
+        if incoming_key is None:
+            return None
+        self._conn.create_function(
+            "jh_normalize_identity", 1, normalize_identity_text, deterministic=True
+        )
+        rows = self._conn.execute(
+            """
+            SELECT j.url, j.title, j.company, j.site,
+                   j.description AS listing_description,
+                   COALESCE(je.full_description, j.full_description)
+                       AS enriched_description,
+                   CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+            FROM jobs j
+            LEFT JOIN job_enrichments je ON je.job_url = j.url
+            LEFT JOIN jobhunter_deleted_jobs d
+              ON d.job_url = j.url
+             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+            WHERE jh_normalize_identity(COALESCE(j.title, '')) = ?
+              AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
+            ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
+            """,
+            (normalize_identity_text(title), normalize_identity_text(company)),
+        ).fetchall()
+        for existing in rows:
+            stored_company = existing["company"]
+            stored_employer = stored_company if stored_company else existing["site"]
+            if not is_genuine_employer_identity(stored_employer):
+                continue
+            basis = content_match_basis(
+                incoming_key=incoming_key,
+                incoming_description=description,
+                candidate_title=existing["title"],
+                candidate_employer=stored_employer,
+                candidate_descriptions=(
+                    existing["listing_description"],
+                    existing["enriched_description"],
+                ),
+            )
+            if basis is not None:
+                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis=basis)
+        return None
+
     def attach_source_observation(
         self,
         tenant_id: TenantId,
@@ -581,6 +671,37 @@ class SqliteJobRepository:
             ),
         )
         self._conn.commit()
+
+    def record_rejected_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        *,
+        owner_job_id: JobId,
+        candidate_url: str,
+        reason: str,
+        rejected_at: str,
+    ) -> bool:
+        """Record a rejected duplicate link idempotently per (owner, candidate).
+
+        Returns ``True`` when this (owner job, candidate URL) rejection is
+        recorded for the first time and ``False`` when an identical rejected link
+        already exists, so the caller can skip re-publishing the audit event.
+        Without this, every re-ingest of a persistently-rejected duplicate would
+        mint a fresh event row (audit noise).
+        """
+
+        before = self._conn.total_changes
+        self._conn.execute(
+            """
+            INSERT INTO job_rejected_duplicate_links (
+                tenant_id, owner_job_url, candidate_url, reason, rejected_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, owner_job_url, candidate_url) DO NOTHING
+            """,
+            (str(tenant_id), str(owner_job_id), str(candidate_url), reason, rejected_at),
+        )
+        self._conn.commit()
+        return self._conn.total_changes > before
 
     def list_observations(
         self,

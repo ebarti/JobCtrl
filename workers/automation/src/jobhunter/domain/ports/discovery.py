@@ -29,6 +29,7 @@ from jobhunter.domain.discovery.value_objects import (
     Source,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import ContentMatchBasis
 from jobhunter.domain.tenant import TenantId
 
 
@@ -59,6 +60,19 @@ class ScrapedJobPosting:
     source_native_id: str
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
+
+
+@dataclass(frozen=True)
+class ContentOwnerMatch:
+    """An existing Job resolved by content identity, plus how it matched.
+
+    ``find_content_owner`` returns this (rather than a bare ``JobId``) so the
+    caller can record an honest duplicate-link reason: the fingerprint and
+    shingle paths carry different confidence and must not be conflated.
+    """
+
+    job_id: JobId
+    basis: ContentMatchBasis
 
 
 class JobBoardScraperPort(Protocol):
@@ -212,6 +226,36 @@ class JobRepository(Protocol):
         """
         ...
 
+    def find_content_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        title: str,
+        company: str,
+        description: str,
+    ) -> ContentOwnerMatch | None:
+        """Look up the canonical Job by content identity when identity checks miss.
+
+        Called by ``DiscoverJobsUseCase`` after ``find_canonical_owner`` returns
+        ``None`` so a posting re-discovered on a different source (different
+        native id AND canonical URL) collapses onto the existing Job instead of
+        creating a second aggregate. Matches the JobSpy content-dedup strictness:
+        an exact normalized title + employer + description fingerprint, or a
+        substantial-description shingle match, both gated on title + employer
+        equality so genuinely distinct roles stay separate.
+
+        Merges MUST key on a genuine employer on BOTH sides: an empty /
+        ``Unknown`` / platform-sentinel employer (a job board, the manual-capture
+        board, or the Workday fallback) is shared across employers, so the
+        implementation returns ``None`` rather than collapse two distinct
+        employers' postings. On a match it returns a :class:`ContentOwnerMatch`
+        carrying the surviving ``JobId`` and the ``basis`` (fingerprint vs
+        shingle) so the caller records an honest duplicate-link reason. Returns
+        ``None`` when either side lacks a genuine employer, the posting cannot be
+        fingerprinted, or no existing Job matches.
+        """
+        ...
+
     def attach_source_observation(
         self,
         tenant_id: TenantId,
@@ -247,6 +291,25 @@ class JobRepository(Protocol):
         link does NOT delete the superseded observation; it only records
         the merge decision so Operations can surface it and a future
         user correction can split the candidate back out.
+        """
+        ...
+
+    def record_rejected_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        *,
+        owner_job_id: JobId,
+        candidate_url: str,
+        reason: str,
+        rejected_at: str,
+    ) -> bool:
+        """Record a rejected duplicate link idempotently per (owner, candidate).
+
+        Returns ``True`` the first time a given (owner job, candidate URL)
+        rejection is recorded and ``False`` when it already exists, so the write
+        boundary publishes the ``DuplicateJobLinkRejected`` audit event exactly
+        once instead of on every re-ingest of the same persistently-rejected
+        duplicate.
         """
         ...
 
