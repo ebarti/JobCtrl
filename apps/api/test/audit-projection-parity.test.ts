@@ -1,25 +1,25 @@
 /**
- * Cross-runtime projection parity for the Phase 4 audit tables (AUDIT-02).
+ * Cross-runtime projection parity for the read-model projections (AUDIT-02).
  *
  * The TS half of the genuine TS<->Python drift guard. The Python half lives at
  * ``workers/automation/tests/test_audit_projection_parity.py``. Both load the
  * SAME shared fixture (``packages/domain-types/test/fixtures/
  * audit_projection_parity.json``), seed the SAME canonical rows, run their OWN
- * projection builder, and assert the resulting projection-column JSON equals the
- * fixture's ``expected`` block.
+ * projection builder, and assert the resulting projection columns equal the
+ * fixture.
  *
- * Because both builders are checked against ONE expectation derived from the
- * canonical rows, a schema/serialisation drift in EITHER runtime fails its test
- * — unlike the earlier Phase-3 parity test, which hand-seeded the projection JSON
- * on the TS side only and so could not catch the Python builder drifting.
- *
- * This test exercises the REAL TS projection builder + read model end to end:
- *  - the TS builder writes ``artifact_list_projections.{bullet_provenance_json,
- *    coverage_audit_json,voice_pass_json}`` + ``job_detail_projections
- *    .employer_analysis_json`` from the canonical rows (asserted byte-for-byte
- *    against the same ``expected`` the Python builder produces), and
- *  - the read model serves the resulting DTOs (employer analysis verbatim;
- *    provenance/coverage/voice converted to camelCase).
+ * Two layers of assertion:
+ *  - the Phase 4 audit read shapes (employer analysis + provenance/coverage/voice)
+ *    match the fixture's ``expected`` block, both as raw projection columns AND as
+ *    the camelCase DTOs the read model serves, and
+ *  - the FULL dual-written column set for job_list_projections /
+ *    job_detail_projections / dashboard_projections matches the fixture's
+ *    ``expectedProjections`` block key-for-key, PLUS a column-set guard: the set
+ *    of columns the TS builder emits must equal the fixture's expected keys plus
+ *    the wall-clock ``nonDeterministicColumns``. That guard fails if EITHER
+ *    runtime's writer/schema grows a column the other lacks — the drift class
+ *    that let the Python-omits-score-audit-columns bug ship (the earlier parity
+ *    test asserted only 4 audit JSON columns and had no column-set guard).
  */
 import { describe, expect, it } from "vitest";
 import path from "node:path";
@@ -34,15 +34,41 @@ const FIXTURE_PATH = fileURLToPath(
   new URL("../../../packages/domain-types/test/fixtures/audit_projection_parity.json", import.meta.url),
 );
 
+type ProjectionTable = "jobList" | "jobDetail" | "dashboard";
+
 interface Fixture {
-  job: { url: string; title: string; site: string; generation: number; createdAt: string };
+  job: {
+    url: string;
+    title: string;
+    company: string;
+    site: string;
+    strategy: string;
+    location: string;
+    salary: string;
+    description: string;
+    fullDescription: string;
+    applicationUrl: string;
+    applyStatus: string;
+    appliedAt: string;
+    scoreReasoning: string;
+    discoveredAt: string;
+    generation: number;
+    createdAt: string;
+  };
   rows: {
+    jobScores: Array<Record<string, unknown>>;
+    jobStageStates: Array<Record<string, unknown>>;
     jobEmployerAnalysis: Array<Record<string, unknown>>;
     jobEmployerAnalysisSubAnalyses: Array<Record<string, unknown>>;
     jobEmployerAnalysisFailures: Array<Record<string, unknown>>;
     artifacts: Array<Record<string, unknown>>;
     bulletProvenance: Array<Record<string, unknown>>;
   };
+  projectionParity: {
+    jsonColumns: Record<ProjectionTable, string[]>;
+    nonDeterministicColumns: Record<ProjectionTable, string[]>;
+  };
+  expectedProjections: Record<ProjectionTable, Record<string, unknown>>;
   expected: {
     employerAnalysisJson: unknown;
     bulletProvenanceJson: unknown;
@@ -69,8 +95,30 @@ function seedSchema(dbPath: string): void {
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
       title TEXT,
+      company TEXT,
+      salary TEXT,
+      description TEXT,
+      location TEXT,
       site TEXT,
-      salary TEXT DEFAULT ''
+      strategy TEXT,
+      discovered_at TEXT,
+      full_description TEXT,
+      application_url TEXT,
+      detail_scraped_at TEXT,
+      detail_error TEXT,
+      fit_score INTEGER,
+      score_reasoning TEXT,
+      scored_at TEXT,
+      tailored_resume_path TEXT,
+      tailored_at TEXT,
+      tailor_attempts INTEGER DEFAULT 0,
+      cover_letter_path TEXT,
+      cover_letter_at TEXT,
+      cover_attempts INTEGER DEFAULT 0,
+      applied_at TEXT,
+      apply_status TEXT,
+      apply_error TEXT,
+      apply_attempts INTEGER DEFAULT 0
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +129,38 @@ function seedSchema(dbPath: string): void {
       message TEXT,
       occurred_at TEXT NOT NULL,
       payload_json TEXT
+    );
+    CREATE TABLE job_scores (
+      job_url TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER NOT NULL,
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT NOT NULL,
+      correction_json TEXT,
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (job_url, version)
+    );
+    CREATE TABLE job_stage_states (
+      job_url TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER DEFAULT 0,
+      max_attempts INTEGER,
+      started_at TEXT,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      error_code TEXT,
+      error_message TEXT,
+      retryable INTEGER DEFAULT 1,
+      blocked_by_json TEXT,
+      next_action TEXT,
+      metadata_json TEXT,
+      version INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, stage)
     );
     CREATE TABLE job_employer_analysis (
       job_url TEXT NOT NULL,
@@ -173,11 +253,51 @@ function seedSchema(dbPath: string): void {
 function seedRows(dbPath: string): void {
   const db = new Database(dbPath);
   const jobUrl = fixture.job.url;
-  db.prepare("INSERT INTO jobs (url, title, site, salary) VALUES (?, ?, ?, '')").run(
-    jobUrl,
-    fixture.job.title,
-    fixture.job.site,
+  db.prepare(
+    `INSERT INTO jobs (
+       url, title, company, site, strategy, location, salary, description,
+       full_description, application_url, apply_status, applied_at,
+       score_reasoning, discovered_at
+     ) VALUES (@url, @title, @company, @site, @strategy, @location, @salary, @description,
+       @full_description, @application_url, @apply_status, @applied_at,
+       @score_reasoning, @discovered_at)`,
+  ).run({
+    url: jobUrl,
+    title: fixture.job.title,
+    company: fixture.job.company,
+    site: fixture.job.site,
+    strategy: fixture.job.strategy,
+    location: fixture.job.location,
+    salary: fixture.job.salary,
+    description: fixture.job.description,
+    full_description: fixture.job.fullDescription,
+    application_url: fixture.job.applicationUrl,
+    apply_status: fixture.job.applyStatus,
+    applied_at: fixture.job.appliedAt,
+    score_reasoning: fixture.job.scoreReasoning,
+    discovered_at: fixture.job.discoveredAt,
+  });
+
+  const insertScore = db.prepare(
+    `INSERT INTO job_scores (
+       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       scored_at, correction_json, criteria_json, trace_json
+     ) VALUES (@job_url, @version, 'local', @fit_score, @breakdown_json, @keywords_json,
+       @scored_at, @correction_json, @criteria_json, @trace_json)`,
   );
+  for (const score of fixture.rows.jobScores) insertScore.run({ job_url: jobUrl, ...score });
+
+  const insertStage = db.prepare(
+    `INSERT INTO job_stage_states (
+       job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
+       finished_at, duration_ms, error_code, error_message, retryable,
+       blocked_by_json, next_action
+     ) VALUES (@job_url, @stage, @state, @attempt_count, @max_attempts, @started_at, @updated_at,
+       @finished_at, @duration_ms, @error_code, @error_message, @retryable,
+       @blocked_by_json, @next_action)`,
+  );
+  for (const stage of fixture.rows.jobStageStates) insertStage.run({ job_url: jobUrl, ...stage });
+
   const insertAnalysis = db.prepare(
     `INSERT INTO job_employer_analysis (
        job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
@@ -241,8 +361,26 @@ function seedRows(dbPath: string): void {
   db.close();
 }
 
-describe("Phase 4 cross-runtime audit projection parity (AUDIT-02)", () => {
-  it("the TS builder + read model agree with the Python builder on the shared fixture", async () => {
+/**
+ * Row -> comparable object: parse *_json columns, drop wall-clock columns.
+ * Both runtimes serialise JSON columns with different whitespace and key order,
+ * so the columns are compared as parsed objects, never as raw strings.
+ */
+function normalizeRow(
+  row: Record<string, unknown>,
+  jsonColumns: string[],
+  nonDeterministic: string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (nonDeterministic.includes(key)) continue;
+    out[key] = jsonColumns.includes(key) && value != null ? JSON.parse(value as string) : value;
+  }
+  return out;
+}
+
+describe("Cross-runtime projection parity (AUDIT-02)", () => {
+  it("the TS builder + read model agree with the Python builder on the audit read shapes", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
       seedSchema(dbPath);
@@ -354,6 +492,70 @@ describe("Phase 4 cross-runtime audit projection parity (AUDIT-02)", () => {
           missing: ["kafka"],
           counts: { planned: 2, covered: 1, missing: 1 },
         });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("the TS builder writes the full projection column set the Python builder produces", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      seedRows(dbPath);
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        // The detail read triggers a full projection refresh (first run rebuilds
+        // every dirty job + the dashboard) so all three tables are materialised.
+        const detailRes = await app.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent(fixture.job.url)}`,
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          const rows: Record<ProjectionTable, Record<string, unknown> | undefined> = {
+            jobList: db
+              .prepare("SELECT * FROM job_list_projections WHERE job_id = ?")
+              .get(fixture.job.url) as Record<string, unknown> | undefined,
+            jobDetail: db
+              .prepare("SELECT * FROM job_detail_projections WHERE job_id = ?")
+              .get(fixture.job.url) as Record<string, unknown> | undefined,
+            dashboard: db
+              .prepare("SELECT * FROM dashboard_projections WHERE tenant_id = 'local'")
+              .get() as Record<string, unknown> | undefined,
+          };
+
+          for (const table of ["jobList", "jobDetail", "dashboard"] as const) {
+            const row = rows[table];
+            expect(row, `${table} projection row missing`).toBeTruthy();
+            const jsonCols = fixture.projectionParity.jsonColumns[table];
+            const nonDet = fixture.projectionParity.nonDeterministicColumns[table];
+            const expectedCols = fixture.expectedProjections[table];
+
+            // Column-set parity guard: the columns the builder emits must be
+            // exactly the fixture's deterministic keys plus the wall-clock columns.
+            // A one-sided column addition in either runtime fails here against the
+            // shared fixture.
+            expect(new Set(Object.keys(row!))).toEqual(
+              new Set([...Object.keys(expectedCols), ...nonDet]),
+            );
+            // Wall-clock columns are excluded from value parity but must be written.
+            for (const column of nonDet) {
+              expect(row![column], `${table}.${column} not populated`).toBeTruthy();
+            }
+            expect(normalizeRow(row!, jsonCols, nonDet)).toEqual(expectedCols);
+          }
+        } finally {
+          db.close();
+        }
       } finally {
         await app.close();
       }

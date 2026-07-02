@@ -361,11 +361,19 @@ The read model serves tailoring audit data from canonical projection rows.
 - **Cross-runtime drift guard.** The Python builder test
   (`workers/automation/tests/test_audit_projection_parity.py`) and the TypeScript
   builder test (`apps/api/test/audit-projection-parity.test.ts`) both seed the
-  canonical `job_employer_analysis` and `job_bullet_provenance` rows from the
-  shared fixture
-  `packages/domain-types/test/fixtures/audit_projection_parity.json`. Each
-  runtime runs its own projection builder and asserts the resulting
-  projection-column JSON equals the fixture expectation key-for-key.
+  canonical rows (scores, stage states, employer analysis, bullet provenance,
+  materials artifacts) from the shared fixture
+  `packages/domain-types/test/fixtures/audit_projection_parity.json`. Each runtime
+  runs its own projection builder and asserts, key-for-key, both the audit read
+  shapes (employer analysis + provenance/coverage/voice) AND the full dual-written
+  column set for `job_list_projections`, `job_detail_projections`, and
+  `dashboard_projections` (stage/score/compensation/apply/dashboard columns; the
+  `*_json` columns are compared parsed, and the wall-clock `last_updated_at` /
+  `generated_at` columns are asserted present but excluded from value comparison).
+  A column-set guard makes each runtime's emitted columns equal the fixture's
+  expected keys plus those wall-clock columns, so a one-sided column addition in
+  either builder fails against the shared fixture — the drift class that let the
+  Python builder ship without the score criteria/trace/correction audit columns.
 
 ## Apply Review And Outcome Feedback
 
