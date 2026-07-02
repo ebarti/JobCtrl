@@ -19,6 +19,10 @@ from jobhunter.domain.materials.policy import (
     RevisionGatePolicy,
     adapt_requirement_led_controls,
 )
+from jobhunter.domain.materials.claim_grounding import (
+    GROUNDED_COVERAGE_BASIS,
+    ground_claim_mappings,
+)
 from jobhunter.domain.materials.quality import build_tailoring_plan
 from jobhunter.domain.materials.requirement_coverage import (
     AchievementNode,
@@ -26,6 +30,8 @@ from jobhunter.domain.materials.requirement_coverage import (
     CoverageGraph,
     GeneratedClaimMapping,
     RequirementNode,
+    TargetProfile,
+    TargetRequirement,
     UncoveredRequirement,
     UnusedAchievement,
     apply_coverage_planner_response,
@@ -528,7 +534,7 @@ def test_apply_coverage_planner_response_reports_invalid_edges() -> None:
     assert graph.uncovered_requirements[0].requirement_id == "req_salesforce"
 
 
-def test_post_generation_fit_score_passes_when_required_coverage_is_claimed() -> None:
+def test_post_generation_fit_score_counts_only_claims_grounded_in_shipped_text() -> None:
     plan = build_tailoring_plan(
         _profile(),
         _senior_job(),
@@ -544,10 +550,15 @@ def test_post_generation_fit_score_passes_when_required_coverage_is_claimed() ->
         requirement_ids=("req_python",),
         evidence_ids=("ev_latency",),
     )
+    grounding = ground_claim_mappings(
+        (mapping,),
+        (("experience:acme_swe#0", "Owned Python API reliability and reduced latency 35%."),),
+    )
 
     fit = score_generated_resume_against_target(
         target_profile=plan.target_profile,
         mappings=(mapping,),
+        grounding=grounding,
     )
     decision = decide_score_gated_revision(
         fit_score=fit,
@@ -556,11 +567,56 @@ def test_post_generation_fit_score_passes_when_required_coverage_is_claimed() ->
     )
 
     assert fit.covered_requirement_ids == ("req_python",)
+    assert fit.claimed_only_requirement_ids == ()
+    assert fit.coverage_basis == GROUNDED_COVERAGE_BASIS
     assert fit.score == 5
     assert fit.must_have_coverage == 0.5
     assert decision.threshold_failed is True
     assert decision.should_revise is False
     assert decision.reason == "fit_score_and_must_have_coverage_below_threshold"
+
+
+def test_post_generation_fit_score_rejects_claims_absent_from_shipped_text() -> None:
+    """A claim asserting coverage that ships nowhere must NOT count as covered.
+
+    Regression for the apply-review contradiction (Digital Hub Director gen 32):
+    the judge-claimed record said must-have coverage 100% while the shipped
+    resume carried the claim in no rendered line. Grounded scoring marks the
+    requirement claimed-only, fails the gate, and names the real fix.
+    """
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    mapping = GeneratedClaimMapping(
+        claim_id="claim_python",
+        location="experience.acme_swe.bullets[0]",
+        text="Owned Python API reliability and reduced latency 35%.",
+        claim_label="evidence_reframed",
+        coverage_edge_ids=("edge_req_python_ev_latency_direct",),
+        requirement_ids=("req_python",),
+        evidence_ids=("ev_latency",),
+    )
+    grounding = ground_claim_mappings(
+        (mapping,),
+        (("experience:acme_swe#0", "Shipped a completely different bullet."),),
+    )
+
+    fit = score_generated_resume_against_target(
+        target_profile=plan.target_profile,
+        mappings=(mapping,),
+        grounding=grounding,
+    )
+
+    assert fit.covered_requirement_ids == ()
+    assert fit.claimed_only_requirement_ids == ("req_python",)
+    assert "req_python" in fit.uncovered_requirement_ids
+    assert fit.must_have_coverage == 0.0
+    assert any(
+        "does not appear in the shipped resume" in fix for fix in fit.prioritized_fixes
+    )
 
 
 def test_post_generation_fit_score_passes_on_first_draft_when_all_must_haves_are_covered() -> None:
@@ -604,9 +660,20 @@ def test_post_generation_fit_score_passes_on_first_draft_when_all_must_haves_are
         writing_style={},
     )
 
+    grounding = ground_claim_mappings(
+        mappings,
+        (
+            ("experience:acme_swe#0", "Owned Python API reliability and reduced latency 35%."),
+            (
+                "experience:acme_swe#1",
+                "Covered the Salesforce administration requirement with approved adjacent evidence.",
+            ),
+        ),
+    )
     fit = score_generated_resume_against_target(
         target_profile=plan.target_profile,
         mappings=mappings,
+        grounding=grounding,
     )
     decision = decide_score_gated_revision(
         fit_score=fit,
@@ -652,6 +719,7 @@ def test_score_gated_revision_routes_low_score_when_enhancement_is_allowed() -> 
     fit = score_generated_resume_against_target(
         target_profile=plan.target_profile,
         mappings=(),
+        grounding=ground_claim_mappings((), ()),
     )
     decision = decide_score_gated_revision(
         fit_score=fit,
@@ -691,6 +759,10 @@ def test_score_gated_revision_blocks_draft_claims_for_review() -> None:
     fit = score_generated_resume_against_target(
         target_profile=plan.target_profile,
         mappings=(draft,),
+        grounding=ground_claim_mappings(
+            (draft,),
+            (("experience:acme_swe#1", "Draft adjacent Salesforce administration claim."),),
+        ),
     )
     decision = decide_score_gated_revision(
         fit_score=fit,
@@ -701,6 +773,76 @@ def test_score_gated_revision_blocks_draft_claims_for_review() -> None:
     assert fit.review_blockers == ("claim_draft: draft_requires_confirmation",)
     assert decision.review_blocked is True
     assert decision.reason == "review_blocked_claims"
+
+
+def test_grounded_gate_reproduces_apply_review_contradiction_shape() -> None:
+    """Digital Hub Director gen-32 shape: claims assert 9/9; one shipped line carries 4.
+
+    The revision gate must report grounded coverage (must-have 4/8 = 50%), fail,
+    and route a revision — never echo the model's 100% self-assessment. This is
+    the regression fixture for the apply-review surface showing "4/9 requirements
+    covered" beside "Must-have coverage: 100% · passed".
+    """
+    requirements = tuple(
+        TargetRequirement(
+            requirement_id=f"r{index}",
+            text=f"Requirement {index}",
+            tier="must_have" if index <= 8 else "nice_to_have",
+            weight=0.9 if index <= 8 else 0.2,
+        )
+        for index in range(1, 10)
+    )
+    target = TargetProfile(
+        job_id="https://example.com/digital-hub-director",
+        target_role="Digital Hub Director",
+        seniority="director",
+        must_have_requirements=requirements[:8],
+        nice_to_have_requirements=requirements[8:],
+    )
+    summary = "Engineering Director with 12+ years leading platform organizations."
+    mappings = tuple(
+        GeneratedClaimMapping(
+            claim_id=f"claim_r{index}",
+            location=(
+                "executive_profile"
+                if index in {3, 4, 5, 6}
+                else f"experience.dropped_entry.bullets[{index}]"
+            ),
+            text=(
+                summary
+                if index in {3, 4, 5, 6}
+                else f"Claim text for requirement {index} that never ships."
+            ),
+            claim_label="evidence_reframed",
+            coverage_edge_ids=(f"edge_r{index}",),
+            requirement_ids=(f"r{index}",),
+            evidence_ids=(f"ev_{index}",),
+        )
+        for index in range(1, 10)
+    )
+    grounding = ground_claim_mappings(mappings, (("executive_profile#0", summary),))
+
+    fit = score_generated_resume_against_target(
+        target_profile=target,
+        mappings=mappings,
+        grounding=grounding,
+    )
+    decision = decide_score_gated_revision(
+        fit_score=fit,
+        controls=adapt_requirement_led_controls(
+            tailoring_policy={"claim_mode": "adjacent_translation"},
+            writing_style={},
+        ),
+        attempt=1,
+    )
+
+    assert fit.covered_requirement_ids == ("r3", "r4", "r5", "r6")
+    assert set(fit.claimed_only_requirement_ids) == {"r1", "r2", "r7", "r8", "r9"}
+    assert fit.must_have_coverage == 0.5
+    assert fit.coverage_basis == GROUNDED_COVERAGE_BASIS
+    assert decision.threshold_failed is True
+    assert decision.should_revise is True
+    assert any("does not appear in the shipped resume" in fix for fix in decision.prioritized_fixes)
 
 
 def test_enhancement_claims_append_without_evicting_selected_covered_claims() -> None:
