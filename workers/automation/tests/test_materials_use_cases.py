@@ -1571,11 +1571,14 @@ def test_tailor_use_case_rejects_prose_skill_fabrication_and_preserves_prior(
 
     fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
     llm = _ScriptedLlm([fabricated, _judge_pass()])
+    # max_retries=0 isolates the gate's hard-reject + preservation behavior from the
+    # deterministic-gate retry loop (A6d), which is exercised by its own tests.
     use_case = TailorResumeUseCase(
         repository=repo,
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        max_retries=0,
     )
 
     outcome = use_case.execute(
@@ -1719,6 +1722,106 @@ def test_tailor_use_case_allows_versioned_declared_skill(tmp_path: Path, job: di
     assert outcome.status == "approved"
     assert outcome.materials is not None
     assert outcome.materials.is_resume_approved
+
+
+def test_tailor_use_case_feeds_gate_finding_into_retry_and_recovers(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A6d: a candidate that trips the deterministic prose skill gate must feed its
+    finding back into the attempt loop as an avoid_note (not fail the whole run) while
+    retry budget remains. Candidate 1 fabricates Kubernetes; candidate 2 is clean and
+    ships. The gate finding is recorded as inspectable repair-loop history AND fed into
+    attempt 2's avoid_notes — the same repair mechanism the judge/adversarial notes use."""
+    repo = _FakeRepository()
+    fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
+    clean = _payload_with_bullet("Cut backend latency 40% using Python.")
+    llm = _ScriptedLlm([fabricated, _judge_pass(), clean, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency", "Kubernetes"]),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+    history = outcome.report["attempt_history"]
+    # Candidate 1's gate finding is recorded as inspectable repair-loop history...
+    first = history[0]["candidates"][0]
+    assert first["status"] == "failed_fabrication_gate"
+    assert first["fabrication_gate"]["controls"] == ["never_fabricate_skills"]
+    assert any("Kubernetes" in note for note in first["fabrication_gate"]["avoid_notes"])
+    # ...and it was fed into attempt 2's avoid_notes (the repair mechanism).
+    assert any("Kubernetes" in note for note in history[1]["avoid_notes"])
+
+
+def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A6d fail-closed: when every candidate trips the deterministic gate and the retry
+    budget is exhausted, the resume is hard-rejected exactly as before (no fabrication
+    ships) and the last accepted generation is preserved untouched."""
+    repo = _FakeRepository()
+    approved_gen1 = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/gen1.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(approved_gen1)
+
+    fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
+    llm = _ScriptedLlm([fabricated, _judge_pass(), fabricated, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "Kubernetes"]),
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.materials is not None
+    assert not outcome.materials.is_resume_approved
+    assert outcome.materials.last_validation is not None
+    assert any("Kubernetes" in error for error in outcome.materials.last_validation.errors)
+    # Both attempts recorded the gate finding as repair-loop history (distinct from a
+    # residual warning accepted on a shipped candidate).
+    history = outcome.report["attempt_history"]
+    assert history[0]["candidates"][0]["status"] == "failed_fabrication_gate"
+    assert history[1]["candidates"][0]["status"] == "failed_fabrication_gate"
+    # The last accepted generation survives untouched.
+    still = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert still is not None
+    assert still.generation == 1
+    assert still.is_resume_approved
 
 
 # ---------------------------------------------------------------------------

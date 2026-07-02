@@ -78,6 +78,7 @@ from jobhunter.domain.materials.coverage_audit import (
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.fabrication_detector import (
     FabricationError,
+    FabricationFinding,
     build_evidence_corpus,
     build_skill_evidence_corpus,
     build_skill_vocabulary,
@@ -784,6 +785,38 @@ def _is_label_only_quality_warning(warning: str) -> bool:
     return warning.startswith(LOW_QUALITY_LABEL_ONLY_WARNING_PREFIXES)
 
 
+_FABRICATION_KIND_LABELS: dict[str, str] = {
+    "numeric": "metric",
+    "date": "date",
+    "title": "seniority title",
+    "employer": "employer",
+    "skill": "skill or technology",
+}
+
+
+def _render_fabrication_avoid_notes(findings: tuple[FabricationFinding, ...]) -> list[str]:
+    """Render deterministic never-fabricate findings as actionable retry avoid_notes.
+
+    The deterministic-gate analogue of the judge/adversarial repair notes: one
+    concise imperative per fabricated token so the next attempt can drop the exact
+    claim the profile cannot support (A6d — a deterministic hard finding feeds the
+    retry budget instead of failing the whole run outright). De-duplicated so a
+    token repeated across bullets yields a single instruction.
+    """
+    notes: list[str] = []
+    seen: set[str] = set()
+    for finding in findings:
+        label = _FABRICATION_KIND_LABELS.get(finding.kind, finding.kind)
+        note = (
+            f"Do not claim the {label} {finding.token!r}: it is not supported by the "
+            f"candidate's profile. Remove it or use only {label} values the profile evidences."
+        )
+        if note not in seen:
+            seen.add(note)
+            notes.append(note)
+    return notes
+
+
 def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
     payload = record.get("parsed_json") if isinstance(record.get("parsed_json"), dict) else {}
     return {
@@ -793,6 +826,7 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
         "schema_version": record.get("schema_version"),
         "validation": record.get("validator"),
         "judge": record.get("judge"),
+        "fabrication_gate": record.get("fabrication_gate"),
         "parse_error": record.get("parse_error"),
         "post_generation_fit": record.get("post_generation_fit"),
         "bullet_limit_overflows": record.get("bullet_limit_overflows") or [],
@@ -1936,7 +1970,6 @@ class TailorResumeUseCase:
                     attempt=attempt + 1,
                 )
                 attempt_record["candidates"].append(candidate.record)
-                report["candidate_summaries"].append(_safe_candidate_summary(candidate.record))
                 last_payload = candidate.payload or last_payload
                 last_validation = candidate.validation
                 last_verdict = candidate.verdict
@@ -1944,17 +1977,33 @@ class TailorResumeUseCase:
                 if candidate.validation.passed and (
                     candidate.verdict is None or candidate.verdict.approved
                 ):
-                    if _candidate_requires_review(candidate.record):
-                        if (
-                            best_review_required is None
-                            or candidate.judge_score > best_review_required.judge_score
-                        ):
-                            best_review_required = candidate
-                    else:
-                        approved_candidates.append(candidate)
+                    # Deterministic never-fabricate gate on a validation- and
+                    # judge-approved candidate BEFORE it can be selected (A6d): a hard
+                    # finding rejects THIS candidate and feeds its findings into the
+                    # retry avoid_notes below, so the next attempt can drop the exact
+                    # fabrication instead of the whole run failing outright. This runs
+                    # the same gate ``_voice_and_audit`` re-confirms on the shipped text.
+                    if not self._apply_fabrication_gate(
+                        candidate,
+                        profile_snapshot=profile_snapshot,
+                        job=job,
+                        employer_analysis=employer_analysis,
+                        requirement_fit_report=requirement_fit_report,
+                        plan=tailoring_plan,
+                    ):
+                        if _candidate_requires_review(candidate.record):
+                            if (
+                                best_review_required is None
+                                or candidate.judge_score > best_review_required.judge_score
+                            ):
+                                best_review_required = candidate
+                        else:
+                            approved_candidates.append(candidate)
                 elif candidate.validation.passed and candidate.verdict is not None:
                     if best_rejected is None or candidate.judge_score > best_rejected.judge_score:
                         best_rejected = candidate
+
+                report["candidate_summaries"].append(_safe_candidate_summary(candidate.record))
 
             if approved_candidates:
                 approved_with_notes = [
@@ -2022,6 +2071,11 @@ class TailorResumeUseCase:
                     blockers = review.get("blockers") or []
                     repairs = review.get("repair_instructions") or []
                     avoid_notes.extend(str(item) for item in [*blockers, *repairs] if str(item))
+                elif status == "failed_fabrication_gate":
+                    gate = candidate_record.get("fabrication_gate") or {}
+                    avoid_notes.extend(
+                        note for note in gate.get("avoid_notes") or [] if str(note).strip()
+                    )
 
             attempt_record["status"] = "failed_quality_gate"
             report["attempt_history"].append(attempt_record)
@@ -2543,35 +2597,43 @@ class TailorResumeUseCase:
         tailored_payload: dict,
         employer_analysis: EmployerAnalysis,
         requirement_fit_report: "RequirementFitReport | None" = None,
-    ) -> tuple[tuple[BulletProvenance, ...], str | None]:
+        plan: TailoringPlan | None = None,
+    ) -> tuple[tuple[BulletProvenance, ...], str | None, tuple[FabricationFinding, ...]]:
         """Compute per-bullet provenance + run the deterministic fabrication gate.
 
-        Returns ``(provenance_rows, fabrication_error)``. ``fabrication_error`` is
-        a non-empty message when the candidate must be HARD-REJECTED — either it
-        fabricated a numeric/date/title/employer/skill token (CONTROL-03 /
-        GROUND-05) or a provenance binding referenced a non-existent
-        evidence/requirement id (GROUND-05: FK bindings, not free text). On reject
+        Returns ``(provenance_rows, fabrication_error, findings)``.
+        ``fabrication_error`` is a non-empty message when the candidate must be
+        HARD-REJECTED — either it fabricated a numeric/date/title/employer/skill
+        token (CONTROL-03 / GROUND-05) or a provenance binding referenced a
+        non-existent evidence/requirement id (GROUND-05: FK bindings, not free
+        text). ``findings`` carries the structured never-fabricate findings (empty
+        for an FK binding error or a clean candidate) so the caller can render
+        per-token retry avoid_notes and record an inspectable audit trail. On reject
         the rows are dropped so no provenance is persisted for an unaccepted
         candidate.
+
+        ``plan`` may be passed pre-built (the attempt loop already has it) to avoid
+        rebuilding it per candidate; when omitted it is built from the analysis.
 
         The detector runs INDEPENDENTLY of the tailoring prompt — it checks the
         actual generated bullet text against the canonical profile evidence corpus,
         never the model's self-reported provenance.
         """
         profile = profile_snapshot.as_dict()
-        plan = build_tailoring_plan(
-            profile,
-            job,
-            employer_analysis=employer_analysis,
-            requirement_fit_report=requirement_fit_report,
-        )
+        if plan is None:
+            plan = build_tailoring_plan(
+                profile,
+                job,
+                employer_analysis=employer_analysis,
+                requirement_fit_report=requirement_fit_report,
+            )
         try:
             rows = build_bullet_provenance(
                 profile, job, tailored_payload, plan, employer_analysis
             )
         except ProvenanceBindingError as exc:
             log.warning("Provenance binding rejected for %s: %s", job.get("url"), exc)
-            return (), f"Provenance grounding failed: {exc}"
+            return (), f"Provenance grounding failed: {exc}", ()
 
         corpus = build_evidence_corpus(profile)
         employers = employer_name_set(profile)
@@ -2622,8 +2684,50 @@ class TailorResumeUseCase:
         if findings:
             error = FabricationError(findings)
             log.warning("Never-fabricate detector rejected %s: %s", job.get("url"), error)
-            return (), f"Never-fabricate detector failed: {error}"
-        return rows, None
+            return (), f"Never-fabricate detector failed: {error}", tuple(findings)
+        return rows, None, ()
+
+    def _apply_fabrication_gate(
+        self,
+        candidate: _TailorCandidate,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        job: dict,
+        employer_analysis: EmployerAnalysis,
+        requirement_fit_report: "RequirementFitReport | None",
+        plan: TailoringPlan,
+    ) -> bool:
+        """Reject a would-be-approved candidate that trips the deterministic gate.
+
+        Runs the never-fabricate + FK gate on the candidate's rendered text. On a
+        hard finding it stamps ``status = "failed_fabrication_gate"`` plus an
+        inspectable ``fabrication_gate`` record (the audit trail for a rejected
+        candidate — the findings that did NOT ship, distinct from residual warnings
+        accepted on the shipped candidate) whose ``avoid_notes`` the attempt loop
+        feeds into the next attempt (A6d), and returns ``True`` so the caller drops
+        the candidate from selection. Returns ``False`` when the candidate is
+        grounded — nothing changes and it stays selectable.
+        """
+        _rows, error, findings = self._compute_provenance(
+            profile_snapshot=profile_snapshot,
+            job=job,
+            tailored_payload=candidate.payload,
+            employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
+            plan=plan,
+        )
+        if error is None:
+            return False
+        avoid_notes = _render_fabrication_avoid_notes(findings) if findings else [error]
+        candidate.record["status"] = "failed_fabrication_gate"
+        candidate.record["fabrication_gate"] = {
+            "passed": False,
+            "error": error,
+            "controls": sorted({finding.control.value for finding in findings}),
+            "findings": [finding.describe() for finding in findings],
+            "avoid_notes": avoid_notes,
+        }
+        return True
 
     # ------------------------------------------------------------------
     # Phase 3 — voice pass → re-validate → final audit (coverage vs rendered text)
@@ -2668,7 +2772,7 @@ class TailorResumeUseCase:
         a voice edit that injects an unsourced metric/title/date/employer (VOICE-03)
         or regresses voice never reaches the user.
         """
-        base_rows, base_error = self._compute_provenance(
+        base_rows, base_error, _base_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
             job=job,
             tailored_payload=tailored_payload,
@@ -2696,7 +2800,7 @@ class TailorResumeUseCase:
             coverage = self._coverage_for(base_rows, employer_analysis, None)
             return tailored_payload, base_rows, coverage, voice_record, None
 
-        voiced_rows, voiced_error = self._compute_provenance(
+        voiced_rows, voiced_error, _voiced_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
             job=job,
             tailored_payload=voiced_payload,
