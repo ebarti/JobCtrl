@@ -63,6 +63,8 @@ interface Fixture {
     jobEmployerAnalysisFailures: Array<Record<string, unknown>>;
     artifacts: Array<Record<string, unknown>>;
     bulletProvenance: Array<Record<string, unknown>>;
+    conversionJobs: Array<Record<string, unknown>>;
+    applicationOutcomes: Array<Record<string, unknown>>;
   };
   dashboardAggregateJobs: Array<{
     hidden: boolean;
@@ -266,6 +268,20 @@ function seedSchema(dbPath: string): void {
       reason TEXT,
       unhidden_at TEXT
     );
+    CREATE TABLE application_outcomes (
+      tenant_id     TEXT NOT NULL DEFAULT 'local',
+      outcome_id    TEXT NOT NULL,
+      job_key       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      note          TEXT,
+      occurred_at   TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL,
+      suggestion_id TEXT,
+      evidence_id   TEXT,
+      created_by    TEXT NOT NULL DEFAULT 'user',
+      PRIMARY KEY (tenant_id, outcome_id)
+    );
   `);
   db.close();
 }
@@ -441,6 +457,56 @@ function seedRows(dbPath: string): void {
     if (agg.hidden) {
       insertHidden.run(agg.url, agg.discoveredAt);
     }
+  }
+  // Extra applied+scored jobs across a second source and score band so the
+  // shared cross-runtime funnel is non-trivial (multi-entry bySource/byBand).
+  const conversionStages: Array<[string, number]> = [
+    ["discover", 1],
+    ["enrich", 3],
+    ["score", 3],
+    ["tailor", 5],
+    ["cover", 5],
+    ["apply", 3],
+  ];
+  const insertConversionJob = db.prepare(
+    `INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
+     VALUES (@url, @title, @site, @fit_score, 'applied', @applied_at, @discovered_at)`,
+  );
+  const insertConversionStage = db.prepare(
+    `INSERT INTO job_stage_states (
+       job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
+       finished_at, duration_ms, retryable
+     ) VALUES (@job_url, @stage, 'succeeded', 1, @max_attempts, @at, @at, @at, 1000, 1)`,
+  );
+  for (const job of fixture.rows.conversionJobs) {
+    insertConversionJob.run({
+      url: job.url,
+      title: job.title,
+      site: job.site,
+      fit_score: job.fitScore,
+      applied_at: job.appliedAt,
+      discovered_at: job.discoveredAt,
+    });
+    for (const [stage, maxAttempts] of conversionStages) {
+      insertConversionStage.run({
+        job_url: job.url,
+        stage,
+        max_attempts: maxAttempts,
+        at: job.appliedAt,
+      });
+    }
+  }
+  const insertOutcome = db.prepare(
+    `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
+     VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
+  );
+  for (const outcome of fixture.rows.applicationOutcomes) {
+    insertOutcome.run({
+      outcome_id: outcome.outcomeId,
+      job_key: outcome.jobKey,
+      kind: outcome.kind,
+      at: "2026-06-11T09:00:00+00:00",
+    });
   }
   db.close();
 }

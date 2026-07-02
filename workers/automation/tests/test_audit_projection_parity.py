@@ -347,7 +347,76 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 """,
                 (agg["url"], agg["discoveredAt"]),
             )
+    # Extra applied+scored jobs across a second source and score band so the
+    # shared cross-runtime funnel is non-trivial (multi-entry bySource/byBand).
+    _seed_conversion_rows(conn, fixture)
     conn.commit()
+
+
+_CONVERSION_STAGES: tuple[tuple[str, int], ...] = (
+    ("discover", 1),
+    ("enrich", 3),
+    ("score", 3),
+    ("tailor", 5),
+    ("cover", 5),
+    ("apply", 3),
+)
+
+
+def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
+    rows = fixture["rows"]
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS application_outcomes (
+          tenant_id     TEXT NOT NULL DEFAULT 'local',
+          outcome_id    TEXT NOT NULL,
+          job_key       TEXT NOT NULL,
+          kind          TEXT NOT NULL,
+          source        TEXT NOT NULL,
+          note          TEXT,
+          occurred_at   TEXT NOT NULL,
+          recorded_at   TEXT NOT NULL,
+          suggestion_id TEXT,
+          evidence_id   TEXT,
+          created_by    TEXT NOT NULL DEFAULT 'user',
+          PRIMARY KEY (tenant_id, outcome_id)
+        );
+        """
+    )
+    for job in rows["conversionJobs"]:
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
+            VALUES (?, ?, ?, ?, 'applied', ?, ?)
+            """,
+            (job["url"], job["title"], job["site"], job["fitScore"], job["appliedAt"], job["discoveredAt"]),
+        )
+        for stage, max_attempts in _CONVERSION_STAGES:
+            conn.execute(
+                """
+                INSERT INTO job_stage_states (
+                    job_url, stage, state, attempt_count, max_attempts, started_at,
+                    updated_at, finished_at, duration_ms, error_code, error_message,
+                    retryable, blocked_by_json, next_action
+                ) VALUES (?, ?, 'succeeded', 1, ?, ?, ?, ?, 1000, NULL, NULL, 1, NULL, NULL)
+                """,
+                (job["url"], stage, max_attempts, job["appliedAt"], job["appliedAt"], job["appliedAt"]),
+            )
+    for outcome in rows["applicationOutcomes"]:
+        conn.execute(
+            """
+            INSERT INTO application_outcomes (
+                tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
+            ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
+            """,
+            (
+                outcome["outcomeId"],
+                outcome["jobKey"],
+                outcome["kind"],
+                "2026-06-11T09:00:00+00:00",
+                "2026-06-11T09:00:00+00:00",
+            ),
+        )
 
 
 def _normalize_row(
