@@ -151,13 +151,18 @@ For changes to the shadcn token foundation, `apps/web/src/styles/tokens.css`,
 classes, theme behavior, or density behavior, run the token foundation proof gate:
 
 ```bash
-corepack pnpm --filter @jobhunter/web test src/styles/token-contract.test.ts
+corepack pnpm --filter @jobhunter/web test src/styles/token-contract.test.ts src/styles/token-contrast.test.ts
 corepack pnpm web:check
 corepack pnpm web:build
 corepack pnpm dlx shadcn@latest info -c apps/web
 corepack pnpm --filter @jobhunter/web e2e -- tests/token-foundation.spec.ts
 git diff --check
 ```
+
+`token-contrast.test.ts` resolves the semantic token pairs from `tokens.css`
+and asserts WCAG AA (>= 4.5:1) for muted-foreground text on both the muted
+card-header band and the card surface in light and dark themes, so a
+regression that pushes muted secondary text below the bar fails deterministically.
 
 Also prove generated CSS contains the standard semantic utilities and scan for
 retired token aliases before accepting the change. Browser proof must use the
@@ -356,6 +361,13 @@ The Storybook `addon-a11y` is configured so that **critical** and **serious**
 axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
 (`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobhunter/web test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
+
+The `color-contrast` axe rule is disabled in the Storybook test runner
+(`.storybook/test-runner.ts`) because contrast shifts across themes, and the
+jsdom `*.a11y.test.tsx` suites cannot evaluate rendered colors either. Token
+contrast is therefore guarded deterministically by
+`src/styles/token-contrast.test.ts`, which computes the WCAG ratio from the
+resolved token values against each real surface.
 
 10 stories defer the a11y check (`a11y: { test: "off" }`) because they exercise
 production a11y defects that are tracked outside the story. Each deferral is
