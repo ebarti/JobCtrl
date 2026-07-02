@@ -277,6 +277,38 @@ def test_reset_clears_terminal_state_but_preserves_history() -> None:
     assert reset.attempt_count == 1  # history preserved
 
 
+def test_backfill_application_url_preserves_description_and_status() -> None:
+    agg = _empty().start_attempt(
+        extraction_tier=ExtractionTier.JSON_LD, started_at="t0"
+    ).succeed_attempt(
+        full_description=FullDescription(text="The canonical description"),
+        application_url=None,
+        extraction_tier=ExtractionTier.JSON_LD,
+        finished_at="t1",
+    )
+    backfilled = agg.backfill_application_url(
+        application_url=ApplicationUrl(value="https://apply.example/role"),
+        updated_at="t2",
+    )
+    assert backfilled.is_enriched
+    assert backfilled.application_url is not None
+    assert backfilled.application_url.value == "https://apply.example/role"
+    assert backfilled.full_description is not None
+    assert backfilled.full_description.text == "The canonical description"
+    assert backfilled.enriched_at == "t1"
+    assert backfilled.extraction_tier is ExtractionTier.JSON_LD
+    assert backfilled.attempt_count == agg.attempt_count
+    assert backfilled.updated_at == "t2"
+
+
+def test_backfill_application_url_requires_enriched_aggregate() -> None:
+    with pytest.raises(ValueError, match="requires an enriched aggregate"):
+        _empty().backfill_application_url(
+            application_url=ApplicationUrl(value="https://apply.example/role"),
+            updated_at="t1",
+        )
+
+
 def test_attempt_numbers_must_be_monotonic() -> None:
     err = EnrichmentError(code="x", message="x", retryable=True)
     bad_attempt = EnrichmentAttempt(

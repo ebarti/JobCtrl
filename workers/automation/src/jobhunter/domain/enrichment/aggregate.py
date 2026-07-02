@@ -288,6 +288,31 @@ class JobEnrichment:
             updated_at=reset_at,
         )
 
+    def backfill_application_url(
+        self,
+        *,
+        application_url: ApplicationUrl,
+        updated_at: str,
+    ) -> "JobEnrichment":
+        """Attach a recovered apply URL to an already-enriched aggregate.
+
+        Used when an authenticated follow-up recovers the external apply
+        target for a job that was enriched without one. Only
+        ``application_url`` changes; ``full_description``, the ``enriched``
+        status, ``enriched_at``, the extraction tier, and the attempt
+        history are all preserved, so a failed or empty recovery can never
+        destroy reviewable material.
+        """
+        if self.current_status != EnrichmentLifecycle.ENRICHED:
+            raise ValueError(
+                "backfill_application_url requires an enriched aggregate"
+            )
+        return replace(
+            self,
+            application_url=application_url,
+            updated_at=updated_at,
+        )
+
     # ------------------------------------------------------------------
     # Predicates
     # ------------------------------------------------------------------
