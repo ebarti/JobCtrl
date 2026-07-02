@@ -43,7 +43,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 
 | Risk | Automated coverage |
 | --- | --- |
-| SQLite has no backup/restore path, or the schema drifts without a `user_version` guard: unstamped databases go unnoticed, a pre-guard DB is not adopted, or a DB written by a newer build is silently downgraded | `workers/automation/tests/test_database_backup.py` |
+| SQLite has no backup/restore path, or the schema drifts without a `user_version` guard: unstamped databases go unnoticed, a pre-guard DB is not adopted, or a DB written by a newer build is silently downgraded by the worker or additively written by a stale TypeScript API | `workers/automation/tests/test_database_backup.py`; `apps/api/test/schema-version-guard.test.ts` |
 | Dry run marks a job applied | `workers/automation/tests/test_apply_regressions.py` |
 | Apply process hangs while stdout stays open | `workers/automation/tests/test_apply_regressions.py` |
 | Targeted apply skips fresh jobs | `workers/automation/tests/test_apply_regressions.py` |
