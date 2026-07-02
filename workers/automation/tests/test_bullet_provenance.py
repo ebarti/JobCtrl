@@ -27,6 +27,7 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
+from jobhunter.domain.materials.coverage_audit import compute_keyword_coverage
 from jobhunter.domain.materials.fabrication_detector import (
     build_evidence_corpus,
     build_skill_evidence_corpus,
@@ -408,6 +409,132 @@ def test_provenance_keeps_mandatory_overflow_bullets_matching_shipped_resume() -
 
     assert experience_texts == _assembled_experience_bullets(profile, payload)
     assert len(experience_texts) == len(bullets)  # not trimmed to the cap of 4
+
+
+# --------------------------------------------------------------------------
+# Shipped-entry parity: provenance + coverage audit ONLY the experience
+# entries the resume ships (strict subset of required_experience_entry_ids).
+# --------------------------------------------------------------------------
+
+
+def _profile_with_omitted_entry(*, required_experience_entry_ids: list[str] | None) -> dict:
+    """A two-entry profile: ``acme_swe`` plus an ``omitted_co`` entry whose only
+    keyword is "Kubernetes". ``required_experience_entry_ids`` pins the shipped
+    subset; ``None`` leaves it unpinned (the default-all path)."""
+    profile = _profile()
+    profile["resume"]["experience_entries"].append(
+        {
+            "id": "omitted_co",
+            "date_range": "2016-2020",
+            "title": "Platform Engineer",
+            "company": "Omitted Co",
+            "location": "Remote",
+            "bullets": ["Operated the Kubernetes platform across production clusters."],
+            "achievement_evidence": [
+                {
+                    "id": "ev_kube",
+                    "source_text": "Operated the Kubernetes platform across production clusters.",
+                    "scope": "owned platform",
+                    "action": "operated the kubernetes platform",
+                    "tools": ["Kubernetes"],
+                    "metrics": [],
+                    "outcome": "reliable platform",
+                    "evidence_strength": "verified",
+                    "claim_confidence": 0.9,
+                    "user_confirmed": True,
+                    "tags": ["kubernetes", "platform"],
+                }
+            ],
+        }
+    )
+    rules = profile["resume"]["tailoring_rules"]
+    if required_experience_entry_ids is None:
+        rules.pop("required_experience_entry_ids", None)
+    else:
+        rules["required_experience_entry_ids"] = list(required_experience_entry_ids)
+    return profile
+
+
+def _analysis_with_platform_requirement() -> EmployerAnalysis:
+    """The base analysis plus a Kubernetes requirement/keyword, so the omitted
+    entry's bullet is a GROUNDED provenance row (it serves ``req_platform``)."""
+    return _analysis(
+        requirements=[
+            Requirement(
+                id="req_python",
+                text="5+ years of Python",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="5+ years of Python",
+            ),
+            Requirement(
+                id="req_latency",
+                text="improve API latency",
+                tier="nice_to_have",
+                weight=0.5,
+                evidence_span="improve API latency",
+            ),
+            Requirement(
+                id="req_platform",
+                text="operate Kubernetes platform",
+                tier="must_have",
+                weight=0.8,
+                evidence_span="operate Kubernetes platform",
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(keyword="Python", evidence_span="5+ years of Python", requirement_ref="req_python"),
+            ReasonedKeyword(keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"),
+            ReasonedKeyword(
+                keyword="Kubernetes",
+                evidence_span="operate Kubernetes platform",
+                requirement_ref="req_platform",
+            ),
+        ],
+    )
+
+
+def test_strict_subset_provenance_and_coverage_reflect_only_shipped_entries() -> None:
+    """Regression (rev-211 A4 / auditability): when ``required_experience_entry_ids``
+    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those
+    entries. Provenance -- and the coverage computed over it -- must audit ONLY the
+    shipped entries. A keyword present solely in an OMITTED entry ("Kubernetes")
+    must not appear in any provenance row and must be reported missing, never
+    inflated as covered with content the employer never receives."""
+    profile = _profile_with_omitted_entry(required_experience_entry_ids=["acme_swe"])
+    analysis = _analysis_with_platform_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
+    assert experience_source_ids == {"acme_swe"}  # the omitted entry is not audited
+    assert not any(row.bullet_id.startswith("experience:omitted_co") for row in rows)
+    assert all("kubernetes" not in row.generated_text.lower() for row in rows)
+
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "kubernetes" in coverage.missing
+    assert "kubernetes" not in coverage.covered
+    # The shipped entry's real coverage is untouched.
+    assert "latency" in coverage.covered
+    assert "python" in coverage.covered
+
+
+def test_default_all_entries_still_audited_when_no_strict_subset_pinned() -> None:
+    """The default-all path (no ``required_experience_entry_ids`` pinned) is
+    unchanged: every experience entry is audited, so a keyword grounded only in the
+    second entry ("Kubernetes") is legitimately covered."""
+    profile = _profile_with_omitted_entry(required_experience_entry_ids=None)
+    analysis = _analysis_with_platform_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
+    assert experience_source_ids == {"acme_swe", "omitted_co"}
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "kubernetes" in coverage.covered
+    assert "kubernetes" not in coverage.missing
 
 
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
