@@ -27,6 +27,7 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
+from jobhunter.domain.materials.coverage_audit import compute_keyword_coverage
 from jobhunter.domain.materials.fabrication_detector import (
     build_evidence_corpus,
     build_skill_evidence_corpus,
@@ -47,6 +48,8 @@ from jobhunter.domain.materials.value_objects import ControlRule, TransformType
 from jobhunter.infrastructure.materials.bullet_provenance_repository import (
     SqliteBulletProvenanceRepository,
 )
+from jobhunter.infrastructure.materials.html_resume_pdf import build_resume_document
+from jobhunter.infrastructure.materials.latex_pdf import build_latex
 from jobhunter.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/senior-backend"
@@ -408,6 +411,328 @@ def test_provenance_keeps_mandatory_overflow_bullets_matching_shipped_resume() -
 
     assert experience_texts == _assembled_experience_bullets(profile, payload)
     assert len(experience_texts) == len(bullets)  # not trimmed to the cap of 4
+
+
+# --------------------------------------------------------------------------
+# Shipped-entry parity: provenance + coverage audit ONLY the experience
+# entries the resume ships (strict subset of required_experience_entry_ids).
+# --------------------------------------------------------------------------
+
+
+def _profile_with_omitted_entry(*, required_experience_entry_ids: list[str] | None) -> dict:
+    """A two-entry profile: ``acme_swe`` plus an ``omitted_co`` entry whose only
+    keyword is "Kubernetes". ``required_experience_entry_ids`` pins the shipped
+    subset; ``None`` leaves it unpinned (the default-all path)."""
+    profile = _profile()
+    profile["resume"]["experience_entries"].append(
+        {
+            "id": "omitted_co",
+            "date_range": "2016-2020",
+            "title": "Platform Engineer",
+            "company": "Omitted Co",
+            "location": "Remote",
+            "bullets": ["Operated the Kubernetes platform across production clusters."],
+            "achievement_evidence": [
+                {
+                    "id": "ev_kube",
+                    "source_text": "Operated the Kubernetes platform across production clusters.",
+                    "scope": "owned platform",
+                    "action": "operated the kubernetes platform",
+                    "tools": ["Kubernetes"],
+                    "metrics": [],
+                    "outcome": "reliable platform",
+                    "evidence_strength": "verified",
+                    "claim_confidence": 0.9,
+                    "user_confirmed": True,
+                    "tags": ["kubernetes", "platform"],
+                }
+            ],
+        }
+    )
+    rules = profile["resume"]["tailoring_rules"]
+    if required_experience_entry_ids is None:
+        rules.pop("required_experience_entry_ids", None)
+    else:
+        rules["required_experience_entry_ids"] = list(required_experience_entry_ids)
+    return profile
+
+
+def _analysis_with_platform_requirement() -> EmployerAnalysis:
+    """The base analysis plus a Kubernetes requirement/keyword, so the omitted
+    entry's bullet is a GROUNDED provenance row (it serves ``req_platform``)."""
+    return _analysis(
+        requirements=[
+            Requirement(
+                id="req_python",
+                text="5+ years of Python",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="5+ years of Python",
+            ),
+            Requirement(
+                id="req_latency",
+                text="improve API latency",
+                tier="nice_to_have",
+                weight=0.5,
+                evidence_span="improve API latency",
+            ),
+            Requirement(
+                id="req_platform",
+                text="operate Kubernetes platform",
+                tier="must_have",
+                weight=0.8,
+                evidence_span="operate Kubernetes platform",
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(keyword="Python", evidence_span="5+ years of Python", requirement_ref="req_python"),
+            ReasonedKeyword(keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"),
+            ReasonedKeyword(
+                keyword="Kubernetes",
+                evidence_span="operate Kubernetes platform",
+                requirement_ref="req_platform",
+            ),
+        ],
+    )
+
+
+def test_strict_subset_provenance_and_coverage_reflect_only_shipped_entries() -> None:
+    """Regression (rev-211 A4 / auditability): when ``required_experience_entry_ids``
+    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those
+    entries. Provenance -- and the coverage computed over it -- must audit ONLY the
+    shipped entries. A keyword present solely in an OMITTED entry ("Kubernetes")
+    must not appear in any provenance row and must be reported missing, never
+    inflated as covered with content the employer never receives."""
+    profile = _profile_with_omitted_entry(required_experience_entry_ids=["acme_swe"])
+    analysis = _analysis_with_platform_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
+    assert experience_source_ids == {"acme_swe"}  # the omitted entry is not audited
+    assert not any(row.bullet_id.startswith("experience:omitted_co") for row in rows)
+    assert all("kubernetes" not in row.generated_text.lower() for row in rows)
+
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "kubernetes" in coverage.missing
+    assert "kubernetes" not in coverage.covered
+    # The shipped entry's real coverage is untouched.
+    assert "latency" in coverage.covered
+    assert "python" in coverage.covered
+
+
+def test_default_all_entries_still_audited_when_no_strict_subset_pinned() -> None:
+    """The default-all path (no ``required_experience_entry_ids`` pinned) is
+    unchanged: every experience entry is audited, so a keyword grounded only in the
+    second entry ("Kubernetes") is legitimately covered."""
+    profile = _profile_with_omitted_entry(required_experience_entry_ids=None)
+    analysis = _analysis_with_platform_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
+    assert experience_source_ids == {"acme_swe", "omitted_co"}
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "kubernetes" in coverage.covered
+    assert "kubernetes" not in coverage.missing
+
+
+# --------------------------------------------------------------------------
+# Shipped-skill-category parity: provenance + coverage audit ONLY the skill
+# categories the resume ships (strict subset of required_skill_category_ids).
+# --------------------------------------------------------------------------
+
+
+def _profile_with_omitted_skill_category(*, required_skill_category_ids: list[str] | None) -> dict:
+    """A two-category profile: ``languages`` plus a ``cloud`` category whose only
+    analysis keyword is "performance". ``required_skill_category_ids`` pins the
+    shipped subset; ``None`` leaves it unpinned (the default-all path)."""
+    profile = _profile()
+    profile["resume"]["skill_categories"].append(
+        {"id": "cloud", "label": "Cloud", "items": ["AWS", "Performance tuning"]}
+    )
+    rules = profile["resume"]["tailoring_rules"]
+    if required_skill_category_ids is None:
+        rules.pop("required_skill_category_ids", None)
+    else:
+        rules["required_skill_category_ids"] = list(required_skill_category_ids)
+    return profile
+
+
+def _analysis_with_performance_requirement() -> EmployerAnalysis:
+    """The base analysis plus a performance requirement/keyword, so the omitted
+    category's skills line is a GROUNDED provenance row (its "Performance tuning"
+    item serves ``req_perf``) — the exact shape that inflated coverage before the
+    fix."""
+    return _analysis(
+        requirements=[
+            Requirement(
+                id="req_python",
+                text="5+ years of Python",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="5+ years of Python",
+            ),
+            Requirement(
+                id="req_latency",
+                text="improve API latency",
+                tier="nice_to_have",
+                weight=0.5,
+                evidence_span="improve API latency",
+            ),
+            Requirement(
+                id="req_perf",
+                text="performance tuning",
+                tier="must_have",
+                weight=0.7,
+                evidence_span="performance tuning",
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(keyword="Python", evidence_span="5+ years of Python", requirement_ref="req_python"),
+            ReasonedKeyword(keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"),
+            ReasonedKeyword(
+                keyword="performance",
+                evidence_span="performance tuning",
+                requirement_ref="req_perf",
+            ),
+        ],
+    )
+
+
+def test_strict_subset_provenance_and_coverage_reflect_only_shipped_skill_categories() -> None:
+    """Regression (rev-211 A4b / auditability): when ``required_skill_category_ids``
+    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those skill
+    categories. Provenance -- and the coverage computed over it -- must audit ONLY
+    the shipped categories. A keyword present solely in an OMITTED category's skills
+    line ("performance") must not appear in any provenance row and must be reported
+    missing, never inflated as covered off a line the employer never receives."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=["languages"])
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
+    assert skill_source_ids == {"languages"}  # the omitted category is not audited
+    assert not any(row.bullet_id.startswith("skills:cloud") for row in rows)
+    assert all("performance" not in row.generated_text.lower() for row in rows)
+
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "performance" in coverage.missing
+    assert "performance" not in coverage.covered
+    # The shipped category's + experience real coverage is untouched.
+    assert "python" in coverage.covered
+    assert "latency" in coverage.covered
+
+
+def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned() -> None:
+    """The default-all path (no ``required_skill_category_ids`` pinned) is unchanged:
+    every skill category is audited, so a keyword grounded only in the second
+    category ("performance") is legitimately covered."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
+    assert skill_source_ids == {"languages", "cloud"}
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "performance" in coverage.covered
+    assert "performance" not in coverage.missing
+
+
+# --------------------------------------------------------------------------
+# Cross-surface parity: the shipped skill-category subset is IDENTICAL across
+# the FOUR surfaces that each re-implement the ``required_skill_category_ids``
+# filter -- the .txt assembler, the LaTeX renderer, the HTML renderer, and the
+# provenance builder. This is the skills-axis analogue of the experience-axis
+# cross-renderer parity test (PR #220); it additionally binds the provenance
+# surface so the audit trail can never claim a skills set the rendered resume
+# did not ship. Drift in ANY single surface breaks these tests.
+# --------------------------------------------------------------------------
+
+
+def _txt_skill_labels(profile: dict, payload: dict) -> set[str]:
+    """Skill-category labels the plain-text assembler ships (SKILLS is terminal)."""
+    lines = ResumeAssembler().assemble_resume_text(payload, profile).splitlines()
+    skills_start = lines.index("SKILLS")
+    return {line.split(":", 1)[0] for line in lines[skills_start + 1 :] if ":" in line}
+
+
+def _latex_skill_labels(profile: dict, payload: dict) -> set[str]:
+    r"""Skill-category labels the LaTeX renderer ships (``\item \textbf{Label:}``)."""
+    prefix = r"\item \textbf{"
+    labels: set[str] = set()
+    for line in build_latex(payload, profile).splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            labels.add(stripped[len(prefix) :].split(":", 1)[0])
+    return labels
+
+
+def _html_skill_labels(profile: dict, payload: dict) -> set[str]:
+    """Skill-category labels the HTML renderer ships (semantic resume document)."""
+    return {category["label"] for category in build_resume_document(payload, profile)["skills"]}
+
+
+def _provenance_skill_labels(
+    profile: dict, payload: dict, analysis: EmployerAnalysis
+) -> set[str]:
+    """Skill-category labels the provenance audit trail claims shipped."""
+    rows = _build(profile, payload, analysis)
+    return {row.generated_text.split(":", 1)[0] for row in rows if row.section == "skills"}
+
+
+def test_all_four_surfaces_ship_the_same_pinned_skill_category_subset() -> None:
+    """Regression (rev-211 A4c / cross-surface auditability): the shipped-skills
+    filter (``required_skill_category_ids``) is duplicated across FOUR surfaces --
+    the .txt assembler, the LaTeX renderer, the HTML renderer, and the provenance
+    builder. With a STRICT SUBSET pinned, all four MUST ship the identical skill
+    categories so the audit trail's coverage claim matches the resume the employer
+    receives. Drift in any single surface (e.g. an edited renderer filter) would
+    ship a skills section that diverges from what provenance/coverage audits --
+    exactly the class of undetected divergence PR #220 closed for the experience
+    axis."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=["languages"])
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    txt = _txt_skill_labels(profile, payload)
+    assert txt == {"Languages"}  # the pinned subset; the "Cloud" category is omitted
+
+    # Every other surface ships EXACTLY the same set as the reviewed .txt.
+    assert _latex_skill_labels(profile, payload) == txt
+    assert _html_skill_labels(profile, payload) == txt
+    assert _provenance_skill_labels(profile, payload, analysis) == txt
+
+    # The omitted category's label leaks into NONE of the four surfaces.
+    all_labels = (
+        _txt_skill_labels(profile, payload)
+        | _latex_skill_labels(profile, payload)
+        | _html_skill_labels(profile, payload)
+        | _provenance_skill_labels(profile, payload, analysis)
+    )
+    assert "Cloud" not in all_labels
+
+
+def test_all_four_surfaces_ship_every_skill_category_when_unpinned() -> None:
+    """The default-all path (no ``required_skill_category_ids`` pinned): all four
+    surfaces ship EVERY skill category, so none silently drops or adds one and the
+    audit trail stays aligned with the rendered resume."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    txt = _txt_skill_labels(profile, payload)
+    assert txt == {"Languages", "Cloud"}
+
+    assert _latex_skill_labels(profile, payload) == txt
+    assert _html_skill_labels(profile, payload) == txt
+    assert _provenance_skill_labels(profile, payload, analysis) == txt
 
 
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:

@@ -47,6 +47,8 @@ from jobhunter.resume_profile import (
     experience_updates_by_id,
     get_claim_mode,
     get_experience_entries,
+    get_required_experience_entry_ids,
+    get_required_skill_category_ids,
     get_resume_master,
     get_skill_categories,
     get_tailoring_policy,
@@ -301,8 +303,19 @@ def build_bullet_provenance(
         )
 
     # ---- Experience bullets (one row per rendered bullet) ----------------
+    # Audit only the entries the resume ships: mirror the assembler + both PDF
+    # renderers, which drop entries outside a pinned strict subset. Auditing an
+    # omitted entry would inflate the provenance-backed coverage with content the
+    # employer never receives.
     experience_updates = experience_updates_by_id(tailored_payload)
-    for entry in get_experience_entries(profile):
+    required_experience_ids = get_required_experience_entry_ids(profile)
+    all_experience_entries = get_experience_entries(profile)
+    experience_entries = [
+        entry
+        for entry in all_experience_entries
+        if not required_experience_ids or entry.get("id") in required_experience_ids
+    ] or all_experience_entries
+    for entry in experience_entries:
         if not isinstance(entry, dict):
             continue
         entry_id = str(entry.get("id") or "")
@@ -346,12 +359,23 @@ def build_bullet_provenance(
             )
 
     # ---- Skills (one row per rendered category line) ---------------------
+    # Audit only the categories the resume ships: mirror the assembler + both PDF
+    # renderers, which drop categories outside a pinned strict subset. Auditing an
+    # omitted category would inflate the provenance-backed coverage with content the
+    # employer never receives.
     skill_updates = {
         str(update.get("id")): update
         for update in tailored_payload.get("skill_category_updates") or []
         if isinstance(update, dict) and update.get("id")
     }
-    for category in get_skill_categories(profile):
+    required_skill_ids = get_required_skill_category_ids(profile)
+    all_skill_categories = get_skill_categories(profile)
+    skill_categories = [
+        category
+        for category in all_skill_categories
+        if not required_skill_ids or category.get("id") in required_skill_ids
+    ] or all_skill_categories
+    for category in skill_categories:
         if not isinstance(category, dict):
             continue
         category_id = str(category.get("id") or "")
