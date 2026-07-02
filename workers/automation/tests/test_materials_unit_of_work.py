@@ -257,6 +257,50 @@ def test_flip_commits_once_on_success(conn: sqlite3.Connection) -> None:
     assert materials.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
 
 
+def test_flip_holds_one_explicit_transaction_and_locks_out_competitors(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """The unit of work makes the flip's transaction explicit and enforced.
+
+    ``__enter__`` opens a ``BEGIN IMMEDIATE``, so the shared connection stays in a
+    single transaction across every staged write (not merely by convention that no
+    other statement commits), and the write lock is held for the whole block: a
+    competing writer on a second connection cannot open its own transaction into
+    the flip window. This proves the atomicity no longer rests on the unenforced
+    assumption the reviewer flagged."""
+    uow = SqliteUnitOfWork(conn)
+    materials = SqliteMaterialsRepository(conn, unit_of_work=uow)
+    provenance = SqliteBulletProvenanceRepository(conn, unit_of_work=uow)
+
+    materials.save(_gen1_approved())
+    superseded, gen2 = _next_generation_approved(materials)
+    gen2_artifact_id = gen2.tailored_resume.artifact_id  # type: ignore[union-attr]
+
+    # A second connection to the SAME database file, set to fail fast instead of
+    # waiting the production busy_timeout, standing in for a concurrent worker.
+    competitor = sqlite3.connect(str(tmp_path / "jobhunter.db"), timeout=0.2)
+    try:
+        assert conn.in_transaction is False  # eager gen-1 save already committed
+        with uow:
+            materials.save(superseded)
+            assert conn.in_transaction is True  # BEGIN IMMEDIATE opened the block
+            materials.save(gen2)
+            provenance.save(
+                _provenance_set(2, artifact_id=gen2_artifact_id, text="Gen 2 grounded bullet.")
+            )
+            assert conn.in_transaction is True  # still one open transaction
+            # The flip holds SQLite's write lock, so a second writer is refused.
+            with pytest.raises(sqlite3.OperationalError, match="lock"):
+                competitor.execute("BEGIN IMMEDIATE")
+        assert conn.in_transaction is False  # commit released the write lock
+    finally:
+        competitor.close()
+
+    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    assert current is not None and current.generation == 2 and current.is_resume_approved
+    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is not None
+
+
 # ---------------------------------------------------------------------------
 # Control: without the unit of work the flip is NOT atomic (pre-A9 behaviour)
 # ---------------------------------------------------------------------------

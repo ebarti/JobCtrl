@@ -1637,6 +1637,13 @@ class TailorResumeUseCase:
         # coverage enrichment run only AFTER the flip commits so they never
         # announce or enrich a rolled-back state.
         record_provenance = materials.is_resume_approved and bool(provenance_rows)
+        # INVARIANT: everything inside this block is ONE SQLite transaction on the
+        # shared thread-local connection. SqliteUnitOfWork opens it with BEGIN
+        # IMMEDIATE and commits (or rolls back) on exit, so no code reachable from
+        # here may commit, roll back, or open its own transaction on that
+        # connection — doing so silently splits the flip back into non-atomic
+        # writes and reopens the crash window A9 closed. Event publication and
+        # projection refresh (which do commit) stay OUTSIDE the block, below.
         with self._unit_of_work if self._unit_of_work is not None else nullcontext():
             if materials.is_resume_approved and prior_generation is not None:
                 self._repository.save(prior_generation)
