@@ -294,6 +294,25 @@ class JobRepository(Protocol):
         """
         ...
 
+    def record_rejected_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        *,
+        owner_job_id: JobId,
+        candidate_url: str,
+        reason: str,
+        rejected_at: str,
+    ) -> bool:
+        """Record a rejected duplicate link idempotently per (owner, candidate).
+
+        Returns ``True`` the first time a given (owner job, candidate URL)
+        rejection is recorded and ``False`` when it already exists, so the write
+        boundary publishes the ``DuplicateJobLinkRejected`` audit event exactly
+        once instead of on every re-ingest of the same persistently-rejected
+        duplicate.
+        """
+        ...
+
 
 class DiscoveryRunRepository(Protocol):
     """Persistence port for the ``DiscoveryRun`` aggregate."""

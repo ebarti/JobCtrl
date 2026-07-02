@@ -448,7 +448,6 @@ class DiscoverJobsUseCase:
         is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
 
         if not content_matched and identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
-            duplicate_link_id = f"dup:{uuid.uuid4().hex}"
             with dedupe_span(
                 tenant_id=str(tenant_id),
                 job_id=str(owner_id),
@@ -457,16 +456,12 @@ class DiscoverJobsUseCase:
                 confidence=identity.confidence,
             ):
                 pass
-            self._publisher.publish(
-                create_duplicate_job_link_rejected(
-                    tenant_id,
-                    DuplicateJobLinkRejectedPayload(
-                        duplicate_link_id=duplicate_link_id,
-                        candidate_ids=(str(owner_id), observation_id),
-                        reason="confidence_below_threshold",
-                        rejected_at=observed_at,
-                    ),
-                )
+            self._record_and_publish_rejected_duplicate(
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+                candidate_url=observed_url,
+                reason="confidence_below_threshold",
+                rejected_at=observed_at,
             )
             return DiscoveryDecision(
                 job_id=owner_id,
@@ -484,6 +479,7 @@ class DiscoverJobsUseCase:
                 tenant_id=tenant_id,
                 owner_id=owner_id,
                 observation_id=observation_id,
+                candidate_url=observed_url,
                 confidence=identity.confidence,
                 acceptance=acceptance,
                 rejected_at=observed_at,
@@ -630,6 +626,7 @@ class DiscoverJobsUseCase:
         tenant_id: TenantId,
         owner_id: JobId,
         observation_id: str,
+        candidate_url: str,
         confidence: float,
         acceptance: PostingAcceptance,
         rejected_at: str,
@@ -643,10 +640,9 @@ class DiscoverJobsUseCase:
         and must NOT attach the rejected posting as an owner observation: doing so
         would let ``find_canonical_owner`` resurface it as a same-identity
         re-observation on a later run and delete the owner then. The declined
-        duplicate is recorded as ``DuplicateJobLinkRejected`` audit and the owner
-        is left untouched.
+        duplicate is recorded as ``DuplicateJobLinkRejected`` audit attributed to
+        the owner and the owner is left untouched.
         """
-        duplicate_link_id = f"dup:{uuid.uuid4().hex}"
         with dedupe_span(
             tenant_id=str(tenant_id),
             job_id=str(owner_id),
@@ -655,22 +651,56 @@ class DiscoverJobsUseCase:
             confidence=confidence,
         ):
             pass
-        self._publisher.publish(
-            create_duplicate_job_link_rejected(
-                tenant_id,
-                DuplicateJobLinkRejectedPayload(
-                    duplicate_link_id=duplicate_link_id,
-                    candidate_ids=(str(owner_id), observation_id),
-                    reason=f"content_match_policy_rejected: {_policy_rejection_reason(acceptance)}",
-                    rejected_at=rejected_at,
-                ),
-            )
+        self._record_and_publish_rejected_duplicate(
+            tenant_id=tenant_id,
+            owner_id=owner_id,
+            candidate_url=candidate_url,
+            reason=f"content_match_policy_rejected: {_policy_rejection_reason(acceptance)}",
+            rejected_at=rejected_at,
         )
         return self._policy_rejected_decision(
             job_id=owner_id,
             observation_id=observation_id,
             confidence=confidence,
             acceptance=acceptance,
+        )
+
+    def _record_and_publish_rejected_duplicate(
+        self,
+        *,
+        tenant_id: TenantId,
+        owner_id: JobId,
+        candidate_url: str,
+        reason: str,
+        rejected_at: str,
+    ) -> None:
+        """Record a rejected duplicate link and publish its audit event once.
+
+        Attributes the ``DuplicateJobLinkRejected`` event to the surviving
+        ``owner_id`` so it lands in that job's audit history, and dedupes on
+        (owner job, candidate URL) so repeat observations of an already-rejected
+        duplicate do not append identical event rows.
+        """
+        newly_recorded = self._repository.record_rejected_duplicate_link(
+            tenant_id,
+            owner_job_id=owner_id,
+            candidate_url=candidate_url,
+            reason=reason,
+            rejected_at=rejected_at,
+        )
+        if not newly_recorded:
+            return
+        self._publisher.publish(
+            create_duplicate_job_link_rejected(
+                tenant_id,
+                DuplicateJobLinkRejectedPayload(
+                    duplicate_link_id=f"dup:{uuid.uuid4().hex}",
+                    job_id=str(owner_id),
+                    candidate_job_id=candidate_url,
+                    reason=reason,
+                    rejected_at=rejected_at,
+                ),
+            )
         )
 
     def _publish_source_observed(

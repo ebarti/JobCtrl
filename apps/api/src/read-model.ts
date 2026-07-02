@@ -1029,7 +1029,6 @@ function jobEventToAuditEntry(
         actor: "system",
         details: auditDetails(
           ["Reason", humanizeToken(payloadText(payload, "reason"))],
-          ["Confidence", formatPercent(payloadNumber(payload, "confidence"))],
           ["Candidate", payloadText(payload, "candidateJobId", "candidate_job_id")],
         ),
       });

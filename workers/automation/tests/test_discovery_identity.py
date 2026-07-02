@@ -746,7 +746,8 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     assert summary.duplicates_rejected == 1
     assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
     rejected = publisher.events[0]
-    assert rejected.payload["candidate_ids"][0] == "https://boards.greenhouse.io/acme/jobs/123"
+    assert rejected.payload["job_id"] == "https://boards.greenhouse.io/acme/jobs/123"
+    assert rejected.payload["candidate_job_id"] == "https://boards.greenhouse.io/acme/jobs/low-confidence"
     assert rejected.payload["reason"] == "confidence_below_threshold"
     assert (
         repo.list_observations(
@@ -1060,18 +1061,22 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
-    # The rejected distinct posting is recorded as declined-duplicate audit, and is
+    # The rejected distinct posting is recorded as declined-duplicate audit
+    # attributed to the OWNER (so it shows in the owner's audit history), and is
     # NOT attached as an owner observation (which would re-trigger the delete later).
     assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
     rejected = publisher.events[-1]
-    assert rejected.payload["candidate_ids"][0] == owner_url
+    assert rejected.payload["job_id"] == owner_url
+    assert rejected.payload["candidate_job_id"] == "https://jobs.lever.co/acme/staff-platform-engineer-india"
     assert "location_mismatch" in rejected.payload["reason"]
     assert [obs.source_id for obs in repo.list_observations(LOCAL_TENANT, JobId(owner_url))] == [
         "greenhouse:acme"
     ]
 
     # Re-running the rejected duplicate must be stable: the owner stays active and
-    # visible, proving the rejection left no re-observation trail to delete it.
+    # visible, proving the rejection left no re-observation trail to delete it. The
+    # already-recorded (owner, candidate) rejection is idempotent, so no duplicate
+    # audit event is appended on the repeat observation.
     publisher.events.clear()
     resummary = use_case.execute(
         tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate-2"
@@ -1081,6 +1086,7 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     assert owner is not None and owner.is_deleted is False
     assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
     assert "JobDeleted" not in [event.event_type for event in publisher.events]
+    assert "DuplicateJobLinkRejected" not in [event.event_type for event in publisher.events]
 
 
 def test_discover_jobs_use_case_keeps_distinct_roles_at_same_company_separate(

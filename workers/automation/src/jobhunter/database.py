@@ -2492,6 +2492,19 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         """
     )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_rejected_duplicate_links (
+            tenant_id       TEXT NOT NULL DEFAULT 'local',
+            owner_job_url   TEXT NOT NULL,
+            candidate_url   TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            rejected_at     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, owner_job_url, candidate_url)
+        )
+        """
+    )
+
     # Idempotent one-shot backfill: every existing jobs row gets one
     # observation row using its legacy URL / site / discovered_at.
     backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
@@ -2507,6 +2520,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         "job_source_observations",
         "job_canonical_identities",
         "job_duplicate_links",
+        "job_rejected_duplicate_links",
     ]
 
 

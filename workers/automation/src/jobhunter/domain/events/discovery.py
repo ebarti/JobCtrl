@@ -272,13 +272,16 @@ def create_duplicate_job_linked(
 class DuplicateJobLinkRejectedPayload:
     """A proposed duplicate link was rejected by Discovery dedupe.
 
-    ``candidate_ids`` carries the ids that would have merged so the
-    Operations dedupe diagnostics can surface the rejected pairing
-    without storing the raw payloads.
+    Attributed to the surviving ``job_id`` (the accepted owner the duplicate
+    matched) so the rejected link shows in that job's audit history — ``job_id``
+    is the standard attribution key both the durable event publisher and the API
+    audit read model key on. ``candidate_job_id`` is the distinct posting that
+    was declined.
     """
 
     duplicate_link_id: str
-    candidate_ids: tuple[str, ...]
+    job_id: str
+    candidate_job_id: str
     reason: str
     rejected_at: str
 

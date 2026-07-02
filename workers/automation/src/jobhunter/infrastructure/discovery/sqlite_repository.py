@@ -672,6 +672,37 @@ class SqliteJobRepository:
         )
         self._conn.commit()
 
+    def record_rejected_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        *,
+        owner_job_id: JobId,
+        candidate_url: str,
+        reason: str,
+        rejected_at: str,
+    ) -> bool:
+        """Record a rejected duplicate link idempotently per (owner, candidate).
+
+        Returns ``True`` when this (owner job, candidate URL) rejection is
+        recorded for the first time and ``False`` when an identical rejected link
+        already exists, so the caller can skip re-publishing the audit event.
+        Without this, every re-ingest of a persistently-rejected duplicate would
+        mint a fresh event row (audit noise).
+        """
+
+        before = self._conn.total_changes
+        self._conn.execute(
+            """
+            INSERT INTO job_rejected_duplicate_links (
+                tenant_id, owner_job_url, candidate_url, reason, rejected_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, owner_job_url, candidate_url) DO NOTHING
+            """,
+            (str(tenant_id), str(owner_job_id), str(candidate_url), reason, rejected_at),
+        )
+        self._conn.commit()
+        return self._conn.total_changes > before
+
     def list_observations(
         self,
         tenant_id: TenantId,
