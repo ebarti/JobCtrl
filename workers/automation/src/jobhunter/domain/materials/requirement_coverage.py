@@ -13,6 +13,7 @@ from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.materials.policy import RequirementLedTailoringControls
 
 if TYPE_CHECKING:  # pragma: no cover - type-only without runtime import cycle
+    from jobhunter.domain.materials.claim_grounding import ClaimGrounding
     from jobhunter.domain.scoring.value_objects import RequirementFitReport
 
 COVERAGE_KINDS = ("direct", "transferable", "adjacent", "enhancement")
@@ -443,8 +444,10 @@ class PostGenerationFitScore:
     must_have_coverage: float
     covered_requirement_ids: tuple[str, ...] = ()
     uncovered_requirement_ids: tuple[str, ...] = ()
+    claimed_only_requirement_ids: tuple[str, ...] = ()
     prioritized_fixes: tuple[str, ...] = ()
     review_blockers: tuple[str, ...] = ()
+    coverage_basis: str = ""
 
     def __post_init__(self) -> None:
         score = _non_negative_int(self.score, "score")
@@ -462,8 +465,14 @@ class PostGenerationFitScore:
         object.__setattr__(self, "must_have_coverage", coverage)
         object.__setattr__(self, "covered_requirement_ids", _clean_string_tuple(self.covered_requirement_ids))
         object.__setattr__(self, "uncovered_requirement_ids", _clean_string_tuple(self.uncovered_requirement_ids))
+        object.__setattr__(
+            self,
+            "claimed_only_requirement_ids",
+            _clean_string_tuple(self.claimed_only_requirement_ids),
+        )
         object.__setattr__(self, "prioritized_fixes", _clean_string_tuple(self.prioritized_fixes))
         object.__setattr__(self, "review_blockers", _clean_string_tuple(self.review_blockers))
+        object.__setattr__(self, "coverage_basis", str(self.coverage_basis or "").strip())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -471,8 +480,10 @@ class PostGenerationFitScore:
             "must_have_coverage": self.must_have_coverage,
             "covered_requirement_ids": list(self.covered_requirement_ids),
             "uncovered_requirement_ids": list(self.uncovered_requirement_ids),
+            "claimed_only_requirement_ids": list(self.claimed_only_requirement_ids),
             "prioritized_fixes": list(self.prioritized_fixes),
             "review_blockers": list(self.review_blockers),
+            "coverage_basis": self.coverage_basis,
         }
 
 
@@ -1078,18 +1089,31 @@ def score_generated_resume_against_target(
     *,
     target_profile: TargetProfile,
     mappings: IterableABC[GeneratedClaimMapping],
+    grounding: ClaimGrounding,
 ) -> PostGenerationFitScore:
+    """Score shipped requirement coverage — grounded, never claim-trusted.
+
+    A requirement is covered ONLY when ``grounding`` bound at least one of its
+    coverage-bearing claims to a line the resume actually ships. A requirement
+    asserted solely by ungrounded claims is ``claimed_only``: it counts as
+    UNCOVERED (the shipped artifact does not carry it) and its prioritized fix
+    says so explicitly, so the revision loop repairs the real gap instead of
+    trusting the model's self-assessment.
+    """
     mapping_tuple = tuple(mappings)
-    covered = tuple(
-        dict.fromkeys(
-            requirement_id
-            for mapping in mapping_tuple
-            if mapping.coverage_edge_ids
-            for requirement_id in mapping.requirement_ids
-        )
-    )
-    covered_set = set(covered)
+    covered_set = set(grounding.grounded_requirement_ids)
+    claimed_only_set = set(grounding.claimed_only_requirement_ids)
     all_requirements = target_profile.requirements
+    covered = tuple(
+        requirement.requirement_id
+        for requirement in all_requirements
+        if requirement.requirement_id in covered_set
+    )
+    claimed_only = tuple(
+        requirement.requirement_id
+        for requirement in all_requirements
+        if requirement.requirement_id in claimed_only_set
+    )
     uncovered_requirements = tuple(
         requirement
         for requirement in all_requirements
@@ -1113,7 +1137,7 @@ def score_generated_resume_against_target(
         weighted_coverage = 1.0 if not uncovered_requirements else 0.0
     score = max(1, min(10, round(weighted_coverage * 10)))
     prioritized_fixes = tuple(
-        f"{requirement.requirement_id}: {requirement.text}"
+        _uncovered_fix_text(requirement, claimed_only=requirement.requirement_id in claimed_only_set)
         for requirement in sorted(
             uncovered_requirements,
             key=lambda item: (item.tier != "must_have", -item.weight, item.requirement_id),
@@ -1131,9 +1155,21 @@ def score_generated_resume_against_target(
         uncovered_requirement_ids=tuple(
             requirement.requirement_id for requirement in uncovered_requirements
         ),
+        claimed_only_requirement_ids=claimed_only,
         prioritized_fixes=prioritized_fixes,
         review_blockers=review_blockers,
+        coverage_basis=grounding.basis,
     )
+
+
+def _uncovered_fix_text(requirement: TargetRequirement, *, claimed_only: bool) -> str:
+    if claimed_only:
+        return (
+            f"{requirement.requirement_id}: {requirement.text} — a claim mapped this "
+            "requirement but its text does not appear in the shipped resume; rewrite a "
+            "rendered bullet to carry it or drop the claim."
+        )
+    return f"{requirement.requirement_id}: {requirement.text}"
 
 
 def decide_score_gated_revision(

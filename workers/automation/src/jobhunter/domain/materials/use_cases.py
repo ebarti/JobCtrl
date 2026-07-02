@@ -101,6 +101,11 @@ from jobhunter.domain.materials.voice import (
     build_voice_request,
 )
 from jobhunter.domain.materials.voice_metrics import measure_voice_delta
+from jobhunter.domain.materials.claim_grounding import (
+    ClaimGrounding,
+    enrich_provenance_requirements,
+    ground_claim_mappings,
+)
 from jobhunter.domain.materials.quality import (
     TailoringPlan,
     build_tailoring_change_annotations,
@@ -477,7 +482,9 @@ def _as_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _claim_mappings_from_payload(payload: dict) -> tuple[GeneratedClaimMapping, tuple[str, ...]]:
+def _claim_mappings_from_payload(
+    payload: dict,
+) -> tuple[tuple[GeneratedClaimMapping, ...], tuple[str, ...]]:
     raw_items = payload.get("generated_claim_mappings", ())
     if not isinstance(raw_items, list):
         return (), ("generated_claim_mappings must be an array",)
@@ -628,6 +635,7 @@ def _post_generation_fit_gate(
     payload: dict,
     tailoring_plan: TailoringPlan,
     attempt: int,
+    shipped_rows: tuple[BulletProvenance, ...],
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], tuple[str, ...]]:
     target_profile = tailoring_plan.target_profile
     if target_profile is None:
@@ -635,9 +643,18 @@ def _post_generation_fit_gate(
     mappings, parse_errors = _claim_mappings_from_payload(payload)
     if parse_errors or _claim_mapping_binding_errors(payload=payload, mappings=mappings):
         return None, (), ()
+    # Ground every coverage-bearing claim against the lines the resume actually
+    # ships (the assembler-mirroring provenance rows), so must-have coverage is
+    # measured, never self-reported. An ungrounded claim's requirements count as
+    # uncovered and drive the revision loop via prioritized fixes.
+    grounding = ground_claim_mappings(
+        mappings,
+        tuple((row.bullet_id, row.generated_text) for row in shipped_rows),
+    )
     fit_score = score_generated_resume_against_target(
         target_profile=target_profile,
         mappings=mappings,
+        grounding=grounding,
     )
     decision = decide_score_gated_revision(
         fit_score=fit_score,
@@ -647,6 +664,7 @@ def _post_generation_fit_gate(
     record = {
         "fit_score": fit_score.to_dict(),
         "revision_decision": decision.to_dict(),
+        "grounding": grounding.to_metadata(),
     }
     errors: list[str] = []
     review_blockers = tuple(decision.review_blockers) if decision.review_blocked else ()
@@ -1521,6 +1539,7 @@ class TailorResumeUseCase:
             coverage,
             voice_record,
             fabrication_error,
+            final_grounding,
         ) = self._voice_and_audit(
             profile_snapshot=profile_snapshot,
             job=job,
@@ -1576,6 +1595,14 @@ class TailorResumeUseCase:
             "quality_plan": report.get("quality_plan") or {},
             "quality_checks": report.get("quality_checks") or {},
             "post_generation_fit": report.get("post_generation_fit"),
+            "post_generation_fit_final": self._final_fit_record(
+                profile_snapshot=profile_snapshot,
+                job=job,
+                employer_analysis=employer_analysis,
+                requirement_fit_report=requirement_fit_report,
+                final_payload=final_payload,
+                grounding=final_grounding,
+            ),
             "review_required": bool(report.get("review_required")),
             "review_blockers": report.get("review_blockers") or [],
             "bullet_limit_overflows": report.get("bullet_limit_overflows") or [],
@@ -1972,6 +1999,7 @@ class TailorResumeUseCase:
                     validation_mode=validation_mode,
                     job=job,
                     attempt=attempt + 1,
+                    employer_analysis=employer_analysis,
                 )
                 attempt_record["candidates"].append(candidate.record)
                 last_payload = candidate.payload or last_payload
@@ -2154,6 +2182,7 @@ class TailorResumeUseCase:
         validation_mode: str,
         job: dict,
         attempt: int,
+        employer_analysis: EmployerAnalysis,
     ) -> _TailorCandidate:
         candidate_id = f"candidate-{abs(hash((model, len(messages), messages[-1].content[:80]))) % 10_000_000}"
         record: dict[str, Any] = {
@@ -2223,11 +2252,37 @@ class TailorResumeUseCase:
                 )
             else:
                 record["claim_mapping_validation"] = {"passed": True, "errors": []}
-            fit_gate, fit_gate_errors, review_blockers = _post_generation_fit_gate(
-                payload=payload,
-                tailoring_plan=tailoring_plan,
-                attempt=attempt,
-            )
+            # Render this candidate's shipped lines (pure, assembler-mirroring) so
+            # the fit gate measures coverage against what would actually ship.
+            shipped_rows: tuple[BulletProvenance, ...] = ()
+            if not claim_mapping_errors:
+                try:
+                    shipped_rows = build_bullet_provenance(
+                        profile_snapshot.as_dict(),
+                        job,
+                        payload,
+                        tailoring_plan,
+                        employer_analysis,
+                    )
+                except ProvenanceBindingError as exc:
+                    validation = ValidationResult.failure(
+                        (*validation.errors, f"Provenance grounding failed: {exc}"),
+                        warnings=tuple(validation.warnings),
+                    )
+            # No shipped rows means the candidate already failed upstream (claim
+            # mapping or provenance binding errors); grounding against an empty
+            # resume would record a misleading 0% on a candidate that is already
+            # rejected, so the gate is skipped rather than fabricating a score.
+            fit_gate: dict[str, Any] | None = None
+            fit_gate_errors: tuple[str, ...] = ()
+            review_blockers: tuple[str, ...] = ()
+            if shipped_rows:
+                fit_gate, fit_gate_errors, review_blockers = _post_generation_fit_gate(
+                    payload=payload,
+                    tailoring_plan=tailoring_plan,
+                    attempt=attempt,
+                    shipped_rows=shipped_rows,
+                )
             if fit_gate is not None:
                 record["post_generation_fit"] = fit_gate
             if review_blockers:
@@ -2737,6 +2792,90 @@ class TailorResumeUseCase:
     # Phase 3 — voice pass → re-validate → final audit (coverage vs rendered text)
     # ------------------------------------------------------------------
 
+    def _final_fit_record(
+        self,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        job: dict,
+        employer_analysis: EmployerAnalysis,
+        requirement_fit_report: "RequirementFitReport | None",
+        final_payload: dict,
+        grounding: ClaimGrounding,
+    ) -> dict[str, Any] | None:
+        """Grounded fit of the SHIPPED artifact — the audit's source of truth.
+
+        Lifecycle-labeled ``post_voice_shipped``: computed on the final voiced
+        payload against the lines that actually ship, AFTER the attempt-scoped
+        revision gate ran. It never mutates the gate record — a shipped artifact
+        whose grounded must-have coverage fell below the gate (e.g. voice
+        unshipped a mapped claim) carries explicit residual warnings here
+        instead, so the review surface can label both truthfully.
+        """
+        plan = build_tailoring_plan(
+            profile_snapshot.as_dict(),
+            job,
+            employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
+        )
+        target_profile = plan.target_profile
+        if target_profile is None:
+            return None
+        mappings, parse_errors = _claim_mappings_from_payload(final_payload)
+        if parse_errors:
+            mappings = ()
+        fit = score_generated_resume_against_target(
+            target_profile=target_profile,
+            mappings=mappings,
+            grounding=grounding,
+        )
+        gates = plan.requirement_led_controls.revision_gates
+        passed = (
+            fit.score >= gates.min_fit_score
+            and fit.must_have_coverage >= gates.must_have_coverage
+        )
+        warnings: list[str] = []
+        if not passed:
+            warnings.append(
+                "Shipped grounded must-have coverage "
+                f"{round(fit.must_have_coverage * 100)}% (fit {fit.score}/10) is below "
+                f"the revision gate ({round(gates.must_have_coverage * 100)}% / "
+                f"{gates.min_fit_score}/10)."
+            )
+        return {
+            "lifecycle": "post_voice_shipped",
+            "fit_score": fit.to_dict(),
+            "grounding": grounding.to_metadata(),
+            "gate_thresholds": {
+                "min_fit_score": gates.min_fit_score,
+                "must_have_coverage": gates.must_have_coverage,
+            },
+            "passed": passed,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def _grounded_rows(
+        payload: dict,
+        rows: tuple[BulletProvenance, ...],
+        prior_rows: tuple[BulletProvenance, ...] = (),
+    ) -> tuple[tuple[BulletProvenance, ...], ClaimGrounding]:
+        """Ground the payload's claim mappings against ``rows`` and enrich them.
+
+        ``prior_rows`` carry the pre-voice text of the same bullets so a claim
+        validated against the pre-voice wording stays grounded to the reworded
+        shipped line (voice keeps bullet identity 1:1). Unparseable mappings
+        ground nothing — rows then keep their keyword-served links only.
+        """
+        mappings, parse_errors = _claim_mappings_from_payload(payload)
+        if parse_errors:
+            mappings = ()
+        grounding = ground_claim_mappings(
+            mappings,
+            tuple((row.bullet_id, row.generated_text) for row in rows),
+            prior_lines=tuple((row.bullet_id, row.generated_text) for row in prior_rows),
+        )
+        return enrich_provenance_requirements(rows, grounding), grounding
+
     def _voice_and_audit(
         self,
         *,
@@ -2751,6 +2890,7 @@ class TailorResumeUseCase:
         KeywordCoverage | None,
         VoicePassRecord,
         str | None,
+        ClaimGrounding,
     ]:
         """Run the voice pass before the final audit (VOICE-01/02/03 + GROUND-06).
 
@@ -2789,21 +2929,23 @@ class TailorResumeUseCase:
         # pre-voice payload (the fabrication gate will reject it upstream if needed).
         # Coverage is still computed canonically over whatever grounded rows exist.
         if self._voice is None or base_error is not None:
+            base_rows, base_grounding = self._grounded_rows(tailored_payload, base_rows)
             coverage = self._coverage_for(base_rows, employer_analysis, base_error, corpus)
             record = (
                 VoicePassRecord.skipped("no_voice_port")
                 if self._voice is None
                 else VoicePassRecord.skipped("pre_voice_candidate_rejected")
             )
-            return tailored_payload, base_rows, coverage, record, base_error
+            return tailored_payload, base_rows, coverage, record, base_error, base_grounding
 
+        base_rows, base_grounding = self._grounded_rows(tailored_payload, base_rows)
         voiced_payload, voice_record = self._run_voice(
             tailored_payload=tailored_payload, base_rows=base_rows
         )
         if voiced_payload is None:
             # Voice did not run / errored / no-op — ship the pre-voice candidate.
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
-            return tailored_payload, base_rows, coverage, voice_record, None
+            return tailored_payload, base_rows, coverage, voice_record, None, base_grounding
 
         voiced_rows, voiced_error, _voiced_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
@@ -2825,15 +2967,19 @@ class TailorResumeUseCase:
                 reason=f"voice_introduced_fabrication: {voiced_error}",
             )
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
-            return tailored_payload, base_rows, coverage, rejected, None
+            return tailored_payload, base_rows, coverage, rejected, None, base_grounding
 
         # The voiced payload is grounded AND improved the proxies — adopt it. Mark
         # every reworded bullet ``transform_type == voice`` so the inspector shows
-        # the shipped wording is the voiced wording (VOICE-02), then compute coverage
-        # over the voiced grounded rows (the text that actually ships).
+        # the shipped wording is the voiced wording (VOICE-02), then re-ground the
+        # claims against the voiced lines (pre-voice text of the same bullets keeps
+        # meaning-preserved claims bound) and compute coverage over the shipped rows.
         marked_rows = _mark_voiced_rows(base_rows, voiced_rows)
+        marked_rows, final_grounding = self._grounded_rows(
+            voiced_payload, marked_rows, prior_rows=base_rows
+        )
         coverage = self._coverage_for(marked_rows, employer_analysis, None, corpus)
-        return voiced_payload, marked_rows, coverage, voice_record, None
+        return voiced_payload, marked_rows, coverage, voice_record, None, final_grounding
 
     def _run_voice(
         self,
