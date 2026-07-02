@@ -29,9 +29,15 @@ class ResultMessage:
     double MUST be named ``ResultMessage`` (a leading underscore would hide it).
     """
 
-    def __init__(self, structured_output: Any, subtype: str = "success") -> None:
+    def __init__(
+        self,
+        structured_output: Any,
+        subtype: str = "success",
+        usage: dict[str, int] | None = None,
+    ) -> None:
         self.structured_output = structured_output
         self.subtype = subtype
+        self.usage = usage
 
 
 class _FakeClaudeOptions:
@@ -39,13 +45,18 @@ class _FakeClaudeOptions:
         self.kwargs = kwargs
 
 
-def _fake_query(structured: Any, *, captured: list[dict[str, Any]] | None = None):
+def _fake_query(
+    structured: Any,
+    *,
+    captured: list[dict[str, Any]] | None = None,
+    usage: dict[str, int] | None = None,
+):
     def _query(*, prompt: str, options: Any):
         if captured is not None:
             captured.append({"prompt": prompt, "options": options})
 
         async def _gen():
-            yield ResultMessage(structured)
+            yield ResultMessage(structured, usage=usage)
 
         return _gen()
 
@@ -108,3 +119,63 @@ async def test_raises_on_structured_output_retry_exhaustion() -> None:
     adapter = ClaudeVoiceAdapter(query_fn=_query, options_factory=_FakeClaudeOptions)
     with pytest.raises(RuntimeError):
         await adapter.rewrite("system", _request())
+
+
+@pytest.mark.asyncio
+async def test_rewrite_opens_generation_span_with_model_and_tokens(in_memory_exporter) -> None:
+    adapter = ClaudeVoiceAdapter(
+        query_fn=_fake_query(
+            _voiced_structured(),
+            usage={"input_tokens": 700, "output_tokens": 120},
+        ),
+        options_factory=_FakeClaudeOptions,
+    )
+    await adapter.rewrite("system", _request())
+
+    spans = in_memory_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "llm.claude-opus-4-8"
+    assert span.instrumentation_scope.name == "jobhunter.materials.voice"
+    attrs = dict(span.attributes or {})
+    assert attrs["langfuse.observation.type"] == "generation"
+    assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+    assert attrs["gen_ai.usage.input_tokens"] == 700
+    assert attrs["gen_ai.usage.output_tokens"] == 120
+
+
+@pytest.mark.asyncio
+async def test_rewrite_span_omits_tokens_when_sdk_reports_no_usage(in_memory_exporter) -> None:
+    # Instrumentation must never break the voice pass: no SDK usage -> the rewrite
+    # still succeeds and the span omits token counts rather than fabricating them.
+    adapter = ClaudeVoiceAdapter(
+        query_fn=_fake_query(_voiced_structured()),
+        options_factory=_FakeClaudeOptions,
+    )
+    result = await adapter.rewrite("system", _request())
+    assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
+
+    attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+    assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+    assert "gen_ai.usage.input_tokens" not in attrs
+
+
+@pytest.mark.asyncio
+async def test_rewrite_span_survives_malformed_sdk_usage(in_memory_exporter) -> None:
+    # A drifted / non-int usage field must NEVER fail the voice pass — token
+    # extraction runs inside the re-raising span block, so it degrades the
+    # unparseable count to omitted rather than raising.
+    adapter = ClaudeVoiceAdapter(
+        query_fn=_fake_query(
+            _voiced_structured(),
+            usage={"input_tokens": "n/a", "output_tokens": 10},
+        ),
+        options_factory=_FakeClaudeOptions,
+    )
+    result = await adapter.rewrite("system", _request())  # must not raise
+    assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
+
+    attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+    assert "gen_ai.usage.input_tokens" not in attrs
+    assert "langfuse.observation.usage_details" not in attrs
+    assert attrs["gen_ai.usage.output_tokens"] == 10

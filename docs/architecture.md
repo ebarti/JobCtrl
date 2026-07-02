@@ -737,6 +737,9 @@ These sources emit spans:
 | Source | Span name | `langfuse.observation.type` |
 | --- | --- | --- |
 | Every LLM call (`jobhunter.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
+| Each employer-analysis ensemble draft leg (scopes `jobhunter.analysis.claude` / `.codex` / `.antigravity`) | `llm.<model>` | `generation` |
+| The employer-analysis synthesizer (scope `jobhunter.analysis.synthesizer`) | `llm.<model>` | `generation` |
+| The resume voice pass (scope `jobhunter.materials.voice`) | `llm.<model>` | `generation` |
 | Every Temporal workflow + activity (via `temporalio.contrib.opentelemetry.TracingInterceptor`) | workflow / activity name | `span` (default) |
 | Every JSON-RPC dispatch (`jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
 | Every pipeline stage (`jobhunter.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
@@ -759,11 +762,22 @@ The employer-analysis ensemble is the first capability on the **agent-SDK**
 standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). Those
 SDKs consume the existing local session credentials (Claude Code session, reused
 Codex login, and `GEMINI_API_KEY`/`GOOGLE_API_KEY` for the Antigravity leg) —
-they introduce no new key management. The analysis run is visible through its persisted
-`EmployerAnalyzed` `job_events` record and the read-model `ensemble_completeness`
-field today; folding the four ensemble legs (drafts + synthesizer) into the same
-Langfuse `generation`-span pipeline as the other LLM calls is the next
-observability step.
+they introduce no new key management. The analysis run is visible through its
+persisted `EmployerAnalyzed` `job_events` record and the read-model
+`ensemble_completeness` field. Each of the four ensemble legs (the three parallel
+drafts + the Claude synthesizer) and the post-selection resume voice pass wrap
+their SDK model call in the same `llm_generation_span` the `LLMClient` uses, so
+every frontier-model call reports its model, prompt/completion, latency, and —
+when the SDK surfaces usage — input/output token counts to Langfuse. Distinct
+instrumentation scopes keep the drafts, synthesizer, and voice pass separable
+even though they share the `llm.<model>` span name. Because the legs run inside
+the enclosing pipeline-stage / JSON-RPC span (OTel context propagates through the
+`asyncio.run` + `asyncio.gather` fan-out), Langfuse aggregates their token usage
+and cost onto the surrounding analysis trace — the per-analysis cost rollup —
+without extra plumbing. Instrumentation never changes control flow: an SDK error
+is recorded on the span and re-raised into the existing per-leg
+retry/partial-failure path, and missing SDK usage degrades to a span without
+token counts rather than fabricating them.
 
 The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side
