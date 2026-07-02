@@ -607,6 +607,72 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
         close_connection(db_path)
 
 
+def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Distinct roles at one employer must not merge through the Smart Extract route.
+
+    The content-owner lookup gates on normalized title AND employer, so two
+    genuinely different roles stay separate even when their descriptions are
+    near-identical (well above the 0.83 shingle threshold): the title gate must
+    short-circuit before any description match. If it did not, the shared
+    description would fingerprint- or shingle-match and wrongly collapse the two
+    roles into one aggregate. Regression guard for the direct-SQL skip-insert path.
+    """
+    db_path = tmp_path / "jobhunter.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    try:
+        shared_description = (
+            "Lead platform reliability, security, and delivery initiatives "
+            "across Spain and the wider EMEA region. " * 12
+        )
+        owner_url = "https://boards.greenhouse.io/acme/jobs/staff-platform-eng"
+        repository = SqliteJobRepository(conn)
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(conn, stage="discover"),
+            clock=lambda: "2026-05-12T00:00:00Z",
+        )
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[
+                _ats_posting(
+                    canonical_url=owner_url,
+                    description=shared_description,
+                    title="Staff Platform Engineer",
+                )
+            ],
+            run_id="run-ats",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+        result = smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": "https://careers.acme.com/staff-data-scientist",
+                    "title": "Staff Data Scientist",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": shared_description,
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Staff Data Scientist",
+        )
+
+        assert result == (1, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+    finally:
+        close_connection(db_path)
+
+
 def test_smart_extract_api_response_extracts_company() -> None:
     intel = {
         "api_responses": [
