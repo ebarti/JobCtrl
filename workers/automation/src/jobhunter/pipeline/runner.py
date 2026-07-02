@@ -1983,7 +1983,8 @@ _PENDING_SQL: dict[str, str] = {
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
-        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+        f"AND {db_module._ENRICHMENT_NOT_QUARANTINED}"
     ),
     "cover": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
@@ -1998,7 +1999,8 @@ _PENDING_SQL: dict[str, str] = {
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_COVER_ATTEMPTS} < 5 "
-        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+        f"AND {db_module._ENRICHMENT_NOT_QUARANTINED}"
     ),
 }
 
@@ -2022,7 +2024,8 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5) "
-            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
+            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+            f"AND {db_module._ENRICHMENT_NOT_QUARANTINED}"
             if retailor else
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
@@ -2031,7 +2034,8 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
-            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
+            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+            f"AND {db_module._ENRICHMENT_NOT_QUARANTINED}"
         )
         return conn.execute(
             f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "

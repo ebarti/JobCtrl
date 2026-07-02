@@ -67,6 +67,7 @@ from jobhunter.database import (
     _EFFECTIVE_FULL_DESCRIPTION,
     _EFFECTIVE_TAILOR_PATH,
     _ENRICHMENT_JOIN,
+    _ENRICHMENT_NOT_QUARANTINED,
     _LATEST_APPLY_RUN_JOIN,
     _LATEST_MATERIALS_JOIN,
     _LATEST_SCORE_JOIN,
@@ -274,6 +275,7 @@ def acquire_job(
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
                   AND {_NOT_CLOSED_ACTIVE_STATE}
+                  AND {_ENRICHMENT_NOT_QUARANTINED}
                   {site_clause}
                   {url_clauses}
                 ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url

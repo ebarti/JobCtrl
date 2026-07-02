@@ -2241,6 +2241,8 @@ def ensure_posting_snapshot_tables(conn: sqlite3.Connection | None = None) -> li
             snapshot_set_json        TEXT NOT NULL,
             latest_snapshot_version  INTEGER NOT NULL DEFAULT 0,
             latest_active_state      TEXT NOT NULL DEFAULT 'unknown',
+            latest_confidence        TEXT,
+            latest_quarantine_reason TEXT,
             updated_at               TEXT NOT NULL,
             PRIMARY KEY (tenant_id, job_url),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
@@ -2253,8 +2255,56 @@ def ensure_posting_snapshot_tables(conn: sqlite3.Connection | None = None) -> li
         ON posting_snapshot_sets(tenant_id, updated_at DESC)
         """
     )
+    # The latest snapshot's confidence + quarantine reason are promoted onto
+    # the row so the read model can gate the tailoring queue and surface the
+    # enrichment quality signal without parsing snapshot_set_json per read.
+    existing_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)").fetchall()
+    }
+    added_quality_columns = False
+    if "latest_confidence" not in existing_cols:
+        conn.execute("ALTER TABLE posting_snapshot_sets ADD COLUMN latest_confidence TEXT")
+        added_quality_columns = True
+    if "latest_quarantine_reason" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE posting_snapshot_sets ADD COLUMN latest_quarantine_reason TEXT"
+        )
+        added_quality_columns = True
+    if added_quality_columns:
+        _backfill_latest_snapshot_quality(conn)
     conn.commit()
     return ["posting_snapshot_sets"]
+
+
+def _backfill_latest_snapshot_quality(conn: sqlite3.Connection) -> None:
+    """Populate ``latest_confidence`` / ``latest_quarantine_reason`` from JSON.
+
+    Runs once when the columns are first added so pre-existing snapshot rows
+    carry the same quality signal new writes persist directly.
+    """
+    rows = conn.execute(
+        "SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets"
+    ).fetchall()
+    for row in rows:
+        raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[2]
+        try:
+            snapshots = (json.loads(raw_json) if raw_json else {}).get("snapshots") or []
+        except (TypeError, ValueError):
+            continue
+        if not snapshots:
+            continue
+        latest = snapshots[-1]
+        conn.execute(
+            "UPDATE posting_snapshot_sets "
+            "SET latest_confidence = ?, latest_quarantine_reason = ? "
+            "WHERE tenant_id = ? AND job_url = ?",
+            (
+                latest.get("confidence"),
+                latest.get("quarantine_reason"),
+                row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0],
+                row["job_url"] if isinstance(row, sqlite3.Row) else row[1],
+            ),
+        )
 
 
 def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -2711,6 +2761,22 @@ _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
 )
 
+# A posting whose latest content snapshot was quarantined as a LOW-confidence
+# extraction is not trustworthy enough to spend the expensive, employer-facing
+# tailoring / cover / apply steps on. It stays scoreable (cheap triage) and
+# visible with its quality signal, so a quarantined job never vanishes from the
+# funnel. Only a genuinely LOW-confidence quarantine is gated: a MEDIUM/HIGH
+# snapshot missing its apply URL is quarantined for review but keeps
+# ``latest_confidence`` above LOW, so a recoverable missing field never starves
+# tailoring. An operator-overridden LOW snapshot carries reason 'none' and also
+# passes. Reads through the ``pss`` alias exposed by ``_ACTIVE_STATE_JOIN``.
+_ENRICHMENT_NOT_QUARANTINED: str = (
+    "(pss.latest_confidence IS NULL "
+    "OR pss.latest_confidence != 'low' "
+    "OR pss.latest_quarantine_reason IS NULL "
+    "OR pss.latest_quarantine_reason IN ('none', ''))"
+)
+
 
 # ---------------------------------------------------------------------------
 # job_materials read fragments — used by the queue selectors that
@@ -3053,12 +3119,13 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["untailored_eligible"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
+        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_ACTIVE_STATE_JOIN} "
         f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
-        f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL"
+        f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
+        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
     ).fetchone()[0]
 
     stats["tailor_exhausted"] = conn.execute(
@@ -3104,7 +3171,8 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
         f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
         f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
-        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+        f"AND {_NOT_CLOSED_ACTIVE_STATE} "
+        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
     ).fetchone()[0]
 
     return stats
@@ -3133,6 +3201,7 @@ def count_ready_to_apply(
         f"{_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL",
         f"{_EFFECTIVE_APPLY_TARGET_URL} != ''",
         _NOT_CLOSED_ACTIVE_STATE,
+        _ENRICHMENT_NOT_QUARANTINED,
         "NOT EXISTS ("
         "SELECT 1 FROM job_stage_states jss_active "
         "WHERE jss_active.job_url = jobs.url "
@@ -3311,12 +3380,14 @@ def load_job_with_enrichment(
         f"je.enriched_at AS je_enriched_at, "
         f"je.current_status AS je_current_status, "
         f"je.extraction_tier AS je_extraction_tier, "
+        f"pss.latest_confidence AS enrichment_confidence, "
+        f"pss.latest_quarantine_reason AS enrichment_quarantine_reason, "
         f"ar.ar_status AS ar_status, "
         f"ar.ar_finished_at AS ar_finished_at, "
         f"ar.ar_run_id AS ar_run_id, "
         f"{_EFFECTIVE_APPLIED_AT} AS effective_applied_at, "
         f"{_EFFECTIVE_APPLY_STATUS} AS effective_apply_status "
-        f"FROM jobs {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+        f"FROM jobs {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
         "WHERE jobs.url = ? LIMIT 1",
         (url,),
     ).fetchone()
@@ -3414,7 +3485,8 @@ def get_jobs_by_stage(
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5) "
-        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+        f"AND {_NOT_CLOSED_ACTIVE_STATE} "
+        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
         if retailor
         else f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
@@ -3422,7 +3494,8 @@ def get_jobs_by_stage(
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
-        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+        f"AND {_NOT_CLOSED_ACTIVE_STATE} "
+        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
     )
 
     conditions = {
@@ -3444,7 +3517,8 @@ def get_jobs_by_stage(
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
             f"AND {_EFFECTIVE_COVER_ATTEMPTS} < 5 "
-            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+            f"AND {_NOT_CLOSED_ACTIVE_STATE} "
+            f"AND {_ENRICHMENT_NOT_QUARANTINED}"
         ),
         "pending_pdf": (
             f"(({_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND jm.jm_resume_pdf_path IS NULL) "
@@ -3465,7 +3539,8 @@ def get_jobs_by_stage(
             f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
             "AND (ar.ar_status IS NULL "
             "     OR ar.ar_status NOT IN ('starting', 'in_progress')) "
-            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+            f"AND {_NOT_CLOSED_ACTIVE_STATE} "
+            f"AND {_ENRICHMENT_NOT_QUARANTINED}"
         ),
         "applied": f"{_EFFECTIVE_APPLIED_AT} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
     }
@@ -3513,6 +3588,8 @@ def get_jobs_by_stage(
         f"je.enriched_at AS je_enriched_at, "
         f"je.current_status AS je_current_status, "
         f"je.extraction_tier AS je_extraction_tier, "
+        f"pss.latest_confidence AS enrichment_confidence, "
+        f"pss.latest_quarantine_reason AS enrichment_quarantine_reason, "
         f"ar.ar_status AS ar_status, "
         f"ar.ar_finished_at AS ar_finished_at, "
         f"ar.ar_run_id AS ar_run_id, "
