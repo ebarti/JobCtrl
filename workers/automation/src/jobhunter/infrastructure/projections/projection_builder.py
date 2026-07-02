@@ -59,6 +59,9 @@ from jobhunter.domain.operations.projections import (
 from jobhunter.domain.ports.events import EventPublisher, Subscription
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.events.watermark import SqliteEventWatermarkRepository
+from jobhunter.infrastructure.projections.location_normalization import (
+    normalize_job_location,
+)
 from jobhunter.infrastructure.projections.sqlite_projection_store import (
     SqliteProjectionStore,
     ensure_projection_tables,
@@ -625,7 +628,9 @@ class ProjectionBuilder:
             employer=employer,
             source=site or "unknown",
             strategy=_row_str(job_row, "strategy"),
-            location=_row_str(job_row, "location"),
+            # Normalize identically to the TS builder (see location_normalization)
+            # so both runtimes write the same job_list_projections.location.
+            location=normalize_job_location(_row_str(job_row, "location")),
             salary=_row_str(job_row, "salary"),
             application_url=application_url,
             discovered_at=_row_nullable_str(job_row, "discovered_at"),
@@ -1256,6 +1261,27 @@ class ProjectionBuilder:
             if (row["job_url"] if not isinstance(row, tuple) else row[0])
         }
 
+    def _hidden_projection_jobs(self) -> set[str]:
+        # Mirror TS rebuildDashboardProjection: jobs hidden via
+        # jobhunter_hidden_jobs (unhidden_at IS NULL) are excluded from every
+        # dashboard total. The table is owned by the TS write-model, so on a DB
+        # where it does not exist yet this excludes nothing.
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT job_url
+                FROM jobhunter_hidden_jobs
+                WHERE unhidden_at IS NULL
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_url"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_url"] if not isinstance(row, tuple) else row[0])
+        }
+
     def _load_artifacts(self, job_url: str) -> list[dict]:
         artifacts: list[dict] = []
         seen: set[tuple[str, str]] = set()
@@ -1365,12 +1391,15 @@ class ProjectionBuilder:
     def _rebuild_dashboard(self) -> None:
         rows = self._store.fetch_job_list(str(self._tenant_id))
         closed_jobs = self._closed_projection_jobs()
-        # Filter out soft-deleted and closed/removed jobs from active dashboard counts.
+        hidden_jobs = self._hidden_projection_jobs()
+        # Filter out soft-deleted, closed/removed, and hidden jobs from active
+        # dashboard counts (mirrors TS rebuildDashboardProjection).
         active_rows = [
             row
             for row in rows
             if not _row_nullable_str(row, "deleted_at")
             and _row_str(row, "job_id") not in closed_jobs
+            and _row_str(row, "job_id") not in hidden_jobs
         ]
 
         total_jobs = len(active_rows)
@@ -1382,11 +1411,13 @@ class ProjectionBuilder:
         blocked = sum(
             1 for row in active_rows if _row_str(row, "current_state") == "blocked"
         )
+        # Mirror TS: a job is "ready" only when it has a resume (has_resume == 1).
         ready = sum(
             1
             for row in active_rows
             if _row_str(row, "current_stage") == "apply"
             and _row_str(row, "current_state") == "pending"
+            and _row_nullable_int(row, "has_resume") == 1
         )
         applied = sum(
             1

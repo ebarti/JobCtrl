@@ -64,6 +64,21 @@ interface Fixture {
     artifacts: Array<Record<string, unknown>>;
     bulletProvenance: Array<Record<string, unknown>>;
   };
+  dashboardAggregateJobs: Array<{
+    hidden: boolean;
+    url: string;
+    title: string;
+    company: string;
+    site: string;
+    strategy: string;
+    location: string;
+    applyStatus: string | null;
+    appliedAt: string | null;
+    tailoredResumePath: string | null;
+    discoveredAt: string;
+    fitScore: number | null;
+    stages: Array<{ stage: string; state: string }>;
+  }>;
   projectionParity: {
     jsonColumns: Record<ProjectionTable, string[]>;
     nonDeterministicColumns: Record<ProjectionTable, string[]>;
@@ -245,6 +260,12 @@ function seedSchema(dbPath: string): void {
       voice_json TEXT,
       PRIMARY KEY (job_url, generation, bullet_id)
     );
+    CREATE TABLE jobhunter_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT
+    );
   `);
   db.close();
 }
@@ -358,6 +379,69 @@ function seedRows(dbPath: string): void {
     `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
      VALUES (?, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')`,
   ).run(jobUrl, createdAt);
+
+  // Dashboard-aggregate-only jobs: they feed ONLY the tenant dashboard totals
+  // (the job_list/job_detail assertions target the primary job). See the fixture
+  // `dashboardAggregateJobs` notes for the two divergences they cover.
+  const insertAggJob = db.prepare(
+    `INSERT INTO jobs (url, title, company, site, strategy, location,
+       apply_status, applied_at, tailored_resume_path, discovered_at)
+     VALUES (@url, @title, @company, @site, @strategy, @location,
+       @apply_status, @applied_at, @tailored_resume_path, @discovered_at)`,
+  );
+  const insertAggStage = db.prepare(
+    `INSERT INTO job_stage_states (job_url, stage, state, attempt_count, max_attempts,
+       started_at, updated_at, finished_at, duration_ms, retryable)
+     VALUES (@job_url, @stage, @state, 1, 1, @ts, @ts, @finished_at, 0, 1)`,
+  );
+  const insertAggScore = db.prepare(
+    `INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json,
+       keywords_json, scored_at, correction_json, criteria_json, trace_json)
+     VALUES (@job_url, 1, 'local', @fit_score, @breakdown_json, '[]', @scored_at, NULL, '{}', '{}')`,
+  );
+  const insertHidden = db.prepare(
+    `INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+     VALUES (?, ?, 'parity', NULL)`,
+  );
+  for (const agg of fixture.dashboardAggregateJobs) {
+    insertAggJob.run({
+      url: agg.url,
+      title: agg.title,
+      company: agg.company,
+      site: agg.site,
+      strategy: agg.strategy,
+      location: agg.location,
+      apply_status: agg.applyStatus,
+      applied_at: agg.appliedAt,
+      tailored_resume_path: agg.tailoredResumePath,
+      discovered_at: agg.discoveredAt,
+    });
+    for (const st of agg.stages) {
+      insertAggStage.run({
+        job_url: agg.url,
+        stage: st.stage,
+        state: st.state,
+        ts: agg.discoveredAt,
+        finished_at: st.state === "succeeded" ? agg.discoveredAt : null,
+      });
+    }
+    if (agg.fitScore != null) {
+      insertAggScore.run({
+        job_url: agg.url,
+        fit_score: agg.fitScore,
+        breakdown_json: JSON.stringify({
+          technical_fit: agg.fitScore,
+          experience_fit: agg.fitScore,
+          role_fit: agg.fitScore,
+          reasoning: "Aggregate fixture job.",
+        }),
+        scored_at: agg.discoveredAt,
+      });
+    }
+    if (agg.hidden) {
+      insertHidden.run(agg.url, agg.discoveredAt);
+    }
+  }
   db.close();
 }
 
@@ -519,14 +603,12 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         });
         expect(detailRes.statusCode, detailRes.body).toBe(200);
 
-        // Two columns are parity-safe here only because of deliberate fixture
-        // value choices, NOT because the builders agree in general — see
-        // projectionParity.knownDivergences in the shared fixture
-        // (job_list.location: TS normalizeJobLocation vs Python raw, worked around
-        // with a normalization fixed point; dashboard.ready: TS also requires
-        // has_resume, worked around with a fully-applied job). Editing job.location
-        // to a non-normalized value or the apply stage to pending would trip those
-        // divergences; the production fix is tracked as follow-up B2b.
+        // job_list.location (TS + Python both run the same location normalization),
+        // dashboard.ready (both require has_resume==1), and the dashboard totals
+        // (both exclude hidden jobs) are all genuinely asserted here: the primary
+        // job.location is non-normalized and dashboardAggregateJobs seeds an
+        // apply/pending-no-resume job plus a hidden applied job. See the fixture
+        // notes.
         const db = new Database(dbPath, { readonly: true });
         try {
           const rows: Record<ProjectionTable, Record<string, unknown> | undefined> = {

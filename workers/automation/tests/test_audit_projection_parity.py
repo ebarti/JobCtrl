@@ -264,6 +264,89 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         """,
         (job_url, created_at),
     )
+
+    # Dashboard-aggregate-only jobs: they feed ONLY the tenant dashboard totals
+    # (the job_list/job_detail assertions target the primary job). See the fixture
+    # dashboardAggregateJobs notes for the two divergences they cover.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+            job_url TEXT PRIMARY KEY,
+            hidden_at TEXT NOT NULL,
+            reason TEXT,
+            unhidden_at TEXT
+        )
+        """
+    )
+    for agg in fixture["dashboardAggregateJobs"]:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                url, title, company, site, strategy, location,
+                apply_status, applied_at, tailored_resume_path, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                agg["url"],
+                agg["title"],
+                agg["company"],
+                agg["site"],
+                agg["strategy"],
+                agg["location"],
+                agg["applyStatus"],
+                agg["appliedAt"],
+                agg["tailoredResumePath"],
+                agg["discoveredAt"],
+            ),
+        )
+        for st in agg["stages"]:
+            finished_at = agg["discoveredAt"] if st["state"] == "succeeded" else None
+            conn.execute(
+                """
+                INSERT INTO job_stage_states (
+                    job_url, stage, state, attempt_count, max_attempts,
+                    started_at, updated_at, finished_at, duration_ms, retryable
+                ) VALUES (?, ?, ?, 1, 1, ?, ?, ?, 0, 1)
+                """,
+                (
+                    agg["url"],
+                    st["stage"],
+                    st["state"],
+                    agg["discoveredAt"],
+                    agg["discoveredAt"],
+                    finished_at,
+                ),
+            )
+        if agg["fitScore"] is not None:
+            conn.execute(
+                """
+                INSERT INTO job_scores (
+                    job_url, version, tenant_id, fit_score, breakdown_json,
+                    keywords_json, scored_at, correction_json, criteria_json, trace_json
+                ) VALUES (?, 1, 'local', ?, ?, '[]', ?, NULL, '{}', '{}')
+                """,
+                (
+                    agg["url"],
+                    agg["fitScore"],
+                    json.dumps(
+                        {
+                            "technical_fit": agg["fitScore"],
+                            "experience_fit": agg["fitScore"],
+                            "role_fit": agg["fitScore"],
+                            "reasoning": "Aggregate fixture job.",
+                        }
+                    ),
+                    agg["discoveredAt"],
+                ),
+            )
+        if agg["hidden"]:
+            conn.execute(
+                """
+                INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+                VALUES (?, ?, 'parity', NULL)
+                """,
+                (agg["url"], agg["discoveredAt"]),
+            )
     conn.commit()
 
 
@@ -328,14 +411,11 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
     json_cols = fixture["projectionParity"]["jsonColumns"]
     non_det = fixture["projectionParity"]["nonDeterministicColumns"]
 
-    # Two columns are parity-safe here only because of deliberate fixture value
-    # choices, NOT because the builders agree in general — see
-    # projectionParity.knownDivergences in the shared fixture (job_list.location:
-    # Python raw vs TS normalizeJobLocation, worked around with a normalization
-    # fixed point; dashboard.ready: TS also requires has_resume, worked around
-    # with a fully-applied job). Editing job.location to a non-normalized value or
-    # the apply stage to pending would trip those divergences; the production fix
-    # is tracked as follow-up B2b.
+    # job_list.location (both builders run the same location normalization),
+    # dashboard.ready (both require has_resume==1), and the dashboard totals
+    # (both exclude hidden jobs) are all genuinely asserted here: the primary
+    # job.location is non-normalized and dashboardAggregateJobs seeds an
+    # apply/pending-no-resume job plus a hidden applied job. See the fixture notes.
 
     actual_rows = {
         "jobList": conn.execute(
