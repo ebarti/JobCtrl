@@ -244,14 +244,46 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   bullet must trace to recorded profile evidence; a token that does not is a
   fabrication and is **hard-rejected at generation time**. A metrics-hungry job
   paired with a numberless profile yields zero unsourced numerics in the output.
-- **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
-  after assembling the selected candidate's text. A fabrication downgrades
-  validation so the resume is **not approved** (the last accepted generation's
-  artifact + provenance are preserved); an accepted generation persists its rows
-  through `BulletProvenanceRepository` transactionally with the artifact and
-  publishes `BulletProvenanceRecorded` (a `job_events` row → projection rebuild →
-  SSE invalidation). Persistence is canonical rows (`job_bullet_provenance`),
-  never `metadata_json`.
+- **Deterministic prose skill/tool gate** (same module, sibling of the numeric
+  detector): the numeric/date/title/employer arms have no concept of a skill or
+  tool, so a fabricated in-demand technology (Kubernetes, Terraform, Kafka, …)
+  woven into an experience bullet or the executive summary would ship on the LLM
+  judge alone. `scan_prose_skill_fabrications` closes that leak with an
+  **allowlist, not a denylist**, scoped to invented **named technologies** so it
+  never punishes concept keywords. It flags a job-TARGET keyword (from the
+  persisted `EmployerAnalysis` keywords) that is BOTH (1) a recognised named
+  technology in the curated `KNOWN_TECHNOLOGY_LEXICON` (languages/frameworks/cloud/
+  databases/tools) AND (2) grounds in NEITHER the candidate's profile-backed skill
+  vocabulary (`build_skill_vocabulary` = skill-category items + evidence tools +
+  evidence tags) NOR the evidence corpus. Grounding is **word-form tolerant**
+  (`scaled`/`scalable`/`scalability` mutually ground), so a concept keyword the
+  candidate demonstrated in a different word form is never a false positive; a
+  pure concept/qualification keyword (scalability, observability, microservices)
+  is never gated at all. A fabricated `Kubernetes` still has no stem variant in a
+  k8s-free profile, so it is still caught. Tools whose name is a homograph of a
+  common word (`HOMOGRAPH_TECHNOLOGY_TERMS` = react, spark, rust, …) are the
+  exception and require **exact** grounding, so a fabricated React cannot borrow
+  the verb `reacted`. Matching is word-boundary anchored, so ordinary English
+  words never false-fire; the skills SECTION is out of scope (it is governed by
+  the skills-section allowlist). A hit is **hard-rejected exactly like an invented
+  metric** (`NEVER_FABRICATE_SKILLS`).
+- **Lifecycle**: the gates (provenance FK bindings + never-fabricate numeric +
+  prose skill/tool) run at **two points**. First, **per candidate inside
+  `TailorResumeUseCase._run_attempts`**: a candidate that clears the LLM judge but
+  trips a gate is stamped `failed_fabrication_gate`, dropped from selection, and
+  its per-token findings are rendered as `avoid_notes` fed into the next attempt —
+  the same retry channel the judge/adversarial rejections use — so the remaining
+  retry budget is spent steering the generator off the exact fabricated token
+  instead of failing the run outright. Second, **after the selected candidate is
+  voiced** the same gate re-confirms against the rendered text (see the voice
+  re-validation below). When the retry budget is exhausted with no clean candidate
+  the tailor **fails closed**: validation is downgraded so the resume is **not
+  approved** (the last accepted generation's artifact + provenance are preserved)
+  and each rejected candidate's gate findings stay as repair-loop audit history.
+  An accepted generation persists its rows through `BulletProvenanceRepository`
+  transactionally with the artifact and publishes `BulletProvenanceRecorded` (a
+  `job_events` row → projection rebuild → SSE invalidation). Persistence is
+  canonical rows (`job_bullet_provenance`), never `metadata_json`.
 - **Read path**: the single projection owner serves provenance on the artifact's
   tailoring explanation (`artifact_list_projections.bullet_provenance_json`),
   built identically by the Python projection builder and

@@ -70,6 +70,18 @@ def _profile_dict() -> dict:
                     "company": "Acme Corp",
                     "location": "Remote",
                     "bullets": ["Built distributed systems."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_latency",
+                            "source_text": "Cut API latency 40% by replacing synchronous calls.",
+                            "scope": "owned backend service",
+                            "action": "replaced synchronous calls",
+                            "tools": ["Python"],
+                            "metrics": ["40%"],
+                            "outcome": "faster API responses",
+                            "tags": ["latency", "backend"],
+                        }
+                    ],
                 }
             ],
             "education_entries": [
@@ -185,6 +197,41 @@ class _FakeAnalyzeUseCase:
             legs_attempted=2,
         )
         return AnalyzeJobOutcome(analysis=analysis, cached=False)
+
+
+def _analysis_with_keywords(job: dict, keywords: list[str]):
+    """Build an EmployerAnalysis whose canonical keywords are the given targets.
+
+    Passed directly to ``execute`` so the prose skill/tool gate sees a concrete set
+    of job-target skill/tool keywords (the terms the generator is tempted to
+    insert) without a live ensemble call.
+    """
+    from jobhunter.domain.materials.analysis import (
+        AnalysisAgreement,
+        EmployerAnalysis,
+        JobAnalysis,
+        ReasonedKeyword,
+        compute_snapshot_hash,
+    )
+
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[],
+        keywords=[ReasonedKeyword(keyword=term, evidence_span=term) for term in keywords],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(str(job["url"])),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 class _FakeRepository:
@@ -390,6 +437,19 @@ def _positioning_claim_mappings(text: str) -> list[dict[str, Any]]:
             "review_required": False,
         }
     ]
+
+
+def _payload_with_bullet(bullet: str, *, summary: str = "Senior engineer focused on systems.") -> str:
+    """A structurally valid tailoring payload whose single experience bullet is
+    ``bullet`` (so a test can put a specific tool into the shipped prose)."""
+    return json.dumps(
+        {
+            "executive_profile": summary,
+            "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
+            "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
+            "generated_claim_mappings": _positioning_claim_mappings(bullet),
+        }
+    )
 
 
 def _keyword_stuffed_json_payload() -> str:
@@ -1482,6 +1542,286 @@ def test_tailor_use_case_first_generation_pdf_failure_leaves_nothing_current(
     assert repo.load_current_approved(LOCAL_TENANT, JobId(job["url"])) is None
     assert not any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
     assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
+
+
+def test_tailor_use_case_rejects_prose_skill_fabrication_and_preserves_prior(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """The #1 truthfulness leak: the generator weaves a job-target tool the profile
+    cannot back (``Kubernetes``) into an experience bullet. The prose skill/tool
+    gate hard-rejects it (resume NOT approved) exactly like an invented metric, and
+    the last accepted generation survives untouched (Anti-Pattern 4)."""
+    repo = _FakeRepository()
+    approved_gen1 = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/gen1.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(approved_gen1)
+
+    fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
+    llm = _ScriptedLlm([fabricated, _judge_pass()])
+    # max_retries=0 isolates the gate's hard-reject + preservation behavior from the
+    # deterministic-gate retry loop (A6d), which is exercised by its own tests.
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "Kubernetes"]),
+    )
+
+    # Hard reject: the fabricated tool downgrades validation -> resume not approved.
+    assert outcome.status == "failed_validation"
+    assert outcome.materials is not None
+    assert outcome.materials.generation == 2
+    assert not outcome.materials.is_resume_approved
+    assert outcome.materials.last_validation is not None
+    assert any("Kubernetes" in error for error in outcome.materials.last_validation.errors)
+    assert any(
+        "never_fabricate_skills" in error for error in outcome.materials.last_validation.errors
+    )
+
+    # The last accepted generation is preserved, not superseded/destroyed.
+    still_approved = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert still_approved is not None
+    assert still_approved.generation == 1
+    assert still_approved.is_resume_approved
+    assert not any(
+        m.generation == 1
+        and m.tailored_resume is not None
+        and m.tailored_resume.status is ArtifactStatus.SUPERSEDED
+        for m in repo.saved
+    )
+
+
+def test_tailor_use_case_allows_profile_backed_tool_in_prose(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """No false reject: a profile-backed tool (``Python``) that is also a job-target
+    keyword is allowed in the shipped prose, and a target tool absent from the prose
+    (``Kubernetes``) is not conjured into a finding."""
+    repo = _FakeRepository()
+    grounded = _payload_with_bullet("Cut backend latency 40% using Python.")
+    llm = _ScriptedLlm([grounded, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency", "Kubernetes"]),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+
+def test_tailor_use_case_approves_concept_keyword_prose(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """Regression (PR #218 discussion_r3509803795): the JD screens on CONCEPT
+    keywords (scalability / reliability / observability / microservices) and the
+    generator weaves them into grounded prose. Concept keywords are not named
+    technologies, so the prose skill gate must NOT hard-reject them — a first-time
+    tailor still yields an APPROVED resume instead of the terminal rejection the
+    unfiltered gate produced on the reviewer's fixture."""
+    repo = _FakeRepository()
+    payload = _payload_with_bullet(
+        "Improved observability and moved to microservices.",
+        summary="Backend owner focused on scalability and reliability.",
+    )
+    llm = _ScriptedLlm([payload, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(
+            job, ["scalability", "reliability", "observability", "microservices"]
+        ),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+
+def _profile_with_versioned_skills_dict() -> dict:
+    profile = _profile_dict()
+    profile["resume"]["skill_categories"] = [
+        {"id": "languages", "label": "Languages", "items": ["Python", "Java 17"]},
+    ]
+    return profile
+
+
+def test_tailor_use_case_allows_versioned_declared_skill(tmp_path: Path, job: dict) -> None:
+    """A6c regression: a DECLARED versioned skill ("Java 17") rendered in the skills
+    line must not be a false fabrication. The whole-resume corpus excludes skill
+    categories, so before the fix the "17" was flagged and the resume was terminally
+    rejected; skills rows now ground against the declared skill items."""
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_versioned_skills_dict())
+    )
+    repo = _FakeRepository()
+    payload = json.dumps(
+        {
+            "executive_profile": "Senior engineer.",
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": ["Cut API latency 40% with Python."]}
+            ],
+            "skill_category_updates": [{"id": "languages", "items": ["Python", "Java 17"]}],
+            "generated_claim_mappings": _positioning_claim_mappings("Cut API latency 40% with Python."),
+        }
+    )
+    llm = _ScriptedLlm([payload, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency"]),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+
+def test_tailor_use_case_feeds_gate_finding_into_retry_and_recovers(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A6d: a candidate that trips the deterministic prose skill gate must feed its
+    finding back into the attempt loop as an avoid_note (not fail the whole run) while
+    retry budget remains. Candidate 1 fabricates Kubernetes; candidate 2 is clean and
+    ships. The gate finding is recorded as inspectable repair-loop history AND fed into
+    attempt 2's avoid_notes — the same repair mechanism the judge/adversarial notes use."""
+    repo = _FakeRepository()
+    fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
+    clean = _payload_with_bullet("Cut backend latency 40% using Python.")
+    llm = _ScriptedLlm([fabricated, _judge_pass(), clean, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency", "Kubernetes"]),
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+
+    history = outcome.report["attempt_history"]
+    # Candidate 1's gate finding is recorded as inspectable repair-loop history...
+    first = history[0]["candidates"][0]
+    assert first["status"] == "failed_fabrication_gate"
+    assert first["fabrication_gate"]["controls"] == ["never_fabricate_skills"]
+    assert any("Kubernetes" in note for note in first["fabrication_gate"]["avoid_notes"])
+    # ...and it was fed into attempt 2's avoid_notes (the repair mechanism).
+    assert any("Kubernetes" in note for note in history[1]["avoid_notes"])
+
+
+def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A6d fail-closed: when every candidate trips the deterministic gate and the retry
+    budget is exhausted, the resume is hard-rejected exactly as before (no fabrication
+    ships) and the last accepted generation is preserved untouched."""
+    repo = _FakeRepository()
+    approved_gen1 = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/gen1.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(approved_gen1)
+
+    fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
+    llm = _ScriptedLlm([fabricated, _judge_pass(), fabricated, _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "Kubernetes"]),
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.materials is not None
+    assert not outcome.materials.is_resume_approved
+    assert outcome.materials.last_validation is not None
+    assert any("Kubernetes" in error for error in outcome.materials.last_validation.errors)
+    # Both attempts recorded the gate finding as repair-loop history (distinct from a
+    # residual warning accepted on a shipped candidate).
+    history = outcome.report["attempt_history"]
+    assert history[0]["candidates"][0]["status"] == "failed_fabrication_gate"
+    assert history[1]["candidates"][0]["status"] == "failed_fabrication_gate"
+    # The last accepted generation survives untouched.
+    still = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert still is not None
+    assert still.generation == 1
+    assert still.is_resume_approved
 
 
 # ---------------------------------------------------------------------------

@@ -136,6 +136,11 @@ class ControlRule(str, Enum):
     ``NEVER_FABRICATE_TITLES``  — titles/seniority must trace to the profile.
     ``NEVER_FABRICATE_DATES``   — dates/durations must trace to the profile.
     ``NEVER_FABRICATE_EMPLOYERS`` — employers/companies must trace to the profile.
+    ``NEVER_FABRICATE_SKILLS``  — a job-target skill/tool woven into an experience
+                                  bullet or the executive summary must trace to a
+                                  profile-backed skill/tool or the evidence corpus;
+                                  claiming a tool the candidate cannot discuss is
+                                  interview-fatal.
 
     The ``NEVER_FABRICATE_*`` rules are the ones the deterministic
     ``fabrication_detector`` enforces independently of the prompt (CONTROL-03).
@@ -147,6 +152,7 @@ class ControlRule(str, Enum):
     NEVER_FABRICATE_TITLES = "never_fabricate_titles"
     NEVER_FABRICATE_DATES = "never_fabricate_dates"
     NEVER_FABRICATE_EMPLOYERS = "never_fabricate_employers"
+    NEVER_FABRICATE_SKILLS = "never_fabricate_skills"
 
 
 # ---------------------------------------------------------------------------
