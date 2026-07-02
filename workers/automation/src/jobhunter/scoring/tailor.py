@@ -60,6 +60,7 @@ from jobhunter.infrastructure.materials import (
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
+    SqliteUnitOfWork,
 )
 from jobhunter.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
@@ -167,12 +168,22 @@ def _build_use_case(
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
     conn = get_connection()
+    # The generation flip (supersede + save + provenance) must commit atomically
+    # (A9). The default materials + provenance repositories share this connection
+    # and this unit of work, so the flip is one transaction. We only hand the unit
+    # of work to the use case when BOTH those repositories are the shared-connection
+    # defaults; an injected repository may not share the connection, so gating it
+    # would give a false atomicity guarantee — such callers keep per-call commits.
+    unit_of_work = SqliteUnitOfWork(conn)
+    default_flip_repositories = repository is None and provenance_repository is None
     if repository is None:
-        repository = SqliteMaterialsRepository(conn)
+        repository = SqliteMaterialsRepository(conn, unit_of_work=unit_of_work)
     if policy_repository is None:
         policy_repository = SqliteTailoringPolicyRepository(conn)
     if provenance_repository is None:
-        provenance_repository = SqliteBulletProvenanceRepository(conn)
+        provenance_repository = SqliteBulletProvenanceRepository(
+            conn, unit_of_work=unit_of_work
+        )
     if requirement_fit_repository is None:
         requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
     if llm_port is None:
@@ -202,6 +213,7 @@ def _build_use_case(
         analyze_use_case=analyze_use_case,
         voice=voice,
         pdf_renderer=pdf_renderer,
+        unit_of_work=unit_of_work if default_flip_repositories else None,
     )
 
 

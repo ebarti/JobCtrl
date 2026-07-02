@@ -17,6 +17,8 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials import (
     Artifact,
@@ -202,6 +204,41 @@ class _RecordingPublisher:
 
     def publish(self, event) -> None:
         self.events.append(event)
+
+
+class _RecordingUnitOfWork:
+    """A UnitOfWork double that records how the use case drove the flip.
+
+    ``events`` captures ``"enter"`` then ``"exit_ok"`` / ``"exit_error"`` so a
+    test can assert the persist block ran inside the boundary and whether it
+    committed or rolled back. It does not simulate a real transaction — the
+    SQLite rollback semantics are proven in ``test_materials_unit_of_work``.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self._depth = 0
+
+    @property
+    def active(self) -> bool:
+        return self._depth > 0
+
+    def __enter__(self) -> "_RecordingUnitOfWork":
+        self._depth += 1
+        self.events.append("enter")
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self._depth -= 1
+        self.events.append("exit_error" if exc_type is not None else "exit_ok")
+        return False
+
+
+class _RaisingProvenanceRepo(_FakeProvenanceRepo):
+    """Fails every ``save`` — models a provenance write error inside the flip."""
+
+    def save(self, provenance: BulletProvenanceSet) -> None:
+        raise RuntimeError("provenance write failed")
 
 
 class _RecordingResumePdfRenderer:
@@ -762,3 +799,80 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
         == 1
     )
     assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
+
+
+def test_tailor_opens_unit_of_work_around_generation_flip(tmp_path: Path) -> None:
+    """The accepted-generation persist path runs inside the injected unit of work
+    and commits it exactly once (A9 orchestration)."""
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    unit_of_work = _RecordingUnitOfWork()
+    llm = _ScriptedLlm(
+        [
+            _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls."),
+            _judge_pass(),
+        ]
+    )
+    use_case = TailorResumeUseCase(
+        repository=materials_repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyze(),
+        provenance_repository=provenance_repo,
+        requirement_fit_repository=_FakeRequirementFitRepo(_latency_requirement_fit_report()),
+        publisher=publisher,
+        unit_of_work=unit_of_work,
+    )
+
+    outcome = use_case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    # The flip opened the unit of work and committed it (clean exit) exactly once.
+    assert unit_of_work.events == ["enter", "exit_ok"]
+    # Provenance + the BulletProvenanceRecorded event still land on the happy path.
+    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL)) is not None
+    assert any(
+        getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
+    )
+
+
+def test_tailor_provenance_failure_rolls_back_flip_and_propagates(tmp_path: Path) -> None:
+    """A provenance write failure inside the flip is NOT swallowed: it rolls the
+    unit of work back (exit with error) and propagates, and no ResumeApproved is
+    published for a generation whose provenance could not be committed (A9)."""
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _RaisingProvenanceRepo()
+    publisher = _RecordingPublisher()
+    unit_of_work = _RecordingUnitOfWork()
+    llm = _ScriptedLlm(
+        [
+            _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls."),
+            _judge_pass(),
+        ]
+    )
+    use_case = TailorResumeUseCase(
+        repository=materials_repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyze(),
+        provenance_repository=provenance_repo,
+        requirement_fit_repository=_FakeRequirementFitRepo(_latency_requirement_fit_report()),
+        publisher=publisher,
+        unit_of_work=unit_of_work,
+    )
+
+    with pytest.raises(RuntimeError, match="provenance write failed"):
+        use_case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    # The unit of work rolled back (exit carried the exception).
+    assert unit_of_work.events == ["enter", "exit_error"]
+    # No approval was announced for a generation whose provenance never committed.
+    assert not any(
+        getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events
+    )
+    assert not any(
+        getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
+    )

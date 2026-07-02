@@ -32,6 +32,7 @@ import logging
 import os
 import re
 from collections.abc import Iterable, Mapping as MappingABC
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -132,6 +133,7 @@ from jobhunter.domain.ports.materials import (
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
+    UnitOfWork,
     VoicePort,
 )
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
@@ -1326,6 +1328,7 @@ class TailorResumeUseCase:
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
         voice: VoicePort | None = None,
         pdf_renderer: PdfRendererPort | None = None,
+        unit_of_work: UnitOfWork | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -1363,6 +1366,14 @@ class TailorResumeUseCase:
         # unit tests that only exercise validate/judge), no PDF is produced and
         # the flow is exactly the pre-render persist path.
         self._pdf_renderer = pdf_renderer
+        # Atomicity boundary (A9). When injected, the generation flip — supersede
+        # the prior approved generation, save the new generation, and record its
+        # provenance/coverage — commits inside ONE transaction, so a crash or a
+        # provenance write failure mid-flip rolls the whole block back: the prior
+        # approved generation stays current and no new artifact is committed
+        # without its provenance. When absent, each repository commits per call
+        # exactly as before (the flow's pre-A9 behaviour).
+        self._unit_of_work = unit_of_work
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -1613,23 +1624,40 @@ class TailorResumeUseCase:
             pdf_artifact, pdf_path = render
             materials = materials.with_resume_pdf(pdf_artifact, updated_at=_utc_now())
 
-        if materials.is_resume_approved and prior_generation is not None:
-            self._repository.save(prior_generation)
-        self._repository.save(materials)
+        # Atomic generation flip (A9): supersede the prior approved generation,
+        # save the new generation, and persist its provenance/coverage inside ONE
+        # transaction. A crash or a provenance write failure mid-flip rolls the
+        # whole block back, so the prior approved generation stays current and no
+        # new artifact is ever committed without its provenance (the audit
+        # invariant: every approved generation has its provenance). A failed
+        # re-tailor still writes no provenance rows, so the prior generation's
+        # rows survive untouched (Anti-Pattern 4 / success criterion 5). The
+        # Phase-3 generation-time coverage (GROUND-06) + voice audit (VOICE-02)
+        # ride on the same set. Event publication + best-effort requirement-fit
+        # coverage enrichment run only AFTER the flip commits so they never
+        # announce or enrich a rolled-back state.
+        record_provenance = materials.is_resume_approved and bool(provenance_rows)
+        with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+            if materials.is_resume_approved and prior_generation is not None:
+                self._repository.save(prior_generation)
+            self._repository.save(materials)
+            if record_provenance:
+                self._persist_provenance_set(
+                    materials=materials,
+                    artifact_id=artifact.artifact_id,
+                    bullets=provenance_rows,
+                    coverage=coverage,
+                    voice=voice_record,
+                )
 
-        # Persist the canonical provenance rows only for an ACCEPTED generation,
-        # transactionally after the artifact is saved (so they share the
-        # generation). A failed re-tailor writes no provenance rows — the prior
-        # accepted generation's rows survive untouched (Anti-Pattern 4 / success
-        # criterion 5). The Phase-3 generation-time coverage (GROUND-06) + voice
-        # audit (VOICE-02) ride on the same set.
-        if materials.is_resume_approved and provenance_rows:
-            self._record_provenance(
-                materials=materials,
+        if record_provenance and self._provenance_repository is not None:
+            self._record_requirement_artifact_coverage(
+                materials=materials, bullets=provenance_rows
+            )
+            self._publish_provenance(
+                materials,
                 artifact_id=artifact.artifact_id,
-                bullets=provenance_rows,
-                coverage=coverage,
-                voice=voice_record,
+                bullet_count=len(provenance_rows),
             )
 
         status = self._derive_status(report, validation, verdict)
@@ -2724,7 +2752,7 @@ class TailorResumeUseCase:
             return None
         return compute_keyword_coverage(employer_analysis, rows)
 
-    def _record_provenance(
+    def _persist_provenance_set(
         self,
         *,
         materials: MaterialsSet,
@@ -2733,32 +2761,30 @@ class TailorResumeUseCase:
         coverage: KeywordCoverage | None = None,
         voice: VoicePassRecord | None = None,
     ) -> None:
-        """Persist the accepted generation's provenance rows + publish the event.
+        """Persist the accepted generation's provenance rows (write only).
 
-        Generation-versioned and bound to the artifact it explains. The Phase-3
+        Generation-versioned and bound to the artifact it explains; the Phase-3
         generation-time coverage (GROUND-06) + voice audit (VOICE-02) ride on the
-        same set. Persistence and event publication never raise into the tailor
-        flow — a provenance write failure must not undo an accepted resume.
+        same set. Called INSIDE the generation-flip unit of work, so a write
+        failure is deliberately NOT swallowed — it propagates to roll the whole
+        flip back (A9), keeping the audit invariant that every committed approved
+        generation has its provenance. Requirement-fit coverage enrichment and
+        the ``BulletProvenanceRecorded`` event fire from the caller only after
+        the flip commits.
         """
         if self._provenance_repository is None:
             return
-        try:
-            provenance_set = BulletProvenanceSet(
-                tenant_id=materials.tenant_id,
-                job_id=materials.job_id,
-                generation=materials.generation,
-                artifact_id=artifact_id,
-                bullets=tuple(bullets),
-                coverage=coverage,
-                voice=voice,
-                created_at=materials.updated_at,
-            )
-            self._provenance_repository.save(provenance_set)
-        except Exception:  # noqa: BLE001 — persistence must not break the use case
-            log.exception("Failed to persist bullet provenance for %s", materials.job_id)
-            return
-        self._record_requirement_artifact_coverage(materials=materials, bullets=bullets)
-        self._publish_provenance(materials, artifact_id=artifact_id, bullet_count=len(bullets))
+        provenance_set = BulletProvenanceSet(
+            tenant_id=materials.tenant_id,
+            job_id=materials.job_id,
+            generation=materials.generation,
+            artifact_id=artifact_id,
+            bullets=tuple(bullets),
+            coverage=coverage,
+            voice=voice,
+            created_at=materials.updated_at,
+        )
+        self._provenance_repository.save(provenance_set)
 
     def _record_requirement_artifact_coverage(
         self,
