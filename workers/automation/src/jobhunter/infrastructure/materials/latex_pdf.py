@@ -351,6 +351,7 @@ def build_latex(
         Complete LaTeX source string ready for pdflatex.
     """
     from jobhunter.resume_profile import (
+        experience_updates_by_id,
         get_education_entries,
         get_experience_entries,
         get_required_education_entry_ids,
@@ -388,11 +389,7 @@ def build_latex(
     ] or all_skill_categories
 
     # Index LLM updates by id
-    experience_updates = {
-        entry.get("id"): entry
-        for entry in data.get("experience_updates", [])
-        if isinstance(entry, dict) and entry.get("id")
-    }
+    experience_updates = experience_updates_by_id(data)
     skill_updates = {
         entry.get("id"): entry
         for entry in data.get("skill_category_updates", [])

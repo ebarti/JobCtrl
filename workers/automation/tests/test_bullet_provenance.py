@@ -368,6 +368,48 @@ def test_provenance_generated_text_is_byte_identical_to_sanitized_shipped_line()
     assert all(not _re.search(r"[‘’“”—–]", r.generated_text) for r in rows)
 
 
+def _assembled_experience_bullets(profile: dict, payload: dict) -> list[str]:
+    """Every assembled experience bullet the resume ships, in order."""
+    text = ResumeAssembler().assemble_resume_text(payload, profile)
+    return [line.removeprefix("- ") for line in text.splitlines() if line.startswith("- ")]
+
+
+def test_provenance_keeps_mandatory_overflow_bullets_matching_shipped_resume() -> None:
+    """Regression (GROUND-06 / byte-identity): when a validated candidate pins
+    requirement-coverage bullets as mandatory overflow (``generated_claim_mappings``
+    present), the assembler keeps every bullet past ``max_experience_bullets``. The
+    provenance audit trail claims byte-identity with the shipped resume, so it MUST
+    emit one row per shipped bullet — not a set silently trimmed to the cap."""
+    profile = _profile()  # max_experience_bullets == 4
+    bullets = [
+        "Reduced API latency 35% by replacing synchronous calls.",
+        "Led the migration to an event driven ingestion pipeline.",
+        "Owned the on call rotation and cut incident volume.",
+        "Mentored four engineers through promotion.",
+        "Rebuilt the analytics warehouse for faster reporting.",
+        "Shipped the customer facing status page.",
+    ]
+    payload = _payload(bullets=bullets)
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": f"claim-{index}",
+            "location": f"experience.acme_swe.bullets[{index}]",
+            "text": bullet,
+            "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+            "requirement_ids": ["req_latency"],
+            "evidence_ids": ["ev_latency"],
+            "review_required": False,
+        }
+        for index, bullet in enumerate(bullets)
+    ]
+
+    rows = _build(profile, payload, _analysis())
+    experience_texts = [row.generated_text for row in rows if row.section == "experience"]
+
+    assert experience_texts == _assembled_experience_bullets(profile, payload)
+    assert len(experience_texts) == len(bullets)  # not trimmed to the cap of 4
+
+
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
     rows = _build(
         _profile(),

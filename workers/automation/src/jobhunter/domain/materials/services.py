@@ -35,6 +35,7 @@ from typing import Any
 from jobhunter.domain.materials.value_objects import ValidationResult
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.resume_profile import (
+    experience_updates_by_id,
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
@@ -552,15 +553,7 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
         if not required_skill_ids or category.get("id") in required_skill_ids
     ] or all_skill_categories
 
-    allow_mandatory_overflow = isinstance(data.get("generated_claim_mappings"), list)
-    experience_updates = {
-        entry.get("id"): {
-            **entry,
-            "_allow_mandatory_bullet_overflow": allow_mandatory_overflow,
-        }
-        for entry in data.get("experience_updates", [])
-        if isinstance(entry, dict) and entry.get("id")
-    }
+    experience_updates = experience_updates_by_id(data)
     skill_updates = {
         entry.get("id"): entry
         for entry in data.get("skill_category_updates", [])

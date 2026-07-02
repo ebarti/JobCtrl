@@ -23,6 +23,7 @@ from jobhunter.domain.materials.value_objects import (
     RenderFormat,
 )
 from jobhunter.resume_profile import (
+    experience_updates_by_id,
     get_education_entries,
     get_experience_entries,
     get_required_education_entry_ids,
@@ -568,11 +569,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
         if not required_skill_ids or category.get("id") in required_skill_ids
     ] or all_skill_categories
 
-    experience_updates = {
-        entry.get("id"): entry
-        for entry in tailored_payload.get("experience_updates", [])
-        if isinstance(entry, dict) and entry.get("id")
-    }
+    experience_updates = experience_updates_by_id(tailored_payload)
     skill_updates = {
         entry.get("id"): entry
         for entry in tailored_payload.get("skill_category_updates", [])

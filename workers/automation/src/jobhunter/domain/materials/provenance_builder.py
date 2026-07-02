@@ -44,6 +44,7 @@ from jobhunter.domain.materials.quality import (
 from jobhunter.domain.materials.services import sanitize_text
 from jobhunter.domain.materials.value_objects import ControlRule, TransformType
 from jobhunter.resume_profile import (
+    experience_updates_by_id,
     get_claim_mode,
     get_experience_entries,
     get_resume_master,
@@ -300,11 +301,7 @@ def build_bullet_provenance(
         )
 
     # ---- Experience bullets (one row per rendered bullet) ----------------
-    experience_updates = {
-        str(update.get("id")): update
-        for update in tailored_payload.get("experience_updates") or []
-        if isinstance(update, dict) and update.get("id")
-    }
+    experience_updates = experience_updates_by_id(tailored_payload)
     for entry in get_experience_entries(profile):
         if not isinstance(entry, dict):
             continue
