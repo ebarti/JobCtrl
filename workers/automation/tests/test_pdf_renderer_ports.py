@@ -26,6 +26,7 @@ from jobhunter.domain.materials import (
     ArtifactType,
     RenderFormat,
 )
+from jobhunter.domain.materials.services import ResumeAssembler
 from jobhunter.domain.ports.materials import PdfRendererPort
 from jobhunter.infrastructure.materials import html_resume_pdf
 from jobhunter.infrastructure.materials import (
@@ -450,6 +451,102 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
     assert artifact.metadata["resume_template"] == template
     assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
     assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "section:experience"
+
+
+# ---------------------------------------------------------------------------
+# Cross-renderer parity — mandatory bullet overflow (submitted PDF == reviewed .txt)
+# ---------------------------------------------------------------------------
+
+
+_OVERFLOW_BULLETS = [
+    "Reduced checkout latency across the payments platform.",
+    "Led the migration to an event driven ingestion pipeline.",
+    "Owned the on call rotation and cut incident volume.",
+    "Mentored four engineers through promotion.",
+    "Rebuilt the analytics warehouse for faster reporting.",
+    "Shipped the customer facing status page.",
+]
+
+
+def _overflow_payload(*, mandatory: bool) -> dict:
+    """Payload whose single entry pins six bullets past ``max_experience_bullets`` (4).
+
+    When ``mandatory`` the payload carries ``generated_claim_mappings`` — the
+    requirement-led signal the validator accepts — so every render path keeps all
+    six bullets. Otherwise the cap still trims to four.
+    """
+    payload: dict = {
+        "executive_profile": "Tailored summary.",
+        "experience_updates": [{"id": "acme_swe", "bullets": list(_OVERFLOW_BULLETS)}],
+        "skill_category_updates": [{"id": "languages", "items": ["Python"]}],
+    }
+    if mandatory:
+        payload["generated_claim_mappings"] = [
+            {
+                "claim_id": f"claim-{index}",
+                "location": f"experience.acme_swe.bullets[{index}]",
+                "text": bullet,
+                "coverage_edge_ids": ["edge_acme"],
+                "requirement_ids": [],
+                "evidence_ids": [],
+                "review_required": False,
+            }
+            for index, bullet in enumerate(_OVERFLOW_BULLETS)
+        ]
+    return payload
+
+
+def _txt_experience_bullets(payload: dict, profile: dict) -> list[str]:
+    text = ResumeAssembler().assemble_resume_text(payload, profile)
+    return [line.removeprefix("- ") for line in text.splitlines() if line.startswith("- ")]
+
+
+def _html_experience_bullets(payload: dict, profile: dict) -> list[str]:
+    document = build_resume_document(payload, profile)
+    return [
+        bullet["text"]
+        for entry in document["experience"]
+        for bullet in entry["bullets"]
+    ]
+
+
+def _latex_experience_bullets(payload: dict, profile: dict) -> list[str]:
+    latex = build_latex(payload, profile)
+    return [
+        line.strip().removeprefix("\\item").strip()
+        for line in latex.splitlines()
+        if line.strip().startswith("\\item") and "\\textbf" not in line
+    ]
+
+
+def test_pdf_renderers_render_all_mandatory_overflow_bullets_like_txt() -> None:
+    """Regression: a validated candidate that pins mandatory-overflow bullets must
+    ship the identical bullet set in the reviewed .txt AND in both submitted PDFs.
+    Previously the PDF renderers built their experience map without the overflow
+    allowance and silently trimmed the pinned bullets, so the employer received a
+    weaker resume than the one the user reviewed."""
+    profile = _profile()
+    payload = _overflow_payload(mandatory=True)
+
+    txt_bullets = _txt_experience_bullets(payload, profile)
+    assert txt_bullets == _OVERFLOW_BULLETS  # .txt keeps all six (past the cap of 4)
+
+    assert _html_experience_bullets(payload, profile) == txt_bullets
+    assert _latex_experience_bullets(payload, profile) == txt_bullets
+
+
+def test_pdf_renderers_respect_max_experience_bullets_without_overflow() -> None:
+    """Without the mandatory-overflow signal the cap still applies identically in
+    every render path: the .txt trims to ``max_experience_bullets`` and both PDFs
+    match it exactly (no silent divergence in either direction)."""
+    profile = _profile()
+    payload = _overflow_payload(mandatory=False)
+
+    txt_bullets = _txt_experience_bullets(payload, profile)
+    assert txt_bullets == _OVERFLOW_BULLETS[:4]  # capped at max_experience_bullets
+
+    assert _html_experience_bullets(payload, profile) == txt_bullets
+    assert _latex_experience_bullets(payload, profile) == txt_bullets
 
 
 # ---------------------------------------------------------------------------
