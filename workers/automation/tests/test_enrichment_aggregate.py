@@ -277,6 +277,67 @@ def test_reset_clears_terminal_state_but_preserves_history() -> None:
     assert reset.attempt_count == 1  # history preserved
 
 
+def _enriched_without_apply_url() -> JobEnrichment:
+    return _empty().start_attempt(
+        extraction_tier=ExtractionTier.JSON_LD, started_at="t0"
+    ).succeed_attempt(
+        full_description=FullDescription(text="The canonical description"),
+        application_url=None,
+        extraction_tier=ExtractionTier.JSON_LD,
+        finished_at="t1",
+    )
+
+
+def test_record_apply_url_recovery_attaches_url_and_preserves_description() -> None:
+    agg = _enriched_without_apply_url()
+    recovered = agg.record_apply_url_recovery(
+        application_url=ApplicationUrl(value="https://apply.example/role"),
+        extraction_tier=ExtractionTier.CSS_SELECTORS,
+        started_at="t2",
+        finished_at="t3",
+    )
+    assert recovered.is_enriched
+    assert recovered.application_url is not None
+    assert recovered.application_url.value == "https://apply.example/role"
+    assert recovered.full_description is not None
+    assert recovered.full_description.text == "The canonical description"
+    assert recovered.enriched_at == "t1"
+    assert recovered.extraction_tier is ExtractionTier.JSON_LD  # top-level tier preserved
+    assert recovered.attempt_count == agg.attempt_count + 1
+    assert recovered.last_attempt is not None and recovered.last_attempt.succeeded
+    assert recovered.updated_at == "t3"
+
+
+def test_record_apply_url_recovery_missing_url_bounds_without_failing_row() -> None:
+    agg = _enriched_without_apply_url()
+    recovered = agg.record_apply_url_recovery(
+        application_url=None,
+        extraction_tier=ExtractionTier.CSS_SELECTORS,
+        started_at="t2",
+        finished_at="t3",
+    )
+    # Enriched status + description are intact; only a bounding attempt is added.
+    assert recovered.is_enriched
+    assert recovered.application_url is None
+    assert recovered.full_description is not None
+    assert recovered.full_description.text == "The canonical description"
+    assert recovered.attempt_count == agg.attempt_count + 1
+    assert recovered.last_attempt is not None
+    assert recovered.last_attempt.failed
+    assert recovered.last_attempt.error is not None
+    assert recovered.last_attempt.error.code == "APPLY_URL_UNRESOLVED"
+
+
+def test_record_apply_url_recovery_requires_enriched_aggregate() -> None:
+    with pytest.raises(ValueError, match="requires an enriched aggregate"):
+        _empty().record_apply_url_recovery(
+            application_url=ApplicationUrl(value="https://apply.example/role"),
+            extraction_tier=ExtractionTier.CSS_SELECTORS,
+            started_at="t0",
+            finished_at="t1",
+        )
+
+
 def test_attempt_numbers_must_be_monotonic() -> None:
     err = EnrichmentError(code="x", message="x", retryable=True)
     bad_attempt = EnrichmentAttempt(

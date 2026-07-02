@@ -17,10 +17,14 @@ from jobhunter.domain.enrichment import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.enrichment.detail import (
+    _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
     _reset_authenticated_linkedin_retry_candidates,
 )
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
+    LinkedInApplyResolution,
+)
 
 
 @pytest.fixture()
@@ -36,6 +40,24 @@ class _Resolver:
     def resolve_loaded_page(self, page: object, url: str) -> str | None:  # noqa: ARG002
         self.calls.append(url)
         return self.application_url
+
+
+class _RecoveryResolver:
+    """Stub resolver for the pageless apply-URL recovery path."""
+
+    def __init__(self, resolution: LinkedInApplyResolution | Exception) -> None:
+        self._resolution = resolution
+        self.calls: list[str] = []
+        self.closed = False
+
+    def resolve(self, job_url: str) -> LinkedInApplyResolution:
+        self.calls.append(job_url)
+        if isinstance(self._resolution, Exception):
+            raise self._resolution
+        return self._resolution
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _seed_discovered(conn: sqlite3.Connection, url: str, site: str) -> None:
@@ -146,7 +168,7 @@ def test_authenticated_apply_url_does_not_run_for_non_linkedin() -> None:
     assert resolver.calls == []
 
 
-def test_retry_candidates_reset_linkedin_failed_and_missing_apply_rows(
+def test_retry_candidates_reset_failed_rows_and_preserve_enriched(
     conn: sqlite3.Connection,
 ) -> None:
     missing_url = "https://www.linkedin.com/jobs/view/1"
@@ -162,14 +184,144 @@ def test_retry_candidates_reset_linkedin_failed_and_missing_apply_rows(
     _save_enriched(conn, has_apply_url, application_url="https://apply.example/3")
     _save_enriched(conn, indeed_url, application_url=None)
 
+    # No resolver supplied: the enriched-but-missing row must never be reset,
+    # since a destructive reset would discard its canonical description.
     reset_count = _reset_authenticated_linkedin_retry_candidates(conn)
 
-    assert reset_count == 2
+    assert reset_count == 1
     repo = SqliteEnrichmentRepository(conn)
-    assert repo.load(LOCAL_TENANT, JobId(missing_url)).is_pending  # type: ignore[union-attr]
+    missing = repo.load(LOCAL_TENANT, JobId(missing_url))
+    assert missing is not None
+    assert missing.is_enriched
+    assert missing.full_description is not None
+    assert missing.full_description.text == "A complete LinkedIn description"
+    assert missing.application_url is None
     assert repo.load(LOCAL_TENANT, JobId(failed_url)).is_pending  # type: ignore[union-attr]
     assert repo.load(LOCAL_TENANT, JobId(has_apply_url)).is_enriched  # type: ignore[union-attr]
     assert repo.load(LOCAL_TENANT, JobId(indeed_url)).is_enriched  # type: ignore[union-attr]
+
+
+def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/failrecover"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution(None, "external_url_missing"))
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver
+    )
+
+    assert reset_count == 0
+    assert resolver.calls == [url]
+    assert resolver.closed is True
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.is_enriched
+    assert aggregate.full_description is not None
+    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is None
+    # A bounding attempt is recorded so a never-resolving row cannot be
+    # re-driven through the authenticated browser forever.
+    assert aggregate.attempt_count == 2
+
+
+def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/raise"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(RuntimeError("login wall"))
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver
+    )
+
+    assert reset_count == 0
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.is_enriched
+    assert aggregate.full_description is not None
+    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is None
+
+
+def test_enriched_missing_apply_url_backfills_on_successful_recovery(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/backfill"
+    apply_target = "https://jobs.ashbyhq.com/acme/role"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution(apply_target, "click"))
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver
+    )
+
+    assert reset_count == 0
+    assert resolver.calls == [url]
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.is_enriched
+    assert aggregate.full_description is not None
+    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is not None
+    assert aggregate.application_url.value == apply_target
+
+
+def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/bounded"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution(None, "external_url_missing"))
+
+    # Drive many enrichment runs against a row whose resolver never resolves.
+    for _ in range(5):
+        _reset_authenticated_linkedin_retry_candidates(
+            conn, resolver_factory=lambda: resolver
+        )
+
+    # The authenticated browser is driven only until the attempt-count bound is
+    # reached (initial enrichment attempt + N-1 recovery passes), never forever.
+    assert len(resolver.calls) == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS - 1
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS
+    # Description preserved intact across every run.
+    assert aggregate.is_enriched
+    assert aggregate.full_description is not None
+    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is None
+
+
+def test_failed_row_still_reset_for_authenticated_retry(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/failedreset"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(conn, url, retryable=True)
+    resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver
+    )
+
+    assert reset_count == 1
+    # Non-enriched rows never touch the apply-URL resolver.
+    assert resolver.calls == []
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.is_pending
 
 
 def test_retry_candidates_skip_nonretryable_and_exhausted_rows(

@@ -27,6 +27,7 @@ import json
 import logging
 import sqlite3
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import urljoin
@@ -1259,20 +1260,39 @@ def _last_failed_attempt_retryable(attempts_json: str | None) -> bool:
     return True
 
 
+def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
+    """Build the authenticated resolver used for apply-URL recovery."""
+    return LinkedInApplyUrlResolver(proxy=_PROXY_CONFIG, user_agent=UA)
+
+
 def _reset_authenticated_linkedin_retry_candidates(
     conn: sqlite3.Connection,
     *,
     job_urls: tuple[str, ...] = (),
     limit: int | None = None,
+    resolver_factory: Callable[[], object] | None = None,
 ) -> int:
-    """Reset LinkedIn rows that need authenticated enrichment retry.
+    """Retry LinkedIn rows that need authenticated enrichment follow-up.
 
-    The normal enrichment queue excludes failed aggregates and already enriched
-    rows. LinkedIn is the exception because a logged-in browser can expose data
-    hidden from the first unauthenticated pass, especially the external apply
-    target. The reset is bounded by attempt count so repeated enrich runs do not
-    loop forever when the profile is not logged in or the posting has no
-    external apply target.
+    The normal enrichment queue excludes failed aggregates and already
+    enriched rows. LinkedIn is the exception because a logged-in browser can
+    expose data hidden from the first unauthenticated pass, especially the
+    external apply target. Two disjoint groups are handled:
+
+      * **Enriched but missing the apply URL** — resolved non-destructively.
+        Only ``application_url`` is backfilled; the canonical
+        ``full_description`` and the ``enriched`` status are preserved, so a
+        failed or empty authenticated resolution can never destroy reviewable
+        material. Each authenticated pass records an ``EnrichmentAttempt`` so
+        this path shares the same attempt-count bound as the cascade.
+      * **Failed / non-enriched** — reset back to ``pending`` so the normal
+        cascade re-scrapes them under an authenticated browser. These rows
+        hold no enriched description to lose.
+
+    Both paths are bounded by attempt count so repeated enrich runs do not
+    loop forever (and never re-drive the authenticated browser against a
+    never-resolving posting) when the profile is not logged in or the posting
+    has no external apply target. Returns the number of rows reset (re-queued).
     """
     if not linkedin_apply_resolver_enabled():
         return 0
@@ -1309,54 +1329,144 @@ def _reset_authenticated_linkedin_retry_candidates(
 
     repo = SqliteEnrichmentRepository(conn)
     reset_count = 0
-    for row in rows:
-        attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
-        if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
-            continue
-        current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
-        if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
-            continue
-        url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
-        url = str(url)
-        reset_at = utc_now()
-        aggregate = repo.load(LOCAL_TENANT, JobId(url))
-        if aggregate is None:
-            continue
-        repo.save(aggregate.reset(reset_at=reset_at))
-        conn.execute(
-            "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
-            (url,),
-        )
-        ensure_job_stage_rows(conn, url)
-        set_stage_state(
-            conn,
-            url,
-            "enrich",
-            "pending",
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            url,
-            "enrich",
-            "StageReset",
-            message="LinkedIn authenticated enrichment retry queued",
-            payload={
-                "reason": "linkedin_authenticated_apply_url",
-                "previousStatus": str(current_status or ""),
-                "automated": True,
-                "resetAt": reset_at,
-            },
-        )
-        reset_count += 1
-        if limit and limit > 0 and reset_count >= limit:
-            break
-    if reset_count:
+    recovery_count = 0
+    backfill_count = 0
+    resolver: object | None = None
+    try:
+        for row in rows:
+            attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
+            if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
+                continue
+            current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
+            if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
+                continue
+            url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
+            now = utc_now()
+            aggregate = repo.load(LOCAL_TENANT, JobId(url))
+            if aggregate is None:
+                continue
+
+            if aggregate.is_enriched:
+                if resolver is None and resolver_factory is not None:
+                    try:
+                        resolver = resolver_factory()
+                    except Exception:
+                        log.warning(
+                            "LinkedIn apply resolver unavailable; skipping apply-URL recovery",
+                            exc_info=True,
+                        )
+                        resolver_factory = None
+                if resolver is None:
+                    continue
+                resolved = _apply_authenticated_linkedin_apply_url(
+                    site="linkedin",
+                    url=url,
+                    cascade_result={
+                        "status": "ok",
+                        "full_description": (
+                            aggregate.full_description.text
+                            if aggregate.full_description
+                            else ""
+                        ),
+                        "application_url": None,
+                    },
+                    resolver=resolver,
+                    page=None,
+                )
+                apply_url_value = resolved.get("application_url")
+                recovered = (
+                    ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
+                )
+                # Every authenticated pass records an attempt so a
+                # never-resolving row is bounded by attempt count exactly
+                # like the extraction cascade; the description is never
+                # touched.
+                repo.save(
+                    aggregate.record_apply_url_recovery(
+                        application_url=recovered,
+                        extraction_tier=ExtractionTier.CSS_SELECTORS,
+                        started_at=now,
+                        finished_at=utc_now(),
+                    )
+                )
+                record_job_event(
+                    conn,
+                    url,
+                    "enrich",
+                    "StageProgress",
+                    message=(
+                        "LinkedIn authenticated apply URL recovered"
+                        if recovered is not None
+                        else "LinkedIn authenticated apply URL unresolved"
+                    ),
+                    payload={
+                        "reason": "linkedin_authenticated_apply_url",
+                        "applicationUrlFound": recovered is not None,
+                        "authenticatedApplyUrlMethod": resolved.get(
+                            "authenticated_apply_url_method"
+                        ),
+                        "authenticatedApplyUrlError": resolved.get(
+                            "authenticated_apply_url_error"
+                        ),
+                        "automated": True,
+                    },
+                )
+                recovery_count += 1
+                if recovered is not None:
+                    backfill_count += 1
+                if limit and limit > 0 and (reset_count + recovery_count) >= limit:
+                    break
+                continue
+
+            repo.save(aggregate.reset(reset_at=now))
+            conn.execute(
+                "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
+                (url,),
+            )
+            ensure_job_stage_rows(conn, url)
+            set_stage_state(
+                conn,
+                url,
+                "enrich",
+                "pending",
+                validate_transition=False,
+            )
+            record_job_event(
+                conn,
+                url,
+                "enrich",
+                "StageReset",
+                message="LinkedIn authenticated enrichment retry queued",
+                payload={
+                    "reason": "linkedin_authenticated_apply_url",
+                    "previousStatus": str(current_status or ""),
+                    "automated": True,
+                    "resetAt": now,
+                },
+            )
+            reset_count += 1
+            if limit and limit > 0 and (reset_count + recovery_count) >= limit:
+                break
+    finally:
+        close = getattr(resolver, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                log.debug("LinkedIn apply resolver close failed", exc_info=True)
+
+    if reset_count or recovery_count:
         conn.commit()
-        log.info(
-            "LinkedIn authenticated enrichment retry queued for %d job(s)",
-            reset_count,
-        )
+        if reset_count:
+            log.info(
+                "LinkedIn authenticated enrichment retry queued for %d job(s)",
+                reset_count,
+            )
+        if backfill_count:
+            log.info(
+                "LinkedIn authenticated apply URL backfilled for %d job(s)",
+                backfill_count,
+            )
     return reset_count
 
 
@@ -1401,6 +1511,7 @@ def _run_detail_scraper(
         conn,
         job_urls=selected_urls,
         limit=max_per_site,
+        resolver_factory=_default_linkedin_apply_resolver_factory,
     )
 
     rows = conn.execute(
