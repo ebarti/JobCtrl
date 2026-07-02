@@ -721,7 +721,11 @@ function RevisionAudit({
               Must-have coverage: {Math.round(shippedFit.mustHaveCoverage * 100)}%
             </span>
           ) : null}
-          <span className="tag ok">grounded (shipped text)</span>
+          <span className={`tag ${shippedFit.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+            {shippedFit.coverageBasis === "grounded_shipped_text_v1"
+              ? "grounded (shipped text)"
+              : "judge-claimed (legacy)"}
+          </span>
           {shippedFit.score !== null ? (
             <span className="tag muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</span>
           ) : null}

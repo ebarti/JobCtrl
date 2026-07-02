@@ -997,6 +997,57 @@ describe("<ApplyReviewView>", () => {
     expect(auditRegion.queryByText(/Attempt/)).not.toBeInTheDocument();
   });
 
+  it("does not tag a non-grounded shipped fit as grounded (shipped text)", async () => {
+    const audit = sampleApplyReviewQueue.items[0]!.materialsPreview.requirementLedAudit!;
+    const nonGroundedShippedFitQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                requirementLedAudit: {
+                  ...audit,
+                  revision: {
+                    ...audit.revision!,
+                    coverageBasis: "grounded_shipped_text_v1" as const,
+                  },
+                  shippedFit: {
+                    lifecycle: "post_voice_shipped",
+                    score: 8,
+                    mustHaveCoverage: 0.8,
+                    claimedOnlyRequirementIds: [],
+                    passed: false,
+                    warnings: ["Shipped fit recorded without a grounded coverage basis."],
+                    coverageBasis: "judge_claimed_legacy" as const,
+                  },
+                },
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => nonGroundedShippedFitQueue),
+        },
+      }),
+    });
+
+    await screen.findByRole("region", { name: "Requirement-led tailoring audit" });
+    const shippedFitBlock = document.querySelector(".apply-review-audit-shipped-fit");
+    expect(shippedFitBlock).toBeInstanceOf(HTMLElement);
+    const shippedFit = within(shippedFitBlock as HTMLElement);
+    expect(shippedFit.queryByText("grounded (shipped text)")).not.toBeInTheDocument();
+    expect(shippedFit.getByText("judge-claimed (legacy)")).toBeInTheDocument();
+    const revisionBlock = document.querySelector(".apply-review-audit-revision");
+    expect(revisionBlock).toBeInstanceOf(HTMLElement);
+    expect(within(revisionBlock as HTMLElement).getByText("grounded")).toBeInTheDocument();
+  });
+
   it("labels a legacy judge-claimed revision gate without hiding the recorded coverage", async () => {
     renderWithProviders(<ApplyReviewView />);
 
@@ -1088,6 +1139,82 @@ describe("<ApplyReviewView>", () => {
     expect(auditRegion.queryByText("passed")).not.toBeInTheDocument();
     expect(auditRegion.queryByText("judge-claimed (legacy)")).not.toBeInTheDocument();
     expect(screen.queryByText(/Must-have coverage:\s*100%/)).not.toBeInTheDocument();
+    expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
+    expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
+  });
+
+  it("labels a legacy judge-claimed 100% pass instead of hiding it, without contradicting the 4/9 badge (Digital Hub regression)", async () => {
+    const audit = sampleApplyReviewQueue.items[0]!.materialsPreview.requirementLedAudit!;
+    const legacyRegressionQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                requirementLedAudit: {
+                  ...audit,
+                  requirementCount: 9,
+                  coveredRequirements: ["r1", "r2", "r3", "r4"].map((id) => ({
+                    id,
+                    textExcerpt: `Covered requirement ${id}`,
+                    tier: "must_have",
+                    reason: null,
+                  })),
+                  uncoveredRequirements: ["r5", "r6", "r7", "r8", "r9"].map((id) => ({
+                    id,
+                    textExcerpt: `Uncovered requirement ${id}`,
+                    tier: id === "r5" ? "must_have" : "important",
+                    reason: "No provenance-linked bullet in the selected tailored resume.",
+                  })),
+                  revision: {
+                    ...audit.revision!,
+                    score: 10,
+                    mustHaveCoverage: 1.0,
+                    thresholdFailed: false,
+                    reviewBlocked: false,
+                    coverageBasis: "judge_claimed_legacy" as const,
+                    attempt: 2,
+                    maxRevisionAttempts: 1,
+                    revisionsUsed: 1,
+                    reason: "passed",
+                    reviewBlockers: [],
+                  },
+                  shippedFit: null,
+                  reviewBlockers: [],
+                },
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => legacyRegressionQueue),
+        },
+      }),
+    });
+
+    const auditRegion = within(
+      await screen.findByRole("region", { name: "Requirement-led tailoring audit" }),
+    );
+    expect(auditRegion.getByText("4/9 requirements covered")).toBeInTheDocument();
+
+    const revisionBlock = document.querySelector(".apply-review-audit-revision");
+    expect(revisionBlock).toBeInstanceOf(HTMLElement);
+    const revision = within(revisionBlock as HTMLElement);
+    expect(revision.getByText("judge-claimed (legacy)")).toBeInTheDocument();
+    expect(revision.getByText(/Must-have coverage:\s*100%/)).toBeInTheDocument();
+    expect(revision.getByText(/Fit gate:\s*10\/10/)).toBeInTheDocument();
+    expect(revision.getByText("Revisions used: 1 of 1")).toBeInTheDocument();
+
+    expect(auditRegion.queryByText("grounded (shipped text)")).not.toBeInTheDocument();
+    expect(auditRegion.queryByText("grounded")).not.toBeInTheDocument();
+    expect(auditRegion.queryByText(/Attempt/)).not.toBeInTheDocument();
+    expect(document.querySelector(".apply-review-audit-shipped-fit")).toBeNull();
     expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
     expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
   });
