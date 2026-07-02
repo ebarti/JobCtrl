@@ -260,10 +260,13 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   candidate demonstrated in a different word form is never a false positive; a
   pure concept/qualification keyword (scalability, observability, microservices)
   is never gated at all. A fabricated `Kubernetes` still has no stem variant in a
-  k8s-free profile, so it is still caught. Matching is word-boundary anchored, so
-  ordinary English words never false-fire; the skills SECTION is out of scope (it
-  is governed by the skills-section allowlist). A hit is **hard-rejected exactly
-  like an invented metric** (`NEVER_FABRICATE_SKILLS`).
+  k8s-free profile, so it is still caught. Tools whose name is a homograph of a
+  common word (`HOMOGRAPH_TECHNOLOGY_TERMS` = react, spark, rust, …) are the
+  exception and require **exact** grounding, so a fabricated React cannot borrow
+  the verb `reacted`. Matching is word-boundary anchored, so ordinary English
+  words never false-fire; the skills SECTION is out of scope (it is governed by
+  the skills-section allowlist). A hit is **hard-rejected exactly like an invented
+  metric** (`NEVER_FABRICATE_SKILLS`).
 - **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
   after assembling the selected candidate's text. A fabrication downgrades
   validation so the resume is **not approved** (the last accepted generation's

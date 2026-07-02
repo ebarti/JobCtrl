@@ -982,6 +982,46 @@ def test_prose_skill_gate_scopes_out_concepts_absent_from_corpus() -> None:
     assert findings == []
 
 
+def test_prose_skill_gate_flags_homograph_tool_fabricated_from_verb() -> None:
+    """Regression (PR #218 r3509984743): a lexicon tool whose name is a homograph of
+    a common verb (React/Spark) must NOT ground on the mere verb form. The candidate
+    only 'reacted'/'sparked' — they never used React or Spark — so weaving those
+    tools into prose is a fabrication and must be flagged. Word-form grounding would
+    otherwise collapse react<->reacted and spark<->sparked."""
+    profile = _reviewer_scenario_profile()
+    profile["resume"]["executive_profile"]["baseline_text"] = "Reacted quickly to incidents."
+    profile["resume"]["experience_entries"][0]["achievement_evidence"][0]["source_text"] = (
+        "Sparked a 20% increase in adoption."
+    )
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Built React apps on Spark clusters.")],
+        target_skill_terms=["react", "spark"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert {f.token for f in findings} == {"react", "spark"}
+    assert all(f.control is ControlRule.NEVER_FABRICATE_SKILLS for f in findings)
+
+
+def test_prose_skill_gate_grounds_homograph_tool_on_literal_token() -> None:
+    """The complement: a legitimate React/Spark user who wrote the literal tool name
+    (declared `ReactJS`/`Spark`, or wrote `react` in prose) still grounds and is NOT
+    flagged. Homograph exact-grounding accepts the tool's own spellings — only the
+    verb form is rejected."""
+    profile = _reviewer_scenario_profile()
+    profile["resume"]["skill_categories"][0]["items"] = ["Python", "ReactJS", "Spark"]
+    profile["resume"]["experience_entries"][0]["bullets"] = ["Shipped React features on Spark."]
+    corpus = build_evidence_corpus(profile)
+    findings = scan_prose_skill_fabrications(
+        [("experience:acme_swe#0", "Built React apps on Spark clusters.")],
+        target_skill_terms=["react", "spark"],
+        allowed_skill_terms=build_skill_vocabulary(profile),
+        corpus=corpus,
+    )
+    assert findings == []
+
+
 # --------------------------------------------------------------------------
 # Persistence: generation-versioning + supersede-not-destroy (criterion 5)
 # --------------------------------------------------------------------------

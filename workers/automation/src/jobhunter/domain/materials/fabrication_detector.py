@@ -47,7 +47,10 @@ actively rewards weaving JD keywords into prose):
     declared it OR demonstrably wrote about it in the evidence corpus — matched
     exactly OR by a shared word-form stem (``scaled`` / ``scalable`` /
     ``scalability`` mutually ground). A fabricated ``Kubernetes`` still has no
-    stem variant anywhere in a k8s-free profile, so it is still caught.
+    stem variant anywhere in a k8s-free profile, so it is still caught. Tools
+    whose name is a homograph of a common word (``react``/``spark``) are the
+    exception and require EXACT grounding, so a fabricated React never borrows the
+    verb ``reacted`` (:data:`HOMOGRAPH_TECHNOLOGY_TERMS`).
 
 Only recognised named-technology keywords are ever candidates, so ordinary
 English words are never flagged; matching is word-boundary anchored so ``go``
@@ -653,6 +656,63 @@ KNOWN_TECHNOLOGY_LEXICON: frozenset[str] = frozenset(
     }
 )
 
+# Lexicon tools whose name is a homograph of a common English word/verb. For these
+# the word-form stem path is UNSAFE: ``stem("react") == stem("reacted")`` and
+# ``stem("spark") == stem("sparked")``, so a fabricated React/Spark would otherwise
+# ground on a candidate who merely wrote "reacted"/"sparked" and never used the
+# tool. Homograph tools require EXACT (literal) grounding instead — accepting the
+# tool's own spellings (react / reactjs / react.js) but never a verb form.
+# Non-homograph tools (kubernetes, terraform, postgresql, …) keep word-form
+# tolerance because they have no common-word collision. (``go``/``r`` are already
+# excluded by the length guard.)
+HOMOGRAPH_TECHNOLOGY_TERMS: frozenset[str] = frozenset(
+    {
+        "react", "spark", "swift", "rust", "ruby", "groovy", "dart", "solidity",
+        "bash", "spring", "express", "hive", "chef", "vault", "consul", "nomad",
+        "envoy", "helm", "packer", "kong", "pandas",
+    }
+)
+
+
+def _spelling_variants(term: str) -> set[str]:
+    """Accepted literal spellings of a named tool that share a base name.
+
+    ``react`` / ``reactjs`` / ``react.js`` all denote the same framework, so a
+    homograph tool grounds on any of them — while the verb form ``reacted`` (a
+    different token) still does not. Purely a spelling family; it never strips an
+    inflectional suffix.
+    """
+    base = term
+    for suffix in (".js", "js"):
+        if term.endswith(suffix) and len(term) - len(suffix) >= 3:
+            base = term[: -len(suffix)]
+            break
+    return {term, base, f"{base}js", f"{base}.js"}
+
+
+def _prose_term_grounded(
+    term: str,
+    *,
+    allowed: set[str],
+    allowed_stems: set[str],
+    corpus: EvidenceCorpus,
+) -> bool:
+    """Whether a gated keyword traces to the candidate's declared skills or evidence.
+
+    A homograph tool requires EXACT grounding (declared spelling or literal token in
+    the corpus) so it cannot borrow a common verb form. Every other keyword keeps
+    word-form tolerance so a concept/tool the candidate wrote in a different word
+    form still grounds.
+    """
+    if term in HOMOGRAPH_TECHNOLOGY_TERMS:
+        variants = _spelling_variants(term)
+        return bool(variants & allowed) or any(corpus.contains_term(v) for v in variants)
+    return (
+        term in allowed
+        or _word_form_stem(term) in allowed_stems
+        or corpus.contains_term_variant(term)
+    )
+
 
 def _is_gated_technology(term: str) -> bool:
     """Whether ``term`` is a named technology the prose gate is allowed to police.
@@ -721,6 +781,9 @@ def scan_prose_skill_fabrications(
         mutually ground) against the vocabulary or corpus. A fabricated tool with
         no stem variant anywhere in the profile (``kubernetes`` in a k8s-free
         profile) is still ungrounded, so a genuine fabrication is still caught.
+        Tools whose name is a homograph of a common word (React/Spark) are the
+        exception: they require EXACT grounding so a fabricated React cannot borrow
+        the verb ``reacted`` (:data:`HOMOGRAPH_TECHNOLOGY_TERMS`).
 
     Ordinary English words are never flagged; single/two-character targets are
     skipped (mirroring the skills-section watchlist) so an ambiguous ``go``/``r``
@@ -735,11 +798,9 @@ def scan_prose_skill_fabrications(
         if len(norm) <= 2 or norm in fabricated:
             continue
         # Grounded when the candidate declared the tool or demonstrably wrote about
-        # it — exact OR a word-form variant, so a legitimate concept/tool in a
-        # different word form is never a false fabrication.
-        if norm in allowed or _word_form_stem(norm) in allowed_stems:
-            continue
-        if corpus.contains_term_variant(norm):
+        # it (homograph tools exact-only; others word-form tolerant), so a
+        # legitimate concept/tool in a real word form is never a false fabrication.
+        if _prose_term_grounded(norm, allowed=allowed, allowed_stems=allowed_stems, corpus=corpus):
             continue
         # Scope: only invented NAMED technologies are interview-fatal fabrications;
         # concept/qualification keywords are never gated even when ungrounded.
@@ -769,6 +830,7 @@ def scan_prose_skill_fabrications(
 
 
 __all__ = [
+    "HOMOGRAPH_TECHNOLOGY_TERMS",
     "KNOWN_TECHNOLOGY_LEXICON",
     "EvidenceCorpus",
     "FabricationError",
