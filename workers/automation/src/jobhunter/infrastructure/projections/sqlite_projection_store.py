@@ -311,6 +311,14 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         ON operational_attempt_metrics(tenant_id, source_id, occurred_at DESC, metric_id DESC)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projection_backfills (
+            name         TEXT PRIMARY KEY,
+            completed_at TEXT NOT NULL
+        )
+        """
+    )
     score_evidence_schema_changed = False
     for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
         score_evidence_schema_changed = (
