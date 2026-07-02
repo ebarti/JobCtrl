@@ -800,10 +800,11 @@ function buildJobAuditHistory(db: SqliteDatabase, jobId: string): JobAuditEntry[
                OR JSON_EXTRACT(payload_json, '$.job_id') = ?
                OR JSON_EXTRACT(payload_json, '$.jobKey') = ?
                OR JSON_EXTRACT(payload_json, '$.job_key') = ?
+               OR JSON_EXTRACT(payload_json, '$.surviving_job_id') = ?
              )
            )
         ORDER BY occurred_at ASC, event_id ASC`,
-      [jobId, jobId, jobId, jobId, jobId],
+      [jobId, jobId, jobId, jobId, jobId, jobId],
     );
     for (const row of rows) {
       const payload = parseJsonRecord(row.payload_json) ?? {};

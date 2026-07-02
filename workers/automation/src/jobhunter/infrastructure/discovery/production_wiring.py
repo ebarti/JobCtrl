@@ -2064,7 +2064,7 @@ def _looks_protected(url: str) -> bool:
 
 
 def _event_job_url(event: DomainEvent) -> str | None:
-    for key in ("job_id", "jobId", "job_url", "jobUrl"):
+    for key in ("job_id", "jobId", "job_url", "jobUrl", "surviving_job_id"):
         value = event.payload.get(key)
         if value:
             return str(value)

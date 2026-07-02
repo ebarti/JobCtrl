@@ -537,9 +537,10 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         assert link["reason"] == "content_fingerprint_match"
         assert link["confidence"] == 0.95
         linked_events = conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE event_type = 'DuplicateJobLinked'"
-        ).fetchone()[0]
-        assert linked_events == 1
+            "SELECT job_url FROM job_events WHERE event_type = 'DuplicateJobLinked'"
+        ).fetchall()
+        assert len(linked_events) == 1
+        assert linked_events[0]["job_url"] == owner_url
         observations = repository.list_observations(LOCAL_TENANT, owner_url)
         assert "smartextract:Acme Careers" in {obs.source_id for obs in observations}
     finally:
