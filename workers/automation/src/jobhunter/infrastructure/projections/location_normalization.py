@@ -2,10 +2,14 @@
 
 The TS and Python projection builders both write
 ``job_list_projections.location`` and MUST produce byte-identical output. Keep
-this module in lockstep with the TS ``normalizeJobLocation``; the cross-runtime
-parity test (``packages/domain-types/test/fixtures/audit_projection_parity.json``,
-exercised by both ``apps/api/test/audit-projection-parity.test.ts`` and
-``workers/automation/tests/test_audit_projection_parity.py``) fails if they drift.
+this module in lockstep with the TS ``normalizeJobLocation``; the shared
+cross-runtime location table (``packages/domain-types/test/fixtures/
+audit_projection_parity.json`` -> ``locationCases``, exercised by both
+``apps/api/test/location-normalization.test.ts`` and
+``workers/automation/tests/test_location_normalization.py``) fails if the two
+implementations drift. Any change to the Spain region labels, the country tokens,
+or the remote-token/marker patterns below must be mirrored in TS and covered by a
+shared ``locationCases`` entry.
 """
 
 from __future__ import annotations
