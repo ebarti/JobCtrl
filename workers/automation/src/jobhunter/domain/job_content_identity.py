@@ -52,6 +52,42 @@ def normalize_description_text(value: object) -> str:
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 
+_NON_EMPLOYER_IDENTITY_LABELS: frozenset[str] = frozenset(
+    {
+        # ``Employer.unknown()`` sentinel + the SqliteJobRepository row fallback.
+        "unknown",
+        # Manual-capture board (production_wiring._manual_capture_posting).
+        "user-mediated capture",
+        # Workday board fallback used when the employer name is missing.
+        "workday",
+        # JobSpy platform boards (jobspy.model.Site): a board, never an employer.
+        "linkedin",
+        "indeed",
+        "zip_recruiter",
+        "glassdoor",
+        "google",
+        "bayt",
+        "naukri",
+        "bdjobs",
+    }
+)
+
+
+def is_genuine_employer_identity(value: object) -> bool:
+    """Return true when ``value`` names one specific hiring employer.
+
+    Content dedup keys on the employer so DISTINCT employers' postings never
+    collapse into one Job. Empty values, the ``Unknown`` sentinel, and
+    non-employer platform/board labels (job boards plus the manual-capture and
+    Workday fallbacks) are shared across many employers, so they must never be
+    used as an employer key: a caller that hits one falls through to creating a
+    distinct Job (a safe under-merge rather than a lossy cross-employer merge).
+    """
+
+    normalized = normalize_identity_text(value)
+    return bool(normalized) and normalized not in _NON_EMPLOYER_IDENTITY_LABELS
+
+
 def normalize_role_title_for_repost_match(value: object) -> str:
     """Return a stable role-title key for repost score-consistency checks.
 

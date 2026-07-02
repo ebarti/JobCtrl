@@ -54,6 +54,7 @@ from jobhunter.domain.discovery.value_objects import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import (
     descriptions_substantially_match,
+    is_genuine_employer_identity,
     job_content_fingerprint,
     normalize_identity_text,
 )
@@ -444,15 +445,23 @@ class SqliteJobRepository:
         """Resolve an existing Job by content identity after native-id / URL miss.
 
         Mirrors the JobSpy content-dedup strictness: candidates are gated on an
-        exact (normalized) title + company match, then confirmed by the shared
+        exact (normalized) title + employer match, then confirmed by the shared
         ``job_content_fingerprint`` or a substantial-description shingle match.
-        The company key coalesces ``jobs.company`` (populated by JobSpy) with
-        ``jobs.site`` (the board, which is the employer for ATS-owned rows) so a
-        posting collapses onto the existing Job regardless of which source
-        discovered it first. Returns ``None`` when the posting cannot be
-        fingerprinted or no existing Job matches.
+
+        Content merges MUST key on a genuine employer on BOTH sides, otherwise
+        two DISTINCT employers' postings would collapse into one Job (silent
+        data loss). ``jobs.company`` is empty for use-case-created rows, so the
+        stored employer coalesces to ``jobs.site`` (the board, which is the real
+        employer for ATS-owned rows) — but a platform/sentinel board
+        ("User-mediated capture", the "Workday" fallback, a JobSpy board, or the
+        ``Unknown`` sentinel) is shared across employers and must not be treated
+        as an employer key. When either side lacks a genuine employer this falls
+        through to ``None`` (a safe under-merge). Returns ``None`` when the
+        posting cannot be fingerprinted or no existing Job matches.
         """
 
+        if not is_genuine_employer_identity(company):
+            return None
         incoming_key = job_content_fingerprint(
             title=title,
             company=company,
@@ -460,10 +469,12 @@ class SqliteJobRepository:
         )
         if incoming_key is None:
             return None
+        self._conn.create_function(
+            "jh_normalize_identity", 1, normalize_identity_text, deterministic=True
+        )
         rows = self._conn.execute(
             """
-            SELECT j.url, j.title,
-                   COALESCE(NULLIF(j.company, ''), j.site) AS company,
+            SELECT j.url, j.title, j.company, j.site,
                    COALESCE(je.full_description, j.full_description, j.description)
                        AS description,
                    CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
@@ -472,16 +483,20 @@ class SqliteJobRepository:
             LEFT JOIN jobhunter_deleted_jobs d
               ON d.job_url = j.url
              AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-            WHERE lower(trim(COALESCE(j.title, ''))) = ?
-              AND lower(trim(COALESCE(NULLIF(j.company, ''), j.site, ''))) = ?
+            WHERE jh_normalize_identity(COALESCE(j.title, '')) = ?
+              AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
             ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
             """,
             (normalize_identity_text(title), normalize_identity_text(company)),
         ).fetchall()
         for existing in rows:
+            stored_company = existing["company"]
+            stored_employer = stored_company if stored_company else existing["site"]
+            if not is_genuine_employer_identity(stored_employer):
+                continue
             existing_key = job_content_fingerprint(
                 title=existing["title"],
-                company=existing["company"],
+                company=stored_employer,
                 description=existing["description"],
             )
             if existing_key == incoming_key:

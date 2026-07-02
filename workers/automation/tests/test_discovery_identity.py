@@ -21,6 +21,7 @@ from jobhunter.domain.discovery import (
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import is_genuine_employer_identity
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.ports.events import EventHandler, Subscription
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -1054,3 +1055,200 @@ def test_discover_jobs_use_case_prefers_native_identity_over_content_match(
     link = conn.execute("SELECT reason, confidence FROM job_duplicate_links").fetchone()
     assert link["reason"] == "canonical_url_match"
     assert link["confidence"] == 0.9
+
+
+def test_is_genuine_employer_identity_rejects_sentinel_and_platform_labels() -> None:
+    assert is_genuine_employer_identity("Acme") is True
+    assert is_genuine_employer_identity("greenhouse:acme") is True
+    for label in (
+        "",
+        "   ",
+        "Unknown",
+        "User-mediated capture",
+        "Workday",
+        "LinkedIn",
+        "indeed",
+        "zip_recruiter",
+        "Glassdoor",
+        "Google",
+    ):
+        assert is_genuine_employer_identity(label) is False, label
+
+
+def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_capture_board(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    boilerplate = _long_description("boiler", tokens=90)
+
+    # Two DISTINCT employers, both captured with only the shared platform-sentinel
+    # board ("User-mediated capture") and near-identical boilerplate text. The
+    # employer discriminator is absent, so these MUST NOT content-merge.
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://careers.acme.example/jobs/eng-1",
+                source_native_id="manual-acme",
+                source_id="manual_capture:acme",
+                ats_kind=AtsKind.OTHER,
+                board="User-mediated capture",
+                metadata=JobMetadata(
+                    title="Head of Engineering",
+                    description=boilerplate + " acme alpha beta",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-1",
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://careers.globex.example/jobs/eng-9",
+                source_native_id="manual-globex",
+                source_id="manual_capture:globex",
+                ats_kind=AtsKind.OTHER,
+                board="User-mediated capture",
+                metadata=JobMetadata(
+                    title="Head of Engineering",
+                    description=boilerplate + " globex gamma delta",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.new_jobs == 1
+    assert summary.observed == 0
+    assert summary.duplicates_linked == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+
+
+def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday_fallback_board(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    boilerplate = _long_description("boiler", tokens=90)
+
+    # Employer-less Workday postings fall back to the constant board "Workday".
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://one.wd1.myworkdayjobs.com/job/Head-of-Data_JR-1",
+                source_native_id="JR-1",
+                source_id="workday:one",
+                ats_kind=AtsKind.WORKDAY,
+                board="Workday",
+                metadata=JobMetadata(
+                    title="Head of Data",
+                    description=boilerplate + " one alpha beta",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-1",
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://two.wd1.myworkdayjobs.com/job/Head-of-Data_JR-2",
+                source_native_id="JR-2",
+                source_id="workday:two",
+                ats_kind=AtsKind.WORKDAY,
+                board="Workday",
+                metadata=JobMetadata(
+                    title="Head of Data",
+                    description=boilerplate + " two gamma delta",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.new_jobs == 1
+    assert summary.observed == 0
+    assert summary.duplicates_linked == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+
+
+def test_discover_jobs_use_case_keeps_boilerplate_heavy_distinct_roles_separate(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    # Same real employer + same title, heavy shared boilerplate (75 tokens) but
+    # genuinely different role content (25 tokens). The 0.83 shingle threshold
+    # keeps distinct roles apart even when boilerplate dominates.
+    boilerplate = _long_description("boiler", tokens=75)
+    platform_description = boilerplate + " " + _long_description("platform", tokens=25)
+    payments_description = boilerplate + " " + _long_description("payments", tokens=25)
+
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/head-platform",
+                source_native_id="gh-platform",
+                source_id="greenhouse:acme",
+                board="Acme",
+                metadata=JobMetadata(
+                    title="Head of Technology",
+                    description=platform_description,
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-1",
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://jobs.lever.co/acme/head-payments",
+                source_native_id="lever-payments",
+                source_id="lever:acme",
+                ats_kind=AtsKind.LEVER,
+                board="Acme",
+                metadata=JobMetadata(
+                    title="Head of Technology",
+                    description=payments_description,
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.new_jobs == 1
+    assert summary.observed == 0
+    assert summary.duplicates_linked == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0

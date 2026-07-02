@@ -58,6 +58,7 @@ from jobhunter.domain.events import (
     create_job_source_observed,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import is_genuine_employer_identity
 from jobhunter.domain.ports.discovery import JobRepository, ScrapedJobPosting
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.tenant import TenantId
@@ -268,7 +269,7 @@ class DiscoverJobsUseCase:
             canonical_url=identity.canonical_url,
         )
         content_matched = False
-        if owner_id is None:
+        if owner_id is None and is_genuine_employer_identity(posting.source.board):
             content_owner_id = self._repository.find_content_owner(
                 tenant_id,
                 title=posting.metadata.title,
