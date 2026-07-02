@@ -6,6 +6,20 @@ export const LOCAL_ORIGIN_PATTERNS = [
 
 export const LOCAL_CORS_METHODS = ["DELETE", "GET", "HEAD", "POST", "PATCH"];
 
+export const LOOPBACK_HOST_PATTERNS = [
+  /^localhost(?::\d+)?$/i,
+  /^127(?:\.\d{1,3}){3}(?::\d+)?$/,
+  /^\[::1\](?::\d+)?$/,
+];
+
+export function isLoopbackHostHeader(hostHeader: string | string[] | undefined): boolean {
+  const values = headerValues(hostHeader);
+  return (
+    values.length === 1 &&
+    values.every((value) => LOOPBACK_HOST_PATTERNS.some((pattern) => pattern.test(value.trim())))
+  );
+}
+
 export function isTrustedMutationSource(
   originHeader: string | string[] | undefined,
   refererHeader: string | string[] | undefined,

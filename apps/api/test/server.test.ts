@@ -496,6 +496,66 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("rejects requests whose Host header is not a loopback host", async () => {
+    const app = buildApp(options);
+    try {
+      const foreignHealth = await app.inject({
+        method: "GET",
+        url: "/v1/health",
+        headers: { host: "evil.example.com" },
+      });
+      expect(foreignHealth.statusCode, foreignHealth.body).toBe(403);
+      expect(foreignHealth.json()).toMatchObject({ ok: false, error: "forbidden_host" });
+
+      const foreignProfile = await app.inject({
+        method: "GET",
+        url: "/v1/profile",
+        headers: { host: "attacker.test:8766" },
+      });
+      expect(foreignProfile.statusCode, foreignProfile.body).toBe(403);
+      expect(foreignProfile.json()).toMatchObject({ ok: false, error: "forbidden_host" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("blocks foreign-Host mutations before the handler runs", async () => {
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        headers: { host: "evil.example.com", origin: "http://127.0.0.1:5173" },
+        payload: { reason: "rebind" },
+      });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "forbidden_host" });
+
+      const db = new Database(options.dbPath);
+      const row = db
+        .prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?")
+        .get("https://example.com/jobs/ready") as { apply_status: string | null; applied_at: string | null };
+      db.close();
+      expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows loopback Host headers with and without a port", async () => {
+    const app = buildApp(options);
+    try {
+      for (const host of ["localhost", "localhost:8766", "127.0.0.1", "127.0.0.1:8766", "[::1]", "[::1]:8766"]) {
+        const response = await app.inject({ method: "GET", url: "/v1/health", headers: { host } });
+        expect(response.statusCode, `${host}: ${response.body}`).toBe(200);
+        expect(response.json()).toMatchObject({ ok: true });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns dashboard summary from the existing SQLite schema", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -4006,6 +4066,76 @@ describe("local TypeScript API", () => {
     expect(opened).toEqual([artifact.localPath]);
 
     await app.close();
+  });
+
+  it("rejects opening an unregistered artifact id", async () => {
+    const opened: string[] = [];
+    const app = buildApp({
+      ...options,
+      artifactOpener: async (artifactPath) => {
+        opened.push(artifactPath);
+      },
+    });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/artifacts/not-a-real-artifact/open",
+      });
+      expect(response.statusCode, response.body).toBe(404);
+      expect(response.json()).toMatchObject({ ok: false, error: "artifact_not_found" });
+      expect(opened).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refuses to open an artifact whose path resolves outside the app directory", async () => {
+    const opened: string[] = [];
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const app = buildApp({
+      ...options,
+      appDir: isolatedAppDir,
+      artifactOpener: async (artifactPath) => {
+        opened.push(artifactPath);
+      },
+    });
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
+      const artifact = listResponse.json().items[0];
+      // The seeded artifact file lives under the default temp dir, which is
+      // outside the isolated app directory configured for this app instance.
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/open`,
+      });
+
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
+      expect(opened).toEqual([]);
+    } finally {
+      await app.close();
+      fs.rmSync(isolatedAppDir, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses to preview a PDF artifact whose path resolves outside the app directory", async () => {
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const app = buildApp({ ...options, appDir: isolatedAppDir });
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+      const artifact = listResponse.json().items[0];
+      fs.writeFileSync(artifact.localPath, "%PDF test");
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview.pdf`,
+      });
+
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
+    } finally {
+      await app.close();
+      fs.rmSync(isolatedAppDir, { force: true, recursive: true });
+    }
   });
 
   it("resolves legacy artifact ids with slashes for detail and open routes", async () => {
