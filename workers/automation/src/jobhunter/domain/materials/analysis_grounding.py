@@ -20,9 +20,15 @@ content-exact** via normalize → locate → snap-to-source:
      can let a fabrication through.
   2. **Locate** the span by building a tolerant regex from it (escape it, then
      relax escaped whitespace to ``\\s+``, each hyphen/quote to a character
-     class, and Markdown-escaped punctuation to the same source character) and
-     searching the ORIGINAL JD case-insensitively. A hit means the span is
-     genuinely present, modulo formatting.
+     class, and Markdown-escaped punctuation to the same source character),
+     anchored on a token boundary at both outer edges (the character just before
+     and just after the whole match must be non-alphanumeric or the string
+     edge), and searching the ORIGINAL JD case-insensitively. The boundary
+     anchor stops a short span from grounding INSIDE a larger word (``"Go"`` in
+     ``"goals"``, ``"AI"`` in ``"email"``, ``"R"``/``"C"`` in almost anything):
+     such a sub-word hit would slip a fabricated keyword past this cardinal gate
+     and snap the stored evidence to a mid-word fragment. A hit means the span is
+     genuinely present as whole token(s), modulo formatting.
   3. **Snap-to-source**: the located match yields the JD's ACTUAL text at that
      position, so the stored ``evidence_span`` becomes verbatim-from-the-posting
      (satisfies D-15 and enables clean char-offset highlighting later).
@@ -70,6 +76,13 @@ _DOUBLE_QUOTE_RE = re.compile(f"[{_DOUBLE_QUOTE_CHARS}]")
 _HYPHEN_CLASS = f"[-{_DASH_CHARS}]"
 _SINGLE_QUOTE_CLASS = f"['{_SINGLE_QUOTE_CHARS}]"
 _DOUBLE_QUOTE_CLASS = f'["{_DOUBLE_QUOTE_CHARS}]'
+
+# One alphanumeric character, Unicode-aware. Used as a zero-width lookaround to
+# require the located match to sit on whole-token boundaries. NOT ``\b``: ``\b``
+# treats ``_`` as a word char, whereas the grounding invariant is "the match is
+# not glued to another alphanumeric". ``[^\W_]`` is exactly ``str.isalnum()`` —
+# every word char minus the underscore.
+_ALNUM_CHAR = r"[^\W_]"
 
 
 def _strip_markdown_escapes(text: str) -> str:
@@ -122,13 +135,21 @@ def _tolerant_pattern(span: str) -> re.Pattern[str] | None:
     quote becomes the matching quote char-class. Searched case-insensitively
     against the ORIGINAL JD, so ``match.group()`` is the verbatim source slice.
 
+    The whole match is bracketed by token-boundary lookaround so it can only land
+    on whole word(s), never inside a longer word. The assertions are zero-width
+    and sit at the OUTER edges only, so a multi-word span still matches across
+    its internal spaces while its first/last real character must border a
+    non-alphanumeric (or the string edge). ``re.search`` therefore skips a
+    sub-word occurrence and keeps scanning for a boundary-aligned one.
+
     Returns ``None`` for an empty/whitespace-only span (no real text to locate).
     """
     normalized = _normalize(span)
     if not normalized:
         return None
     pattern = "".join(_char_pattern(char) for char in normalized)
-    return re.compile(pattern, re.IGNORECASE)
+    bounded = f"(?<!{_ALNUM_CHAR}){pattern}(?!{_ALNUM_CHAR})"
+    return re.compile(bounded, re.IGNORECASE)
 
 
 def locate_grounded_span(span: str, jd_snapshot: str) -> str | None:
