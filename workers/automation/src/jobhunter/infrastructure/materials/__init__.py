@@ -30,6 +30,7 @@ from jobhunter.infrastructure.materials.sqlite_repository import (
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
 )
+from jobhunter.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
 __all__ = [
     "HtmlResumePdfAdapter",
@@ -40,4 +41,5 @@ __all__ = [
     "SqliteEmployerAnalysisRepository",
     "SqliteMaterialsRepository",
     "SqliteTailoringPolicyRepository",
+    "SqliteUnitOfWork",
 ]

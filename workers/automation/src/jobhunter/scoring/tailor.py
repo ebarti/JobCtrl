@@ -36,7 +36,6 @@ from jobhunter import config
 from jobhunter.config import TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import ValidationResult
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
     TailorOutcome,
@@ -61,6 +60,7 @@ from jobhunter.infrastructure.materials import (
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
+    SqliteUnitOfWork,
 )
 from jobhunter.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
@@ -164,15 +164,26 @@ def _build_use_case(
     requirement_fit_repository=None,
     analyze_use_case=None,
     voice=None,
+    pdf_renderer: PdfRendererPort | None = None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
     conn = get_connection()
+    # The generation flip (supersede + save + provenance) must commit atomically
+    # (A9). The default materials + provenance repositories share this connection
+    # and this unit of work, so the flip is one transaction. We only hand the unit
+    # of work to the use case when BOTH those repositories are the shared-connection
+    # defaults; an injected repository may not share the connection, so gating it
+    # would give a false atomicity guarantee — such callers keep per-call commits.
+    unit_of_work = SqliteUnitOfWork(conn)
+    default_flip_repositories = repository is None and provenance_repository is None
     if repository is None:
-        repository = SqliteMaterialsRepository(conn)
+        repository = SqliteMaterialsRepository(conn, unit_of_work=unit_of_work)
     if policy_repository is None:
         policy_repository = SqliteTailoringPolicyRepository(conn)
     if provenance_repository is None:
-        provenance_repository = SqliteBulletProvenanceRepository(conn)
+        provenance_repository = SqliteBulletProvenanceRepository(
+            conn, unit_of_work=unit_of_work
+        )
     if requirement_fit_repository is None:
         requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
     if llm_port is None:
@@ -187,6 +198,8 @@ def _build_use_case(
         analyze_use_case = _build_analyze_use_case(conn=conn, publisher=publisher)
     if voice is None:
         voice = _build_voice_port()
+    if pdf_renderer is None:
+        pdf_renderer = _build_pdf_renderer()
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
@@ -199,6 +212,8 @@ def _build_use_case(
         requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
+        pdf_renderer=pdf_renderer,
+        unit_of_work=unit_of_work if default_flip_repositories else None,
     )
 
 
@@ -222,35 +237,6 @@ def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):
         tenant_id,
         JobId(job_url),
     )
-
-
-def _selected_candidate_payload(report: dict) -> dict | None:
-    """Return the selected tailored JSON payload from a quality-gated report."""
-    selected_candidate_id = str(report.get("selected_candidate") or "")
-    attempts = report.get("attempt_history") or []
-    for attempt in reversed(attempts):
-        if not isinstance(attempt, dict):
-            continue
-        candidates = attempt.get("candidates") or []
-        if not isinstance(candidates, list):
-            continue
-        for candidate in candidates:
-            if not isinstance(candidate, dict):
-                continue
-            if candidate.get("candidate_id") != selected_candidate_id:
-                continue
-            payload = candidate.get("parsed_json")
-            if isinstance(payload, dict):
-                return payload
-        for candidate in candidates:
-            if not isinstance(candidate, dict):
-                continue
-            if candidate.get("status") != "approved":
-                continue
-            payload = candidate.get("parsed_json")
-            if isinstance(payload, dict):
-                return payload
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -342,16 +328,18 @@ def _tailor_one_job(
     """
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
-        use_case = _build_use_case(llm_policy=llm_policy)
+        use_case = _build_use_case(llm_policy=llm_policy, pdf_renderer=pdf_renderer)
         requirement_fit_report = _load_requirement_fit_report_for_job(
             tenant_id=tenant_id,
             job=job,
         )
     else:
         requirement_fit_report = None
-    if pdf_renderer is None:
-        pdf_renderer = _build_pdf_renderer()
 
+    # The use case owns PDF rendering (it renders the approved resume BEFORE
+    # superseding the prior generation so a render failure cannot strip the job
+    # of its last accepted resume — architecture.md §5.5 / CLAUDE.md). The runner
+    # only surfaces the resulting outcome.
     outcome = use_case.execute(
         job=job,
         profile_snapshot=snapshot,
@@ -363,79 +351,16 @@ def _tailor_one_job(
         requirement_fit_report=requirement_fit_report,
     )
 
-    pdf_path: str | None = None
-    if outcome.materials is not None and outcome.materials.is_resume_approved:
-        # Render the resume PDF inline so the legacy result shape carries
-        # ``pdf_path`` (downstream callers and the apply launcher
-        # immediately pick it up via the joined ``jm_resume_pdf_path`` /
-        # legacy fallback).
-        # Phase 3: render the PDF from the FINAL (voiced) payload so the LaTeX/HTML
-        # PDF matches the plain-text resume, the provenance ``generated_text``, and
-        # the coverage audit — all the same final canonical text (GROUND-06). Fall
-        # back to the selected candidate only when the use case did not surface a
-        # final payload (e.g. an older outcome shape).
-        parsed_payload = outcome.final_payload or _selected_candidate_payload(outcome.report)
-        if parsed_payload and outcome.materials.tailored_resume is not None:
-            try:
-                text_path = Path(outcome.materials.tailored_resume.path)
-                pdf_out = text_path.with_suffix(".pdf")
-                template_resolver = getattr(use_case._repository, "resolve_effective_resume_template", None)  # noqa: SLF001
-                try:
-                    resume_template = (
-                        template_resolver(outcome.materials.job_id)
-                        if callable(template_resolver)
-                        else None
-                    )
-                except Exception:  # noqa: BLE001
-                    log.exception("Failed to resolve effective resume template for %s", outcome.materials.job_id)
-                    resume_template = None
-                pdf_artifact = pdf_renderer.render_resume_to_pdf(
-                    tailored_payload=parsed_payload,
-                    profile_dict=snapshot.as_dict(),
-                    output_path=str(pdf_out),
-                    created_at=utc_now(),
-                    resume_theme=resume_template.get("theme") if isinstance(resume_template, dict) else None,
-                    resume_template=resume_template.get("metadata") if isinstance(resume_template, dict) else None,
-                )
-                # Append the PDF onto the existing aggregate so the
-                # repository persists it under the same generation.
-                outcome_materials = outcome.materials.with_resume_pdf(
-                    pdf_artifact, updated_at=utc_now()
-                )
-                # Re-save through the same repository the use case used.
-                use_case._repository.save(outcome_materials)  # noqa: SLF001 — DI seam
-                pdf_path = str(pdf_out)
-            except Exception as exc:
-                log.error("LaTeX PDF generation failed for %s", outcome.text_path, exc_info=True)
-                pdf_error = f"PDF render failed: {exc}"
-                failed_materials = outcome.materials.with_resume_attempt(
-                    outcome.materials.tailored_resume,
-                    validation=ValidationResult.failure((pdf_error,)),
-                    verdict=outcome.materials.last_verdict,
-                    updated_at=utc_now(),
-                )
-                use_case._repository.save(failed_materials)  # noqa: SLF001 — DI seam
-                return {
-                    "url": job["url"],
-                    "path": outcome.text_path,
-                    "pdf_path": None,
-                    "title": job["title"],
-                    "site": job.get("site"),
-                    "status": "error",
-                    "attempts": outcome.attempts,
-                    "materials": failed_materials,
-                    "error": pdf_error,
-                }
-
     return {
         "url": job["url"],
         "path": outcome.text_path,
-        "pdf_path": pdf_path,
+        "pdf_path": outcome.pdf_path,
         "title": job["title"],
         "site": job.get("site"),
         "status": outcome.status,
         "attempts": outcome.attempts,
         "materials": outcome.materials,
+        "error": outcome.error,
     }
 
 

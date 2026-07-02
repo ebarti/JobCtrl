@@ -36,6 +36,7 @@ from jobhunter.domain.materials.value_objects import (
     ValidationResult,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +73,20 @@ class SqliteMaterialsRepository:
     A single ``sqlite3.Connection`` is held for the lifetime of the
     adapter; ``save`` commits eagerly so consumers see the row immediately.
     Tests inject their own connection via the constructor for isolation.
+
+    When a :class:`SqliteUnitOfWork` is supplied and active, ``save`` stages
+    its writes and defers the commit to the unit of work, so a multi-write
+    persist block (e.g. the tailor generation flip) commits atomically.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        unit_of_work: SqliteUnitOfWork | None = None,
+    ) -> None:
         self._conn = conn
+        self._unit_of_work = unit_of_work
 
     # ------------------------------------------------------------------
     # Read
@@ -485,7 +496,12 @@ class SqliteMaterialsRepository:
         for artifact in materials.artifacts:
             self._upsert_artifact(materials, artifact)
 
-        self._conn.commit()
+        self._commit()
+
+    def _commit(self) -> None:
+        """Commit now, unless an active unit of work owns the transaction."""
+        if self._unit_of_work is None or not self._unit_of_work.active:
+            self._conn.commit()
 
     def suppress_active_artifacts(
         self,

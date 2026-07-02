@@ -23,13 +23,25 @@ from jobhunter.domain.materials.coverage_audit import KeywordCoverage
 from jobhunter.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobhunter.domain.materials.voice import VoicePassRecord
 from jobhunter.domain.tenant import TenantId
+from jobhunter.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
 
 class SqliteBulletProvenanceRepository:
-    """SQLite-backed implementation of ``BulletProvenanceRepository``."""
+    """SQLite-backed implementation of ``BulletProvenanceRepository``.
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    When a :class:`SqliteUnitOfWork` is supplied and active, ``save`` stages its
+    writes and defers the commit to the unit of work, so an accepted generation's
+    provenance commits in the same transaction as the artifact it explains.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        unit_of_work: SqliteUnitOfWork | None = None,
+    ) -> None:
         self._conn = conn
+        self._unit_of_work = unit_of_work
         # Idempotent — safe if init_db already ran; keeps test setup minimal.
         ensure_bullet_provenance_tables(conn)
 
@@ -144,7 +156,12 @@ class SqliteBulletProvenanceRepository:
                     voice_json,
                 ),
             )
-        self._conn.commit()
+        self._commit()
+
+    def _commit(self) -> None:
+        """Commit now, unless an active unit of work owns the transaction."""
+        if self._unit_of_work is None or not self._unit_of_work.active:
+            self._conn.commit()
 
     # --------------------------------------------------------------- mapping
 

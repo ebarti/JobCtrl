@@ -32,6 +32,7 @@ import logging
 import os
 import re
 from collections.abc import Iterable, Mapping as MappingABC
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -132,6 +133,7 @@ from jobhunter.domain.ports.materials import (
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
+    UnitOfWork,
     VoicePort,
 )
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
@@ -1325,6 +1327,8 @@ class TailorResumeUseCase:
         requirement_fit_repository: "RequirementFitReportRepository | None" = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
         voice: VoicePort | None = None,
+        pdf_renderer: PdfRendererPort | None = None,
+        unit_of_work: UnitOfWork | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -1354,6 +1358,22 @@ class TailorResumeUseCase:
         # ships. When absent, the use case is exactly the Phase-2 flow (coverage is
         # still computed canonically, just over the un-voiced candidate).
         self._voice = voice
+        # Preservation invariant (architecture.md §5.5 / CLAUDE.md): when a PDF
+        # renderer is injected, an approved resume's PDF is rendered INSIDE the
+        # tailor transaction — BEFORE the prior approved generation is superseded
+        # and BEFORE ResumeApproved is published — so a transient render failure
+        # never strips the job of its last accepted resume. When absent (narrow
+        # unit tests that only exercise validate/judge), no PDF is produced and
+        # the flow is exactly the pre-render persist path.
+        self._pdf_renderer = pdf_renderer
+        # Atomicity boundary (A9). When injected, the generation flip — supersede
+        # the prior approved generation, save the new generation, and record its
+        # provenance/coverage — commits inside ONE transaction, so a crash or a
+        # provenance write failure mid-flip rolls the whole block back: the prior
+        # approved generation stays current and no new artifact is committed
+        # without its provenance. When absent, each repository commits per call
+        # exactly as before (the flow's pre-A9 behaviour).
+        self._unit_of_work = unit_of_work
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -1565,23 +1585,86 @@ class TailorResumeUseCase:
             },
             updated_at=materials.updated_at,
         )
-        if materials.is_resume_approved and prior_generation is not None:
-            self._repository.save(prior_generation)
-        self._repository.save(materials)
-
-        # Persist the canonical provenance rows only for an ACCEPTED generation,
-        # transactionally after the artifact is saved (so they share the
-        # generation). A failed re-tailor writes no provenance rows — the prior
-        # accepted generation's rows survive untouched (Anti-Pattern 4 / success
-        # criterion 5). The Phase-3 generation-time coverage (GROUND-06) + voice
-        # audit (VOICE-02) ride on the same set.
-        if materials.is_resume_approved and provenance_rows:
-            self._record_provenance(
+        # Render the replacement resume PDF BEFORE superseding the prior approved
+        # generation (preservation invariant — architecture.md §5.5 / CLAUDE.md).
+        # A transient render failure must leave the last accepted generation
+        # untouched, so on failure we neither supersede the prior nor publish
+        # ResumeApproved: the new generation is demoted to a rejected attempt
+        # (audit history) and the prior stays current for downstream stages.
+        pdf_path: str | None = None
+        if materials.is_resume_approved and self._pdf_renderer is not None:
+            render = self._render_resume_pdf(
                 materials=materials,
+                final_payload=final_payload,
+                profile_snapshot=profile_snapshot,
+                resume_template=resume_template,
+            )
+            if isinstance(render, str):
+                rejected = materials.with_resume_attempt(
+                    artifact,
+                    validation=ValidationResult.failure((render,)),
+                    verdict=verdict,
+                    updated_at=_utc_now(),
+                )
+                self._repository.save(rejected)
+                self._publish_failed(
+                    rejected,
+                    validation_errors=(render,),
+                    attempt=attempts,
+                )
+                return TailorOutcome(
+                    materials=rejected,
+                    status="error",
+                    attempts=attempts,
+                    text_path=str(text_path),
+                    report=report,
+                    error=render,
+                    final_payload=final_payload,
+                )
+            pdf_artifact, pdf_path = render
+            materials = materials.with_resume_pdf(pdf_artifact, updated_at=_utc_now())
+
+        # Atomic generation flip (A9): supersede the prior approved generation,
+        # save the new generation, and persist its provenance/coverage inside ONE
+        # transaction. A crash or a provenance write failure mid-flip rolls the
+        # whole block back, so the prior approved generation stays current and no
+        # new artifact is ever committed without its provenance (the audit
+        # invariant: every approved generation has its provenance). A failed
+        # re-tailor still writes no provenance rows, so the prior generation's
+        # rows survive untouched (Anti-Pattern 4 / success criterion 5). The
+        # Phase-3 generation-time coverage (GROUND-06) + voice audit (VOICE-02)
+        # ride on the same set. Event publication + best-effort requirement-fit
+        # coverage enrichment run only AFTER the flip commits so they never
+        # announce or enrich a rolled-back state.
+        record_provenance = materials.is_resume_approved and bool(provenance_rows)
+        # INVARIANT: everything inside this block is ONE SQLite transaction on the
+        # shared thread-local connection. SqliteUnitOfWork opens it with BEGIN
+        # IMMEDIATE and commits (or rolls back) on exit, so no code reachable from
+        # here may commit, roll back, or open its own transaction on that
+        # connection — doing so silently splits the flip back into non-atomic
+        # writes and reopens the crash window A9 closed. Event publication and
+        # projection refresh (which do commit) stay OUTSIDE the block, below.
+        with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+            if materials.is_resume_approved and prior_generation is not None:
+                self._repository.save(prior_generation)
+            self._repository.save(materials)
+            if record_provenance:
+                self._persist_provenance_set(
+                    materials=materials,
+                    artifact_id=artifact.artifact_id,
+                    bullets=provenance_rows,
+                    coverage=coverage,
+                    voice=voice_record,
+                )
+
+        if record_provenance and self._provenance_repository is not None:
+            self._record_requirement_artifact_coverage(
+                materials=materials, bullets=provenance_rows
+            )
+            self._publish_provenance(
+                materials,
                 artifact_id=artifact.artifact_id,
-                bullets=provenance_rows,
-                coverage=coverage,
-                voice=voice_record,
+                bullet_count=len(provenance_rows),
             )
 
         status = self._derive_status(report, validation, verdict)
@@ -1625,6 +1708,7 @@ class TailorResumeUseCase:
             status=status,
             attempts=attempts,
             text_path=str(text_path),
+            pdf_path=pdf_path,
             report=report,
             final_payload=final_payload,
         )
@@ -1632,6 +1716,50 @@ class TailorResumeUseCase:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _render_resume_pdf(
+        self,
+        *,
+        materials: MaterialsSet,
+        final_payload: dict,
+        profile_snapshot: ProfileSnapshot,
+        resume_template: dict[str, Any] | None,
+    ) -> tuple[Artifact, str] | str:
+        """Render the approved resume to PDF next to its text artifact.
+
+        Returns ``(pdf_artifact, pdf_path)`` on success or a
+        ``"PDF render failed: …"`` message on failure. Rendering happens before
+        the prior approved generation is superseded, so a failure here is
+        recoverable — the caller keeps the last accepted resume intact.
+        """
+        assert self._pdf_renderer is not None
+        assert materials.tailored_resume is not None
+        pdf_out = Path(materials.tailored_resume.path).with_suffix(".pdf")
+        try:
+            pdf_artifact = self._pdf_renderer.render_resume_to_pdf(
+                tailored_payload=final_payload,
+                profile_dict=profile_snapshot.as_dict(),
+                output_path=str(pdf_out),
+                created_at=_utc_now(),
+                resume_theme=(
+                    resume_template.get("theme")
+                    if isinstance(resume_template, dict)
+                    else None
+                ),
+                resume_template=(
+                    resume_template.get("metadata")
+                    if isinstance(resume_template, dict)
+                    else None
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — a render failure must not destroy the prior resume
+            log.error(
+                "Resume PDF generation failed for %s",
+                materials.tailored_resume.path,
+                exc_info=True,
+            )
+            return f"PDF render failed: {exc}"
+        return pdf_artifact, str(pdf_out)
 
     def _run_analyze(
         self,
@@ -2631,7 +2759,7 @@ class TailorResumeUseCase:
             return None
         return compute_keyword_coverage(employer_analysis, rows)
 
-    def _record_provenance(
+    def _persist_provenance_set(
         self,
         *,
         materials: MaterialsSet,
@@ -2640,32 +2768,30 @@ class TailorResumeUseCase:
         coverage: KeywordCoverage | None = None,
         voice: VoicePassRecord | None = None,
     ) -> None:
-        """Persist the accepted generation's provenance rows + publish the event.
+        """Persist the accepted generation's provenance rows (write only).
 
-        Generation-versioned and bound to the artifact it explains. The Phase-3
+        Generation-versioned and bound to the artifact it explains; the Phase-3
         generation-time coverage (GROUND-06) + voice audit (VOICE-02) ride on the
-        same set. Persistence and event publication never raise into the tailor
-        flow — a provenance write failure must not undo an accepted resume.
+        same set. Called INSIDE the generation-flip unit of work, so a write
+        failure is deliberately NOT swallowed — it propagates to roll the whole
+        flip back (A9), keeping the audit invariant that every committed approved
+        generation has its provenance. Requirement-fit coverage enrichment and
+        the ``BulletProvenanceRecorded`` event fire from the caller only after
+        the flip commits.
         """
         if self._provenance_repository is None:
             return
-        try:
-            provenance_set = BulletProvenanceSet(
-                tenant_id=materials.tenant_id,
-                job_id=materials.job_id,
-                generation=materials.generation,
-                artifact_id=artifact_id,
-                bullets=tuple(bullets),
-                coverage=coverage,
-                voice=voice,
-                created_at=materials.updated_at,
-            )
-            self._provenance_repository.save(provenance_set)
-        except Exception:  # noqa: BLE001 — persistence must not break the use case
-            log.exception("Failed to persist bullet provenance for %s", materials.job_id)
-            return
-        self._record_requirement_artifact_coverage(materials=materials, bullets=bullets)
-        self._publish_provenance(materials, artifact_id=artifact_id, bullet_count=len(bullets))
+        provenance_set = BulletProvenanceSet(
+            tenant_id=materials.tenant_id,
+            job_id=materials.job_id,
+            generation=materials.generation,
+            artifact_id=artifact_id,
+            bullets=tuple(bullets),
+            coverage=coverage,
+            voice=voice,
+            created_at=materials.updated_at,
+        )
+        self._provenance_repository.save(provenance_set)
 
     def _record_requirement_artifact_coverage(
         self,

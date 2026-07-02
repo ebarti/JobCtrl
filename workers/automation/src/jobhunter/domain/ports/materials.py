@@ -38,6 +38,35 @@ from jobhunter.domain.tenant import TenantId
 
 
 # ---------------------------------------------------------------------------
+# UnitOfWork
+# ---------------------------------------------------------------------------
+
+
+class UnitOfWork(Protocol):
+    """Transaction boundary a use case opens around a multi-write persist block.
+
+    A use case that must persist writes spanning more than one per-aggregate
+    repository (e.g. supersede the prior generation, save the new generation,
+    and record its provenance) opens a ``UnitOfWork`` around the whole block so
+    the writes commit atomically: the boundary commits once on a clean exit and
+    rolls the whole block back on any exception. Repositories enrolled in the
+    active unit of work stage their writes and skip their per-call commit.
+
+    The local adapter is
+    :class:`~jobhunter.infrastructure.materials.unit_of_work.SqliteUnitOfWork`,
+    a boundary over the shared SQLite connection; the hosted future maps it onto
+    the outbox transaction. When no unit of work is supplied the use case falls
+    back to the per-call-commit behaviour of each repository.
+    """
+
+    def __enter__(self) -> "UnitOfWork":
+        ...
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
+        ...
+
+
+# ---------------------------------------------------------------------------
 # MaterialsRepository
 # ---------------------------------------------------------------------------
 
@@ -381,6 +410,7 @@ __all__ = [
     "PdfRendererPort",
     "RenderFormat",
     "TailoringPolicyRepository",
+    "UnitOfWork",
     "VoicePort",
 ]
 
