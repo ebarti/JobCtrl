@@ -2248,6 +2248,67 @@ def test_cover_letter_use_case_accepts_grounded_letter_and_persists_audit(
     )
 
 
+def test_cover_letter_gate_inherits_concept_scope_and_word_form_grounding(
+    tmp_path: Path, job: dict
+) -> None:
+    """The cover-letter gate inherits #218's precision fixes to the shared prose
+    skill/tool gate: concept keywords (scalability/reliability/observability), whose
+    word form varies normally, are NEVER false-rejected, while a fabricated NAMED
+    technology (Kubernetes, absent from the profile) IS still hard-rejected.
+
+    The profile writes ``scalable``/``reliability``; the target keywords ask for
+    ``scalability``/``reliability`` (word-form grounded against the corpus) and
+    ``observability``/``microservices`` (not named technologies, so never gated).
+    Without the #218 merge the old gate would terminally reject the concept letter
+    on ``scalability`` — the same regression #218 fixed for the resume."""
+    profile = _profile_dict()
+    profile["resume"]["executive_profile"]["baseline_text"] = (
+        "Senior engineer who designs scalable services with strong reliability."
+    )
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    analysis_repository = _FakeAnalysisRepository(
+        _analysis_with_keywords(
+            job,
+            ["scalability", "reliability", "observability", "microservices", "Kubernetes"],
+        )
+    )
+
+    def _run(letter_body: str):
+        repo = _FakeRepository()
+        _seed_approved_cover_materials(repo, job, tmp_path)
+        use_case = GenerateCoverLetterUseCase(
+            repository=repo,
+            llm=_ScriptedLlm([_cover_letter_text(letter_body)]),
+            validator=ContentValidator(),
+            analysis_repository=analysis_repository,
+            max_retries=0,
+        )
+        return use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    # Concept keywords in varied word forms are NOT false-rejected.
+    grounded = _run(
+        "I focus on scalability, reliability, and observability across microservices."
+    )
+    assert grounded.status == "ok"
+    assert grounded.materials is not None
+    assert grounded.materials.cover_letter.status is ArtifactStatus.APPROVED
+    assert grounded.materials.cover_letter.metadata["fabrication_audit"]["grounded"] is True
+
+    # A fabricated NAMED tool absent from the profile is still hard-rejected.
+    fabricated = _run(
+        "I focus on scalability and reliability, and I deploy with Kubernetes."
+    )
+    assert fabricated.status == "failed_validation"
+    assert fabricated.materials is not None
+    assert fabricated.materials.cover_letter.status is ArtifactStatus.REJECTED
+    findings = fabricated.materials.cover_letter.metadata["fabrication_audit"]["findings"]
+    assert any(item["kind"] == "skill" and item["token"] == "Kubernetes" for item in findings)
+    assert any(
+        "never_fabricate_skills" in error
+        for error in fabricated.materials.last_validation.errors
+    )
+
+
 # ---------------------------------------------------------------------------
 # RenderPdfUseCase
 # ---------------------------------------------------------------------------

@@ -296,8 +296,11 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   accepted `GenerateCoverLetterUseCase` runs the SAME deterministic guards over the
   generated body — the never-fabricate detector (metrics/dates/titles/employers)
   plus the prose skill/tool gate (`build_skill_vocabulary` + the persisted
-  `EmployerAnalysis` keywords as targets). Two cover-letter allowances keep it
-  precise, since a letter legitimately names the job it targets: the mandatory
+  `EmployerAnalysis` keywords as targets), so it inherits that gate's
+  named-technology scope and word-form-tolerant grounding — a fabricated
+  `Kubernetes` is rejected while JD concept keywords (scalability, reliability,
+  observability) woven into a grounded letter are not. Two cover-letter allowances
+  keep it precise, since a letter legitimately names the job it targets: the mandatory
   `Dear …` salutation is excluded from the scan (its addressee title is not a
   claim), the target role's title tokens ground the title arm, and an employer
   mention containing the target company is not a fabricated employer. The
