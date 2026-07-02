@@ -64,3 +64,50 @@ def test_negative_event_id_rejected(tmp_path: Path) -> None:
             repo.set("bad", -1)
     finally:
         close_connection(db_path)
+
+
+def test_set_is_monotonic_never_regresses(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        repo = SqliteEventWatermarkRepository(conn)
+        repo.set("scoring_projection", 10)
+        # A backwards write must be ignored — the watermark never regresses.
+        repo.set("scoring_projection", 5)
+        assert repo.get("scoring_projection") == 10
+        # Equal is a no-op; a forward write advances.
+        repo.set("scoring_projection", 10)
+        assert repo.get("scoring_projection") == 10
+        repo.set("scoring_projection", 15)
+        assert repo.get("scoring_projection") == 15
+    finally:
+        close_connection(db_path)
+
+
+def test_deferred_set_does_not_autocommit(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        repo = SqliteEventWatermarkRepository(conn)
+        repo.set("scoring_projection", 5)
+        # A deferred write leaves the transaction open for the outer owner
+        # to flush; rolling back reverts it so the watermark is unchanged.
+        repo.set("scoring_projection", 9, commit=False)
+        assert conn.in_transaction
+        conn.rollback()
+        assert repo.get("scoring_projection") == 5
+    finally:
+        close_connection(db_path)
+
+
+def test_default_set_commits_immediately(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        repo = SqliteEventWatermarkRepository(conn)
+        repo.set("scoring_projection", 7)
+        # Default set() commits, so there is nothing pending to roll back.
+        conn.rollback()
+        assert repo.get("scoring_projection") == 7
+    finally:
+        close_connection(db_path)

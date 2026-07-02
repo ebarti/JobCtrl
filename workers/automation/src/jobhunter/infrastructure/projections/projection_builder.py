@@ -481,7 +481,9 @@ class ProjectionBuilder:
             if source_quality_dirty or (not source_quality_exists and source_quality_history):
                 self._rebuild_source_quality()
             if max_event_id > watermark:
-                self._watermarks.set(PROJECTION_NAME, max_event_id)
+                self._watermarks.set(
+                    PROJECTION_NAME, max_event_id, commit=not defer_commit
+                )
             if not dashboard_exists:
                 self._rebuild_dashboard()
             if audit_backfill_pending:
@@ -500,7 +502,9 @@ class ProjectionBuilder:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
         if max_event_id > watermark:
-            self._watermarks.set(PROJECTION_NAME, max_event_id)
+            self._watermarks.set(
+                PROJECTION_NAME, max_event_id, commit=not defer_commit
+            )
         if audit_backfill_pending:
             self._mark_score_audit_backfill_done()
         if not defer_commit:
