@@ -537,6 +537,112 @@ def test_default_all_entries_still_audited_when_no_strict_subset_pinned() -> Non
     assert "kubernetes" not in coverage.missing
 
 
+# --------------------------------------------------------------------------
+# Shipped-skill-category parity: provenance + coverage audit ONLY the skill
+# categories the resume ships (strict subset of required_skill_category_ids).
+# --------------------------------------------------------------------------
+
+
+def _profile_with_omitted_skill_category(*, required_skill_category_ids: list[str] | None) -> dict:
+    """A two-category profile: ``languages`` plus a ``cloud`` category whose only
+    analysis keyword is "performance". ``required_skill_category_ids`` pins the
+    shipped subset; ``None`` leaves it unpinned (the default-all path)."""
+    profile = _profile()
+    profile["resume"]["skill_categories"].append(
+        {"id": "cloud", "label": "Cloud", "items": ["AWS", "Performance tuning"]}
+    )
+    rules = profile["resume"]["tailoring_rules"]
+    if required_skill_category_ids is None:
+        rules.pop("required_skill_category_ids", None)
+    else:
+        rules["required_skill_category_ids"] = list(required_skill_category_ids)
+    return profile
+
+
+def _analysis_with_performance_requirement() -> EmployerAnalysis:
+    """The base analysis plus a performance requirement/keyword, so the omitted
+    category's skills line is a GROUNDED provenance row (its "Performance tuning"
+    item serves ``req_perf``) — the exact shape that inflated coverage before the
+    fix."""
+    return _analysis(
+        requirements=[
+            Requirement(
+                id="req_python",
+                text="5+ years of Python",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="5+ years of Python",
+            ),
+            Requirement(
+                id="req_latency",
+                text="improve API latency",
+                tier="nice_to_have",
+                weight=0.5,
+                evidence_span="improve API latency",
+            ),
+            Requirement(
+                id="req_perf",
+                text="performance tuning",
+                tier="must_have",
+                weight=0.7,
+                evidence_span="performance tuning",
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(keyword="Python", evidence_span="5+ years of Python", requirement_ref="req_python"),
+            ReasonedKeyword(keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"),
+            ReasonedKeyword(
+                keyword="performance",
+                evidence_span="performance tuning",
+                requirement_ref="req_perf",
+            ),
+        ],
+    )
+
+
+def test_strict_subset_provenance_and_coverage_reflect_only_shipped_skill_categories() -> None:
+    """Regression (rev-211 A4b / auditability): when ``required_skill_category_ids``
+    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those skill
+    categories. Provenance -- and the coverage computed over it -- must audit ONLY
+    the shipped categories. A keyword present solely in an OMITTED category's skills
+    line ("performance") must not appear in any provenance row and must be reported
+    missing, never inflated as covered off a line the employer never receives."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=["languages"])
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
+    assert skill_source_ids == {"languages"}  # the omitted category is not audited
+    assert not any(row.bullet_id.startswith("skills:cloud") for row in rows)
+    assert all("performance" not in row.generated_text.lower() for row in rows)
+
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "performance" in coverage.missing
+    assert "performance" not in coverage.covered
+    # The shipped category's + experience real coverage is untouched.
+    assert "python" in coverage.covered
+    assert "latency" in coverage.covered
+
+
+def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned() -> None:
+    """The default-all path (no ``required_skill_category_ids`` pinned) is unchanged:
+    every skill category is audited, so a keyword grounded only in the second
+    category ("performance") is legitimately covered."""
+    profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
+    analysis = _analysis_with_performance_requirement()
+    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
+
+    rows = _build(profile, payload, analysis)
+
+    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
+    assert skill_source_ids == {"languages", "cloud"}
+    coverage = compute_keyword_coverage(analysis, rows)
+    assert "performance" in coverage.covered
+    assert "performance" not in coverage.missing
+
+
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
     rows = _build(
         _profile(),
