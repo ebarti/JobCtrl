@@ -23,9 +23,16 @@ class EventWatermarkRepository(Protocol):
         """
         ...
 
-    def set(self, projection_name: str, last_event_id: int) -> None:
+    def set(
+        self, projection_name: str, last_event_id: int, *, commit: bool = True
+    ) -> None:
         """Upsert *projection_name* → *last_event_id*.
 
-        Implementations must be transactional.
+        Implementations must be transactional and monotonic: the watermark
+        never regresses, so a stale or out-of-order write with a lower
+        *last_event_id* is a no-op.
+
+        Pass ``commit=False`` to defer the flush to an enclosing transaction
+        (e.g. the projection builder rebuilding within the caller's write).
         """
         ...

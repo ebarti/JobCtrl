@@ -225,6 +225,293 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert "/Users/" not in json.dumps(audit)
 
 
+def _insert_score(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    fit_score: int,
+    scored_at: str,
+    criteria_json: str,
+    trace_json: str,
+    correction_json: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at,
+                                correction_json, criteria_json, trace_json)
+        VALUES (?, 1, 'local', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_url,
+            fit_score,
+            json.dumps(
+                {
+                    "technical_fit": 9,
+                    "experience_fit": 7,
+                    "role_fit": 8,
+                    "reasoning": "Strong fit",
+                }
+            ),
+            json.dumps(["python"]),
+            scored_at,
+            correction_json,
+            criteria_json,
+            trace_json,
+        ),
+    )
+
+
+def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) -> None:
+    """Score audit columns (rubric criteria + prompt/model trace) are projected
+    verbatim from ``job_scores`` into both the list and detail projections.
+
+    Regression guard for the read-model NULL bug: the Python builder must write
+    the same three audit columns the TS builder does, sourced byte-for-byte from
+    the latest ``job_scores`` row, so the score-audit surface is never NULL for a
+    normally-scored job even when the Python event handler owns the refresh.
+    """
+    url = "https://example.com/jobs/score-audit"
+    _seed_job(conn, url)
+    criteria_json = json.dumps(
+        {
+            "formula_version": "score-v3",
+            "rubric": {"technical_fit": "Depth of required stack"},
+            "weights": {"experience_fit": 0.3, "role_fit": 0.2, "technical_fit": 0.5},
+        },
+        sort_keys=True,
+    )
+    trace_json = json.dumps(
+        {
+            "correction_history": [],
+            "model": "claude-opus",
+            "parser_warnings": [],
+            "prompt_version": "score-prompt-v7",
+            "schema_version": "score-schema-v2",
+            "scoring_policy_version": 3,
+        },
+        sort_keys=True,
+    )
+    _insert_score(
+        conn,
+        url,
+        fit_score=8,
+        scored_at="2026-06-20T10:00:00+00:00",
+        criteria_json=criteria_json,
+        trace_json=trace_json,
+        correction_json=None,
+    )
+    record_job_event(conn, url, "score", "JobScored")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    list_row = conn.execute(
+        """
+        SELECT score_criteria_json, score_trace_json, score_correction_json
+        FROM job_list_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert list_row is not None
+    assert list_row["score_criteria_json"] == criteria_json
+    assert list_row["score_trace_json"] == trace_json
+    assert list_row["score_correction_json"] is None
+    assert json.loads(list_row["score_criteria_json"])["formula_version"] == "score-v3"
+    assert json.loads(list_row["score_trace_json"])["scoring_policy_version"] == 3
+
+    detail_row = conn.execute(
+        """
+        SELECT score_criteria_json, score_trace_json, score_correction_json
+        FROM job_detail_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert detail_row is not None
+    assert detail_row["score_criteria_json"] == criteria_json
+    assert detail_row["score_trace_json"] == trace_json
+    assert detail_row["score_correction_json"] is None
+
+
+def test_projects_score_correction_json_when_correction_exists(
+    conn: sqlite3.Connection,
+) -> None:
+    """A self-correction on the latest score row is projected verbatim into
+    ``score_correction_json`` for both projections, preserving the correction
+    history the score-audit surface renders.
+    """
+    url = "https://example.com/jobs/score-correction"
+    _seed_job(conn, url)
+    correction_json = json.dumps(
+        {
+            "adjustments": [
+                {"dimension": "experience_fit", "from": 9, "note": "overstated tenure", "to": 6}
+            ],
+            "corrected_fit_score": 7,
+            "original_fit_score": 9,
+            "reason": "adversarial_self_correction",
+        },
+        sort_keys=True,
+    )
+    _insert_score(
+        conn,
+        url,
+        fit_score=7,
+        scored_at="2026-06-20T11:00:00+00:00",
+        criteria_json=json.dumps({"formula_version": "score-v3"}, sort_keys=True),
+        trace_json=json.dumps({"prompt_version": "score-prompt-v7"}, sort_keys=True),
+        correction_json=correction_json,
+    )
+    record_job_event(conn, url, "score", "JobScored")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    list_row = conn.execute(
+        "SELECT score_correction_json FROM job_list_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    assert list_row is not None
+    assert list_row["score_correction_json"] == correction_json
+
+    detail_row = conn.execute(
+        "SELECT score_correction_json FROM job_detail_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    assert detail_row is not None
+    assert detail_row["score_correction_json"] == correction_json
+    assert json.loads(detail_row["score_correction_json"])["corrected_fit_score"] == 7
+
+
+def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Connection) -> None:
+    """One-time backfill repopulates audit columns for jobs scored before the
+    Python builder learned to project them.
+
+    Reproduces the production state on an existing DB: a projection row written
+    by the old Python builder (audit columns NULL), a canonical ``job_scores``
+    row, and a watermark already advanced past the ``JobScored`` event (the
+    Python-first consumption that blocks the TS refresher). ``refresh()`` must
+    rebuild the row and populate the three audit columns from ``job_scores``
+    with no new score event. Without the backfill the row stays NULL because the
+    columns already exist, so the schema-migration reset never fires.
+    """
+    url = "https://example.com/jobs/backfill-existing-null"
+    _seed_job(conn, url)
+    criteria_json = json.dumps({"formula_version": "score-v3"}, sort_keys=True)
+    trace_json = json.dumps({"prompt_version": "score-prompt-v7"}, sort_keys=True)
+    correction_json = json.dumps({"reason": "adversarial_self_correction"}, sort_keys=True)
+    _insert_score(
+        conn,
+        url,
+        fit_score=8,
+        scored_at="2026-06-20T10:00:00+00:00",
+        criteria_json=criteria_json,
+        trace_json=trace_json,
+        correction_json=correction_json,
+    )
+    record_job_event(conn, url, "score", "JobScored")
+    conn.commit()
+
+    # Pre-fix projection rows: the old Python upsert never wrote the audit
+    # columns, so they default to NULL.
+    conn.execute(
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
+        "VALUES ('local', ?, 'Engineer', 8)",
+        (url,),
+    )
+    conn.execute(
+        "INSERT INTO job_detail_projections (tenant_id, job_id, description_preview) "
+        "VALUES ('local', ?, 'Short job description')",
+        (url,),
+    )
+    # Watermark already advanced past the score event: no event-driven rebuild.
+    latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
+    conn.commit()
+
+    pre = conn.execute(
+        "SELECT score_criteria_json FROM job_list_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    assert pre["score_criteria_json"] is None
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    list_row = conn.execute(
+        """
+        SELECT score_criteria_json, score_trace_json, score_correction_json
+        FROM job_list_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert list_row is not None
+    assert list_row["score_criteria_json"] == criteria_json
+    assert list_row["score_trace_json"] == trace_json
+    assert list_row["score_correction_json"] == correction_json
+
+    detail_row = conn.execute(
+        """
+        SELECT score_criteria_json, score_trace_json, score_correction_json
+        FROM job_detail_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert detail_row is not None
+    assert detail_row["score_criteria_json"] == criteria_json
+    assert detail_row["score_trace_json"] == trace_json
+    assert detail_row["score_correction_json"] == correction_json
+
+
+def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> None:
+    """The backfill marker gates the scan so it runs once per DB. A NULL-audit
+    row that appears after the marker is set is not re-backfilled, keeping steady
+    state cheap (no per-refresh O(jobs) resync).
+    """
+    first = "https://example.com/jobs/backfill-marker-first"
+    _seed_job(conn, first)
+    conn.commit()
+
+    # First refresh materialises the projection and sets the backfill marker.
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    marker = conn.execute(
+        "SELECT COUNT(*) FROM projection_backfills WHERE name LIKE 'score_audit_columns_v1%'"
+    ).fetchone()[0]
+    assert marker == 1
+
+    # A stray NULL-audit projection row with a canonical score appears AFTER the
+    # marker is set. With the watermark advanced, the next refresh must leave it
+    # untouched — the one-time scan does not run again.
+    later = "https://example.com/jobs/backfill-marker-later"
+    _seed_job(conn, later)
+    _insert_score(
+        conn,
+        later,
+        fit_score=6,
+        scored_at="2026-06-20T12:00:00+00:00",
+        criteria_json=json.dumps({"formula_version": "score-v3"}, sort_keys=True),
+        trace_json=json.dumps({"prompt_version": "score-prompt-v7"}, sort_keys=True),
+        correction_json=None,
+    )
+    conn.execute(
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
+        "VALUES ('local', ?, 'Engineer', 6)",
+        (later,),
+    )
+    record_job_event(conn, later, "score", "JobScored")
+    latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT score_criteria_json FROM job_list_projections WHERE job_id = ?",
+        (later,),
+    ).fetchone()
+    assert row is not None
+    assert row["score_criteria_json"] is None
+
+
 def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection) -> None:
     record_job_event(
         conn,

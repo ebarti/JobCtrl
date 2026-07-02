@@ -55,6 +55,9 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_list_projections", "score_version", "INTEGER"),
     ("job_list_projections", "scored_at", "TEXT"),
+    ("job_list_projections", "score_criteria_json", "TEXT"),
+    ("job_list_projections", "score_trace_json", "TEXT"),
+    ("job_list_projections", "score_correction_json", "TEXT"),
     ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
     ("job_detail_projections", "compensation_summary_json", "TEXT"),
@@ -62,6 +65,9 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_detail_projections", "score_version", "INTEGER"),
     ("job_detail_projections", "scored_at", "TEXT"),
+    ("job_detail_projections", "score_criteria_json", "TEXT"),
+    ("job_detail_projections", "score_trace_json", "TEXT"),
+    ("job_detail_projections", "score_correction_json", "TEXT"),
     ("job_detail_projections", "employer_analysis_json", "TEXT"),
     ("job_detail_projections", "requirement_fit_report_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
@@ -97,6 +103,9 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             score_reasoning        TEXT NOT NULL DEFAULT '',
             score_version          INTEGER,
             scored_at              TEXT,
+            score_criteria_json    TEXT,
+            score_trace_json       TEXT,
+            score_correction_json  TEXT,
             current_stage          TEXT NOT NULL DEFAULT 'discover',
             current_substage       TEXT NOT NULL DEFAULT 'discover',
             current_state          TEXT NOT NULL DEFAULT 'pending',
@@ -151,6 +160,9 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             score_reasoning        TEXT NOT NULL DEFAULT '',
             score_version          INTEGER,
             scored_at              TEXT,
+            score_criteria_json    TEXT,
+            score_trace_json       TEXT,
+            score_correction_json  TEXT,
             stages_json            TEXT NOT NULL DEFAULT '[]',
             employer_analysis_json TEXT,
             requirement_fit_report_json TEXT,
@@ -299,6 +311,14 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         ON operational_attempt_metrics(tenant_id, source_id, occurred_at DESC, metric_id DESC)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projection_backfills (
+            name         TEXT PRIMARY KEY,
+            completed_at TEXT NOT NULL
+        )
+        """
+    )
     score_evidence_schema_changed = False
     for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
         score_evidence_schema_changed = (
@@ -352,6 +372,7 @@ class SqliteProjectionStore:
                 full_description, fit_score, compensation_summary_json,
                 score_breakdown_json, score_keywords_json,
                 score_reasoning, score_version, scored_at,
+                score_criteria_json, score_trace_json, score_correction_json,
                 current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
@@ -359,7 +380,7 @@ class SqliteProjectionStore:
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -379,6 +400,9 @@ class SqliteProjectionStore:
                 score_reasoning       = excluded.score_reasoning,
                 score_version         = excluded.score_version,
                 scored_at             = excluded.scored_at,
+                score_criteria_json   = excluded.score_criteria_json,
+                score_trace_json      = excluded.score_trace_json,
+                score_correction_json = excluded.score_correction_json,
                 current_stage         = excluded.current_stage,
                 current_substage      = excluded.current_substage,
                 current_state         = excluded.current_state,
@@ -414,6 +438,9 @@ class SqliteProjectionStore:
                 projection.score_reasoning,
                 projection.score_version,
                 projection.scored_at,
+                projection.score_criteria_json,
+                projection.score_trace_json,
+                projection.score_correction_json,
                 projection.current_stage,
                 projection.current_substage,
                 projection.current_state,
@@ -492,9 +519,10 @@ class SqliteProjectionStore:
                 tenant_id, job_id, description_preview, compensation_summary_json,
                 compensation_audit_json, score_breakdown_json, score_keywords_json,
                 score_reasoning, score_version, scored_at,
+                score_criteria_json, score_trace_json, score_correction_json,
                 stages_json, employer_analysis_json, requirement_fit_report_json,
                 last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 description_preview    = excluded.description_preview,
                 compensation_summary_json = excluded.compensation_summary_json,
@@ -504,6 +532,9 @@ class SqliteProjectionStore:
                 score_reasoning        = excluded.score_reasoning,
                 score_version          = excluded.score_version,
                 scored_at              = excluded.scored_at,
+                score_criteria_json    = excluded.score_criteria_json,
+                score_trace_json       = excluded.score_trace_json,
+                score_correction_json  = excluded.score_correction_json,
                 stages_json            = excluded.stages_json,
                 employer_analysis_json = excluded.employer_analysis_json,
                 requirement_fit_report_json = excluded.requirement_fit_report_json,
@@ -520,6 +551,9 @@ class SqliteProjectionStore:
                 projection.score_reasoning,
                 projection.score_version,
                 projection.scored_at,
+                projection.score_criteria_json,
+                projection.score_trace_json,
+                projection.score_correction_json,
                 json.dumps(
                     [
                         {

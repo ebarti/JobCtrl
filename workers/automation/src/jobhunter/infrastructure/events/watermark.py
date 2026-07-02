@@ -33,17 +33,31 @@ class SqliteEventWatermarkRepository:
         except (KeyError, TypeError, IndexError):
             return int(row[0])
 
-    def set(self, projection_name: str, last_event_id: int) -> None:
+    def set(
+        self, projection_name: str, last_event_id: int, *, commit: bool = True
+    ) -> None:
         if last_event_id < 0:
             raise ValueError(f"last_event_id must be >= 0 (got {last_event_id})")
+        # MAX() keeps the watermark monotonic: a stale or out-of-order writer
+        # can never rewind it. updated_at only moves when the value advances.
         self._conn.execute(
             """
             INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
             VALUES (?, ?, ?)
             ON CONFLICT(projection_name) DO UPDATE SET
-                last_event_id = excluded.last_event_id,
-                updated_at    = excluded.updated_at
+                last_event_id = MAX(
+                    event_watermarks.last_event_id, excluded.last_event_id
+                ),
+                updated_at    = CASE
+                    WHEN excluded.last_event_id > event_watermarks.last_event_id
+                        THEN excluded.updated_at
+                    ELSE event_watermarks.updated_at
+                END
             """,
             (projection_name, int(last_event_id), _utc_now()),
         )
-        self._conn.commit()
+        # commit=False lets an outer transaction (the ProjectionBuilder's
+        # deferred-commit path) own the flush so the watermark bump stays
+        # atomic with the projection rebuild and the caller's own writes.
+        if commit:
+            self._conn.commit()

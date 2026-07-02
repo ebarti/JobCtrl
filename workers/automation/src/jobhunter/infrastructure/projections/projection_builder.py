@@ -89,6 +89,13 @@ log = logging.getLogger(__name__)
 
 
 PROJECTION_NAME = "operations_projections"
+# One-time backfill marker: existing DBs already had the score-audit projection
+# columns (the TS builder added them via ensureProjectionColumn), so the schema-
+# migration reset in ``ensure_projection_tables`` never fires for them and the
+# scored rows the Python builder wrote before it learned to project the audit
+# columns keep NULL criteria/trace/correction. This marker drives a single
+# targeted rebuild of those rows, independent of column creation.
+SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
 COMPENSATION_PROJECTION_VERSION = 1
 POSTED_COMPENSATION_WARNING_MESSAGES = {
     "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
@@ -420,6 +427,14 @@ class ProjectionBuilder:
                 pass
         dirty_jobs.update(self._stale_deleted_projection_jobs())
 
+        # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
+        # already-projected scored job whose audit columns are still NULL. This
+        # is independent of schema migration — on existing DBs the columns were
+        # added long ago by the TS builder, so the migration reset never runs.
+        audit_backfill_pending = not self._score_audit_backfill_done()
+        if audit_backfill_pending:
+            dirty_jobs.update(self._jobs_missing_score_audit_projection())
+
         # L5 (round-1 review): if there's nothing dirty AND we've already
         # synced past the latest event, skip the O(jobs × stages)
         # dashboard / apply-run rebuilds.  Exception: first-run, when
@@ -446,6 +461,7 @@ class ProjectionBuilder:
             and dashboard_exists
             and (source_quality_exists or not source_quality_history)
             and max_event_id == watermark
+            and not audit_backfill_pending
         ):
             return 0
 
@@ -465,9 +481,13 @@ class ProjectionBuilder:
             if source_quality_dirty or (not source_quality_exists and source_quality_history):
                 self._rebuild_source_quality()
             if max_event_id > watermark:
-                self._watermarks.set(PROJECTION_NAME, max_event_id)
+                self._watermarks.set(
+                    PROJECTION_NAME, max_event_id, commit=not defer_commit
+                )
             if not dashboard_exists:
                 self._rebuild_dashboard()
+            if audit_backfill_pending:
+                self._mark_score_audit_backfill_done()
             if not defer_commit:
                 self._conn.commit()
             return 0
@@ -482,7 +502,11 @@ class ProjectionBuilder:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
         if max_event_id > watermark:
-            self._watermarks.set(PROJECTION_NAME, max_event_id)
+            self._watermarks.set(
+                PROJECTION_NAME, max_event_id, commit=not defer_commit
+            )
+        if audit_backfill_pending:
+            self._mark_score_audit_backfill_done()
         if not defer_commit:
             self._conn.commit()
         return len(dirty_jobs)
@@ -549,6 +573,9 @@ class ProjectionBuilder:
         score_keywords_json = score.get("keywords_json") or "[]"
         score_version = score.get("version")
         scored_at = score.get("scored_at")
+        score_criteria_json = score.get("criteria_json")
+        score_trace_json = score.get("trace_json")
+        score_correction_json = score.get("correction_json")
 
         # Materials presence:
         tailor_path = materials.get("tailor_path") or _row_nullable_str(
@@ -611,6 +638,9 @@ class ProjectionBuilder:
             score_reasoning=score_reasoning,
             score_version=score_version,
             scored_at=scored_at,
+            score_criteria_json=score_criteria_json,
+            score_trace_json=score_trace_json,
+            score_correction_json=score_correction_json,
             current_stage=current_stage,
             current_substage=current_substage,
             current_state=current_state,
@@ -642,6 +672,9 @@ class ProjectionBuilder:
             score_reasoning=score_reasoning,
             score_version=score_version,
             scored_at=scored_at,
+            score_criteria_json=score_criteria_json,
+            score_trace_json=score_trace_json,
+            score_correction_json=score_correction_json,
             stages=tuple(stages),
             employer_analysis_json=employer_analysis_json,
             requirement_fit_report_json=requirement_fit_report_json,
@@ -896,7 +929,8 @@ class ProjectionBuilder:
             row = self._conn.execute(
                 """
                 SELECT s.version, s.fit_score, s.scored_at, s.breakdown_json,
-                       s.keywords_json
+                       s.keywords_json, s.criteria_json, s.trace_json,
+                       s.correction_json
                 FROM job_scores s
                 WHERE s.job_url = ?
                 ORDER BY s.version DESC
@@ -923,6 +957,9 @@ class ProjectionBuilder:
             "breakdown_json": None if legacy else json.dumps(_camel_score_breakdown(breakdown)),
             "keywords_json": json.dumps([] if legacy and keywords == ["legacy"] else keywords),
             "reasoning": reasoning,
+            "criteria_json": _row_nullable_str(row, "criteria_json"),
+            "trace_json": _row_nullable_str(row, "trace_json"),
+            "correction_json": _row_nullable_str(row, "correction_json"),
         }
 
     def _load_latest_materials(self, job_url: str) -> dict:
@@ -1145,6 +1182,48 @@ class ProjectionBuilder:
                 WHERE p.tenant_id = ?
                   AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                   AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
+
+    @property
+    def _score_audit_backfill_marker(self) -> str:
+        # Per-tenant marker so a shared multi-tenant DB backfills each tenant's
+        # scored rows exactly once, matching the per-tenant scan below.
+        return f"{SCORE_AUDIT_BACKFILL}:{self._tenant_id}"
+
+    def _score_audit_backfill_done(self) -> bool:
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM projection_backfills WHERE name = ?",
+                (self._score_audit_backfill_marker,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+    def _mark_score_audit_backfill_done(self) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO projection_backfills (name, completed_at) VALUES (?, ?)",
+            (self._score_audit_backfill_marker, _utc_now()),
+        )
+
+    def _jobs_missing_score_audit_projection(self) -> set[str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT p.job_id
+                FROM job_list_projections p
+                JOIN job_scores s ON s.job_url = p.job_id
+                WHERE p.tenant_id = ?
+                  AND p.score_criteria_json IS NULL
                 """,
                 (str(self._tenant_id),),
             ).fetchall()
