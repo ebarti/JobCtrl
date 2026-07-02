@@ -519,6 +519,26 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("rejects DNS-rebinding Host headers that embed a loopback label in a foreign name", async () => {
+    const app = buildApp(options);
+    const rebindingHosts = [
+      "localhost.evil.com",
+      "127.0.0.1.evil.com",
+      "localhost.",
+      "127.0.0.1, evil.com",
+      "[::ffff:127.0.0.1]",
+    ];
+    try {
+      for (const host of rebindingHosts) {
+        const response = await app.inject({ method: "GET", url: "/v1/health", headers: { host } });
+        expect(response.statusCode, `${host}: ${response.body}`).toBe(403);
+        expect(response.json(), host).toMatchObject({ ok: false, error: "forbidden_host" });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it("blocks foreign-Host mutations before the handler runs", async () => {
     const app = buildApp(options);
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -4132,6 +4152,75 @@ describe("local TypeScript API", () => {
 
       expect(response.statusCode, response.body).toBe(403);
       expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
+    } finally {
+      await app.close();
+      fs.rmSync(isolatedAppDir, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses to serve HTML preview for an artifact whose path resolves outside the app directory", async () => {
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const app = buildApp({ ...options, appDir: isolatedAppDir });
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+      const artifact = listResponse.json().items[0];
+      fs.writeFileSync(artifact.localPath, "%PDF html-rendered escape test");
+      const htmlPath = path.join(path.dirname(artifact.localPath), `${path.parse(artifact.localPath).name}.html`);
+      fs.writeFileSync(htmlPath, '<!doctype html><main class="resume-page">Escape HTML preview</main>');
+      const now = "2026-06-20T10:00:00+00:00";
+      const db = new Database(options.dbPath);
+      createMaterialsTables(db);
+      db.prepare(
+        `INSERT OR REPLACE INTO job_materials (
+           job_url, generation, tenant_id, status, created_at, updated_at
+         ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+      ).run(artifact.jobKey, now, now);
+      db.prepare(
+        `INSERT OR REPLACE INTO job_materials_artifacts (
+           job_url, generation, artifact_type, artifact_id, status, path,
+           render_format, size_bytes, metadata_json, created_at
+         ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+      ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
+      db.close();
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview.html`,
+      });
+
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
+      expect(response.body).not.toContain("Escape HTML preview");
+    } finally {
+      await app.close();
+      fs.rmSync(isolatedAppDir, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses to render a PDF page preview for an artifact whose path resolves outside the app directory", async () => {
+    const rendered: Array<{ path: string; pageNumber: number }> = [];
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const app = buildApp({
+      ...options,
+      appDir: isolatedAppDir,
+      artifactPdfPageRenderer: async (artifactPath, pageNumber) => {
+        rendered.push({ path: artifactPath, pageNumber });
+        return Buffer.from("png page");
+      },
+    });
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+      const artifact = listResponse.json().items[0];
+      fs.writeFileSync(artifact.localPath, "%PDF test");
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview/page/2.png`,
+      });
+
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
+      expect(rendered).toEqual([]);
     } finally {
       await app.close();
       fs.rmSync(isolatedAppDir, { force: true, recursive: true });
