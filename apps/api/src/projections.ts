@@ -476,6 +476,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       funnel_json            TEXT NOT NULL DEFAULT '[]',
       by_source_json         TEXT NOT NULL DEFAULT '[]',
       score_distribution_json TEXT NOT NULL DEFAULT '[]',
+      outcome_conversion_json TEXT NOT NULL DEFAULT '{}',
       generated_at           TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS job_detail_projections (
@@ -644,6 +645,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     ensureProjectionColumn(db, "artifact_list_projections", "coverage_audit_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "artifact_list_projections", "voice_pass_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "dashboard_projections", "outcome_conversion_json", "TEXT NOT NULL DEFAULT '{}'") ||
+    schemaChanged;
   return schemaChanged;
 }
 
@@ -2363,6 +2367,113 @@ function pdfSibling(value: string | null | undefined): string | null {
   return `${value.replace(/\.[^.]+$/, "")}.pdf`;
 }
 
+// Score bands bucket ``fit_score`` by the user-facing scoring criteria in
+// workers .../scoring/use_cases.py SCORE_PROMPT (9-10 perfect ... 1-2 poor). MUST
+// stay byte-equivalent to the Python ``_score_band`` — the cross-runtime parity
+// test asserts both builders write the same outcome_conversion_json.
+const SCORE_BAND_ORDER = ["perfect", "strong", "moderate", "weak", "poor", "unscored"] as const;
+// Outcome kinds that mark an applied job as having reached each funnel stage.
+// Later stages imply earlier ones (an offer implies an interview and a reply).
+const REPLY_OUTCOME_KINDS = new Set(["recruiter_reply", "interview", "assessment", "offer", "rejection"]);
+const INTERVIEW_OUTCOME_KINDS = new Set(["interview", "assessment", "offer"]);
+const OFFER_OUTCOME_KINDS = new Set(["offer"]);
+const REJECTION_OUTCOME_KINDS = new Set(["rejection"]);
+
+interface ConversionCounts {
+  applied: number;
+  reply: number;
+  interview: number;
+  offer: number;
+  rejection: number;
+}
+
+interface OutcomeConversion {
+  version: number;
+  totals: ConversionCounts;
+  bySource: Array<{ source: string } & ConversionCounts>;
+  byBand: Array<{ band: string } & ConversionCounts>;
+}
+
+function scoreBand(fitScore: number | null | undefined): string {
+  if (fitScore === null || fitScore === undefined) return "unscored";
+  if (fitScore >= 9) return "perfect";
+  if (fitScore >= 7) return "strong";
+  if (fitScore >= 5) return "moderate";
+  if (fitScore >= 3) return "weak";
+  return "poor";
+}
+
+function hasAnyKind(kinds: Set<string>, target: Set<string>): boolean {
+  for (const kind of kinds) if (target.has(kind)) return true;
+  return false;
+}
+
+function loadOutcomeKindsByJob(db: SqliteDatabase, tenantId: string): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  if (!tableExists(db, "application_outcomes")) return result;
+  const rows = allRows<{ job_key: string; kind: string }>(
+    db,
+    "SELECT job_key, kind FROM application_outcomes WHERE tenant_id = ?",
+    [tenantId],
+  );
+  for (const row of rows) {
+    if (!row.job_key || !row.kind) continue;
+    const set = result.get(row.job_key) ?? new Set<string>();
+    set.add(row.kind);
+    result.set(row.job_key, set);
+  }
+  return result;
+}
+
+function buildOutcomeConversion(
+  db: SqliteDatabase,
+  tenantId: string,
+  active: Array<{
+    job_id: string;
+    apply_status: string | null;
+    applied_at: string | null;
+    fit_score: number | null;
+    source: string;
+  }>,
+): OutcomeConversion {
+  const appliedRows = active.filter((row) => row.applied_at || row.apply_status === "applied");
+  const outcomesByJob = loadOutcomeKindsByJob(db, tenantId);
+  const blank = (): ConversionCounts => ({ applied: 0, reply: 0, interview: 0, offer: 0, rejection: 0 });
+  const totals = blank();
+  const bySource = new Map<string, ConversionCounts>();
+  const byBand = new Map<string, ConversionCounts>();
+  for (const row of appliedRows) {
+    const source = row.source || "unknown";
+    const band = scoreBand(row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score));
+    const kinds = outcomesByJob.get(row.job_id) ?? new Set<string>();
+    let sourceBucket = bySource.get(source);
+    if (!sourceBucket) {
+      sourceBucket = blank();
+      bySource.set(source, sourceBucket);
+    }
+    let bandBucket = byBand.get(band);
+    if (!bandBucket) {
+      bandBucket = blank();
+      byBand.set(band, bandBucket);
+    }
+    for (const bucket of [totals, sourceBucket, bandBucket]) {
+      bucket.applied += 1;
+      if (hasAnyKind(kinds, REPLY_OUTCOME_KINDS)) bucket.reply += 1;
+      if (hasAnyKind(kinds, INTERVIEW_OUTCOME_KINDS)) bucket.interview += 1;
+      if (hasAnyKind(kinds, OFFER_OUTCOME_KINDS)) bucket.offer += 1;
+      if (hasAnyKind(kinds, REJECTION_OUTCOME_KINDS)) bucket.rejection += 1;
+    }
+  }
+  const bySourceList = [...bySource.entries()]
+    .map(([source, counts]) => ({ source, ...counts }))
+    .sort((a, b) => b.applied - a.applied || (a.source < b.source ? -1 : a.source > b.source ? 1 : 0));
+  const byBandList = SCORE_BAND_ORDER.filter((band) => byBand.has(band)).map((band) => ({
+    band,
+    ...byBand.get(band)!,
+  }));
+  return { version: 1, totals, bySource: bySourceList, byBand: byBandList };
+}
+
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
   const hiddenWhere = tableExists(db, "jobhunter_hidden_jobs")
     ? `AND NOT EXISTS (
@@ -2510,11 +2621,14 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   }
   const scoreDistribution = [...scoreCounts.entries()].sort((a, b) => b[0] - a[0]);
 
+  const outcomeConversion = buildOutcomeConversion(db, tenantId, active);
+
   db.prepare(
     `INSERT INTO dashboard_projections (
        tenant_id, total_jobs, failures, blocked, ready, applied, dry_runs,
-       funnel_json, by_source_json, score_distribution_json, generated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       funnel_json, by_source_json, score_distribution_json,
+       outcome_conversion_json, generated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id) DO UPDATE SET
        total_jobs              = excluded.total_jobs,
        failures                = excluded.failures,
@@ -2525,6 +2639,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
        funnel_json             = excluded.funnel_json,
        by_source_json          = excluded.by_source_json,
        score_distribution_json = excluded.score_distribution_json,
+       outcome_conversion_json = excluded.outcome_conversion_json,
        generated_at            = excluded.generated_at`,
   ).run(
     tenantId,
@@ -2537,6 +2652,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     JSON.stringify(funnel),
     JSON.stringify(bySource),
     JSON.stringify(scoreDistribution),
+    JSON.stringify(outcomeConversion),
     new Date().toISOString(),
   );
 }

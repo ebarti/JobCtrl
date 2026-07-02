@@ -75,6 +75,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("artifact_list_projections", "bullet_provenance_json", "TEXT"),
     ("artifact_list_projections", "coverage_audit_json", "TEXT"),
     ("artifact_list_projections", "voice_pass_json", "TEXT"),
+    ("dashboard_projections", "outcome_conversion_json", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
 
@@ -143,6 +144,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             funnel_json            TEXT NOT NULL DEFAULT '[]',
             by_source_json         TEXT NOT NULL DEFAULT '[]',
             score_distribution_json TEXT NOT NULL DEFAULT '[]',
+            outcome_conversion_json TEXT NOT NULL DEFAULT '{}',
             generated_at           TEXT NOT NULL DEFAULT ''
         )
         """
@@ -470,8 +472,8 @@ class SqliteProjectionStore:
             INSERT INTO dashboard_projections (
                 tenant_id, total_jobs, failures, blocked, ready, applied,
                 dry_runs, funnel_json, by_source_json, score_distribution_json,
-                generated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                outcome_conversion_json, generated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id) DO UPDATE SET
                 total_jobs              = excluded.total_jobs,
                 failures                = excluded.failures,
@@ -482,6 +484,7 @@ class SqliteProjectionStore:
                 funnel_json             = excluded.funnel_json,
                 by_source_json          = excluded.by_source_json,
                 score_distribution_json = excluded.score_distribution_json,
+                outcome_conversion_json = excluded.outcome_conversion_json,
                 generated_at            = excluded.generated_at
             """,
             (
@@ -508,6 +511,7 @@ class SqliteProjectionStore:
                 ),
                 json.dumps([list(item) for item in projection.by_source]),
                 json.dumps([list(item) for item in projection.score_distribution]),
+                json.dumps(projection.outcome_conversion),
                 projection.generated_at,
             ),
         )

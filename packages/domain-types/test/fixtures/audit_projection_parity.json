@@ -1,5 +1,5 @@
 {
-  "description": "Shared TS<->Python cross-runtime projection parity fixture (AUDIT-02). Both the Python builder test (workers/automation/tests/test_audit_projection_parity.py) and the TS builder test (apps/api/test/audit-projection-parity.test.ts) seed the SAME canonical rows, run their OWN projection builder, and assert the resulting projection columns match. `rows` are the canonical SQL rows exactly as the Python repositories write them. `expected` is the audit read shape both builders own (employer analysis verbatim; provenance/coverage/voice converted to camelCase DTOs by the read model). `expectedProjections` is the FULL dual-written column set for job_list_projections / job_detail_projections / dashboard_projections: every deterministic column each builder writes, with *_json columns given as parsed objects (both runtimes serialise with different whitespace/key order, so the tests parse before comparing). `projectionParity.jsonColumns` marks which columns to parse; `projectionParity.nonDeterministicColumns` marks wall-clock columns (last_updated_at / generated_at) that are asserted present-and-non-null but excluded from value comparison. Each test also runs a column-set guard: the set of columns its builder emits must equal the expectedProjections keys plus the non-deterministic columns, so a one-sided column addition in EITHER builder's schema fails the shared fixture. This closes the gap that let the Python-omits-score-audit-columns drift ship: the earlier fixture only asserted 4 audit JSON columns and no column-set guard. `dashboardAggregateJobs` seeds extra tenant-level jobs that feed ONLY the dashboard aggregate (the job_list/job_detail assertions target the primary `job` only): a non-hidden apply/pending job with no resume (so dashboard.ready genuinely asserts the has_resume predicate) and a hidden applied job in jobhunter_hidden_jobs (so total_jobs/applied/by_source/score_distribution/funnel genuinely assert hidden-job exclusion). The primary job.location is a non-normalized value (\"Remote - Berlin, Germany\") whose expected job_list.location is the normalized form (\"Berlin, Germany (Remote)\"), so both builders must run the same location normalization. These three columns (location, ready, hidden-job totals) were previously worked around; both builders now converge on them (B2b). The top-level `locationCases` array is a shared TS<->Python table of raw->normalized location inputs consumed by BOTH apps/api/test/location-normalization.test.ts and workers/automation/tests/test_location_normalization.py (which replaced their previously hand-maintained, already-drifted case lists), so neither normalization implementation can change a Spain region label (AN/CT/MD), a country token (ES/ESP/Spain/Espana), or a remote token/marker (remote, en remoto, remoto, teletrabajo, work from home, wfh) without one of those tests going red. It exercises the region-label expansion branch (gated on a Spain country token being present) and the remote-marker branch (every remote token plus the parenthetical markers).",
+  "description": "Shared TS<->Python cross-runtime projection parity fixture (AUDIT-02). Both the Python builder test (workers/automation/tests/test_audit_projection_parity.py) and the TS builder test (apps/api/test/audit-projection-parity.test.ts) seed the SAME canonical rows, run their OWN projection builder, and assert the resulting projection columns match. `rows` are the canonical SQL rows exactly as the Python repositories write them. `expected` is the audit read shape both builders own (employer analysis verbatim; provenance/coverage/voice converted to camelCase DTOs by the read model). `expectedProjections` is the FULL dual-written column set for job_list_projections / job_detail_projections / dashboard_projections: every deterministic column each builder writes, with *_json columns given as parsed objects (both runtimes serialise with different whitespace/key order, so the tests parse before comparing). `projectionParity.jsonColumns` marks which columns to parse; `projectionParity.nonDeterministicColumns` marks wall-clock columns (last_updated_at / generated_at) that are asserted present-and-non-null but excluded from value comparison. Each test also runs a column-set guard: the set of columns its builder emits must equal the expectedProjections keys plus the non-deterministic columns, so a one-sided column addition in EITHER builder's schema fails the shared fixture. This closes the gap that let the Python-omits-score-audit-columns drift ship: the earlier fixture only asserted 4 audit JSON columns and no column-set guard. `dashboardAggregateJobs` seeds extra tenant-level jobs that feed ONLY the dashboard aggregate (the job_list/job_detail assertions target the primary `job` only): a non-hidden apply/pending job with no resume (so dashboard.ready genuinely asserts the has_resume predicate) and a hidden applied job in jobhunter_hidden_jobs (so total_jobs/applied/by_source/score_distribution/funnel genuinely assert hidden-job exclusion). The primary job.location is a non-normalized value (\"Remote - Berlin, Germany\") whose expected job_list.location is the normalized form (\"Berlin, Germany (Remote)\"), so both builders must run the same location normalization. These three columns (location, ready, hidden-job totals) were previously worked around; both builders now converge on them (B2b). `rows.conversionJobs` seed two extra applied+scored greenhouse jobs and `rows.applicationOutcomes` record their outcomes (plus the primary job's) so `dashboard.outcome_conversion_json` is a non-trivial funnel with multi-entry bySource/byBand; the hidden applied job carries no outcome and, being hidden, is excluded from the funnel denominator, so the conversion totals also prove hidden-job exclusion flows through the rollup (#223). With the primary job, the no-resume job, and the two conversion jobs all active (the hidden job excluded) the dashboard aggregates over four jobs: total_jobs 4, applied 3, ready 0, funnel 4/4 per stage except apply (3 succeeded, 1 pending), by_source greenhouse 3 / linkedin 1, score_distribution 8/7/6. The top-level `locationCases` array is a shared TS<->Python table of raw->normalized location inputs consumed by BOTH apps/api/test/location-normalization.test.ts and workers/automation/tests/test_location_normalization.py (which replaced their previously hand-maintained, already-drifted case lists), so neither normalization implementation can change a Spain region label (AN/CT/MD), a country token (ES/ESP/Spain/Espana), or a remote token/marker (remote, en remoto, remoto, teletrabajo, work from home, wfh) without one of those tests going red. It exercises the region-label expansion branch (gated on a Spain country token being present) and the remote-marker branch (every remote token plus the parenthetical markers).",
   "job": {
     "url": "https://example.com/jobs/parity-developer-platform",
     "title": "Senior Platform Engineer",
@@ -227,16 +227,51 @@
         "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"counts\": {\"planned\": 2, \"covered\": 1, \"missing\": 1}}",
         "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
       }
+    ],
+    "conversionJobs": [
+      {
+        "url": "https://example.com/jobs/parity-conversion-offer",
+        "title": "Backend Platform Engineer",
+        "site": "greenhouse",
+        "fitScore": 6,
+        "appliedAt": "2026-06-09T13:00:00+00:00",
+        "discoveredAt": "2026-06-09T10:00:00+00:00"
+      },
+      {
+        "url": "https://example.com/jobs/parity-conversion-rejection",
+        "title": "Data Platform Engineer",
+        "site": "greenhouse",
+        "fitScore": 7,
+        "appliedAt": "2026-06-10T13:00:00+00:00",
+        "discoveredAt": "2026-06-10T10:00:00+00:00"
+      }
+    ],
+    "applicationOutcomes": [
+      {
+        "outcomeId": "parity-outcome-interview",
+        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "kind": "interview"
+      },
+      {
+        "outcomeId": "parity-outcome-offer",
+        "jobKey": "https://example.com/jobs/parity-conversion-offer",
+        "kind": "offer"
+      },
+      {
+        "outcomeId": "parity-outcome-rejection",
+        "jobKey": "https://example.com/jobs/parity-conversion-rejection",
+        "kind": "rejection"
+      }
     ]
   },
   "dashboardAggregateJobs": [
     {
-      "note": "Non-hidden job parked at apply/pending with NO resume. Canonical (TS) excludes it from `ready` because has_resume != 1; the pre-fix Python builder counted any apply/pending job, so this row makes dashboard.ready a genuine cross-runtime assertion (canonical ready == 0, pre-fix Python == 1).",
+      "note": "Non-hidden job parked at apply/pending with NO resume. Canonical (TS) excludes it from `ready` because has_resume != 1; the pre-fix Python builder counted any apply/pending job, so this row makes dashboard.ready a genuine cross-runtime assertion (canonical ready == 0, pre-fix Python == 1). Placed on `greenhouse` (not linkedin) so the dashboard by_source counts are greenhouse=3 / linkedin=1: dashboard by_source sorts by count only, and the two runtimes iterate active rows in different orders (TS rowid/insertion, Python job_id), so a count TIE would order non-deterministically across runtimes. The conversion bySource keeps its own count-then-source tiebreaker and is unaffected.",
       "hidden": false,
       "url": "https://example.com/jobs/parity-ready-no-resume",
       "title": "Ready Pending No Resume",
       "company": "ReadyCo",
-      "site": "linkedin",
+      "site": "greenhouse",
       "strategy": "jobspy",
       "location": "Berlin, Germany",
       "applyStatus": null,
@@ -302,7 +337,8 @@
       "dashboard": [
         "funnel_json",
         "by_source_json",
-        "score_distribution_json"
+        "score_distribution_json",
+        "outcome_conversion_json"
       ]
     },
     "nonDeterministicColumns": {
@@ -698,12 +734,16 @@
       "tenant_id": "local"
     },
     "dashboard": {
-      "applied": 1,
+      "applied": 3,
       "blocked": 0,
       "by_source_json": [
         [
+          "greenhouse",
+          3
+        ],
+        [
           "linkedin",
-          2
+          1
         ]
       ],
       "dry_runs": 0,
@@ -715,8 +755,8 @@
           "pending": 0,
           "running": 0,
           "stage": "discover",
-          "succeeded": 2,
-          "total": 2
+          "succeeded": 4,
+          "total": 4
         },
         {
           "blocked": 0,
@@ -724,8 +764,8 @@
           "pending": 0,
           "running": 0,
           "stage": "enrich",
-          "succeeded": 2,
-          "total": 2
+          "succeeded": 4,
+          "total": 4
         },
         {
           "blocked": 0,
@@ -733,8 +773,8 @@
           "pending": 0,
           "running": 0,
           "stage": "score",
-          "succeeded": 2,
-          "total": 2
+          "succeeded": 4,
+          "total": 4
         },
         {
           "blocked": 0,
@@ -742,8 +782,8 @@
           "pending": 0,
           "running": 0,
           "stage": "tailor",
-          "succeeded": 2,
-          "total": 2
+          "succeeded": 4,
+          "total": 4
         },
         {
           "blocked": 0,
@@ -751,8 +791,8 @@
           "pending": 0,
           "running": 0,
           "stage": "cover",
-          "succeeded": 2,
-          "total": 2
+          "succeeded": 4,
+          "total": 4
         },
         {
           "blocked": 0,
@@ -760,19 +800,73 @@
           "pending": 1,
           "running": 0,
           "stage": "apply",
-          "succeeded": 1,
-          "total": 2
+          "succeeded": 3,
+          "total": 4
         }
       ],
+      "outcome_conversion_json": {
+        "version": 1,
+        "totals": {
+          "applied": 3,
+          "reply": 3,
+          "interview": 2,
+          "offer": 1,
+          "rejection": 1
+        },
+        "bySource": [
+          {
+            "source": "greenhouse",
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 1
+          },
+          {
+            "source": "linkedin",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "byBand": [
+          {
+            "band": "strong",
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 1
+          },
+          {
+            "band": "moderate",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 0
+          }
+        ]
+      },
       "ready": 0,
       "score_distribution_json": [
         [
           8,
           1
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          6,
+          1
         ]
       ],
       "tenant_id": "local",
-      "total_jobs": 2
+      "total_jobs": 4
     }
   },
   "expected": {

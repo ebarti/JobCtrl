@@ -130,6 +130,7 @@ class DashboardProjection:
     funnel: tuple[DashboardFunnelStage, ...] = ()
     by_source: tuple[tuple[str, int], ...] = ()
     score_distribution: tuple[tuple[int, int], ...] = ()
+    outcome_conversion: dict[str, Any] = field(default_factory=dict)
     generated_at: str = ""
 
 

@@ -237,6 +237,35 @@ def _job_list_stage(stage: str | None, *, has_resume: bool = False) -> str:
 
 _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 
+# Score bands bucket ``fit_score`` by the user-facing scoring criteria in
+# ``domain/scoring/use_cases.py`` SCORE_PROMPT (9-10 perfect ... 1-2 poor) so the
+# outcome-conversion funnel reads by the same bands the score view shows.
+SCORE_BAND_ORDER: tuple[str, ...] = ("perfect", "strong", "moderate", "weak", "poor", "unscored")
+
+# Outcome kinds that mark an applied job as having reached each funnel stage.
+# Later stages imply earlier ones (an offer implies an interview and a reply), so
+# the sets are cumulative and reply >= interview >= offer holds within each group.
+_REPLY_OUTCOME_KINDS = frozenset(
+    {"recruiter_reply", "interview", "assessment", "offer", "rejection"}
+)
+_INTERVIEW_OUTCOME_KINDS = frozenset({"interview", "assessment", "offer"})
+_OFFER_OUTCOME_KINDS = frozenset({"offer"})
+_REJECTION_OUTCOME_KINDS = frozenset({"rejection"})
+
+
+def _score_band(fit_score: int | None) -> str:
+    if fit_score is None:
+        return "unscored"
+    if fit_score >= 9:
+        return "perfect"
+    if fit_score >= 7:
+        return "strong"
+    if fit_score >= 5:
+        return "moderate"
+    if fit_score >= 3:
+        return "weak"
+    return "poor"
+
 
 class ProjectionBuilder:
     """In-process projection materialiser.
@@ -1544,9 +1573,84 @@ class ProjectionBuilder:
             funnel=funnel,
             by_source=by_source,
             score_distribution=score_distribution,
+            outcome_conversion=self._build_outcome_conversion(active_rows),
             generated_at=_utc_now(),
         )
         self._store.upsert_dashboard(dashboard)
+
+    def _build_outcome_conversion(self, active_rows: list) -> dict[str, Any]:
+        """Roll Gmail/manual application outcomes into a funnel by source + band.
+
+        The denominator is the applied jobs (same predicate as the ``applied``
+        counter); each applied job's ``application_outcomes`` decide which funnel
+        stages it reached. Only counts are materialised — the read model derives
+        rates so there is no cross-runtime float drift.
+        """
+        applied_rows = [
+            row
+            for row in active_rows
+            if _row_nullable_str(row, "applied_at")
+            or _row_nullable_str(row, "apply_status") == "applied"
+        ]
+        outcomes_by_job = self._load_outcome_kinds_by_job()
+
+        def blank() -> dict[str, int]:
+            return {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0}
+
+        totals = blank()
+        by_source: dict[str, dict[str, int]] = {}
+        by_band: dict[str, dict[str, int]] = {}
+        for row in applied_rows:
+            source = _row_str(row, "source") or "unknown"
+            band = _score_band(_row_nullable_int(row, "fit_score"))
+            kinds = outcomes_by_job.get(_row_str(row, "job_id"), frozenset())
+            for bucket in (
+                totals,
+                by_source.setdefault(source, blank()),
+                by_band.setdefault(band, blank()),
+            ):
+                bucket["applied"] += 1
+                if kinds & _REPLY_OUTCOME_KINDS:
+                    bucket["reply"] += 1
+                if kinds & _INTERVIEW_OUTCOME_KINDS:
+                    bucket["interview"] += 1
+                if kinds & _OFFER_OUTCOME_KINDS:
+                    bucket["offer"] += 1
+                if kinds & _REJECTION_OUTCOME_KINDS:
+                    bucket["rejection"] += 1
+
+        by_source_list = [
+            {"source": source, **counts}
+            for source, counts in sorted(
+                by_source.items(), key=lambda kv: (-kv[1]["applied"], kv[0])
+            )
+        ]
+        by_band_list = [
+            {"band": band, **by_band[band]} for band in SCORE_BAND_ORDER if band in by_band
+        ]
+        return {
+            "version": 1,
+            "totals": totals,
+            "bySource": by_source_list,
+            "byBand": by_band_list,
+        }
+
+    def _load_outcome_kinds_by_job(self) -> dict[str, frozenset[str]]:
+        try:
+            rows = self._conn.execute(
+                "SELECT job_key, kind FROM application_outcomes WHERE tenant_id = ?",
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        grouped: dict[str, set[str]] = {}
+        for row in rows:
+            job_key = _row_str(row, "job_key")
+            kind = _row_str(row, "kind")
+            if not job_key or not kind:
+                continue
+            grouped.setdefault(job_key, set()).add(kind)
+        return {job_key: frozenset(kinds) for job_key, kinds in grouped.items()}
 
     def _rebuild_source_quality(self) -> None:
         placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)

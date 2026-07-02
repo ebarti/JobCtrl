@@ -2067,6 +2067,25 @@ export interface ApplyRunTimelineEventSummary {
   message: string | null;
 }
 
+export interface DashboardConversionFunnel {
+  applied: number;
+  reply: number;
+  interview: number;
+  offer: number;
+  rejection: number;
+  replyRate: number | null;
+  interviewRate: number | null;
+  offerRate: number | null;
+  rejectionRate: number | null;
+  costPerInterview: number | null;
+}
+
+export interface DashboardConversionSummary {
+  totals: DashboardConversionFunnel;
+  bySource: Array<{ source: string } & DashboardConversionFunnel>;
+  byBand: Array<{ band: string } & DashboardConversionFunnel>;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -2090,6 +2109,7 @@ export interface DashboardSummary {
     blocked: number;
     failed: number;
   }>;
+  conversion: DashboardConversionSummary;
   activity: ActivityEventSummary[];
   progress: PipelineProgressSummary[];
   sourceHealth: SourceHealthSummary[];
