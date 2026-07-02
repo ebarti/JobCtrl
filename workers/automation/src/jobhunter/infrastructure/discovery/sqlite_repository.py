@@ -53,7 +53,7 @@ from jobhunter.domain.discovery.value_objects import (
 )
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import (
-    descriptions_substantially_match,
+    content_match_basis,
     is_genuine_employer_identity,
     job_content_fingerprint,
     normalize_identity_text,
@@ -461,6 +461,12 @@ class SqliteJobRepository:
         as an employer key. When either side lacks a genuine employer this falls
         through to ``None`` (a safe under-merge). Returns ``None`` when the
         posting cannot be fingerprinted or no existing Job matches.
+
+        The incoming posting is a raw LISTING, so the match compares it against
+        BOTH the stored listing (``jobs.description``) and the stored enriched
+        full text like-for-like. Comparing only against the enriched text drops a
+        listing below the shingle threshold once the owner is enriched, silently
+        turning off cross-source dedup post-enrichment.
         """
 
         if not is_genuine_employer_identity(company):
@@ -478,8 +484,9 @@ class SqliteJobRepository:
         rows = self._conn.execute(
             """
             SELECT j.url, j.title, j.company, j.site,
-                   COALESCE(je.full_description, j.full_description, j.description)
-                       AS description,
+                   j.description AS listing_description,
+                   COALESCE(je.full_description, j.full_description)
+                       AS enriched_description,
                    CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
             FROM jobs j
             LEFT JOIN job_enrichments je ON je.job_url = j.url
@@ -497,15 +504,18 @@ class SqliteJobRepository:
             stored_employer = stored_company if stored_company else existing["site"]
             if not is_genuine_employer_identity(stored_employer):
                 continue
-            existing_key = job_content_fingerprint(
-                title=existing["title"],
-                company=stored_employer,
-                description=existing["description"],
+            basis = content_match_basis(
+                incoming_key=incoming_key,
+                incoming_description=description,
+                candidate_title=existing["title"],
+                candidate_employer=stored_employer,
+                candidate_descriptions=(
+                    existing["listing_description"],
+                    existing["enriched_description"],
+                ),
             )
-            if existing_key == incoming_key:
-                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis="fingerprint")
-            if descriptions_substantially_match(description, existing["description"]):
-                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis="shingle")
+            if basis is not None:
+                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis=basis)
         return None
 
     def attach_source_observation(

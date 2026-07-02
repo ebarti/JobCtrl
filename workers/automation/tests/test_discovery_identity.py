@@ -890,6 +890,92 @@ def test_discover_jobs_use_case_collapses_reworded_cross_source_description(
     assert link["confidence"] == 0.85
 
 
+def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
+    conn: sqlite3.Connection,
+) -> None:
+    """A fresh listing must still collapse onto an already-enriched owner.
+
+    Discovery stores the board LISTING in ``jobs.description``; enrichment writes
+    a much longer full text to ``job_enrichments.full_description``. Comparing an
+    incoming listing only against the enriched text drops below the shingle
+    threshold, so cross-source dedup silently stopped working post-enrichment.
+    The match must compare the incoming listing against the stored LISTING text
+    like-for-like (this test fails on the pre-fix tip, which compared against the
+    enriched text alone: reworded-vs-enriched Jaccard 0.66 < 0.83 threshold).
+    """
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    listing = _long_description("resp", tokens=90)
+    enriched = listing + " " + _long_description("bene", tokens=40)
+    second_source_listing = listing + " " + _long_description("extra", tokens=5)
+    survivor = "https://boards.greenhouse.io/acme/jobs/staff-eng"
+
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=survivor,
+                source_native_id="gh-1",
+                source_id="greenhouse:acme",
+                ats_kind=AtsKind.GREENHOUSE,
+                board="Acme",
+                metadata=JobMetadata(
+                    title="Staff Platform Engineer",
+                    description=listing,
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-greenhouse",
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            job_url, tenant_id, current_status, full_description,
+            enriched_at, updated_at
+        ) VALUES (?, 'local', 'enriched', ?, ?, ?)
+        """,
+        (survivor, enriched, "2026-05-12T01:00:00Z", "2026-05-12T01:00:00Z"),
+    )
+    conn.commit()
+    publisher.events.clear()
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://jobs.lever.co/acme/staff-platform-engineer",
+                source_native_id="lever-1",
+                source_id="lever:acme",
+                ats_kind=AtsKind.LEVER,
+                board="Acme",
+                metadata=JobMetadata(
+                    title="Staff Platform Engineer",
+                    description=second_source_listing,
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-lever",
+    )
+
+    assert summary.new_jobs == 0
+    assert summary.observed == 1
+    assert summary.duplicates_linked == 1
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    link = conn.execute(
+        "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
+    ).fetchone()
+    assert link["surviving_job_id"] == survivor
+    assert link["reason"] == "content_shingle_match"
+    assert link["confidence"] == 0.85
+
+
 def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_rejected(
     conn: sqlite3.Connection,
 ) -> None:

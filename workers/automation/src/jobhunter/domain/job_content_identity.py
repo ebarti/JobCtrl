@@ -5,6 +5,17 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from typing import Iterable, Literal
+
+ContentMatchBasis = Literal["fingerprint", "shingle"]
+"""How an incoming posting matched an existing Job by content identity.
+
+``fingerprint`` is an exact normalised title + employer + description hash
+match; ``shingle`` is a substantial description-shingle similarity match. The
+Discovery write boundary records a distinct ``DuplicateJobLink`` reason per
+basis so the audit trail never overstates a fuzzy shingle match as an exact
+fingerprint one.
+"""
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -147,6 +158,46 @@ def job_content_fingerprint(
         return None
     payload = "\x1f".join((normalized_title, normalized_company, normalized_description))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def content_match_basis(
+    *,
+    incoming_key: str,
+    incoming_description: object,
+    candidate_title: object,
+    candidate_employer: object,
+    candidate_descriptions: Iterable[object],
+) -> ContentMatchBasis | None:
+    """Return how an incoming posting matches a stored Job, or ``None``.
+
+    The incoming posting is a raw board LISTING. Discovery stores the listing
+    text in ``jobs.description`` and, once enriched, a much longer full text in
+    ``job_enrichments.full_description``. Comparing the incoming listing only
+    against the enriched text drops below the shingle threshold once the owner is
+    enriched, so cross-source dedup silently stops working post-enrichment.
+
+    Comparing like-for-like against BOTH stored texts (the listing and, if
+    present, the enriched full text) and taking the strongest basis keeps dedup
+    working before and after enrichment without lowering any threshold. An exact
+    fingerprint against either stored text beats a shingle match against either.
+    """
+
+    texts: list[object] = []
+    for text in candidate_descriptions:
+        if normalize_description_text(text) and text not in texts:
+            texts.append(text)
+    for text in texts:
+        candidate_key = job_content_fingerprint(
+            title=candidate_title,
+            company=candidate_employer,
+            description=text,
+        )
+        if candidate_key is not None and candidate_key == incoming_key:
+            return "fingerprint"
+    for text in texts:
+        if descriptions_substantially_match(incoming_description, text):
+            return "shingle"
+    return None
 
 
 def descriptions_substantially_match(left: object, right: object) -> bool:

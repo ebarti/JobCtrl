@@ -22,7 +22,7 @@ from jobhunter.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, 
 from jobhunter.domain.discovery.identity import normalize_observed_url
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.job_content_identity import (
-    descriptions_substantially_match,
+    content_match_basis,
     is_genuine_employer_identity,
     job_content_fingerprint,
     normalize_identity_text,
@@ -716,7 +716,8 @@ def _find_content_duplicate_survivor(
     rows = conn.execute(
         f"""
         SELECT j.url, j.title, j.company, j.site,
-               COALESCE(je.full_description, j.full_description, j.description) AS description,
+               j.description AS listing_description,
+               COALESCE(je.full_description, j.full_description) AS enriched_description,
                CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
@@ -736,14 +737,16 @@ def _find_content_duplicate_survivor(
         stored_employer = stored_company if stored_company else existing["site"]
         if not is_genuine_employer_identity(stored_employer):
             continue
-        existing_key = job_content_fingerprint(
-            title=existing["title"],
-            company=stored_employer,
-            description=existing["description"],
-        )
-        if existing_key == incoming_key:
-            return str(existing["url"])
-        if descriptions_substantially_match(description, existing["description"]):
+        if content_match_basis(
+            incoming_key=incoming_key,
+            incoming_description=description,
+            candidate_title=existing["title"],
+            candidate_employer=stored_employer,
+            candidate_descriptions=(
+                existing["listing_description"],
+                existing["enriched_description"],
+            ),
+        ) is not None:
             return str(existing["url"])
     return None
 

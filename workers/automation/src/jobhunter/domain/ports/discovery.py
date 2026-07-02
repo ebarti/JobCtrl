@@ -12,7 +12,7 @@ PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Protocol
+from typing import Iterable, Protocol
 
 from jobhunter.domain.discovery.aggregate import Job
 from jobhunter.domain.discovery.identity import (
@@ -29,6 +29,7 @@ from jobhunter.domain.discovery.value_objects import (
     Source,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import ContentMatchBasis
 from jobhunter.domain.tenant import TenantId
 
 
@@ -59,16 +60,6 @@ class ScrapedJobPosting:
     source_native_id: str
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
-
-
-ContentMatchBasis = Literal["fingerprint", "shingle"]
-"""How ``find_content_owner`` matched an incoming posting to an existing Job.
-
-``fingerprint`` is an exact normalised title + company + description hash match;
-``shingle`` is a substantial description-shingle similarity match. The Discovery
-write boundary records a distinct ``DuplicateJobLink`` reason per basis so the
-audit trail never overstates a fuzzy shingle match as an exact fingerprint one.
-"""
 
 
 @dataclass(frozen=True)
