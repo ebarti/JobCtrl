@@ -143,7 +143,8 @@ export const eventByType = {
   }),
   DuplicateJobLinkRejected: createDuplicateJobLinkRejected(LOCAL_TENANT, {
     duplicateLinkId: "duplicate-link-rejected-1",
-    candidateIds: [JOB_ID, "job-duplicate-1"],
+    jobId: JOB_ID,
+    candidateJobId: "job-duplicate-1",
     reason: "low_confidence",
     rejectedAt: NOW,
   }),
