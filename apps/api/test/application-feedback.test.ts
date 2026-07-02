@@ -812,6 +812,129 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("labels grounded coverage basis and parses the shipped grounded fit record", async () => {
+    const metadata = requirementLedAuditMetadata();
+    const fit = metadata.post_generation_fit as Record<string, unknown>;
+    const fitScore = fit.fit_score as Record<string, unknown>;
+    fitScore.coverage_basis = "grounded_shipped_text_v1";
+    fitScore.claimed_only_requirement_ids = ["r2"];
+    const decision = fit.revision_decision as Record<string, unknown>;
+    decision.attempt = 2;
+    decision.max_revision_attempts = 1;
+    metadata.post_generation_fit_final = {
+      lifecycle: "post_voice_shipped",
+      fit_score: {
+        score: 5,
+        must_have_coverage: 0.5,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirement_ids: ["r2"],
+        claimed_only_requirement_ids: ["r2"],
+        prioritized_fixes: [
+          "r2: Improve developer experience — a claim mapped this requirement but its text does not appear in the shipped resume.",
+        ],
+        review_blockers: [],
+        coverage_basis: "grounded_shipped_text_v1",
+      },
+      grounding: {
+        basis: "grounded_shipped_text_v1",
+        grounded_claims: [],
+        ungrounded_claims: [],
+        claimed_only_requirement_ids: ["r2"],
+      },
+      gate_thresholds: { min_fit_score: 6, must_have_coverage: 1.0 },
+      passed: false,
+      warnings: ["Shipped grounded must-have coverage 50% (fit 5/10) is below the revision gate."],
+    };
+
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(metadata), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    expect(audit?.revision).toMatchObject({
+      coverageBasis: "grounded_shipped_text_v1",
+      claimedOnlyRequirementIds: ["r2"],
+      attempt: 2,
+      maxRevisionAttempts: 1,
+      revisionsUsed: 1,
+    });
+    expect(audit?.shippedFit).toMatchObject({
+      lifecycle: "post_voice_shipped",
+      score: 5,
+      mustHaveCoverage: 0.5,
+      claimedOnlyRequirementIds: ["r2"],
+      passed: false,
+      coverageBasis: "grounded_shipped_text_v1",
+    });
+    expect(audit?.shippedFit?.warnings).toEqual([
+      "Shipped grounded must-have coverage 50% (fit 5/10) is below the revision gate.",
+    ]);
+
+    await app.close();
+  });
+
+  it("labels legacy judge-claimed coverage basis and omits the shipped grounded fit", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    expect(audit?.revision).toMatchObject({
+      coverageBasis: "judge_claimed_legacy",
+      claimedOnlyRequirementIds: [],
+      attempt: 1,
+      maxRevisionAttempts: 1,
+      revisionsUsed: 0,
+    });
+    expect(audit?.shippedFit ?? null).toBeNull();
+
+    await app.close();
+  });
+
+  it("reports revisions used as null when the generation attempt ordinal is absent", async () => {
+    const metadata = requirementLedAuditMetadata();
+    const decision = (metadata.post_generation_fit as Record<string, unknown>)
+      .revision_decision as Record<string, unknown>;
+    delete decision.attempt;
+
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(metadata), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    expect(audit?.revision?.attempt).toBeNull();
+    expect(audit?.revision?.revisionsUsed).toBeNull();
+
+    await app.close();
+  });
+
   it("surfaces review-required candidate material previews but ignores ordinary candidates", async () => {
     const ignoredCandidatePath = path.join(tempDir, "ignored-candidate-resume.txt");
     const reviewCandidatePath = path.join(tempDir, "review-candidate-resume.txt");

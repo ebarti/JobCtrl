@@ -13,9 +13,11 @@ import type {
   ApplyReviewDecisionValue,
   ApplyReviewIdealRequirement,
   ApplyReviewProfileSourceField,
+  ApplyReviewCoverageBasis,
   ApplyReviewQueueItem,
   ApplyReviewQueueResponse,
   ApplyReviewRequirementLedAudit,
+  ApplyReviewRequirementLedShippedFit,
   JobCompensationSummary,
   JobApplicationOutcomeListResponse,
   ManualApplicationOutcomeRequest,
@@ -1677,6 +1679,9 @@ function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequ
   const coveredRequirementIds = parseStringList(recordValue(coverageGraph, "coveredRequirementIds", "covered_requirement_ids"));
   const claims = parseAuditClaims(recordValue(metadata, "changeAnnotations", "change_annotations"));
   const revision = parseAuditRevision(recordValue(metadata, "postGenerationFit", "post_generation_fit"));
+  const shippedFit = parseAuditShippedFit(
+    recordValue(metadata, "postGenerationFitFinal", "post_generation_fit_final"),
+  );
   const reviewBlockers = boundedEvidenceList([
     ...(revision?.reviewBlockers ?? []),
     ...claims
@@ -1707,6 +1712,7 @@ function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequ
     ),
     bulletLimitOverflows: parseAuditOverflows(recordValue(metadata, "bulletLimitOverflows", "bullet_limit_overflows")),
     revision,
+    shippedFit,
     reviewBlockers,
   };
 }
@@ -1808,6 +1814,12 @@ function parseAuditOverflows(value: unknown): ApplyReviewRequirementLedAudit["bu
     .slice(0, EVIDENCE_LIST_LIMIT);
 }
 
+const GROUNDED_COVERAGE_BASIS = "grounded_shipped_text_v1";
+
+function coverageBasisLabel(value: unknown): ApplyReviewCoverageBasis {
+  return value === GROUNDED_COVERAGE_BASIS ? "grounded_shipped_text_v1" : "judge_claimed_legacy";
+}
+
 function parseAuditRevision(value: unknown): ApplyReviewRequirementLedAudit["revision"] {
   const record = asRecord(value);
   if (!record) {
@@ -1818,6 +1830,7 @@ function parseAuditRevision(value: unknown): ApplyReviewRequirementLedAudit["rev
   if (!fitScore && !decision) {
     return null;
   }
+  const attempt = nullableInteger(decision?.attempt);
   return {
     score: nullableNumber(fitScore?.score),
     mustHaveCoverage: nullableNumber(recordValue(fitScore, "mustHaveCoverage", "must_have_coverage")),
@@ -1826,10 +1839,38 @@ function parseAuditRevision(value: unknown): ApplyReviewRequirementLedAudit["rev
     reviewBlocked: Boolean(recordValue(decision, "reviewBlocked", "review_blocked")),
     enhancementAllowed: Boolean(recordValue(decision, "enhancementAllowed", "enhancement_allowed")),
     reason: cleanLimitedText(decision?.reason, EVIDENCE_TEXT_LIMIT) || null,
-    attempt: nullableInteger(decision?.attempt),
+    attempt,
     maxRevisionAttempts: nullableInteger(recordValue(decision, "maxRevisionAttempts", "max_revision_attempts")),
+    revisionsUsed: attempt === null ? null : Math.max(0, attempt - 1),
+    coverageBasis: coverageBasisLabel(recordValue(fitScore, "coverageBasis", "coverage_basis")),
+    claimedOnlyRequirementIds: parseStringList(
+      recordValue(fitScore, "claimedOnlyRequirementIds", "claimed_only_requirement_ids"),
+    ),
     prioritizedFixes: parseStringList(recordValue(decision, "prioritizedFixes", "prioritized_fixes")),
     reviewBlockers: parseStringList(recordValue(decision, "reviewBlockers", "review_blockers")),
+  };
+}
+
+function parseAuditShippedFit(value: unknown): ApplyReviewRequirementLedShippedFit | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const fitScore = asRecord(recordValue(record, "fitScore", "fit_score"));
+  const lifecycle = cleanLimitedText(record.lifecycle, 80) || null;
+  if (!fitScore && !lifecycle) {
+    return null;
+  }
+  return {
+    lifecycle,
+    score: nullableNumber(fitScore?.score),
+    mustHaveCoverage: nullableNumber(recordValue(fitScore, "mustHaveCoverage", "must_have_coverage")),
+    claimedOnlyRequirementIds: parseStringList(
+      recordValue(fitScore, "claimedOnlyRequirementIds", "claimed_only_requirement_ids"),
+    ),
+    passed: Boolean(record.passed),
+    warnings: parseStringList(record.warnings),
+    coverageBasis: coverageBasisLabel(recordValue(fitScore, "coverageBasis", "coverage_basis")),
   };
 }
 

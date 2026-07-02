@@ -328,6 +328,8 @@ export interface ApplyReviewRequirementLedAuditOverflow {
   evidenceIds: string[];
 }
 
+export type ApplyReviewCoverageBasis = "grounded_shipped_text_v1" | "judge_claimed_legacy";
+
 export interface ApplyReviewRequirementLedAuditRevision {
   score: number | null;
   mustHaveCoverage: number | null;
@@ -338,8 +340,21 @@ export interface ApplyReviewRequirementLedAuditRevision {
   reason: string | null;
   attempt: number | null;
   maxRevisionAttempts: number | null;
+  revisionsUsed: number | null;
+  coverageBasis: ApplyReviewCoverageBasis;
+  claimedOnlyRequirementIds: string[];
   prioritizedFixes: string[];
   reviewBlockers: string[];
+}
+
+export interface ApplyReviewRequirementLedShippedFit {
+  lifecycle: string | null;
+  score: number | null;
+  mustHaveCoverage: number | null;
+  claimedOnlyRequirementIds: string[];
+  passed: boolean;
+  warnings: string[];
+  coverageBasis: ApplyReviewCoverageBasis;
 }
 
 export interface ApplyReviewRequirementLedAudit {
@@ -354,6 +369,7 @@ export interface ApplyReviewRequirementLedAudit {
   adjacentOrDraftClaims: ApplyReviewRequirementLedAuditClaim[];
   bulletLimitOverflows: ApplyReviewRequirementLedAuditOverflow[];
   revision: ApplyReviewRequirementLedAuditRevision | null;
+  shippedFit?: ApplyReviewRequirementLedShippedFit | null;
   reviewBlockers: string[];
 }
 

@@ -633,7 +633,11 @@ function RequirementLedAuditPanel({
         {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
       </div>
       <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
-      <RevisionAudit revision={audit.revision} reviewBlockers={audit.reviewBlockers} />
+      <RevisionAudit
+        revision={audit.revision}
+        shippedFit={audit.shippedFit ?? null}
+        reviewBlockers={audit.reviewBlockers}
+      />
     </section>
   );
 }
@@ -696,31 +700,59 @@ function BulletOverflowAudit({
 
 function RevisionAudit({
   revision,
+  shippedFit,
   reviewBlockers,
 }: {
   readonly revision: ApplyReviewRequirementLedAudit["revision"];
+  readonly shippedFit: ApplyReviewRequirementLedAudit["shippedFit"];
   readonly reviewBlockers: readonly string[];
 }) {
-  if (!revision && !reviewBlockers.length) {
+  if (!revision && !shippedFit && !reviewBlockers.length) {
     return null;
   }
 
   return (
     <section className="apply-review-audit-section">
       <h4>Revision gate</h4>
+      {shippedFit ? (
+        <div className="apply-review-audit-shipped-fit" aria-label="Shipped grounded fit">
+          {shippedFit.mustHaveCoverage !== null ? (
+            <span className="tag muted">
+              Must-have coverage: {Math.round(shippedFit.mustHaveCoverage * 100)}%
+            </span>
+          ) : null}
+          <span className="tag ok">grounded (shipped text)</span>
+          {shippedFit.score !== null ? (
+            <span className="tag muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</span>
+          ) : null}
+          <span className={`tag ${shippedFit.passed ? "ok" : "warn"}`}>
+            {shippedFit.passed ? "meets revision gate" : "below revision gate"}
+          </span>
+          <AuditTagGroup
+            label="Post-acceptance audit findings"
+            values={shippedFit.warnings}
+            tone="warn"
+            formatValue={formatAuditMessage}
+          />
+        </div>
+      ) : null}
       {revision ? (
         <div className="apply-review-audit-revision">
           <span className={`tag ${revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}`}>
             Fit gate: {formatScoreValue(revision.score)}/10
           </span>
+          <span className={`tag ${revision.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+            {revision.coverageBasis === "grounded_shipped_text_v1" ? "grounded" : "judge-claimed (legacy)"}
+          </span>
           {revision.mustHaveCoverage !== null ? (
             <span className="tag muted">
-              Must-have coverage: {Math.round(revision.mustHaveCoverage * 100)}%
+              {shippedFit ? "Gate-recorded coverage" : "Must-have coverage"}:{" "}
+              {Math.round(revision.mustHaveCoverage * 100)}%
             </span>
           ) : null}
-          {revision.attempt !== null && revision.maxRevisionAttempts !== null ? (
+          {revision.revisionsUsed !== null && revision.maxRevisionAttempts !== null ? (
             <span className="tag muted">
-              Attempt {revision.attempt}/{revision.maxRevisionAttempts}
+              Revisions used: {revision.revisionsUsed} of {revision.maxRevisionAttempts}
             </span>
           ) : null}
           {revision.reason ? <p className="meta">{formatAuditMessage(revision.reason)}</p> : null}
