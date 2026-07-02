@@ -372,49 +372,52 @@ export function correctScore(
     corrected_by: "local",
     corrected_at: now,
   });
-  db.prepare(
-    `INSERT INTO job_scores (
-       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
-       scored_at, correction_json, criteria_json, trace_json
-     ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    jobUrl,
-    nextVersion,
-    request.correctedScore,
-    String(latest.breakdown_json ?? "{}"),
-    String(latest.keywords_json ?? "[]"),
-    now,
-    JSON.stringify(correction),
-    String(latest.criteria_json ?? "{}"),
-    JSON.stringify(trace),
-  );
-  const policyChange = persistScoringPolicyCorrection(db, {
-    jobUrl,
-    latest,
-    correctedScore: request.correctedScore,
-    correctedAt: now,
-  });
-  markComparableScoresStale(db, {
-    correctedJobUrl: jobUrl,
-    markedAt: now,
-    newPolicyId: `local:scoring-policy-v${policyChange.newPolicyVersion}`,
-    newPolicyVersion: policyChange.newPolicyVersion,
-  });
-  recordActionEvent(db, {
-    jobUrl,
-    stage: "score",
-    eventType: "ScoreCorrected",
-    level: "info",
-    message: "Score corrected from the local API.",
-    payload: {
-      tenantId: "local",
-      jobId: jobUrl,
-      originalScore: Number(latest.fit_score ?? 0),
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO job_scores (
+         job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+         scored_at, correction_json, criteria_json, trace_json
+       ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      jobUrl,
+      nextVersion,
+      request.correctedScore,
+      String(latest.breakdown_json ?? "{}"),
+      String(latest.keywords_json ?? "[]"),
+      now,
+      JSON.stringify(correction),
+      String(latest.criteria_json ?? "{}"),
+      JSON.stringify(trace),
+    );
+    const policyChange = persistScoringPolicyCorrection(db, {
+      jobUrl,
+      latest,
       correctedScore: request.correctedScore,
-      reason: request.reason,
       correctedAt: now,
-    },
+    });
+    markComparableScoresStale(db, {
+      correctedJobUrl: jobUrl,
+      markedAt: now,
+      newPolicyId: `local:scoring-policy-v${policyChange.newPolicyVersion}`,
+      newPolicyVersion: policyChange.newPolicyVersion,
+    });
+    recordActionEvent(db, {
+      jobUrl,
+      stage: "score",
+      eventType: "ScoreCorrected",
+      level: "info",
+      message: "Score corrected from the local API.",
+      payload: {
+        tenantId: "local",
+        jobId: jobUrl,
+        originalScore: Number(latest.fit_score ?? 0),
+        correctedScore: request.correctedScore,
+        reason: request.reason,
+        correctedAt: now,
+      },
+    });
   });
+  transaction();
   return { jobUrl, version: nextVersion };
 }
 
