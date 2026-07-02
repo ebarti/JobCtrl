@@ -2269,12 +2269,20 @@ class TailorResumeUseCase:
                         (*validation.errors, f"Provenance grounding failed: {exc}"),
                         warnings=tuple(validation.warnings),
                     )
-            fit_gate, fit_gate_errors, review_blockers = _post_generation_fit_gate(
-                payload=payload,
-                tailoring_plan=tailoring_plan,
-                attempt=attempt,
-                shipped_rows=shipped_rows,
-            )
+            # No shipped rows means the candidate already failed upstream (claim
+            # mapping or provenance binding errors); grounding against an empty
+            # resume would record a misleading 0% on a candidate that is already
+            # rejected, so the gate is skipped rather than fabricating a score.
+            fit_gate: dict[str, Any] | None = None
+            fit_gate_errors: tuple[str, ...] = ()
+            review_blockers: tuple[str, ...] = ()
+            if shipped_rows:
+                fit_gate, fit_gate_errors, review_blockers = _post_generation_fit_gate(
+                    payload=payload,
+                    tailoring_plan=tailoring_plan,
+                    attempt=attempt,
+                    shipped_rows=shipped_rows,
+                )
             if fit_gate is not None:
                 record["post_generation_fit"] = fit_gate
             if review_blockers:

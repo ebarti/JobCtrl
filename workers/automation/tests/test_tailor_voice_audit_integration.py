@@ -455,6 +455,56 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     assert "spearheaded" not in shipped.lower()
 
 
+def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: Path) -> None:
+    """The gate record carries its grounding audit; the shipped artifact persists
+    a lifecycle-labeled post-voice grounded fit; claim evidence never leaks onto
+    provenance rows (the #216 keyword-coverage stuffing vector stays closed)."""
+
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            experience_bullets=(
+                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
+            ),
+        )
+
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    outcome = _use_case(
+        materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+
+    # The selected candidate's gate record is grounded and inspectable.
+    gate = outcome.report["post_generation_fit"]
+    assert gate["fit_score"]["coverage_basis"] == "grounded_shipped_text_v1"
+    assert gate["grounding"]["basis"] == "grounded_shipped_text_v1"
+    assert gate["grounding"]["claimed_only_requirement_ids"] == []
+
+    # The artifact persists the lifecycle-labeled post-voice grounded fit: the
+    # voice pass reworded the claim's bullet, so the claim stays grounded via
+    # the same bullet's pre-voice text and the shipped record passes the gate.
+    final = outcome.report["tailoring_quality"]["post_generation_fit_final"]
+    assert final["lifecycle"] == "post_voice_shipped"
+    assert final["passed"] is True
+    assert final["warnings"] == []
+    assert final["fit_score"]["coverage_basis"] == "grounded_shipped_text_v1"
+    assert final["fit_score"]["covered_requirement_ids"] == ["req_latency"]
+    assert final["fit_score"]["must_have_coverage"] == 1.0
+    assert final["gate_thresholds"]["must_have_coverage"] > 0
+
+    # Persisted provenance rows carry the grounded claim requirement link on the
+    # voiced bullet, and enrichment never injected the claim's evidence ids
+    # beyond what the builder bound from the profile.
+    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    assert saved is not None
+    experience = next(row for row in saved.bullets if row.section == "experience")
+    assert "req_latency" in experience.requirement_ids
+    assert all(evidence_id == "ev_latency" for evidence_id in experience.evidence_ids)
+
+
 def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     """VOICE-02: a bullet whose wording the voice pass changed is transform=voice."""
 

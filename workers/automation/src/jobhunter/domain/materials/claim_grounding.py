@@ -115,16 +115,6 @@ class ClaimGrounding:
             )
         )
 
-    def evidence_ids_for_bullet(self, bullet_id: str) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                evidence_id
-                for binding in self.bindings
-                if bullet_id in binding.bullet_ids
-                for evidence_id in binding.evidence_ids
-            )
-        )
-
     def to_metadata(self) -> dict[str, Any]:
         """Inspectable audit record: how every coverage-bearing claim grounded."""
         return {
@@ -247,7 +237,7 @@ def enrich_provenance_requirements(
     rows: IterableABC[BulletProvenance],
     grounding: ClaimGrounding,
 ) -> tuple[BulletProvenance, ...]:
-    """Fold grounded claim links onto the provenance rows that carry them.
+    """Fold grounded claim REQUIREMENT links onto the provenance rows that carry them.
 
     A row's ``requirement_ids`` become the union of the claim-grounded links
     (the semantic bullet↔requirement bindings the generator declared AND the
@@ -256,12 +246,18 @@ def enrich_provenance_requirements(
     (``validate_generated_claim_mappings``), so the union stays FK-valid. With
     this, the audit chips, the "N/M covered" badge, and the revision gate all
     derive from the same grounded criterion.
+
+    ``evidence_ids`` are deliberately NEVER touched: the keyword-coverage audit
+    (GROUND-06 / #216) credits a planned keyword only when its bullet carries a
+    BUILDER-bound profile evidence FK, so injecting a claim's evidence id here
+    would let an unrelated claim launder every keyword in its bullet into
+    ``covered`` — the exact stuffing vector #216 closed. Claim evidence stays
+    inspectable on the claim mappings and the gate's grounding audit record.
     """
     out: list[BulletProvenance] = []
     for row in rows:
         claim_requirements = grounding.requirement_ids_for_bullet(row.bullet_id)
-        claim_evidence = grounding.evidence_ids_for_bullet(row.bullet_id)
-        if not claim_requirements and not claim_evidence:
+        if not claim_requirements:
             out.append(row)
             continue
         out.append(
@@ -270,7 +266,6 @@ def enrich_provenance_requirements(
                 requirement_ids=tuple(
                     dict.fromkeys((*claim_requirements, *row.requirement_ids))
                 ),
-                evidence_ids=tuple(dict.fromkeys((*row.evidence_ids, *claim_evidence))),
             )
         )
     return tuple(out)

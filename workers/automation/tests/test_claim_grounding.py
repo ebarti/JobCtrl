@@ -171,7 +171,14 @@ def test_non_requirement_claims_never_participate_in_coverage() -> None:
     assert grounding.ungrounded == ()
 
 
-def test_enrichment_unions_claim_links_onto_the_carrying_row_only() -> None:
+def test_enrichment_adds_requirement_links_but_never_evidence_ids() -> None:
+    """Claim evidence must NOT reach provenance rows (the #216 stuffing vector).
+
+    Keyword coverage credits a planned keyword only when its bullet carries a
+    BUILDER-bound evidence FK; if enrichment injected the claim's evidence id,
+    an unrelated claim would launder every keyword in its bullet into
+    ``covered``. Requirement links union; evidence ids stay byte-identical.
+    """
     rows = (
         _row("experience:acme#0", "Owned Python API reliability.", requirement_ids=("r9",)),
         _row("experience:acme#1", "Unrelated shipped line."),
@@ -184,8 +191,9 @@ def test_enrichment_unions_claim_links_onto_the_carrying_row_only() -> None:
     enriched = enrich_provenance_requirements(rows, grounding)
 
     assert enriched[0].requirement_ids == ("r1", "r2", "r9")
-    assert enriched[0].evidence_ids == ("ev1",)
+    assert enriched[0].evidence_ids == ()
     assert enriched[1].requirement_ids == ()
+    assert enriched[1].evidence_ids == ()
 
 
 def test_grounding_metadata_is_inspectable_for_the_audit_trail() -> None:
