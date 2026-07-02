@@ -90,6 +90,14 @@ _EXCLUDED_BUSINESS_FALSE_POSITIVE_PHRASES = (
     frozenset(("customer", "success")),
     frozenset(("product", "management")),
 )
+_ENGINEERING_ROLE_HEAD_TOKENS = {
+    "architect",
+    "developer",
+    "engineer",
+    "engineering",
+    "sre",
+    "swe",
+}
 
 _RECALL_LEADERSHIP_TOKENS = {
     "chief",
@@ -242,6 +250,7 @@ def title_matches_query(
         return False
     if _has_excluded_engineering_specialty(title_sequence, query_tokens):
         return False
+    force_adjudication = _business_function_needs_adjudication(title_sequence, query_tokens)
     if match_mode == _RECALL_MATCH_MODE:
         matched = _recall_title_matches_query(
             title_sequence,
@@ -251,6 +260,9 @@ def title_matches_query(
         )
         if not matched:
             return False
+        verbatim = _query_tokens_match_verbatim(query_tokens, title_sequence) or _query_alias_matches(
+            query_tokens, title_sequence
+        )
         return _adjudicate_loose_match(
             title=title,
             query=normalized_query,
@@ -258,8 +270,7 @@ def title_matches_query(
             target_track=target_track,
             seniority_floor=seniority_floor,
             role_matcher=role_matcher,
-            verbatim=_query_tokens_match_verbatim(query_tokens, title_sequence)
-            or _query_alias_matches(query_tokens, title_sequence),
+            verbatim=verbatim and not force_adjudication,
         )
     verbatim_match = _query_tokens_match_verbatim(query_tokens, title_sequence)
     alias_match = _query_alias_matches(query_tokens, title_sequence)
@@ -276,7 +287,7 @@ def title_matches_query(
         target_track=target_track,
         seniority_floor=seniority_floor,
         role_matcher=role_matcher,
-        verbatim=verbatim_match or alias_match,
+        verbatim=(verbatim_match or alias_match) and not force_adjudication,
     )
 
 
@@ -382,11 +393,44 @@ def _has_business_function_false_positive(
     title_tokens = set(title_sequence)
     query_token_set = set(query_tokens)
     excluded_tokens = _EXCLUDED_BUSINESS_FALSE_POSITIVE_TOKENS.difference(query_token_set)
-    if title_tokens.intersection(excluded_tokens):
+    if title_tokens.intersection(excluded_tokens) and not _has_engineering_role_head(
+        title_sequence, excluded_tokens
+    ):
         return True
     return any(
         phrase.issubset(title_tokens) and not phrase.intersection(query_token_set)
         for phrase in _EXCLUDED_BUSINESS_FALSE_POSITIVE_PHRASES
+    )
+
+
+def _has_engineering_role_head(
+    title_sequence: Sequence[str],
+    excluded_business_tokens: set[str],
+) -> bool:
+    for index, token in enumerate(title_sequence):
+        if token not in _ENGINEERING_ROLE_HEAD_TOKENS:
+            continue
+        # "Sales Engineer": a business token directly modifying the head keeps the
+        # role business-primary, so it does not count as a genuine engineering head.
+        if index > 0 and title_sequence[index - 1] in excluded_business_tokens:
+            continue
+        return True
+    return False
+
+
+def _business_function_needs_adjudication(
+    title_sequence: Sequence[str],
+    query_tokens: Sequence[str],
+) -> bool:
+    # A non-adjacent business token beside an engineering head is ambiguous: it may be
+    # engineering-primary ("Staff Engineer, Pricing Platform") or business-primary
+    # ("Sales Director, Engineering"). We cannot tell deterministically, so route it to
+    # the LLM adjudicator for precision rather than verbatim-accepting it. When the
+    # adjudicator is unavailable the loose-match path accepts, preserving recall.
+    title_tokens = set(title_sequence)
+    excluded_tokens = _EXCLUDED_BUSINESS_FALSE_POSITIVE_TOKENS.difference(set(query_tokens))
+    return bool(title_tokens.intersection(excluded_tokens)) and _has_engineering_role_head(
+        title_sequence, excluded_tokens
     )
 
 

@@ -198,3 +198,58 @@ def test_approved_role_feedback_title_exclusions_apply(monkeypatch, tmp_path) ->
     assert title_matches_query("Engineering Manager", "Engineering Manager")
 
     reset_role_match_feedback_cache()
+
+
+# Engineering-primary titles that carry a non-adjacent business-function token as a
+# team/domain qualifier. They must never be dropped deterministically.
+_MUST_SURVIVE_ENGINEERING_TITLES = (
+    ("Staff Engineer, Pricing Platform", "Staff Engineer"),
+    ("Engineering Manager, Accounts", "Engineering Manager"),
+    ("Software Engineer, Sales Platform", "Software Engineer"),
+    ("Engineer, Commercial Systems", "Engineer"),
+)
+
+# Business-primary titles that still contain a genuine (non-adjacent) engineering head.
+# Deterministic rules cannot distinguish these from the must-survive titles, so they
+# must be routed to the LLM adjudicator rather than verbatim-accepted.
+_AMBIGUOUS_BUSINESS_ENGINEERING_TITLES = (
+    ("Sales Director, Engineering", "Engineering"),
+    ("Head of Sales, Platform Engineering", "Engineering"),
+    ("Pre-Sales Solutions Engineer", "Engineer"),
+    ("Solutions Engineer, Sales", "Engineer"),
+    ("Sales Development Engineer", "Engineer"),
+)
+
+
+def test_business_and_engineering_titles_default_to_accept_without_adjudicator() -> None:
+    for title, query in _MUST_SURVIVE_ENGINEERING_TITLES + _AMBIGUOUS_BUSINESS_ENGINEERING_TITLES:
+        assert title_matches_query(title, query, role_matcher=None), title
+
+
+def test_business_and_engineering_titles_are_routed_to_the_adjudicator() -> None:
+    for title, query in _MUST_SURVIVE_ENGINEERING_TITLES + _AMBIGUOUS_BUSINESS_ENGINEERING_TITLES:
+        accepting = _FakeRoleMatcher(True)
+        assert title_matches_query(title, query, role_matcher=accepting), title
+        assert len(accepting.calls) == 1, title
+
+
+def test_business_primary_engineering_titles_are_rejected_when_adjudicator_declines() -> None:
+    for title, query in _AMBIGUOUS_BUSINESS_ENGINEERING_TITLES:
+        rejecting = _FakeRoleMatcher(False)
+        assert not title_matches_query(title, query, role_matcher=rejecting), title
+        assert len(rejecting.calls) == 1, title
+
+
+def test_business_function_primary_roles_are_deterministically_rejected() -> None:
+    # When the business token IS the role head or its immediate modifier and there is
+    # no genuine engineering head, the title is business-primary and hard-rejected
+    # before adjudication. Queries share the non-business token so a bypassed filter
+    # would verbatim-match, proving the deterministic reject fires and the accepting
+    # matcher is never consulted.
+    matcher = _FakeRoleMatcher(True)
+    assert not title_matches_query("Account Executive", "Executive", role_matcher=matcher)
+    assert not title_matches_query("Sales Manager", "Manager", role_matcher=matcher)
+    assert not title_matches_query("Commercial Director", "Director", role_matcher=matcher)
+    assert not title_matches_query("Pricing Analyst", "Analyst", role_matcher=matcher)
+    assert not title_matches_query("Sales Engineer", "Engineer", role_matcher=matcher)
+    assert matcher.calls == []
