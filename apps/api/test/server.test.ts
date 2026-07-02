@@ -2191,6 +2191,79 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("rolls back the whole score correction when a later staleness write fails", async () => {
+    const comparableUrl = "https://example.com/jobs/comparable-atomic";
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      CREATE TABLE IF NOT EXISTS scoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        rubric_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        created_from_event_id INTEGER,
+        PRIMARY KEY (tenant_id, version)
+      )
+    `);
+    seedDb
+      .prepare(
+        `INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id)
+         VALUES ('local', 1, ?, '[]', ?, NULL)`,
+      )
+      .run(JSON.stringify({ rubric_version: "default-scoring-rubric-v1" }), "2026-04-29T10:03:00+00:00");
+    insertJob(seedDb, { url: comparableUrl, title: "Comparable Engineer", site: "ExampleCo", fitScore: 7 });
+    insertScore(seedDb, comparableUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, comparableUrl, "score", "succeeded");
+    createScoreStalenessTable(seedDb);
+    // Force the staleness-marking step to abort mid-correction, mimicking a
+    // SQLITE_BUSY / constraint failure from a concurrent worker write after the
+    // new score version and policy row have already been inserted.
+    seedDb.exec(`
+      CREATE TRIGGER fail_staleness_insert
+      BEFORE INSERT ON job_score_staleness
+      BEGIN
+        SELECT RAISE(ABORT, 'forced staleness failure');
+      END;
+    `);
+    seedDb.close();
+
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/score-correction`,
+      payload: { correctedScore: 6, reason: "Manual review found a seniority mismatch." },
+    });
+
+    expect(response.statusCode, response.body).toBe(500);
+    expect(response.json()).toMatchObject({ ok: false, error: "db_write_failed" });
+
+    const db = new Database(options.dbPath);
+    try {
+      const scores = db
+        .prepare("SELECT version FROM job_scores WHERE job_url = ? ORDER BY version")
+        .all("https://example.com/jobs/ready") as Array<{ version: number }>;
+      expect(scores.map((row) => row.version)).toEqual([1]);
+      const policies = db
+        .prepare("SELECT version FROM scoring_policies WHERE tenant_id = 'local' ORDER BY version")
+        .all() as Array<{ version: number }>;
+      expect(policies.map((row) => row.version)).toEqual([1]);
+      const staleCount = db.prepare("SELECT COUNT(*) AS count FROM job_score_staleness").get() as { count: number };
+      expect(staleCount.count).toBe(0);
+      const comparableStage = db
+        .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+        .get(comparableUrl) as { state: string };
+      expect(comparableStage.state).toBe("succeeded");
+      const correctionEvents = db
+        .prepare("SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ScoreCorrected'")
+        .get() as { count: number };
+      expect(correctionEvents.count).toBe(0);
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
   it("resets stale score markers for explicit rescore through the API", async () => {
     const staleUrl = "https://example.com/jobs/stale-score";
     const seedDb = new Database(options.dbPath);
