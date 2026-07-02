@@ -335,3 +335,91 @@ def test_by_source_counts(conn: sqlite3.Connection) -> None:
     counts = {entry[0]: entry[1] for entry in by_source}
     assert counts["OneCo"] == 2
     assert counts["TwoCo"] == 1
+
+
+def _apply_job(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int) -> None:
+    _seed_job(conn, url, site=site)
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        """,
+        (url, fit_score, utc_now()),
+    )
+    run_id = f"run-{url}"
+    record_job_event(
+        conn, url, "apply", "ApplyRunStarted",
+        payload={"run_id": run_id, "started_at": utc_now()},
+    )
+    record_job_event(
+        conn, url, "apply", "ApplicationSubmitted",
+        payload={"run_id": run_id, "finished_at": utc_now(), "result": "applied"},
+    )
+
+
+def _record_outcome(conn: sqlite3.Connection, url: str, kind: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO application_outcomes (
+            tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
+        ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
+        """,
+        (f"outcome-{url}-{kind}", url, kind, utc_now(), utc_now()),
+    )
+
+
+def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) -> None:
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    _apply_job(conn, "https://example.com/li-a", site="linkedin", fit_score=8)
+    _apply_job(conn, "https://example.com/li-b", site="linkedin", fit_score=8)
+    _apply_job(conn, "https://example.com/li-c", site="linkedin", fit_score=8)
+    _apply_job(conn, "https://example.com/gh-a", site="greenhouse", fit_score=5)
+    _apply_job(conn, "https://example.com/gh-b", site="greenhouse", fit_score=5)
+    _record_outcome(conn, "https://example.com/li-a", "interview")
+    _record_outcome(conn, "https://example.com/li-b", "recruiter_reply")
+    _record_outcome(conn, "https://example.com/gh-a", "offer")
+    _record_outcome(conn, "https://example.com/gh-b", "rejection")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    assert conversion["version"] == 1
+    assert conversion["totals"] == {
+        "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
+    }
+    by_source = {entry["source"]: entry for entry in conversion["bySource"]}
+    assert by_source["linkedin"] == {
+        "source": "linkedin", "applied": 3, "reply": 2, "interview": 1, "offer": 0, "rejection": 0,
+    }
+    assert by_source["greenhouse"] == {
+        "source": "greenhouse", "applied": 2, "reply": 2, "interview": 1, "offer": 1, "rejection": 1,
+    }
+    by_band = {entry["band"]: entry for entry in conversion["byBand"]}
+    assert by_band["strong"] == {
+        "band": "strong", "applied": 3, "reply": 2, "interview": 1, "offer": 0, "rejection": 0,
+    }
+    assert by_band["moderate"] == {
+        "band": "moderate", "applied": 2, "reply": 2, "interview": 1, "offer": 1, "rejection": 1,
+    }
+
+
+def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection) -> None:
+    _seed_job(conn, "https://example.com/discovered-only")
+    record_job_event(conn, "https://example.com/discovered-only", "discover", "JobDiscovered")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    assert conversion == {
+        "version": 1,
+        "totals": {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0},
+        "bySource": [],
+        "byBand": [],
+    }

@@ -2754,3 +2754,162 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 });
+
+describe("dashboard outcome-conversion projection", () => {
+  function seedConversionDb(dbPath: string): void {
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE jobs (
+        url TEXT PRIMARY KEY, title TEXT, company TEXT, site TEXT, strategy TEXT,
+        location TEXT, salary TEXT, discovered_at TEXT, application_url TEXT,
+        description TEXT, full_description TEXT, detail_scraped_at TEXT,
+        detail_error TEXT, fit_score INTEGER, score_reasoning TEXT, scored_at TEXT,
+        tailored_resume_path TEXT, tailored_at TEXT, tailor_attempts INTEGER DEFAULT 0,
+        cover_letter_path TEXT, cover_letter_at TEXT, cover_attempts INTEGER DEFAULT 0,
+        applied_at TEXT, apply_status TEXT, apply_error TEXT, apply_attempts INTEGER DEFAULT 0
+      );
+      CREATE TABLE job_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_url TEXT, stage TEXT,
+        event_type TEXT NOT NULL DEFAULT '', level TEXT NOT NULL DEFAULT 'info',
+        message TEXT, occurred_at TEXT NOT NULL, payload_json TEXT
+      );
+      CREATE TABLE job_scores (
+        job_url TEXT NOT NULL, version INTEGER NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'local',
+        fit_score INTEGER NOT NULL, breakdown_json TEXT NOT NULL, keywords_json TEXT NOT NULL,
+        scored_at TEXT NOT NULL, correction_json TEXT, criteria_json TEXT NOT NULL DEFAULT '{}',
+        trace_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (job_url, version)
+      );
+      CREATE TABLE job_stage_states (
+        job_url TEXT NOT NULL, stage TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER DEFAULT 0, max_attempts INTEGER, started_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT '', finished_at TEXT, duration_ms INTEGER,
+        error_code TEXT, error_message TEXT, retryable INTEGER DEFAULT 1,
+        blocked_by_json TEXT, next_action TEXT, metadata_json TEXT,
+        version INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (job_url, stage)
+      );
+      CREATE TABLE application_outcomes (
+        tenant_id TEXT NOT NULL DEFAULT 'local', outcome_id TEXT NOT NULL,
+        job_key TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, note TEXT,
+        occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, outcome_id)
+      );
+    `);
+    db.close();
+  }
+
+  interface SeedJob {
+    url: string;
+    site: string;
+    fitScore: number | null;
+    applied: boolean;
+    outcomes?: string[];
+  }
+
+  function seedJobs(dbPath: string, jobs: SeedJob[]): void {
+    const db = new Database(dbPath);
+    const insertJob = db.prepare(
+      `INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
+       VALUES (@url, @title, @site, @fit_score, @apply_status, @applied_at, @discovered_at)`,
+    );
+    const insertOutcome = db.prepare(
+      `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
+       VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
+    );
+    for (const job of jobs) {
+      insertJob.run({
+        url: job.url,
+        title: "Engineer",
+        site: job.site,
+        fit_score: job.fitScore,
+        apply_status: job.applied ? "applied" : null,
+        applied_at: job.applied ? "2026-06-01T12:00:00+00:00" : null,
+        discovered_at: "2026-05-20T12:00:00+00:00",
+      });
+      for (const kind of job.outcomes ?? []) {
+        insertOutcome.run({
+          outcome_id: `${job.url}-${kind}`,
+          job_key: job.url,
+          kind,
+          at: "2026-06-05T12:00:00+00:00",
+        });
+      }
+    }
+    db.close();
+  }
+
+  it("materialises the funnel conversion by source and score band", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      seedJobs(dbPath, [
+        { url: "https://example.com/li-a", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/li-b", site: "linkedin", fitScore: 8, applied: true },
+        { url: "https://example.com/gh-a", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["offer"] },
+      ]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const conversion = res.json().conversion;
+
+        expect(conversion.totals).toEqual({
+          applied: 3, reply: 2, interview: 2, offer: 1, rejection: 0,
+          replyRate: 0.6667, interviewRate: 0.6667, offerRate: 0.3333, rejectionRate: 0,
+          costPerInterview: null,
+        });
+        const bySource = Object.fromEntries(
+          conversion.bySource.map((g: { source: string }) => [g.source, g]),
+        );
+        expect(bySource.linkedin).toMatchObject({
+          applied: 2, reply: 1, interview: 1, offer: 0, rejection: 0,
+          replyRate: 0.5, interviewRate: 0.5,
+        });
+        expect(bySource.greenhouse).toMatchObject({
+          applied: 1, reply: 1, interview: 1, offer: 1, offerRate: 1, costPerInterview: null,
+        });
+        const byBand = Object.fromEntries(
+          conversion.byBand.map((g: { band: string }) => [g.band, g]),
+        );
+        expect(byBand.strong).toMatchObject({ applied: 2, reply: 1, interview: 1 });
+        expect(byBand.moderate).toMatchObject({ applied: 1, offer: 1 });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("returns an empty conversion with null rates when nothing is applied", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      seedJobs(dbPath, [
+        { url: "https://example.com/discovered", site: "linkedin", fitScore: 7, applied: false },
+      ]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const conversion = res.json().conversion;
+        expect(conversion.totals).toEqual({
+          applied: 0, reply: 0, interview: 0, offer: 0, rejection: 0,
+          replyRate: null, interviewRate: null, offerRate: null, rejectionRate: null,
+          costPerInterview: null,
+        });
+        expect(conversion.bySource).toEqual([]);
+        expect(conversion.byBand).toEqual([]);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});

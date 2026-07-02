@@ -450,7 +450,7 @@ tables that back every read-model endpoint:
 | Table                        | What it stores                                                    |
 |------------------------------|-------------------------------------------------------------------|
 | `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, materials presence, apply status. |
-| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution. |
+| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source and score band, from `application_outcomes`). |
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
@@ -465,6 +465,14 @@ projections from canonical aggregate state, and advance the watermark in the
 same transaction. Both processes write to the same tables; SQLite handles the
 concurrent advances. Request paths read precomputed projections instead of
 assembling stage state with per-request joins.
+
+The outcome-conversion projection materialises integer funnel counts only (both
+builders must agree — the cross-runtime parity fixture asserts the
+`outcome_conversion_json` column). The dashboard read model derives the
+conversion rates (reply/interview/offer/rejection over applied) from those
+counts so there is no cross-runtime float drift; `costPerInterview` stays `null`
+until per-run apply cost is projected. This surface is read-only — it never
+feeds scoring, ranking, thresholds, or apply eligibility.
 
 Job detail audit history is assembled at read time from allow-listed lifecycle
 events and append-only apply review/outcome records. It is a user-facing audit

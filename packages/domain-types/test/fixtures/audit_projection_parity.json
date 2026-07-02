@@ -302,7 +302,8 @@
       "dashboard": [
         "funnel_json",
         "by_source_json",
-        "score_distribution_json"
+        "score_distribution_json",
+        "outcome_conversion_json"
       ]
     },
     "nonDeterministicColumns": {
@@ -764,6 +765,36 @@
           "total": 2
         }
       ],
+      "outcome_conversion_json": {
+        "version": 1,
+        "totals": {
+          "applied": 1,
+          "reply": 0,
+          "interview": 0,
+          "offer": 0,
+          "rejection": 0
+        },
+        "bySource": [
+          {
+            "source": "linkedin",
+            "applied": 1,
+            "reply": 0,
+            "interview": 0,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "byBand": [
+          {
+            "band": "strong",
+            "applied": 1,
+            "reply": 0,
+            "interview": 0,
+            "offer": 0,
+            "rejection": 0
+          }
+        ]
+      },
       "ready": 0,
       "score_distribution_json": [
         [

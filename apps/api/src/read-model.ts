@@ -27,6 +27,7 @@ import type {
   BulletCoverageAudit,
   BulletProvenanceEntry,
   BulkJobMutationFilter,
+  DashboardConversionFunnel,
   DashboardSettings,
   DashboardSummary,
   EmployerAnalysis,
@@ -210,6 +211,7 @@ interface DashboardProjectionRow extends Record<string, unknown> {
   funnel_json: string;
   by_source_json: string;
   score_distribution_json: string;
+  outcome_conversion_json: string;
   generated_at: string;
 }
 
@@ -341,6 +343,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
       dryRuns: Number(dashboard.dry_runs ?? 0),
     },
     funnel: parseFunnel(dashboard.funnel_json),
+    conversion: buildConversionSummary(dashboard.outcome_conversion_json),
     activity: recentActivity(db),
     progress: listPipelineProgress(db),
     sourceHealth: listSourceHealth(db),
@@ -3417,6 +3420,61 @@ function defaultFunnel(): DashboardSummary["funnel"] {
   }));
 }
 
+/**
+ * Derive the dashboard conversion section from the materialised
+ * ``outcome_conversion_json`` counts. Rates are computed here (not stored) so the
+ * cross-runtime projection stays integer-only; ``costPerInterview`` stays null
+ * until per-run apply cost is projected into the read model (follow-up).
+ */
+function buildConversionSummary(json: string): DashboardSummary["conversion"] {
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(json || "{}");
+  } catch {
+    parsed = {};
+  }
+  const record = isRecord(parsed) ? parsed : {};
+  const bySource = Array.isArray(record.bySource) ? record.bySource : [];
+  const byBand = Array.isArray(record.byBand) ? record.byBand : [];
+  return {
+    totals: conversionFunnelMetrics(record.totals),
+    bySource: bySource.filter(isRecord).map((group) => ({
+      source: String(group.source ?? "unknown"),
+      ...conversionFunnelMetrics(group),
+    })),
+    byBand: byBand.filter(isRecord).map((group) => ({
+      band: String(group.band ?? "unscored"),
+      ...conversionFunnelMetrics(group),
+    })),
+  };
+}
+
+function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {
+  const counts = isRecord(value) ? value : {};
+  const applied = Number(counts.applied ?? 0);
+  const reply = Number(counts.reply ?? 0);
+  const interview = Number(counts.interview ?? 0);
+  const offer = Number(counts.offer ?? 0);
+  const rejection = Number(counts.rejection ?? 0);
+  return {
+    applied,
+    reply,
+    interview,
+    offer,
+    rejection,
+    replyRate: conversionRate(reply, applied),
+    interviewRate: conversionRate(interview, applied),
+    offerRate: conversionRate(offer, applied),
+    rejectionRate: conversionRate(rejection, applied),
+    costPerInterview: null,
+  };
+}
+
+function conversionRate(numerator: number, applied: number): number | null {
+  if (applied <= 0) return null;
+  return Math.round((numerator / applied) * 10000) / 10000;
+}
+
 function defaultDashboardRow(): DashboardProjectionRow {
   return {
     tenant_id: DEFAULT_TENANT,
@@ -3429,6 +3487,7 @@ function defaultDashboardRow(): DashboardProjectionRow {
     funnel_json: "[]",
     by_source_json: "[]",
     score_distribution_json: "[]",
+    outcome_conversion_json: "{}",
     generated_at: "",
   };
 }
