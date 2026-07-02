@@ -2421,11 +2421,13 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       // repo writes the SAME value on each row of the generation).
       const coverageJson = JSON.stringify({
         computed_against: "rendered_text",
-        planned: ["latency", "python"],
+        planned: ["latency", "terraform", "python"],
         covered: ["latency"],
+        declared: ["terraform"],
         missing: ["python"],
         covered_by: { latency: "experience:acme_swe#0" },
-        counts: { planned: 2, covered: 1, missing: 1 },
+        declared_by: { terraform: "skills:cloud#0" },
+        counts: { planned: 3, covered: 1, declared: 1, missing: 1 },
       });
       const voiceJson = JSON.stringify({
         ran: true,
@@ -2462,9 +2464,11 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(explanation.coverageAudit).toMatchObject({
           computedAgainst: "rendered_text",
           covered: ["latency"],
+          declared: ["terraform"],
           missing: ["python"],
           coveredBy: { latency: "experience:acme_swe#0" },
-          counts: { planned: 2, covered: 1, missing: 1 },
+          declaredBy: { terraform: "skills:cloud#0" },
+          counts: { planned: 3, covered: 1, declared: 1, missing: 1 },
         });
         expect(explanation.voicePass).toMatchObject({
           ran: true,

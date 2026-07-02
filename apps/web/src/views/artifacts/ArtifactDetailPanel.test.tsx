@@ -116,6 +116,7 @@ describe("<ArtifactDetailPanel>", () => {
         coverageRecorded: true,
         planned: ["platform reliability", "typescript"],
         covered: ["platform reliability"],
+        declared: [],
         missing: ["typescript"],
         filtered: {
           planned: [],
@@ -125,9 +126,11 @@ describe("<ArtifactDetailPanel>", () => {
         counts: {
           planned: 2,
           covered: 1,
+          declared: 0,
           missing: 1,
           displayedPlanned: 2,
           displayedCovered: 1,
+          displayedDeclared: 0,
           displayedMissing: 1,
           filteredPlanned: 0,
           filteredCovered: 0,
@@ -259,7 +262,7 @@ describe("<ArtifactDetailPanel>", () => {
     expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
-    expect(screen.getByText("1/2 found in resume")).toBeInTheDocument();
+    expect(screen.getByText("1/2 demonstrated in resume")).toBeInTheDocument();
     expect(screen.getByText("2 total")).toBeInTheDocument();
     expect(screen.getByText("Target job keywords")).toBeInTheDocument();
     expect(screen.getByText("Found in tailored resume")).toBeInTheDocument();
@@ -318,6 +321,7 @@ describe("<ArtifactDetailPanel>", () => {
         coverageRecorded: false,
         planned: ["AWS", "GCP", "Java", "Observability"],
         covered: [],
+        declared: [],
         missing: [],
         filtered: {
           planned: [],
@@ -327,9 +331,11 @@ describe("<ArtifactDetailPanel>", () => {
         counts: {
           planned: 4,
           covered: 0,
+          declared: 0,
           missing: 0,
           displayedPlanned: 4,
           displayedCovered: 0,
+          displayedDeclared: 0,
           displayedMissing: 0,
           filteredPlanned: 0,
           filteredCovered: 0,
@@ -387,6 +393,6 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("AWS")).toBeInTheDocument();
     expect(screen.queryByText("Found in tailored resume")).not.toBeInTheDocument();
     expect(screen.queryByText("No resume keyword match found")).not.toBeInTheDocument();
-    expect(screen.queryByText(/0\/4 found in resume/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0\/4 demonstrated in resume/i)).not.toBeInTheDocument();
   });
 });

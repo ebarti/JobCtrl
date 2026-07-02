@@ -618,6 +618,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     coverageRecorded: true,
     planned: ["platform reliability", "incident response", "kubernetes"],
     covered: ["platform reliability"],
+    declared: [],
     missing: ["incident response"],
     filtered: {
       planned: [],
@@ -627,9 +628,11 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     counts: {
       planned: 3,
       covered: 1,
+      declared: 0,
       missing: 1,
       displayedPlanned: 3,
       displayedCovered: 1,
+      displayedDeclared: 0,
       displayedMissing: 1,
       filteredPlanned: 0,
       filteredCovered: 0,

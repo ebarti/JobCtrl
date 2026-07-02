@@ -357,11 +357,29 @@ against the voiced text.
   voice` (the outermost transform) so the shipped wording is inspectable, not a
   hidden prompt tweak.
 - **Final coverage audit** (`domain/materials/coverage_audit.py`):
-  keyword coverage (covered + missing) is computed at generation time against the
-  actual rendered (voiced) bullet text — never inferred from the job description —
-  and a keyword counts as covered **only when it appears in a provenance-backed
-  grounded bullet** (a bullet carrying an evidence/requirement FK). Keyword-
-  stuffing an ungrounded skills line and substring false positives do not count.
+  keyword coverage is computed at generation time against the actual rendered
+  (voiced) bullet text — never inferred from the job description — and partitions the
+  analysis keywords into three honestly-labeled buckets: **covered** (demonstrated),
+  **declared** (rendered from the profile's canonical skills declaration but not
+  demonstrated), and **missing** (rendered nowhere the employer reads). A keyword
+  counts as **covered** only when it appears in a bullet backed by real profile
+  evidence: the bullet carries a canonical evidence FK (`evidence_ids`), or the
+  keyword itself traces (word-boundary) to the profile evidence corpus. A requirement
+  FK does **not** credit coverage — the provenance builder binds a requirement
+  whenever one of its keywords appears in the line, so counting that binding would let
+  a keyword ground itself (circular), rewarding the stuffing the guard exists to
+  catch. A keyword whose only home is a skills-section line that no evidence
+  demonstrates is **declared**, not `missing` — reporting a shipped skill as absent
+  would be the same lying audit surface in the other direction. Its profile grounding
+  is not "by construction" (the skills line renders the LLM's reordered
+  `tailored_skill_items`, not raw `skill_categories`): surfaced coverage is read only
+  from the persisted `coverage_audit_json`, which is recorded only for an **approved**
+  resume, and approval requires validation whose "Fabricated skill" check rejects any
+  skills item outside the profile's declared category (the prose fabrication gate
+  likewise treats declared skills as backed). `coverage_ratio` stays covered/planned
+  (demonstrated ratio) and is never inflated by `declared`. Substring false positives
+  do not count. The read model carries `covered`/`declared`/`missing` with
+  `covered_by`/`declared_by` per-keyword bullet maps so all three are inspectable.
 - **Final canonical text** is the single voiced payload: `TailorResumeUseCase`
   assembles the plain-text resume from it, the provenance rows anchor to it, and
   the active resume PDF renderer consumes `TailorOutcome.final_payload`. The
