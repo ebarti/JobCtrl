@@ -13,9 +13,14 @@ Gemini-serialised (no ``additionalProperties``).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
 from jobhunter.domain.materials.analysis import JobAnalysisDraft
 from jobhunter.infrastructure.analysis.antigravity_analysis_adapter import (
@@ -24,6 +29,23 @@ from jobhunter.infrastructure.analysis.antigravity_analysis_adapter import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def in_memory_exporter(monkeypatch):
+    """TracerProvider piped to an in-memory exporter for generation-span assertions."""
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+    yield exporter
+    exporter.clear()
 
 
 def _valid_analysis_dict() -> dict[str, Any]:
@@ -56,10 +78,13 @@ def _valid_analysis_dict() -> dict[str, Any]:
 class _FakeResponse:
     """Mimics the SDK response: an async ``chunks`` iterator + structured_output()."""
 
-    def __init__(self, structured: Any, *, chunks: list[Any] | None = None) -> None:
+    def __init__(
+        self, structured: Any, *, chunks: list[Any] | None = None, usage_metadata: Any = None
+    ) -> None:
         self._structured = structured
         self._chunks = chunks if chunks is not None else ["chunk-a", "chunk-b"]
         self.drained = False
+        self.usage_metadata = usage_metadata
 
     @property
     async def chunks(self):  # noqa: D401 - async generator property mirroring the SDK
@@ -112,9 +137,10 @@ def _make_adapter(
     structured: Any,
     calls: dict[str, Any],
     chunks: list[Any] | None = None,
+    usage_metadata: Any = None,
 ) -> AntigravityAnalysisAdapter:
     """Build an adapter wired to fakes; ``calls`` captures the config kwargs."""
-    response = _FakeResponse(structured, chunks=chunks)
+    response = _FakeResponse(structured, chunks=chunks, usage_metadata=usage_metadata)
 
     def config_factory(**kwargs: Any) -> dict[str, Any]:
         calls["config_kwargs"] = kwargs
@@ -223,3 +249,51 @@ async def test_model_id_property() -> None:
 
     custom = AntigravityAnalysisAdapter(model="gemini-x")
     assert custom.model_id == "gemini-x"
+
+
+async def test_draft_opens_generation_span_with_model_and_tokens(
+    monkeypatch: pytest.MonkeyPatch, in_memory_exporter
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    usage = SimpleNamespace(
+        prompt_token_count=900,
+        candidates_token_count=150,
+        thoughts_token_count=40,
+        cached_content_token_count=0,
+        total_token_count=1090,
+    )
+    calls: dict[str, Any] = {}
+    adapter = _make_adapter(
+        structured=_valid_analysis_dict(), calls=calls, usage_metadata=usage
+    )
+
+    await adapter.draft("SYS", "6+ years of Python required.")
+
+    spans = in_memory_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "llm.gemini-3.5-flash"
+    assert span.instrumentation_scope.name == "jobhunter.analysis.antigravity"
+    attrs = dict(span.attributes or {})
+    assert attrs["langfuse.observation.type"] == "generation"
+    assert attrs["langfuse.observation.model.name"] == "gemini-3.5-flash"
+    assert attrs["gen_ai.usage.input_tokens"] == 900
+    # output = visible candidates (150) + reasoning thoughts (40).
+    assert attrs["gen_ai.usage.output_tokens"] == 190
+
+
+async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(
+    monkeypatch: pytest.MonkeyPatch, in_memory_exporter
+) -> None:
+    # Instrumentation must never break a leg: no usage metadata -> the draft still
+    # succeeds and the span omits token counts rather than fabricating them.
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls: dict[str, Any] = {}
+    adapter = _make_adapter(structured=_valid_analysis_dict(), calls=calls)
+
+    draft = await adapter.draft("SYS", "6+ years of Python required.")
+    assert isinstance(draft, JobAnalysisDraft)
+
+    attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+    assert attrs["langfuse.observation.model.name"] == "gemini-3.5-flash"
+    assert "gen_ai.usage.input_tokens" not in attrs

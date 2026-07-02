@@ -21,11 +21,12 @@ wrapping asyncio task — matching the constraint "NO timeouts on the voice LLM 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from jobhunter.domain.materials.voice import VoicePayload, VoiceRequest, VoiceResult
 from jobhunter.infrastructure.materials.voice_prompts import build_voice_user_prompt
+from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 # A query callable: (prompt, options) -> async iterator of SDK messages.
 QueryFn = Callable[..., AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]]
@@ -34,6 +35,9 @@ OptionsFactory = Callable[..., Any]
 # Top Claude model + default high effort (mirrors the analysis adapter default).
 # Re-confirm the id at impl time; model ids drift.
 CLAUDE_VOICE_MODEL = "claude-opus-4-8"
+
+# OTel instrumentation scope for the voice pass's generation span.
+_VOICE_SCOPE = "jobhunter.materials.voice"
 
 
 def _load_sdk_query() -> QueryFn:
@@ -83,6 +87,30 @@ def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
     return structured
 
 
+def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
+    """Best-effort ``(input_tokens, output_tokens)`` from the final ResultMessage.
+
+    The Claude Agent SDK reports authoritative cumulative usage on the terminal
+    ``ResultMessage``; the true input is fresh + cache-creation + cache-read
+    tokens. Returns ``(None, None)`` when the SDK surfaced no usage so the span
+    omits token counts rather than fabricating them.
+    """
+    for message in reversed(messages):
+        if type(message).__name__ != "ResultMessage":
+            continue
+        usage = getattr(message, "usage", None)
+        if not isinstance(usage, Mapping):
+            return None, None
+        input_tokens = (
+            int(usage.get("input_tokens") or 0)
+            + int(usage.get("cache_creation_input_tokens") or 0)
+            + int(usage.get("cache_read_input_tokens") or 0)
+        )
+        output_tokens = int(usage.get("output_tokens") or 0)
+        return (input_tokens or None, output_tokens or None)
+    return None, None
+
+
 class ClaudeVoiceAdapter:
     """Claude Agent SDK voice pass (``VoicePort``)."""
 
@@ -117,12 +145,28 @@ class ClaudeVoiceAdapter:
             },
         )
         user_prompt = build_voice_user_prompt(request)
-        raw = query_fn(prompt=user_prompt, options=options)
-        iterator = await _aiter(raw)
-        messages = [message async for message in iterator]
-        structured = _structured_output_from_messages(messages)
-        payload = VoicePayload.model_validate(structured)
-        return VoiceResult.from_payload(payload)
+        span_input = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        with llm_generation_span(
+            model=self._model,
+            messages=span_input,
+            params={},
+            scope_name=_VOICE_SCOPE,
+        ) as record:
+            raw = query_fn(prompt=user_prompt, options=options)
+            iterator = await _aiter(raw)
+            messages = [message async for message in iterator]
+            structured = _structured_output_from_messages(messages)
+            input_tokens, output_tokens = _usage_from_messages(messages)
+            record(
+                json.dumps(structured, ensure_ascii=False),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            payload = VoicePayload.model_validate(structured)
+            return VoiceResult.from_payload(payload)
 
 
 __all__ = [

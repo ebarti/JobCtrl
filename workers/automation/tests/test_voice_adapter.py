@@ -17,9 +17,30 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
 from jobhunter.domain.materials.voice import VoiceRequest
 from jobhunter.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+
+
+@pytest.fixture
+def in_memory_exporter(monkeypatch):
+    """TracerProvider piped to an in-memory exporter for generation-span assertions."""
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+    yield exporter
+    exporter.clear()
 
 
 class ResultMessage:
@@ -29,9 +50,15 @@ class ResultMessage:
     double MUST be named ``ResultMessage`` (a leading underscore would hide it).
     """
 
-    def __init__(self, structured_output: Any, subtype: str = "success") -> None:
+    def __init__(
+        self,
+        structured_output: Any,
+        subtype: str = "success",
+        usage: dict[str, int] | None = None,
+    ) -> None:
         self.structured_output = structured_output
         self.subtype = subtype
+        self.usage = usage
 
 
 class _FakeClaudeOptions:
@@ -39,13 +66,18 @@ class _FakeClaudeOptions:
         self.kwargs = kwargs
 
 
-def _fake_query(structured: Any, *, captured: list[dict[str, Any]] | None = None):
+def _fake_query(
+    structured: Any,
+    *,
+    captured: list[dict[str, Any]] | None = None,
+    usage: dict[str, int] | None = None,
+):
     def _query(*, prompt: str, options: Any):
         if captured is not None:
             captured.append({"prompt": prompt, "options": options})
 
         async def _gen():
-            yield ResultMessage(structured)
+            yield ResultMessage(structured, usage=usage)
 
         return _gen()
 
@@ -108,3 +140,42 @@ async def test_raises_on_structured_output_retry_exhaustion() -> None:
     adapter = ClaudeVoiceAdapter(query_fn=_query, options_factory=_FakeClaudeOptions)
     with pytest.raises(RuntimeError):
         await adapter.rewrite("system", _request())
+
+
+@pytest.mark.asyncio
+async def test_rewrite_opens_generation_span_with_model_and_tokens(in_memory_exporter) -> None:
+    adapter = ClaudeVoiceAdapter(
+        query_fn=_fake_query(
+            _voiced_structured(),
+            usage={"input_tokens": 700, "output_tokens": 120},
+        ),
+        options_factory=_FakeClaudeOptions,
+    )
+    await adapter.rewrite("system", _request())
+
+    spans = in_memory_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "llm.claude-opus-4-8"
+    assert span.instrumentation_scope.name == "jobhunter.materials.voice"
+    attrs = dict(span.attributes or {})
+    assert attrs["langfuse.observation.type"] == "generation"
+    assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+    assert attrs["gen_ai.usage.input_tokens"] == 700
+    assert attrs["gen_ai.usage.output_tokens"] == 120
+
+
+@pytest.mark.asyncio
+async def test_rewrite_span_omits_tokens_when_sdk_reports_no_usage(in_memory_exporter) -> None:
+    # Instrumentation must never break the voice pass: no SDK usage -> the rewrite
+    # still succeeds and the span omits token counts rather than fabricating them.
+    adapter = ClaudeVoiceAdapter(
+        query_fn=_fake_query(_voiced_structured()),
+        options_factory=_FakeClaudeOptions,
+    )
+    result = await adapter.rewrite("system", _request())
+    assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
+
+    attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+    assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+    assert "gen_ai.usage.input_tokens" not in attrs

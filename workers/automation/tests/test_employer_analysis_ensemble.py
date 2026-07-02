@@ -19,17 +19,41 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
 from jobhunter.domain.materials.analysis import (
     EnsembleError,
     JobAnalysis,
     JobAnalysisDraft,
 )
-from jobhunter.infrastructure.analysis.claude_analysis_adapter import ClaudeAnalysisAdapter
+from jobhunter.infrastructure.analysis.claude_analysis_adapter import (
+    ClaudeAnalysisAdapter,
+    ClaudeAnalysisSynthesizer,
+)
 from jobhunter.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
 from jobhunter.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def in_memory_exporter(monkeypatch):
+    """TracerProvider piped to an in-memory exporter for generation-span assertions."""
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+    yield exporter
+    exporter.clear()
 
 JD = (
     "Staff Backend Engineer. Requires 8+ years building distributed systems in "
@@ -82,9 +106,15 @@ def _grounded_dict(model_tag: str | None = None) -> dict[str, Any]:
 class ResultMessage:
     """Named to match the real SDK class — the adapter keys on the class name."""
 
-    def __init__(self, structured_output: Any, subtype: str = "success") -> None:
+    def __init__(
+        self,
+        structured_output: Any,
+        subtype: str = "success",
+        usage: dict[str, int] | None = None,
+    ) -> None:
         self.structured_output = structured_output
         self.subtype = subtype
+        self.usage = usage
 
 
 class _FakeClaudeOptions:
@@ -92,7 +122,12 @@ class _FakeClaudeOptions:
         self.kwargs = kwargs
 
 
-def _fake_claude_query(structured: Any, *, captured: list[dict[str, Any]] | None = None):
+def _fake_claude_query(
+    structured: Any,
+    *,
+    captured: list[dict[str, Any]] | None = None,
+    usage: dict[str, int] | None = None,
+):
     """Return a fake ``query`` that yields one ResultMessage with ``structured``."""
 
     def query(*, prompt: str, options: Any):
@@ -100,7 +135,7 @@ def _fake_claude_query(structured: Any, *, captured: list[dict[str, Any]] | None
             captured.append({"prompt": prompt, "options": options})
 
         async def _gen():
-            yield ResultMessage(structured)
+            yield ResultMessage(structured, usage=usage)
 
         return _gen()
 
@@ -113,9 +148,10 @@ def _fake_claude_query(structured: Any, *, captured: list[dict[str, Any]] | None
 
 
 class _FakeCodexThread:
-    def __init__(self, final_response: str, status: str = "completed") -> None:
+    def __init__(self, final_response: str, status: str = "completed", usage: Any = None) -> None:
         self._final_response = final_response
         self._status = status
+        self._usage = usage
         self.runs: list[dict[str, Any]] = []
 
     async def run(self, prompt: str, **kwargs: Any) -> Any:
@@ -124,14 +160,15 @@ class _FakeCodexThread:
             status=self._status,
             final_response=self._final_response,
             error=None,
+            usage=self._usage,
         )
 
 
 class _FakeAsyncCodex:
-    def __init__(self, final_response: str, status: str = "completed") -> None:
+    def __init__(self, final_response: str, status: str = "completed", usage: Any = None) -> None:
         self._final_response = final_response
         self._status = status
-        self.thread = _FakeCodexThread(final_response, status)
+        self.thread = _FakeCodexThread(final_response, status, usage)
         self.thread_start_calls: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> _FakeAsyncCodex:
@@ -185,6 +222,90 @@ class TestClaudeAdapter:
         with pytest.raises(RuntimeError, match="retries exhausted"):
             await adapter.draft("system", JD)
 
+    async def test_draft_opens_generation_span_with_model_and_tokens(self, in_memory_exporter) -> None:
+        adapter = ClaudeAnalysisAdapter(
+            model="claude-opus-4-8",
+            query_fn=_fake_claude_query(
+                _grounded_dict(),
+                usage={"input_tokens": 1200, "output_tokens": 340, "cache_read_input_tokens": 50},
+            ),
+            options_factory=_FakeClaudeOptions,
+        )
+        await adapter.draft("system", JD)
+
+        spans = in_memory_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "llm.claude-opus-4-8"
+        assert span.instrumentation_scope.name == "jobhunter.analysis.claude"
+        attrs = dict(span.attributes or {})
+        assert attrs["langfuse.observation.type"] == "generation"
+        assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+        # input = 1200 fresh + 50 cache_read; cache tokens count toward input processed.
+        assert attrs["gen_ai.usage.input_tokens"] == 1250
+        assert attrs["gen_ai.usage.output_tokens"] == 340
+        assert json.loads(attrs["langfuse.observation.usage_details"]) == {
+            "input_tokens": 1250,
+            "output_tokens": 340,
+            "total_tokens": 1590,
+        }
+
+    async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(self, in_memory_exporter) -> None:
+        # Instrumentation must never break a leg: no SDK usage -> the draft still
+        # succeeds and the span omits token counts rather than fabricating them.
+        adapter = ClaudeAnalysisAdapter(
+            query_fn=_fake_claude_query(_grounded_dict()),
+            options_factory=_FakeClaudeOptions,
+        )
+        draft = await adapter.draft("system", JD)
+        assert draft.model_id == "claude-opus-4-8"
+
+        attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
+        assert "gen_ai.usage.input_tokens" not in attrs
+        assert "langfuse.observation.usage_details" not in attrs
+
+    async def test_draft_span_records_sdk_error_and_reraises(self, in_memory_exporter) -> None:
+        from opentelemetry.trace import StatusCode
+
+        def query(*, prompt: str, options: Any):
+            async def _gen():
+                yield ResultMessage(None, subtype="error_max_structured_output_retries")
+
+            return _gen()
+
+        adapter = ClaudeAnalysisAdapter(query_fn=query, options_factory=_FakeClaudeOptions)
+        with pytest.raises(RuntimeError, match="retries exhausted"):
+            await adapter.draft("system", JD)
+
+        spans = in_memory_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+
+
+class TestClaudeSynthesizer:
+    async def test_reconcile_opens_generation_span(self, in_memory_exporter) -> None:
+        synth = ClaudeAnalysisSynthesizer(
+            query_fn=_fake_claude_query(
+                _grounded_dict(),
+                usage={"input_tokens": 500, "output_tokens": 90},
+            ),
+            options_factory=_FakeClaudeOptions,
+        )
+        draft = JobAnalysisDraft(model_id="claude-opus-4-8", **_grounded_dict())
+        await synth.reconcile("synth-sys", drafts=(draft,), jd_snapshot=JD)
+
+        spans = in_memory_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "llm.claude-opus-4-8"
+        # A distinct scope keeps the synthesizer separable from the Claude draft leg.
+        assert span.instrumentation_scope.name == "jobhunter.analysis.synthesizer"
+        attrs = dict(span.attributes or {})
+        assert attrs["langfuse.observation.type"] == "generation"
+        assert attrs["gen_ai.usage.input_tokens"] == 500
+        assert attrs["gen_ai.usage.output_tokens"] == 90
+
 
 class TestCodexAdapter:
     async def test_parses_final_response_into_typed_draft(self) -> None:
@@ -211,6 +332,23 @@ class TestCodexAdapter:
         )
         with pytest.raises(RuntimeError, match="Codex turn failed"):
             await adapter.draft("system", JD)
+
+    async def test_draft_opens_generation_span_with_model_and_tokens(self, in_memory_exporter) -> None:
+        usage = SimpleNamespace(total=SimpleNamespace(input_tokens=800, output_tokens=210))
+        fake = _FakeAsyncCodex(json.dumps(_grounded_dict()), usage=usage)
+        adapter = CodexAnalysisAdapter(model="gpt-5.5", async_codex_factory=lambda: fake)
+        await adapter.draft("system", JD)
+
+        spans = in_memory_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "llm.gpt-5.5"
+        assert span.instrumentation_scope.name == "jobhunter.analysis.codex"
+        attrs = dict(span.attributes or {})
+        assert attrs["langfuse.observation.type"] == "generation"
+        assert attrs["langfuse.observation.model.name"] == "gpt-5.5"
+        assert attrs["gen_ai.usage.input_tokens"] == 800
+        assert attrs["gen_ai.usage.output_tokens"] == 210
 
 
 # --------------------------------------------------------------------------- #

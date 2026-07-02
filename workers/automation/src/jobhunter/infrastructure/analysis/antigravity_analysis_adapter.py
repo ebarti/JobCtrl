@@ -37,6 +37,7 @@ from jobhunter.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobhunter.infrastructure.analysis.gemini_schema import gemini_json_schema
+from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 # An ``Agent`` factory: (config) -> async-context-manager agent.
 AgentFactory = Callable[[Any], Any]
@@ -48,6 +49,9 @@ ConfigFactory = Callable[..., Any]
 # 404s on the current key. Swappable via the ``model`` ctor arg if a newer id
 # becomes available — re-confirm against the SDK at impl time, model ids drift.
 ANTIGRAVITY_ANALYSIS_MODEL = "gemini-3.5-flash"
+
+# OTel instrumentation scope for the Antigravity draft leg's generation span.
+_ANTIGRAVITY_SCOPE = "jobhunter.analysis.antigravity"
 
 # Where the local Antigravity agent persists session + app state. Per-process,
 # 0700, under the OS temp dir so the suite and live runs never collide with a
@@ -155,25 +159,68 @@ class AntigravityAnalysisAdapter:
 
         config = self._build_config(config_factory, types_module, system_prompt=system_prompt)
 
-        async with agent_factory(config) as agent:
-            response = await agent.chat(jd_snapshot)
-            # The chunk stream MUST be drained before structured_output() resolves.
-            async for _chunk in response.chunks:
-                pass
-            structured = await response.structured_output()
+        span_input = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": jd_snapshot},
+        ]
+        with llm_generation_span(
+            model=self._model,
+            messages=span_input,
+            params={},
+            scope_name=_ANTIGRAVITY_SCOPE,
+        ) as record:
+            async with agent_factory(config) as agent:
+                response = await agent.chat(jd_snapshot)
+                # The chunk stream MUST be drained before structured_output() resolves.
+                async for _chunk in response.chunks:
+                    pass
+                structured = await response.structured_output()
+                usage_metadata = getattr(response, "usage_metadata", None)
 
-        if structured is None:
-            raise RuntimeError(
-                "Antigravity (Gemini) returned no structured output for response_schema"
+            if structured is None:
+                raise RuntimeError(
+                    "Antigravity (Gemini) returned no structured output for response_schema"
+                )
+            if not isinstance(structured, dict):
+                # Tolerate a JSON string shape; a non-object payload is a hard fail.
+                structured = json.loads(structured)
+            if not isinstance(structured, dict):
+                raise RuntimeError("Antigravity (Gemini) structured output was not a JSON object")
+
+            input_tokens, output_tokens = _usage_from_metadata(usage_metadata)
+            record(
+                json.dumps(structured, ensure_ascii=False),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
-        if not isinstance(structured, dict):
-            # Tolerate a JSON string shape; a non-object payload is a hard fail.
-            structured = json.loads(structured)
-        if not isinstance(structured, dict):
-            raise RuntimeError("Antigravity (Gemini) structured output was not a JSON object")
+            analysis = JobAnalysis.model_validate(structured)
+            return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
 
-        analysis = JobAnalysis.model_validate(structured)
-        return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
+
+def _optional_int(value: Any) -> int | None:
+    """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_from_metadata(usage_metadata: Any) -> tuple[int | None, int | None]:
+    """Best-effort ``(input_tokens, output_tokens)`` from Gemini ``usage_metadata``.
+
+    ``prompt_token_count`` is the total input the model processed (cached tokens
+    included); output is the visible ``candidates_token_count`` plus the
+    ``thoughts_token_count`` reasoning tokens. Returns ``(None, None)`` when the
+    SDK surfaced no usage so the span omits token counts rather than fabricating.
+    """
+    if usage_metadata is None:
+        return None, None
+    prompt = _optional_int(getattr(usage_metadata, "prompt_token_count", None))
+    candidates = _optional_int(getattr(usage_metadata, "candidates_token_count", None)) or 0
+    thoughts = _optional_int(getattr(usage_metadata, "thoughts_token_count", None)) or 0
+    return prompt, ((candidates + thoughts) or None)
 
 
 __all__ = [

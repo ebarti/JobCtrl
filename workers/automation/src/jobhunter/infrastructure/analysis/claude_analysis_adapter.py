@@ -18,7 +18,7 @@ cancellation of the wrapping asyncio task.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from jobhunter.domain.materials.analysis import (
@@ -26,6 +26,7 @@ from jobhunter.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobhunter.infrastructure.analysis.prompts import build_synthesizer_user_prompt
+from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 # A query callable: (prompt, options) -> async iterator of SDK messages.
 QueryFn = Callable[..., AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]]
@@ -34,6 +35,11 @@ OptionsFactory = Callable[..., Any]
 # Top Claude model + default high effort (D-18). Re-confirm the id at impl time;
 # model ids drift. Mirrors the mestre Claude runtime default set.
 CLAUDE_ANALYSIS_MODEL = "claude-opus-4-8"
+
+# OTel instrumentation scopes so the draft leg and the synthesizer pass stay
+# distinguishable in Langfuse even though they share the Claude model + span name.
+_DRAFT_SCOPE = "jobhunter.analysis.claude"
+_SYNTHESIZER_SCOPE = "jobhunter.analysis.synthesizer"
 
 
 def _load_sdk_query() -> QueryFn:
@@ -86,6 +92,31 @@ def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
     return structured
 
 
+def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
+    """Best-effort ``(input_tokens, output_tokens)`` from the final ResultMessage.
+
+    The Claude Agent SDK reports authoritative cumulative usage on the terminal
+    ``ResultMessage``; the true input is fresh + cache-creation + cache-read
+    tokens (reading only ``input_tokens`` under-reports the cached system prompt).
+    Returns ``(None, None)`` when the SDK surfaced no usage so the span omits
+    token counts rather than fabricating them.
+    """
+    for message in reversed(messages):
+        if type(message).__name__ != "ResultMessage":
+            continue
+        usage = getattr(message, "usage", None)
+        if not isinstance(usage, Mapping):
+            return None, None
+        input_tokens = (
+            int(usage.get("input_tokens") or 0)
+            + int(usage.get("cache_creation_input_tokens") or 0)
+            + int(usage.get("cache_read_input_tokens") or 0)
+        )
+        output_tokens = int(usage.get("output_tokens") or 0)
+        return (input_tokens or None, output_tokens or None)
+    return None, None
+
+
 class _ClaudeStructuredCaller:
     """Shared call path for the draft adapter and the synthesizer."""
 
@@ -95,10 +126,12 @@ class _ClaudeStructuredCaller:
         model: str = CLAUDE_ANALYSIS_MODEL,
         query_fn: QueryFn | None = None,
         options_factory: OptionsFactory | None = None,
+        scope_name: str = _DRAFT_SCOPE,
     ) -> None:
         self._model = model
         self._query_fn = query_fn
         self._options_factory = options_factory
+        self._scope_name = scope_name
 
     async def call(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         query_fn = self._query_fn or _load_sdk_query()
@@ -116,10 +149,27 @@ class _ClaudeStructuredCaller:
                 "schema": JobAnalysis.model_json_schema(),
             },
         )
-        raw = query_fn(prompt=user_prompt, options=options)
-        iterator = await _aiter(raw)
-        messages = [message async for message in iterator]
-        return _structured_output_from_messages(messages)
+        span_input = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        with llm_generation_span(
+            model=self._model,
+            messages=span_input,
+            params={},
+            scope_name=self._scope_name,
+        ) as record:
+            raw = query_fn(prompt=user_prompt, options=options)
+            iterator = await _aiter(raw)
+            messages = [message async for message in iterator]
+            structured = _structured_output_from_messages(messages)
+            input_tokens, output_tokens = _usage_from_messages(messages)
+            record(
+                json.dumps(structured, ensure_ascii=False),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            return structured
 
 
 class ClaudeAnalysisAdapter:
@@ -134,7 +184,10 @@ class ClaudeAnalysisAdapter:
     ) -> None:
         self._model = model
         self._caller = _ClaudeStructuredCaller(
-            model=model, query_fn=query_fn, options_factory=options_factory
+            model=model,
+            query_fn=query_fn,
+            options_factory=options_factory,
+            scope_name=_DRAFT_SCOPE,
         )
 
     @property
@@ -159,7 +212,10 @@ class ClaudeAnalysisSynthesizer:
     ) -> None:
         self._model = model
         self._caller = _ClaudeStructuredCaller(
-            model=model, query_fn=query_fn, options_factory=options_factory
+            model=model,
+            query_fn=query_fn,
+            options_factory=options_factory,
+            scope_name=_SYNTHESIZER_SCOPE,
         )
 
     @property

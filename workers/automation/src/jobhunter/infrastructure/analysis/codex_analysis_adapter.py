@@ -34,12 +34,16 @@ from jobhunter.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobhunter.infrastructure.analysis.strict_schema import strict_json_schema
+from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 AsyncCodexFactory = Callable[[], Any]
 
 # Top current Codex model (gpt-5.5) + max reasoning effort (D-18). Matches
 # mestre's vendor-lane default for the Codex leg.
 CODEX_ANALYSIS_MODEL = "gpt-5.5"
+
+# OTel instrumentation scope for the Codex draft leg's generation span.
+_CODEX_SCOPE = "jobhunter.analysis.codex"
 
 # Disable Codex plugins/apps so the isolated home only ever holds JobHunter's
 # analysis rollouts + the copied auth token (mirrors mestre's vendor lane).
@@ -146,32 +150,70 @@ class CodexAnalysisAdapter:
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         factory = self._async_codex_factory or _load_async_codex_factory()
         prompt = f"{system_prompt}\n\nJOB DESCRIPTION:\n{jd_snapshot}"
-        async with factory() as codex:  # reuses existing Codex login (D-04)
-            thread = await codex.thread_start(
-                model=self._model,
-                # Max reasoning effort (D-18); analysis reads the JD, no FS writes.
-                config={"model_reasoning_effort": "high"},
-                sandbox=_load_sandbox_read_only(),
-            )
-            result = await thread.run(
-                prompt,
-                # Codex/OpenAI strict structured output requires every object to
-                # set additionalProperties:false and list all props in required;
-                # Pydantic's model_json_schema() emits neither (live 400 otherwise).
-                output_schema=strict_json_schema(JobAnalysis.model_json_schema()),
-                effort="high",
-            )
-        # ``status`` is a ``TurnStatus`` enum whose ``str()`` is
-        # "TurnStatus.completed" — compare its ``.value`` ("completed"), not the
-        # enum repr, or a successful turn is wrongly rejected (live-caught bug).
-        status_obj = getattr(result, "status", None)
-        status = str(getattr(status_obj, "value", status_obj) or "")
-        final_response = getattr(result, "final_response", None)
-        if (status and status != "completed") or not final_response:
-            error = getattr(result, "error", None)
-            raise RuntimeError(f"Codex turn failed: status={status!r} err={error!r}")
-        analysis = JobAnalysis.model_validate_json(final_response)
-        return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
+        span_input = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": jd_snapshot},
+        ]
+        with llm_generation_span(
+            model=self._model,
+            messages=span_input,
+            params={},
+            scope_name=_CODEX_SCOPE,
+        ) as record:
+            async with factory() as codex:  # reuses existing Codex login (D-04)
+                thread = await codex.thread_start(
+                    model=self._model,
+                    # Max reasoning effort (D-18); analysis reads the JD, no FS writes.
+                    config={"model_reasoning_effort": "high"},
+                    sandbox=_load_sandbox_read_only(),
+                )
+                result = await thread.run(
+                    prompt,
+                    # Codex/OpenAI strict structured output requires every object to
+                    # set additionalProperties:false and list all props in required;
+                    # Pydantic's model_json_schema() emits neither (live 400 otherwise).
+                    output_schema=strict_json_schema(JobAnalysis.model_json_schema()),
+                    effort="high",
+                )
+            # ``status`` is a ``TurnStatus`` enum whose ``str()`` is
+            # "TurnStatus.completed" — compare its ``.value`` ("completed"), not the
+            # enum repr, or a successful turn is wrongly rejected (live-caught bug).
+            status_obj = getattr(result, "status", None)
+            status = str(getattr(status_obj, "value", status_obj) or "")
+            final_response = getattr(result, "final_response", None)
+            if (status and status != "completed") or not final_response:
+                error = getattr(result, "error", None)
+                raise RuntimeError(f"Codex turn failed: status={status!r} err={error!r}")
+            input_tokens, output_tokens = _usage_from_result(result)
+            record(final_response, input_tokens=input_tokens, output_tokens=output_tokens)
+            analysis = JobAnalysis.model_validate_json(final_response)
+            return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
+
+
+def _optional_int(value: Any) -> int | None:
+    """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_from_result(result: Any) -> tuple[int | None, int | None]:
+    """Best-effort ``(input_tokens, output_tokens)`` from a Codex ``TurnResult``.
+
+    Codex reports cumulative token usage on ``result.usage.total``. Returns
+    ``(None, None)`` when the SDK surfaced no usage so the span omits token
+    counts rather than fabricating them.
+    """
+    total = getattr(getattr(result, "usage", None), "total", None)
+    if total is None:
+        return None, None
+    return (
+        _optional_int(getattr(total, "input_tokens", None)),
+        _optional_int(getattr(total, "output_tokens", None)),
+    )
 
 
 __all__ = [
