@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1477,6 +1478,36 @@ def _worker_heartbeat_iteration(
         started_before=worker_started_at,
     )
     return (recovered_stages, recovered_discovery_runs)
+
+
+@app.command()
+def backup(
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=(
+            "Destination file, or a directory to place a timestamped backup in. "
+            "Defaults to ~/.jobhunter/backups/jobhunter-<timestamp>.db."
+        ),
+    ),
+) -> None:
+    """Write a consistent snapshot of the local SQLite database.
+
+    Uses SQLite VACUUM INTO, so it is safe to run while the app is running.
+    Nothing is ever deleted. To restore, stop the app and copy a backup file
+    over ~/.jobhunter/jobhunter.db.
+    """
+    from jobhunter.database import backup_database
+
+    try:
+        destination = backup_database(output)
+    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error) as exc:
+        console.print(f"[red]Backup failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    size = destination.stat().st_size
+    console.print(f"[green]Database backup written:[/green] {destination} ({size:,} bytes)")
 
 
 @app.command()

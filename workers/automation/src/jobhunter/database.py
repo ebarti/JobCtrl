@@ -17,6 +17,17 @@ from typing import Any
 
 from jobhunter.config import DB_PATH, DEFAULTS
 
+# Schema version stamped into the SQLite ``user_version`` header. The ensure_*
+# helpers below are additive and idempotent, so this is a lightweight
+# forward-incompatibility guard (refuse a DB written by a newer build), not a
+# migration framework. Bump it only when the schema shape changes.
+SCHEMA_VERSION = 1
+
+
+class IncompatibleSchemaVersionError(RuntimeError):
+    """Raised when the database was written by a newer build than this code."""
+
+
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
@@ -64,6 +75,83 @@ def close_connection(db_path: Path | str | None = None) -> None:
             conn.close()
 
 
+def backup_database(
+    output: Path | str | None = None,
+    *,
+    db_path: Path | str | None = None,
+) -> Path:
+    """Write a consistent snapshot of the live database with ``VACUUM INTO``.
+
+    ``VACUUM INTO`` copies a transactionally consistent view of the database
+    even while the app is running under WAL, and always emits a standalone
+    single-file database (no ``-wal`` / ``-shm`` sidecars) that can be copied
+    over ``jobhunter.db`` to restore. Nothing is ever deleted.
+
+    Args:
+        output: Destination file, or an existing directory to place a
+            timestamped file into. Defaults to a timestamped file under a
+            ``backups/`` directory next to the source database.
+        db_path: Override the source database path (defaults to ``DB_PATH``).
+
+    Returns:
+        The path the backup was written to.
+    """
+    source = Path(db_path or DB_PATH)
+    if not source.exists():
+        raise FileNotFoundError(f"No database to back up at {source}")
+
+    destination = _resolve_backup_destination(source, output)
+    if destination.exists():
+        raise FileExistsError(f"Backup destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    src = sqlite3.connect(source)
+    try:
+        # Match the app's lock-wait budget so a backup taken during transient
+        # DDL waits briefly instead of failing on "database is locked".
+        src.execute("PRAGMA busy_timeout=10000")
+        src.execute("VACUUM INTO ?", (str(destination),))
+    finally:
+        src.close()
+    return destination
+
+
+def _resolve_backup_destination(source: Path, output: Path | str | None) -> Path:
+    if output is not None:
+        candidate = Path(output).expanduser()
+        if not candidate.is_dir():
+            return candidate
+        target_dir = candidate
+    else:
+        target_dir = source.parent / "backups"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return target_dir / f"jobhunter-{timestamp}.db"
+
+
+def _ensure_schema_version(conn: sqlite3.Connection) -> int:
+    """Stamp ``PRAGMA user_version`` as a lightweight schema guard.
+
+    Databases created before this guard report ``user_version == 0`` and are
+    adopted by stamping ``SCHEMA_VERSION``; an equal version is a no-op. A
+    database whose version is newer than this build fails closed with
+    ``IncompatibleSchemaVersionError`` -- the caller (``init_db``) invokes this
+    before any table creation or migration, so a stale build never runs its
+    potentially destructive ``ensure_*`` migrations against a forward-migrated
+    file, and is never silently downgraded.
+    """
+    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current > SCHEMA_VERSION:
+        raise IncompatibleSchemaVersionError(
+            f"database was written by a newer JobHunter build "
+            f"(schema version {current} > code schema version {SCHEMA_VERSION}); "
+            f"upgrade JobHunter or restore a compatible backup ('jobhunter backup')."
+        )
+    if current < SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+    return SCHEMA_VERSION
+
+
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Create the full jobs table with all columns from every pipeline stage.
 
@@ -92,6 +180,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
     conn = get_connection(path)
+    _ensure_schema_version(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             -- Discovery stage (smart_extract / job_search)

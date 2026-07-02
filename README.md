@@ -95,11 +95,45 @@ Important local files include:
 - `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts and logs.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 - `codex_home/`: isolated Codex SDK home when apply/review agents need it.
+- `backups/`: timestamped database snapshots written by `jobhunter backup`.
 
 Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
 profiles, logs, SQLite databases, screenshots containing real data, or local
 worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
 and [SECURITY.md](SECURITY.md).
+
+### Back Up And Restore
+
+All product state lives in `jobhunter.db`. Take a consistent snapshot at any
+time — even while the app is running — with:
+
+```bash
+uv --project workers/automation run jobhunter backup
+```
+
+This writes `~/.jobhunter/backups/jobhunter-<timestamp>.db` using SQLite
+`VACUUM INTO`, prints the path, and never deletes anything. Pass `--output
+<path>` to choose a specific file or target directory.
+
+To restore, stop the app (Ctrl-C on `pnpm dev`), clear any stale WAL sidecars,
+then copy a backup over the live database:
+
+```bash
+rm -f ~/.jobhunter/jobhunter.db-wal ~/.jobhunter/jobhunter.db-shm
+cp ~/.jobhunter/backups/jobhunter-<timestamp>.db ~/.jobhunter/jobhunter.db
+```
+
+Always restore the whole file — never hand-import individual tables from a
+backup. The read-model's projection watermark only ever moves forward, so a
+partial reconstruction can leave it ahead of the restored `job_events` and stall
+projection refresh; if you ever rebuild the database piecemeal, delete the
+`operations_projections` watermark row afterwards so the projections rebuild from
+scratch:
+
+```bash
+sqlite3 ~/.jobhunter/jobhunter.db \
+  "DELETE FROM event_watermarks WHERE projection_name = 'operations_projections';"
+```
 
 ## Normal Flow
 
