@@ -19,10 +19,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import set_tracer_provider
 
 from jobhunter.domain.materials.analysis import (
     EnsembleError,
@@ -37,23 +33,6 @@ from jobhunter.infrastructure.analysis.codex_analysis_adapter import CodexAnalys
 from jobhunter.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
 
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-def in_memory_exporter(monkeypatch):
-    """TracerProvider piped to an in-memory exporter for generation-span assertions."""
-    from opentelemetry import trace as trace_api
-    from opentelemetry.util._once import Once
-
-    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
-    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
-
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    set_tracer_provider(provider)
-    yield exporter
-    exporter.clear()
 
 JD = (
     "Staff Backend Engineer. Requires 8+ years building distributed systems in "
@@ -281,6 +260,26 @@ class TestClaudeAdapter:
         spans = in_memory_exporter.get_finished_spans()
         assert len(spans) == 1
         assert spans[0].status.status_code == StatusCode.ERROR
+
+    async def test_draft_span_survives_malformed_sdk_usage(self, in_memory_exporter) -> None:
+        # A drifted / non-int usage field must NEVER fail the leg — token
+        # extraction runs inside the re-raising span block, so it degrades the
+        # unparseable count to omitted rather than raising.
+        adapter = ClaudeAnalysisAdapter(
+            query_fn=_fake_claude_query(
+                _grounded_dict(),
+                usage={"input_tokens": "n/a", "output_tokens": 10},
+            ),
+            options_factory=_FakeClaudeOptions,
+        )
+        draft = await adapter.draft("system", JD)  # must not raise
+        assert draft.model_id == "claude-opus-4-8"
+
+        attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
+        assert "gen_ai.usage.input_tokens" not in attrs
+        assert "langfuse.observation.usage_details" not in attrs
+        # A well-formed sibling field is still recorded.
+        assert attrs["gen_ai.usage.output_tokens"] == 10
 
 
 class TestClaudeSynthesizer:

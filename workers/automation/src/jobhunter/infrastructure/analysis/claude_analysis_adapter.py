@@ -92,14 +92,25 @@ def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
     return structured
 
 
+def _optional_int(value: Any) -> int | None:
+    """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
     """Best-effort ``(input_tokens, output_tokens)`` from the final ResultMessage.
 
     The Claude Agent SDK reports authoritative cumulative usage on the terminal
     ``ResultMessage``; the true input is fresh + cache-creation + cache-read
     tokens (reading only ``input_tokens`` under-reports the cached system prompt).
-    Returns ``(None, None)`` when the SDK surfaced no usage so the span omits
-    token counts rather than fabricating them.
+    Every field is coerced defensively so a drifted/non-int usage shape yields
+    omitted counts rather than raising inside the span (telemetry must never fail
+    the leg). Returns ``(None, None)`` when the SDK surfaced no usage.
     """
     for message in reversed(messages):
         if type(message).__name__ != "ResultMessage":
@@ -108,11 +119,11 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
         if not isinstance(usage, Mapping):
             return None, None
         input_tokens = (
-            int(usage.get("input_tokens") or 0)
-            + int(usage.get("cache_creation_input_tokens") or 0)
-            + int(usage.get("cache_read_input_tokens") or 0)
+            (_optional_int(usage.get("input_tokens")) or 0)
+            + (_optional_int(usage.get("cache_creation_input_tokens")) or 0)
+            + (_optional_int(usage.get("cache_read_input_tokens")) or 0)
         )
-        output_tokens = int(usage.get("output_tokens") or 0)
+        output_tokens = _optional_int(usage.get("output_tokens")) or 0
         return (input_tokens or None, output_tokens or None)
     return None, None
 

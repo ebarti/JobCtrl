@@ -8,6 +8,10 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
 
 _TEST_APP_DIR = Path(tempfile.mkdtemp(prefix="jobhunter-pytest-"))
@@ -32,3 +36,24 @@ def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, 
     if test_file in {"test_otel_init.py", "test_doctor_langfuse.py"}:
         return
     monkeypatch.setenv("LANGFUSE_DISABLE", "1")
+
+
+@pytest.fixture
+def in_memory_exporter(monkeypatch):
+    """TracerProvider piped to an in-memory exporter for span assertions.
+
+    Resets the global provider guard so each requesting test gets a fresh,
+    isolated exporter; shared by the observability + generation-span tests.
+    """
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+    yield exporter
+    exporter.clear()

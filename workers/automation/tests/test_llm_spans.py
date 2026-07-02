@@ -5,27 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import set_tracer_provider
-
-
-@pytest.fixture
-def in_memory_exporter(monkeypatch):
-    """Stand up a TracerProvider piped to an in-memory exporter for assertions."""
-    from opentelemetry import trace as trace_api
-    from opentelemetry.util._once import Once
-
-    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
-    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
-
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    set_tracer_provider(provider)
-    yield exporter
-    exporter.clear()
 
 
 def _attrs(span) -> dict:
