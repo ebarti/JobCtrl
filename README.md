@@ -123,6 +123,18 @@ rm -f ~/.jobhunter/jobhunter.db-wal ~/.jobhunter/jobhunter.db-shm
 cp ~/.jobhunter/backups/jobhunter-<timestamp>.db ~/.jobhunter/jobhunter.db
 ```
 
+Always restore the whole file — never hand-import individual tables from a
+backup. The read-model's projection watermark only ever moves forward, so a
+partial reconstruction can leave it ahead of the restored `job_events` and stall
+projection refresh; if you ever rebuild the database piecemeal, delete the
+`operations_projections` watermark row afterwards so the projections rebuild from
+scratch:
+
+```bash
+sqlite3 ~/.jobhunter/jobhunter.db \
+  "DELETE FROM event_watermarks WHERE projection_name = 'operations_projections';"
+```
+
 ## Normal Flow
 
 1. Create or import a candidate profile.
