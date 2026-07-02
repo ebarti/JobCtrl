@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from jobhunter.domain.compensation import PostedCompensationFact, parse_posted_compensation
 from jobhunter.domain.scoring.value_objects import (
     EligibilityAssessment,
     FitScore,
@@ -501,12 +502,6 @@ class ConstraintChecker:
         r"remuneration|wage|ote|on-target\s+earnings|annual\s+package)\b",
         re.IGNORECASE,
     )
-    _SALARY_AMOUNT = re.compile(
-        r"(?P<currency>[$\u20ac\u00a3])?\s*"
-        r"(?P<number>\d+(?:[,.]\d+)?)\s*"
-        r"(?P<suffix>k|thousand|m|million)?",
-        re.IGNORECASE,
-    )
     _ONSITE_TERMS = ("on-site", "onsite", "office-based", "office based")
     _REMOTE_TERMS = ("remote", "work from home", "distributed")
     _NO_SPONSORSHIP_TERMS = (
@@ -530,9 +525,13 @@ class ConstraintChecker:
                 blockers.append("candidate requires sponsorship but posting says sponsorship is unavailable")
 
         target_work_models = _split_preferences(prefs.get("target_work_models"))
-        if "remote" in target_work_models and any(term in text for term in self._ONSITE_TERMS):
-            if not any(term in text for term in self._REMOTE_TERMS):
-                blockers.append("target work model is remote but posting appears onsite-only")
+        if "remote" in target_work_models and not any(term in text for term in self._REMOTE_TERMS):
+            matched_onsite = next((term for term in self._ONSITE_TERMS if term in text), "")
+            if matched_onsite:
+                warnings.append(
+                    "target work model is remote but posting appears onsite-only "
+                    f"(matched '{matched_onsite}' in job text with no remote signal)"
+                )
 
         target_locations = _split_preferences(prefs.get("target_locations"))
         location = str(job.get("location") or "").strip().lower()
@@ -545,9 +544,14 @@ class ConstraintChecker:
             desired_min = _first_number(compensation.get("salary_range_min")) or _first_number(
                 compensation.get("salary_expectation")
             )
-            posted_max = _salary_max(job)
-            if desired_min and posted_max and posted_max < desired_min:
-                blockers.append("posted compensation appears below profile minimum")
+            if desired_min:
+                signal = _posted_compensation_signal(job)
+                if signal is not None and signal.annual_ceiling < desired_min:
+                    reason = _compensation_reason(signal, desired_min)
+                    if signal.reliable_annual:
+                        blockers.append(reason)
+                    else:
+                        warnings.append(reason)
 
         excluded = _explicit_exclusions(criteria.criteria_text, criteria.target_criteria)
         for phrase in excluded:
@@ -641,17 +645,123 @@ def _first_number(value: Any) -> int | None:
     return int(match.group(1).replace(",", ""))
 
 
-def _salary_max(job: dict[str, Any]) -> int | None:
+_ANNUAL_SALARY_FLOOR = 12_000
+_WORK_WEEKS_PER_YEAR = 52
+_WORK_DAYS_PER_YEAR = 260
+_WEEKLY_MARKER = re.compile(r"/\s*wk\b|/\s*week\b|\bper\s+week\b|\bweekly\b", re.IGNORECASE)
+_DAILY_MARKER = re.compile(r"/\s*day\b|\bper\s+day\b|\bday\s*rate\b|\bper\s+diem\b|\bdaily\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class _PostedCompensationSignal:
+    """A single posted-compensation reading distilled for the eligibility gate.
+
+    ``reliable_annual`` is the only thing that can turn a below-minimum
+    reading into a hard blocker: it is true only for a genuinely annual
+    figure taken from the structured salary field. Hourly/monthly figures
+    (annualized via a fixed-hours assumption) and description-derived
+    figures stay warnings so a truthful, high-fit job is never dropped from
+    the funnel on a brittle guess.
+    """
+
+    annual_ceiling: int
+    source_field: str
+    period: str
+    assumption: str
+    reliable_annual: bool
+
+
+def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSignal | None:
     salary = str(job.get("salary") or "").strip()
-    posted = _salary_amounts(salary, explicit_salary_field=True)
-    if posted:
-        return max(posted)
+    if salary:
+        signal = _signal_from_fact(
+            parse_posted_compensation(salary, source_field="jobs.salary"),
+            salary_field=True,
+        )
+        if signal is not None:
+            return signal
 
     description = "\n".join(str(job.get(key) or "") for key in ("description", "full_description"))
-    posted = []
+    best: _PostedCompensationSignal | None = None
     for window in _compensation_windows(description):
-        posted.extend(_salary_amounts(window, explicit_salary_field=False))
-    return max(posted) if posted else None
+        signal = _signal_from_fact(
+            parse_posted_compensation(window, source_field="jobs.description"),
+            salary_field=False,
+        )
+        if signal is None:
+            continue
+        if best is None or signal.annual_ceiling > best.annual_ceiling:
+            best = signal
+    return best
+
+
+def _signal_from_fact(
+    fact: PostedCompensationFact,
+    *,
+    salary_field: bool,
+) -> _PostedCompensationSignal | None:
+    if fact.parse_state != "parsed_range":
+        return None
+    if fact.period in ("year", "month", "hour"):
+        ceiling = fact.annualized_maximum_amount
+        if ceiling is None:
+            return None
+        return _PostedCompensationSignal(
+            annual_ceiling=ceiling,
+            source_field=fact.source_field,
+            period=fact.period,
+            assumption=fact.annualization_assumption or "",
+            reliable_annual=salary_field and fact.period == "year",
+        )
+    ceiling = fact.maximum_amount
+    if ceiling is None:
+        return None
+    subannual = _subannual_from_text(fact.source_text)
+    if subannual is not None:
+        period, factor, assumption = subannual
+        return _PostedCompensationSignal(
+            annual_ceiling=ceiling * factor,
+            source_field=fact.source_field,
+            period=period,
+            assumption=assumption,
+            reliable_annual=False,
+        )
+    if ceiling < _ANNUAL_SALARY_FLOOR:
+        return None
+    return _PostedCompensationSignal(
+        annual_ceiling=ceiling,
+        source_field=fact.source_field,
+        period="unknown",
+        assumption="amount without an explicit pay period; read as annual",
+        reliable_annual=salary_field,
+    )
+
+
+def _subannual_from_text(source_text: str | None) -> tuple[str, int, str] | None:
+    """Detect a week/day pay marker the posted-comp parser leaves as unknown.
+
+    The shared parser only classifies hour/month/year; a salary-field figure
+    like "$15,000/week" would otherwise be read as a raw annual amount and
+    could fabricate a below-minimum hard blocker on a ~$780k/yr role. Weekly
+    and daily rates are annualized here and always kept as warnings, never
+    hard blockers, because they rely on a fixed-schedule assumption.
+    """
+    text = source_text or ""
+    if _DAILY_MARKER.search(text):
+        return ("day", _WORK_DAYS_PER_YEAR, "daily rate annualized by multiplying by 260 working days")
+    if _WEEKLY_MARKER.search(text):
+        return ("week", _WORK_WEEKS_PER_YEAR, "weekly rate annualized by multiplying by 52 weeks")
+    return None
+
+
+def _compensation_reason(signal: _PostedCompensationSignal, desired_min: int) -> str:
+    provenance = f"source {signal.source_field}, period {signal.period}"
+    if signal.assumption:
+        provenance = f"{provenance}, {signal.assumption}"
+    return (
+        "posted compensation appears below profile minimum: "
+        f"${signal.annual_ceiling:,} vs profile minimum ${desired_min:,} ({provenance})"
+    )
 
 
 def _compensation_windows(text: str) -> list[str]:
@@ -660,52 +770,6 @@ def _compensation_windows(text: str) -> list[str]:
         if ConstraintChecker._COMPENSATION_CONTEXT.search(segment):
             windows.append(segment)
     return windows
-
-
-def _salary_amounts(text: str, *, explicit_salary_field: bool) -> list[int]:
-    if not text:
-        return []
-    matches = list(ConstraintChecker._SALARY_AMOUNT.finditer(text))
-    if not matches:
-        return []
-    window_uses_short_scale = any(
-        str(match.group("suffix") or "").lower() in {"k", "thousand"}
-        for match in matches
-    )
-    amounts: list[int] = []
-    for match in matches:
-        amount = _parse_amount(match.group("number"))
-        if amount is None:
-            continue
-        suffix = str(match.group("suffix") or "").lower()
-        if suffix in {"m", "million"}:
-            amount *= 1_000_000
-        elif suffix in {"k", "thousand"} or (window_uses_short_scale and amount < 1000):
-            amount *= 1000
-        elif explicit_salary_field and amount < 1000:
-            amount *= 1000
-        elif amount < 10_000:
-            continue
-        amounts.append(int(amount))
-    return amounts
-
-
-def _parse_amount(value: str) -> float | None:
-    raw = str(value or "").strip().replace(" ", "")
-    if not raw:
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(",", "")
-    elif "," in raw:
-        parts = raw.split(",")
-        raw = "".join(parts) if len(parts[-1]) == 3 else raw.replace(",", ".")
-    elif "." in raw:
-        parts = raw.split(".")
-        raw = "".join(parts) if len(parts[-1]) == 3 else raw
-    try:
-        return float(raw)
-    except ValueError:
-        return None
 
 
 def _explicit_exclusions(*texts: str) -> tuple[str, ...]:

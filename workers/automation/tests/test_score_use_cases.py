@@ -33,7 +33,7 @@ from jobhunter.domain.scoring import (
     ScoringPolicy,
     ScoringCriteria,
 )
-from jobhunter.domain.scoring.services import ScoreParser
+from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParser
 from jobhunter.domain.scoring.use_cases import (
     CorrectScoreUseCase,
     ScoreJobUseCase,
@@ -877,9 +877,16 @@ def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot
         "sponsorship" in blocker
         for blocker in outcome.score.breakdown.eligibility.hard_blockers
     )
-    assert any(
+    # A remote-vs-onsite work-model mismatch is a preference, not a hard
+    # eligibility constraint; it must surface as a warning so the job stays
+    # in the funnel for the user to judge rather than being silently dropped.
+    assert not any(
         "remote" in blocker
         for blocker in outcome.score.breakdown.eligibility.hard_blockers
+    )
+    assert any(
+        "remote" in warning
+        for warning in outcome.score.breakdown.eligibility.warnings
     )
 
 
@@ -945,9 +952,161 @@ def test_score_job_blocks_when_explicit_posted_compensation_is_below_minimum(pro
     assert outcome.ok is True
     assert outcome.score is not None
     assert outcome.score.breakdown.eligibility.status == "blocked"
-    assert "posted compensation appears below profile minimum" in (
-        outcome.score.breakdown.eligibility.hard_blockers
+    blocker = next(
+        (
+            entry
+            for entry in outcome.score.breakdown.eligibility.hard_blockers
+            if "posted compensation appears below profile minimum" in entry
+        ),
+        None,
     )
+    assert blocker is not None
+    # The audit trail must name the source and the parsed figure it judged.
+    assert "jobs.salary" in blocker
+    assert "$95,000" in blocker
+    assert "$120,000" in blocker
+
+
+def _comp_criteria(desired_min: str) -> ScoringCriteria:
+    return ScoringCriteria(
+        profile_preferences={"compensation": {"salary_range_min": desired_min}},
+    )
+
+
+def test_constraint_checker_hourly_pay_annualizes_and_does_not_false_block() -> None:
+    # Regression: "$50/hourly" is ~$104k/yr, not $50k. The old parser
+    # multiplied any amount < 1000 by 1000, fabricating a below-minimum hard
+    # blocker that silently dropped a truthful, high-fit job from the funnel.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$50/hourly"},
+        criteria=_comp_criteria("80,000"),
+    )
+
+    assert assessment.status == "eligible"
+    assert assessment.hard_blockers == ()
+    assert assessment.warnings == ()
+
+
+def test_constraint_checker_hourly_below_minimum_is_warning_with_annualization_audit() -> None:
+    # An hourly rate is annualized under a fixed-hours assumption, so a
+    # below-minimum reading is a warning (never a hard blocker) and the audit
+    # trail records the annualized figure, the source, and the assumption.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$50/hr"},
+        criteria=_comp_criteria("150,000"),
+    )
+
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "posted compensation appears below profile minimum" in warning
+    assert "$104,000" in warning
+    assert "$150,000" in warning
+    assert "jobs.salary" in warning
+    assert "2,080" in warning
+
+
+def test_constraint_checker_confident_annual_below_minimum_is_hard_blocker_with_source() -> None:
+    # A confidently-parsed annual salary from the structured salary field that
+    # is below the profile minimum remains a hard blocker, with its source and
+    # parsed figure captured for the audit trail.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$40,000 per year"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "blocked"
+    assert assessment.warnings == ()
+    assert len(assessment.hard_blockers) == 1
+    blocker = assessment.hard_blockers[0]
+    assert "posted compensation appears below profile minimum" in blocker
+    assert "$40,000" in blocker
+    assert "$120,000" in blocker
+    assert "jobs.salary" in blocker
+    assert "period year" in blocker
+
+
+def test_constraint_checker_monthly_pay_below_minimum_is_warning_not_hard_blocker() -> None:
+    # Monthly pay is annualized via a fixed x12 assumption, so it is a warning
+    # rather than a hard blocker even when the annualized figure is below floor.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$6,000/month"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "$72,000" in warning
+    assert "period month" in warning
+
+
+def test_constraint_checker_remote_work_model_mismatch_is_warning_not_hard_blocker() -> None:
+    # A remote preference vs an onsite posting is a soft mismatch the user
+    # should judge, not a hard eligibility constraint that drops the job.
+    assessment = ConstraintChecker().evaluate(
+        job={
+            "title": "Engineer",
+            "location": "On-site Barcelona",
+            "full_description": "Office-based team; relocation required.",
+        },
+        criteria=ScoringCriteria(profile_preferences={"target_work_models": "remote"}),
+    )
+
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert any("remote" in warning for warning in assessment.warnings)
+
+
+def test_constraint_checker_weekly_pay_annualizes_and_does_not_false_block() -> None:
+    # Regression: the posted-comp parser classifies only hour/month/year, so a
+    # salary-field "$15,000/week" (~$780k/yr) was read as a raw annual $15k and
+    # could fabricate a below-minimum hard blocker. Weekly pay must annualize
+    # (x52) and never hard-block.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$15,000/week"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "eligible"
+    assert assessment.hard_blockers == ()
+    assert assessment.warnings == ()
+
+
+def test_constraint_checker_daily_rate_below_minimum_is_warning_not_hard_blocker() -> None:
+    # A daily rate annualizes under a fixed working-days assumption, so a
+    # below-minimum reading is a warning (never a hard blocker) and the audit
+    # trail records the annualized figure and the assumption.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$300/day"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "$78,000" in warning
+    assert "period day" in warning
+    assert "260" in warning
+
+
+def test_constraint_checker_bare_amount_without_period_is_still_read_as_annual() -> None:
+    # A bare salary-field amount with no sub-annual marker keeps the existing
+    # behavior: it is read as annual, so a below-minimum figure hard-blocks.
+    assessment = ConstraintChecker().evaluate(
+        job={"title": "Engineer", "salary": "$13,000"},
+        criteria=_comp_criteria("120,000"),
+    )
+
+    assert assessment.status == "blocked"
+    assert assessment.warnings == ()
+    assert len(assessment.hard_blockers) == 1
+    blocker = assessment.hard_blockers[0]
+    assert "$13,000" in blocker
+    assert "read as annual" in blocker
 
 
 def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snapshot) -> None:
