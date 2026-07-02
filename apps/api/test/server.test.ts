@@ -1345,6 +1345,54 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("surfaces enrichment confidence and quarantine on the content-snapshot audit entry", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      jobUrl,
+      "enrich",
+      "PostingContentSnapshotCaptured",
+      "info",
+      "raw snapshot message",
+      "2026-04-29T10:06:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        jobId: jobUrl,
+        sourceId: "workday:example",
+        snapshotVersion: 1,
+        extractionTier: "llm_assisted",
+        confidence: "low",
+        quarantineReason: "low_confidence_extraction",
+        quarantined: true,
+      }),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    const snapshotEntry = body.auditHistory.find(
+      (entry: { title: string }) => entry.title === "Content snapshot captured",
+    );
+    expect(snapshotEntry).toBeDefined();
+    expect(snapshotEntry.tone).toBe("warning");
+    expect(snapshotEntry.details).toEqual(
+      expect.arrayContaining([
+        { label: "Confidence", value: "Low" },
+        { label: "Quarantine", value: "Low Confidence Extraction" },
+      ]),
+    );
+
+    await app.close();
+  });
+
   it("soft-deletes jobs, hides them from active lists, and restores them", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent("https://example.com/jobs/ready");

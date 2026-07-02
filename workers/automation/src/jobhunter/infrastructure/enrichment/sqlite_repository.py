@@ -253,12 +253,15 @@ class SqlitePostingSnapshotSetRepository:
             """
             INSERT INTO posting_snapshot_sets (
                 tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
-                latest_active_state, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                latest_active_state, latest_confidence, latest_quarantine_reason,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_url) DO UPDATE SET
                 snapshot_set_json = excluded.snapshot_set_json,
                 latest_snapshot_version = excluded.latest_snapshot_version,
                 latest_active_state = excluded.latest_active_state,
+                latest_confidence = excluded.latest_confidence,
+                latest_quarantine_reason = excluded.latest_quarantine_reason,
                 updated_at = excluded.updated_at
             """,
             (
@@ -267,6 +270,8 @@ class SqlitePostingSnapshotSetRepository:
                 json.dumps(snapshot_set.to_dict(), sort_keys=True),
                 latest.snapshot_version if latest else 0,
                 snapshot_set.latest_active_state.value,
+                latest.confidence.value if latest else None,
+                latest.quarantine_reason.value if latest else None,
                 snapshot_set.updated_at,
             ),
         )

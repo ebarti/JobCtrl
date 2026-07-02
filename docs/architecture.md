@@ -102,6 +102,21 @@ Operations list projections keep that product contract by exposing only
 `discover` or `apply`; internal stage rows remain available in detail and
 diagnostic surfaces.
 
+The **enrichment quality gate** keeps low-confidence descriptions out of the
+expensive, employer-facing steps without hiding the jobs. Each successful detail
+capture records a `PostingContentSnapshot` whose `confidence` and
+`quarantine_reason` are promoted onto `posting_snapshot_sets.latest_confidence` /
+`latest_quarantine_reason`. A posting whose latest snapshot was quarantined as a
+LOW-confidence extraction is excluded from the tailoring, cover-letter, and apply
+prep selectors (`get_jobs_by_stage`, the pipeline runner's pending counters, and
+the apply launcher), but stays scoreable (cheap triage) and visible with its
+confidence/quarantine surfaced on the job read model and the
+`PostingContentSnapshotCaptured` audit entry. A snapshot missing only its apply
+URL keeps `latest_confidence` above LOW and is not gated, and an
+operator-overridden LOW snapshot carries reason `none` and also passes — a
+recoverable missing field never starves tailoring, and a quarantined job never
+vanishes from the funnel.
+
 ## Retrieval Before Scoring
 
 The Scoring context owns a local hybrid retrieval service under

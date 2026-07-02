@@ -1129,20 +1129,29 @@ function jobEventToAuditEntry(
         actor: "system",
         details: auditDetails(["Attempt", payloadText(payload, "attemptNumber", "attempt_number")]),
       });
-    case "PostingContentSnapshotCaptured":
+    case "PostingContentSnapshotCaptured": {
+      const snapshotQuarantined = payloadBoolean(payload, "quarantined");
+      const quarantineReason = payloadText(payload, "quarantineReason", "quarantine_reason");
+      const quarantineLabel =
+        quarantineReason && quarantineReason !== "none" ? humanizeToken(quarantineReason) : "";
       return makeAuditEntry({
         ...base,
         category: "enrichment",
-        tone: "success",
+        tone: snapshotQuarantined ? "warning" : "success",
         title: "Content snapshot captured",
-        description: "A posting content snapshot was stored for future comparisons.",
+        description: snapshotQuarantined
+          ? "A low-confidence posting snapshot was stored and quarantined from tailoring; the job stays scoreable and visible."
+          : "A posting content snapshot was stored for future comparisons.",
         actor: "system",
         details: auditDetails(
           ["Source", payloadText(payload, "sourceId", "source_id")],
           ["Version", payloadText(payload, "snapshotVersion", "snapshot_version")],
           ["Extraction tier", humanizeToken(payloadText(payload, "extractionTier", "extraction_tier"))],
+          ["Confidence", humanizeToken(payloadText(payload, "confidence"))],
+          ["Quarantine", quarantineLabel],
         ),
       });
+    }
     case "PostingContentSnapshotFailed":
       return makeAuditEntry({
         ...base,
