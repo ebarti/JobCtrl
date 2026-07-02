@@ -1283,14 +1283,16 @@ def _reset_authenticated_linkedin_retry_candidates(
         Only ``application_url`` is backfilled; the canonical
         ``full_description`` and the ``enriched`` status are preserved, so a
         failed or empty authenticated resolution can never destroy reviewable
-        material.
+        material. Each authenticated pass records an ``EnrichmentAttempt`` so
+        this path shares the same attempt-count bound as the cascade.
       * **Failed / non-enriched** — reset back to ``pending`` so the normal
         cascade re-scrapes them under an authenticated browser. These rows
         hold no enriched description to lose.
 
-    The retry is bounded by attempt count so repeated enrich runs do not loop
-    forever when the profile is not logged in or the posting has no external
-    apply target. Returns the number of rows reset (re-queued).
+    Both paths are bounded by attempt count so repeated enrich runs do not
+    loop forever (and never re-drive the authenticated browser against a
+    never-resolving posting) when the profile is not logged in or the posting
+    has no external apply target. Returns the number of rows reset (re-queued).
     """
     if not linkedin_apply_resolver_enabled():
         return 0
@@ -1327,6 +1329,7 @@ def _reset_authenticated_linkedin_retry_candidates(
 
     repo = SqliteEnrichmentRepository(conn)
     reset_count = 0
+    recovery_count = 0
     backfill_count = 0
     resolver: object | None = None
     try:
@@ -1371,12 +1374,19 @@ def _reset_authenticated_linkedin_retry_candidates(
                     page=None,
                 )
                 apply_url_value = resolved.get("application_url")
-                if not apply_url_value:
-                    continue
+                recovered = (
+                    ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
+                )
+                # Every authenticated pass records an attempt so a
+                # never-resolving row is bounded by attempt count exactly
+                # like the extraction cascade; the description is never
+                # touched.
                 repo.save(
-                    aggregate.backfill_application_url(
-                        application_url=ApplicationUrl(value=str(apply_url_value)),
-                        updated_at=now,
+                    aggregate.record_apply_url_recovery(
+                        application_url=recovered,
+                        extraction_tier=ExtractionTier.CSS_SELECTORS,
+                        started_at=now,
+                        finished_at=utc_now(),
                     )
                 )
                 record_job_event(
@@ -1384,18 +1394,27 @@ def _reset_authenticated_linkedin_retry_candidates(
                     url,
                     "enrich",
                     "StageProgress",
-                    message="LinkedIn authenticated apply URL recovered",
+                    message=(
+                        "LinkedIn authenticated apply URL recovered"
+                        if recovered is not None
+                        else "LinkedIn authenticated apply URL unresolved"
+                    ),
                     payload={
                         "reason": "linkedin_authenticated_apply_url",
-                        "applicationUrlFound": True,
+                        "applicationUrlFound": recovered is not None,
                         "authenticatedApplyUrlMethod": resolved.get(
                             "authenticated_apply_url_method"
+                        ),
+                        "authenticatedApplyUrlError": resolved.get(
+                            "authenticated_apply_url_error"
                         ),
                         "automated": True,
                     },
                 )
-                backfill_count += 1
-                if limit and limit > 0 and (reset_count + backfill_count) >= limit:
+                recovery_count += 1
+                if recovered is not None:
+                    backfill_count += 1
+                if limit and limit > 0 and (reset_count + recovery_count) >= limit:
                     break
                 continue
 
@@ -1426,7 +1445,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                 },
             )
             reset_count += 1
-            if limit and limit > 0 and (reset_count + backfill_count) >= limit:
+            if limit and limit > 0 and (reset_count + recovery_count) >= limit:
                 break
     finally:
         close = getattr(resolver, "close", None)
@@ -1436,7 +1455,7 @@ def _reset_authenticated_linkedin_retry_candidates(
             except Exception:
                 log.debug("LinkedIn apply resolver close failed", exc_info=True)
 
-    if reset_count or backfill_count:
+    if reset_count or recovery_count:
         conn.commit()
         if reset_count:
             log.info(

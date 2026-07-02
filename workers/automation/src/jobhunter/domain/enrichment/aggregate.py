@@ -288,29 +288,52 @@ class JobEnrichment:
             updated_at=reset_at,
         )
 
-    def backfill_application_url(
+    def record_apply_url_recovery(
         self,
         *,
-        application_url: ApplicationUrl,
-        updated_at: str,
+        application_url: ApplicationUrl | None,
+        extraction_tier: ExtractionTier,
+        started_at: str,
+        finished_at: str,
     ) -> "JobEnrichment":
-        """Attach a recovered apply URL to an already-enriched aggregate.
+        """Record an authenticated apply-URL recovery pass on an enriched aggregate.
 
-        Used when an authenticated follow-up recovers the external apply
-        target for a job that was enriched without one. Only
-        ``application_url`` changes; ``full_description``, the ``enriched``
-        status, ``enriched_at``, the extraction tier, and the attempt
-        history are all preserved, so a failed or empty recovery can never
-        destroy reviewable material.
+        A terminal ``EnrichmentAttempt`` is appended for every authenticated
+        pass, so repeated recoveries stay bounded by attempt count exactly
+        like the extraction cascade. The ``enriched`` status,
+        ``full_description``, ``enriched_at``, and top-level extraction tier
+        are always preserved — a recovery that finds an external apply target
+        attaches it and records a succeeded attempt, one that finds none
+        records a failed attempt but leaves the reviewable material intact.
+        The aggregate never transitions to ``failed``: a missing external
+        apply URL is not an enrichment failure.
         """
         if self.current_status != EnrichmentLifecycle.ENRICHED:
             raise ValueError(
-                "backfill_application_url requires an enriched aggregate"
+                "record_apply_url_recovery requires an enriched aggregate"
             )
+        resolved = application_url is not None
+        attempt = EnrichmentAttempt(
+            attempt_number=len(self.attempts) + 1,
+            extraction_tier=extraction_tier,
+            status=AttemptStatus.SUCCEEDED if resolved else AttemptStatus.FAILED,
+            started_at=started_at,
+            finished_at=finished_at,
+            error=(
+                None
+                if resolved
+                else EnrichmentError(
+                    code="APPLY_URL_UNRESOLVED",
+                    message="authenticated apply URL not found",
+                    retryable=True,
+                )
+            ),
+        )
         return replace(
             self,
-            application_url=application_url,
-            updated_at=updated_at,
+            attempts=self.attempts + (attempt,),
+            application_url=application_url if resolved else self.application_url,
+            updated_at=finished_at,
         )
 
     # ------------------------------------------------------------------

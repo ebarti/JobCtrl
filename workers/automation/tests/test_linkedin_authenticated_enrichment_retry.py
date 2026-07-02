@@ -17,6 +17,7 @@ from jobhunter.domain.enrichment import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.enrichment.detail import (
+    _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
     _reset_authenticated_linkedin_retry_candidates,
 )
@@ -222,6 +223,9 @@ def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
     assert aggregate.full_description is not None
     assert aggregate.full_description.text == "A complete LinkedIn description"
     assert aggregate.application_url is None
+    # A bounding attempt is recorded so a never-resolving row cannot be
+    # re-driven through the authenticated browser forever.
+    assert aggregate.attempt_count == 2
 
 
 def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
@@ -269,6 +273,34 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     assert aggregate.full_description.text == "A complete LinkedIn description"
     assert aggregate.application_url is not None
     assert aggregate.application_url.value == apply_target
+
+
+def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/bounded"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution(None, "external_url_missing"))
+
+    # Drive many enrichment runs against a row whose resolver never resolves.
+    for _ in range(5):
+        _reset_authenticated_linkedin_retry_candidates(
+            conn, resolver_factory=lambda: resolver
+        )
+
+    # The authenticated browser is driven only until the attempt-count bound is
+    # reached (initial enrichment attempt + N-1 recovery passes), never forever.
+    assert len(resolver.calls) == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS - 1
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS
+    # Description preserved intact across every run.
+    assert aggregate.is_enriched
+    assert aggregate.full_description is not None
+    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is None
 
 
 def test_failed_row_still_reset_for_authenticated_retry(
