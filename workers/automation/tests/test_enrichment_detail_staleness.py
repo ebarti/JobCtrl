@@ -61,6 +61,35 @@ class _FakePlaywright:
         return None
 
 
+class _OfflineLlmPort:
+    """LlmPort stub for the Tier-3 extractor.
+
+    Staleness detection wins at Tier 1 (JSON-LD) or Tier 2 (CSS), so the
+    Tier-3 LLM extractor is only constructed by the cascade, never invoked.
+    The stub keeps that construction from resolving a real provider (which
+    needs API keys and network) and raises if the cascade ever falls through
+    to the LLM tier, so a regression can't quietly reroute staleness detection
+    through the model.
+    """
+
+    def chat(self, *_args, **_kwargs) -> str:
+        raise AssertionError("LLM tier must not run during staleness detection")
+
+    def chat_json(self, *_args, **_kwargs) -> dict:
+        raise AssertionError("LLM tier must not run during staleness detection")
+
+    def ask(self, *_args, **_kwargs) -> str:
+        raise AssertionError("LLM tier must not run during staleness detection")
+
+
+@pytest.fixture
+def offline_llm_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Swap the LlmPort the detail cascade resolves so Tier-3 construction stays
+    offline-deterministic (no keys, no network)."""
+    monkeypatch.setattr(detail, "get_llm_adapter", lambda: _OfflineLlmPort())
+
+
+@pytest.mark.usefixtures("offline_llm_tier")
 def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         detail,
@@ -85,6 +114,7 @@ def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pyt
     assert result["full_description"]
 
 
+@pytest.mark.usefixtures("offline_llm_tier")
 def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detail, "_collect_json_ld", lambda _page: [])
     monkeypatch.setattr(
