@@ -872,6 +872,35 @@ def scan_prose_skill_fabrications(
 
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
 
+# Corporate suffix tokens (mirrors the suffix alternation in ``_EMPLOYER_RE``).
+# Stripped from an employer name so a bare target company ("Acme") compares equal
+# to the same company written with a suffix ("Acme Corporation") — but NOT to a
+# different company that merely starts with the target ("Acme Global Corp").
+_COMPANY_SUFFIX_TOKENS: frozenset[str] = frozenset(
+    {
+        "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
+        "co", "company", "gmbh", "plc", "ag", "sa", "nv", "llp",
+    }
+)
+
+
+def _employer_core_tokens(normalized_name: str) -> frozenset[str]:
+    """Reduce a normalised employer name to its identifying token set.
+
+    Strips surrounding punctuation from each whitespace token and drops any
+    trailing corporate-suffix tokens, so ``acme`` and ``acme corporation`` yield
+    the same set ``{"acme"}`` while ``acme global corp`` yields ``{"acme",
+    "global"}``. Used to exempt the cover letter's target company by IDENTITY
+    (token-set equality), never by substring — so a fabricated past employer that
+    merely contains the target name ("Acme Global Fabrications Inc.") is not
+    exempted, and a short target ("Meta") never swallows "Metamorphic Corp".
+    """
+    tokens = [re.sub(r"[^a-z0-9&]", "", token) for token in normalized_name.split()]
+    tokens = [token for token in tokens if token]
+    while tokens and tokens[-1] in _COMPANY_SUFFIX_TOKENS:
+        tokens.pop()
+    return frozenset(tokens)
+
 
 def _cover_letter_claim_body(letter_text: str) -> str:
     """Return the claim-bearing body of a cover letter for grounding.
@@ -911,11 +940,14 @@ def scan_cover_letter(
     Two cover-letter-specific allowances keep the gate precise — a cover letter
     LEGITIMATELY names the job it targets, unlike a resume bullet describing past
     work: the target ROLE's title tokens ground the title arm, and an employer
-    mention that contains the target COMPANY name is not a fabricated employer, so
-    "applying for the Senior Engineer role at Globex Corporation" is not mistaken
-    for an invented title/employer. The numeric/date arms stay strict — job-post
-    text is never folded into the evidence corpus, so a number lifted from the
-    posting is still ungrounded.
+    mention that IS the target COMPANY (token-set equality via
+    :func:`_employer_core_tokens`, so a bare "Acme" matches "Acme Corporation") is
+    not a fabricated employer, so "applying for the Senior Engineer role at Acme
+    Corporation" is not mistaken for an invented title/employer. The exemption is
+    identity, never substring — a fabricated PAST employer that merely contains the
+    target name ("Acme Global Fabrications Inc.") is still flagged. The numeric/date
+    arms stay strict — job-post text is never folded into the evidence corpus, so a
+    number lifted from the posting is still ungrounded.
     """
     body = _cover_letter_claim_body(letter_text)
     paragraphs = [
@@ -934,12 +966,15 @@ def scan_cover_letter(
         scan_corpus = replace(corpus, title_tokens=corpus.title_tokens | role_title_tokens)
 
     findings = scan_resume_bullets(paragraphs, scan_corpus, employers=employers)
-    target_name = _normalize(target_company)
-    if target_name:
+    target_core = _employer_core_tokens(_normalize(target_company))
+    if target_core:
         findings = [
             finding
             for finding in findings
-            if not (finding.kind == "employer" and target_name in _normalize(finding.token))
+            if not (
+                finding.kind == "employer"
+                and _employer_core_tokens(_normalize(finding.token)) == target_core
+            )
         ]
     findings.extend(
         scan_prose_skill_fabrications(

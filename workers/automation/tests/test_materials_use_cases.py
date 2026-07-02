@@ -2309,6 +2309,50 @@ def test_cover_letter_gate_inherits_concept_scope_and_word_form_grounding(
     )
 
 
+def test_cover_letter_exempts_target_company_but_flags_fabricated_lookalike(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """The target-company employer exemption is by IDENTITY, not substring: a letter
+    naming the real target ('Acme Corporation') stays exempted, but a fabricated
+    PAST employer that merely contains the target name ('Acme Global Fabrications
+    Inc.', absent from the profile) is still flagged and rejected. The job fixture's
+    company resolves to 'Acme'; a substring exemption also swallowed short-target
+    look-alikes (Meta -> Metamorphic Corp), so identity/token-set equality is
+    required."""
+
+    def _run(letter_body: str):
+        repo = _FakeRepository()
+        _seed_approved_cover_materials(repo, job, tmp_path)
+        use_case = GenerateCoverLetterUseCase(
+            repository=repo,
+            llm=_ScriptedLlm([_cover_letter_text(letter_body)]),
+            validator=ContentValidator(),
+            max_retries=0,
+        )
+        return use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    # The real target company (with a corporate suffix) stays exempted -> accepted.
+    exempt = _run("I am applying for the backend role at Acme Corporation.")
+    assert exempt.status == "ok"
+    assert exempt.materials is not None
+    assert exempt.materials.cover_letter.metadata["fabrication_audit"]["grounded"] is True
+
+    # A fabricated past employer that merely starts with the target name is FLAGGED.
+    flagged = _run("Earlier at Acme Global Fabrications Inc. I built services.")
+    assert flagged.status == "failed_validation"
+    assert flagged.materials is not None
+    assert flagged.materials.cover_letter.status is ArtifactStatus.REJECTED
+    findings = flagged.materials.cover_letter.metadata["fabrication_audit"]["findings"]
+    assert any(
+        item["kind"] == "employer" and "Global Fabrications" in item["token"]
+        for item in findings
+    )
+    assert any(
+        "never_fabricate_employers" in error
+        for error in flagged.materials.last_validation.errors
+    )
+
+
 # ---------------------------------------------------------------------------
 # RenderPdfUseCase
 # ---------------------------------------------------------------------------
