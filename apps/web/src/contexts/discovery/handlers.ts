@@ -95,6 +95,7 @@ export const duplicateJobLinkedHandler = (
 export const duplicateJobLinkRejectedHandler = (
   event: DuplicateJobLinkRejected,
 ): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
