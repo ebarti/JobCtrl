@@ -338,17 +338,21 @@ def test_by_source_counts(conn: sqlite3.Connection) -> None:
 
 
 def test_by_source_orders_ties_by_source_name(conn: sqlite3.Connection) -> None:
-    # Netflix leads on count; Acme and Wayfair tie at 2, seeded reverse-
-    # alphabetically so a count-only sort would leak insertion order. The
-    # tiebreak re-orders the tie A->Z, byte-identical to the TS builder.
+    # Netflix leads on count; Acme and Wayfair tie at 2. The builder seeds
+    # source_counts from fetch_job_list, which returns rows ORDER BY job_id —
+    # so the URL prefixes below deliberately put Wayfair FIRST in job_id order
+    # (a-wayfair < m-netflix < z-acme) while the tie must render Acme first
+    # A->Z. A count-only sort would leak insertion order ([..., Wayfair, Acme])
+    # and fail; only the count-desc-then-source-asc tiebreak passes,
+    # byte-identical to the TS builder.
     seeded = [
-        ("https://example.com/w1", "Wayfair"),
-        ("https://example.com/w2", "Wayfair"),
-        ("https://example.com/n1", "Netflix"),
-        ("https://example.com/n2", "Netflix"),
-        ("https://example.com/n3", "Netflix"),
-        ("https://example.com/a1", "Acme"),
-        ("https://example.com/a2", "Acme"),
+        ("https://example.com/a-wayfair-1", "Wayfair"),
+        ("https://example.com/a-wayfair-2", "Wayfair"),
+        ("https://example.com/m-netflix-1", "Netflix"),
+        ("https://example.com/m-netflix-2", "Netflix"),
+        ("https://example.com/m-netflix-3", "Netflix"),
+        ("https://example.com/z-acme-1", "Acme"),
+        ("https://example.com/z-acme-2", "Acme"),
     ]
     for url, site in seeded:
         _seed_job(conn, url, site=site)
