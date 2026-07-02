@@ -5,7 +5,13 @@ The local TypeScript API is the runnable backend app under `apps/api`.
 It owns product-facing JSON endpoints, reads the local SQLite database, and
 invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
 `jobhunter rpc` subprocess. It is intentionally local-first and binds to
-`127.0.0.1` by default.
+`127.0.0.1` by default. As a DNS-rebinding defense, an `onRequest` hook rejects
+any request whose `Host` header is not a loopback host (`127.0.0.1`,
+`localhost`, or `[::1]`, with an optional port) with `403` `forbidden_host`;
+local browser and CLI callers always send a loopback `Host`, so legitimate
+access is unaffected. Full bearer-token authentication and keychain-to-worker
+credential passing remain a deliberate follow-up that needs coordinated
+frontend and dev-launcher changes.
 
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobhunter.db` as the source of truth. When the profile
@@ -67,6 +73,12 @@ and `400` for invalid page numbers. The separate
 for resume text/PDF artifacts it first runs the resume-template ensure-current
 path and opens the newest approved same-type artifact when a render-only
 template refresh succeeds.
+Every preview and open route only touches a path that is a registered artifact
+in the projection AND whose `realpath` stays inside the JobHunter app directory;
+a path that resolves outside the app directory (for example a tampered
+projection row or a symlink escape) is rejected with `403`
+`artifact_path_forbidden` before any file is streamed or handed to the OS
+opener.
 PDF artifact detail responses also include `layoutBoxes` when the Materials
 projection has generated resume layout metadata. Boxes use page-relative
 percent coordinates plus optional resume line numbers. Apply Review passes them

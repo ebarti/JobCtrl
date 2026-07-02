@@ -160,7 +160,12 @@ import {
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
 } from "./resume-templates.js";
-import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
+import {
+  isLoopbackHostHeader,
+  isTrustedMutationSource,
+  LOCAL_CORS_METHODS,
+  LOCAL_ORIGIN_PATTERNS,
+} from "./local-origin.js";
 import {
   ProfileInputError,
   parseProfileUpdateProfile,
@@ -246,6 +251,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.addHook("onRequest", async (request, reply) => {
+    if (!isLoopbackHostHeader(request.headers.host)) {
+      return reply.code(403).send({
+        ok: false,
+        error: "forbidden_host",
+        message: "Requests must target a loopback host (127.0.0.1, localhost, or [::1]).",
+      });
+    }
     if (!UNSAFE_METHODS.has(request.method)) {
       return;
     }
@@ -1583,6 +1595,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(404);
       return { ok: false, error: "artifact_missing" };
     }
+    if (!artifactPathWithinAppDir(appDir, detail.artifact.localPath)) {
+      void reply.code(403);
+      return {
+        ok: false,
+        error: "artifact_path_forbidden",
+        message: "Artifact path resolves outside the JobHunter app directory.",
+      };
+    }
 
     return reply
       .type("application/pdf")
@@ -1611,6 +1631,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const statusCode = "statusCode" in preview ? preview.statusCode : 500;
       void reply.code(statusCode);
       return { ok: false, error: preview.error, message: preview.message };
+    }
+
+    if (!artifactPathWithinAppDir(appDir, preview.htmlPath)) {
+      void reply.code(403);
+      return {
+        ok: false,
+        error: "artifact_path_forbidden",
+        message: "Artifact path resolves outside the JobHunter app directory.",
+      };
     }
 
     return reply
@@ -1645,6 +1674,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
         void reply.code(404);
         return { ok: false, error: "artifact_missing" };
+      }
+      if (!artifactPathWithinAppDir(appDir, detail.artifact.localPath)) {
+        void reply.code(403);
+        return {
+          ok: false,
+          error: "artifact_path_forbidden",
+          message: "Artifact path resolves outside the JobHunter app directory.",
+        };
       }
 
       try {
@@ -1683,6 +1720,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
       void reply.code(404);
       return { ok: false, error: "artifact_missing" };
+    }
+    if (!artifactPathWithinAppDir(appDir, detail.artifact.localPath)) {
+      void reply.code(403);
+      return {
+        ok: false,
+        error: "artifact_path_forbidden",
+        message: "Artifact path resolves outside the JobHunter app directory.",
+      };
     }
     await artifactOpener(detail.artifact.localPath);
     return {
@@ -1901,6 +1946,17 @@ function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolea
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {
   return artifactType.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
+}
+
+function artifactPathWithinAppDir(appDir: string, targetPath: string): boolean {
+  try {
+    const root = fs.realpathSync(appDir);
+    const resolved = fs.realpathSync(targetPath);
+    const relative = path.relative(root, resolved);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
 }
 
 type HtmlPreviewArtifactRow = { render_format?: string | null; metadata_json?: string | null } | undefined;
