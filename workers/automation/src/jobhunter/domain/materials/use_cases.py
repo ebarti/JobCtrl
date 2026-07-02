@@ -83,6 +83,7 @@ from jobhunter.domain.materials.fabrication_detector import (
     build_skill_evidence_corpus,
     build_skill_vocabulary,
     employer_name_set,
+    scan_cover_letter,
     scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
@@ -124,6 +125,7 @@ from jobhunter.domain.materials.services import (
 from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
+    ControlRule,
     JudgeVerdict,
     LlmModelSpec,
     RenderFormat,
@@ -134,6 +136,7 @@ from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage, LlmPort
 from jobhunter.domain.ports.materials import (
     BulletProvenanceRepository,
+    EmployerAnalysisRepository,
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
@@ -3063,12 +3066,66 @@ def _resolve_effective_resume_template(
     return resolved if isinstance(resolved, dict) else None
 
 
+# The deterministic grounding controls the cover-letter body is checked against —
+# recorded on the audit trail so an inspector sees which gates ran, not just their
+# result. Mirrors the resume's never-fabricate controls (CONTROL-03).
+_COVER_LETTER_GROUNDING_CONTROLS: tuple[str, ...] = (
+    ControlRule.NEVER_FABRICATE_METRICS.value,
+    ControlRule.NEVER_FABRICATE_DATES.value,
+    ControlRule.NEVER_FABRICATE_TITLES.value,
+    ControlRule.NEVER_FABRICATE_EMPLOYERS.value,
+    ControlRule.NEVER_FABRICATE_SKILLS.value,
+)
+
+
+def _cover_letter_fabrication_audit(
+    findings: list[FabricationFinding],
+    *,
+    target_skill_terms: list[str],
+) -> dict[str, Any]:
+    """The cover letter's truthfulness trail, persisted on its artifact metadata.
+
+    Mirrors the resume's per-artifact audit signals: it records that the
+    deterministic grounding gates ran over the shipped body, the job-target
+    skill/tool keywords the skill gate was scoped to, and every fabrication finding
+    (empty when grounded). A rejected letter's failure therefore survives as
+    inspectable audit history rather than being silently dropped, and an accepted
+    letter carries proof it was checked and grounded.
+    """
+    return {
+        "checked": True,
+        "grounded": not findings,
+        "controls": list(_COVER_LETTER_GROUNDING_CONTROLS),
+        "target_keyword_count": len(target_skill_terms),
+        "findings": [
+            {
+                "bullet_id": finding.bullet_id,
+                "kind": finding.kind,
+                "token": finding.token,
+                "control": finding.control.value,
+            }
+            for finding in findings
+        ],
+    }
+
+
 class GenerateCoverLetterUseCase:
     """Generate a cover letter for an approved resume's MaterialsSet.
 
     Loads the latest aggregate, requires the tailored resume to be
     approved (per §4.5), generates the cover letter (with retries),
-    validates it, and persists the result back through the repository.
+    runs the same deterministic grounding gates the resume uses over the
+    generated body, and persists the result back through the repository.
+
+    The cover letter ships to the employer as a first-person claims document, so
+    it carries the SAME truthfulness gate as the resume (CONTROL-03): the
+    never-fabricate detector plus the prose skill/tool gate run over the shipped
+    body before acceptance. A detected fabrication downgrades the letter to
+    REJECTED (never shipped as approved) and is persisted as inspectable audit
+    history. ``analysis_repository`` supplies the canonical job-target skill/tool
+    keywords the skill gate is scoped to (the same persisted employer analysis the
+    tailor step produced); without it the never-fabricate detector still runs, but
+    the skill/tool gate has no target vocabulary and is a no-op.
     """
 
     def __init__(
@@ -3078,12 +3135,14 @@ class GenerateCoverLetterUseCase:
         llm: LlmPort,
         validator: ContentValidator,
         publisher: EventPublisher | None = None,
+        analysis_repository: EmployerAnalysisRepository | None = None,
         max_retries: int = 3,
     ) -> None:
         self._repository = repository
         self._llm = llm
         self._validator = validator
         self._publisher = publisher
+        self._analysis_repository = analysis_repository
         self._max_retries = max_retries
 
     def execute(
@@ -3136,11 +3195,13 @@ class GenerateCoverLetterUseCase:
                 error=f"Could not read tailored resume {resume_path}: {exc}",
             )
 
-        letter, validation = self._run_attempts(
+        target_skill_terms = self._load_target_skill_terms(tenant_id, job_id)
+        letter, validation, findings = self._run_attempts(
             job=job,
             resume_text=resume_text,
             profile_snapshot=profile_snapshot,
             validation_mode=validation_mode,
+            target_skill_terms=target_skill_terms,
         )
 
         prefix = _safe_filename_prefix(job)
@@ -3162,6 +3223,9 @@ class GenerateCoverLetterUseCase:
             metadata={
                 "validation_mode": validation_mode,
                 "passed": validation.passed,
+                "fabrication_audit": _cover_letter_fabrication_audit(
+                    findings, target_skill_terms=target_skill_terms
+                ),
             },
         )
         materials = materials.with_cover_letter(
@@ -3181,6 +3245,27 @@ class GenerateCoverLetterUseCase:
             error="; ".join(validation.errors),
         )
 
+    def _load_target_skill_terms(self, tenant_id: TenantId, job_id: JobId) -> list[str]:
+        """The canonical job-target skill/tool keywords the skill gate is scoped to.
+
+        Reuses the persisted employer analysis the tailor step already produced
+        (no re-reasoning, no LLM call) as the single source of truth for target
+        keywords — the same source :class:`TailorResumeUseCase` uses (D-21). Absent
+        an analysis repository or a persisted record the list is empty: the
+        never-fabricate detector still runs, the skill/tool gate simply has no
+        target vocabulary.
+        """
+        if self._analysis_repository is None:
+            return []
+        analysis = self._analysis_repository.load(tenant_id, job_id)
+        if analysis is None:
+            return []
+        return [
+            keyword.keyword
+            for keyword in analysis.canonical.keywords
+            if keyword.keyword.strip()
+        ]
+
     def _run_attempts(
         self,
         *,
@@ -3188,10 +3273,22 @@ class GenerateCoverLetterUseCase:
         resume_text: str,
         profile_snapshot: ProfileSnapshot,
         validation_mode: str,
-    ) -> tuple[str, ValidationResult]:
+        target_skill_terms: list[str],
+    ) -> tuple[str, ValidationResult, list[FabricationFinding]]:
         cl_prompt_base = build_cover_letter_prompt(profile_snapshot)
+        # The deterministic grounding context is fixed across attempts — build it
+        # once from canonical profile data (never the job description, so a number
+        # lifted from the posting stays ungrounded).
+        profile = profile_snapshot.as_dict()
+        corpus = build_evidence_corpus(profile)
+        employers = employer_name_set(profile)
+        allowed_skill_terms = build_skill_vocabulary(profile)
+        target_company = _job_company(job)
+        job_title = str(job.get("title") or "")
+
         avoid_notes: list[str] = []
         letter = ""
+        findings: list[FabricationFinding] = []
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         for attempt in range(self._max_retries + 1):
             prompt = cl_prompt_base
@@ -3213,31 +3310,41 @@ class GenerateCoverLetterUseCase:
             raw = self._llm.chat(
                 messages,
                 max_tokens=8192,
-                temperature=0.7,
+                temperature=0.4,
             )
             letter = sanitize_text(raw)
             letter = _strip_preamble(letter)
             letter, has_completion_marker = _strip_cover_letter_completion_marker(letter)
 
             validation = self._validator.validate_cover_letter(letter, mode=validation_mode)
+            findings = scan_cover_letter(
+                letter,
+                corpus,
+                employers=employers,
+                target_company=target_company,
+                job_title=job_title,
+                target_skill_terms=target_skill_terms,
+                allowed_skill_terms=allowed_skill_terms,
+            )
+            errors = list(validation.errors)
             if not has_completion_marker:
-                validation = ValidationResult.failure(
-                    (
-                        *validation.errors,
-                        f"Missing {COVER_LETTER_COMPLETION_MARKER} completion marker.",
-                    ),
-                    warnings=validation.warnings,
-                )
+                errors.append(f"Missing {COVER_LETTER_COMPLETION_MARKER} completion marker.")
+            # Deterministic grounding gate: a fabricated metric/date/title/employer
+            # or an unbacked job-target tool downgrades the letter to REJECTED, never
+            # shipped as approved (CONTROL-03) — the findings guide the retry.
+            errors.extend(finding.describe() for finding in findings)
+            if errors:
+                validation = ValidationResult.failure(tuple(errors), warnings=validation.warnings)
             last_validation = validation
             if validation.passed:
-                return letter, validation
-            avoid_notes.extend(validation.errors)
+                return letter, validation, findings
+            avoid_notes.extend(errors)
             log.debug(
                 "Cover letter attempt %d/%d failed: %s",
                 attempt + 1, self._max_retries + 1, validation.errors,
             )
 
-        return letter, last_validation
+        return letter, last_validation, findings
 
     def _publish_generated(self, materials: MaterialsSet) -> None:
         if self._publisher is None or materials.cover_letter is None:

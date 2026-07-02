@@ -290,6 +290,17 @@ class _TemplateRepository(_FakeRepository):
         return self.resume_template
 
 
+class _FakeAnalysisRepository:
+    """Returns a fixed EmployerAnalysis so the cover-letter skill/tool gate sees a
+    concrete set of job-target keywords without a live ensemble call."""
+
+    def __init__(self, analysis) -> None:
+        self._analysis = analysis
+
+    def load(self, tenant_id, job_id, *, generation=None):
+        return self._analysis
+
+
 class _ScriptedLlm:
     """Replays a queue of canned LLM responses so tests stay deterministic."""
 
@@ -2009,6 +2020,231 @@ def test_cover_letter_use_case_retries_when_completion_marker_missing(
     assert outcome.text_path is not None
     assert COVER_LETTER_COMPLETION_MARKER not in Path(outcome.text_path).read_text(
         encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GenerateCoverLetterUseCase — cover-letter truthfulness gate (CONTROL-03)
+# ---------------------------------------------------------------------------
+
+
+def _seed_approved_cover_materials(repo: _FakeRepository, job: dict, tmp_path: Path) -> None:
+    """Seed an approved tailored resume + approved resume PDF so the cover-letter
+    use case reaches generation (mirrors the happy-path preconditions)."""
+    resume_path = tmp_path / "resume.txt"
+    resume_path.write_text("Tailored resume body", encoding="utf-8")
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path=str(resume_path),
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        Artifact.create(
+            type=ArtifactType.RESUME_PDF,
+            path=str(tmp_path / "resume.pdf"),
+            created_at="2024-01-02T01:00:00+00:00",
+            render_format=RenderFormat.LATEX_PDF,
+        ),
+        updated_at="2024-01-02T01:00:00+00:00",
+    )
+    repo.save(materials)
+
+
+def _cover_letter_text(body: str, *, name: str = "Jane") -> str:
+    """A structurally valid cover letter whose single body paragraph is ``body``."""
+    return f"Dear Hiring Manager,\n\n{body}\n\n{name}\n{COVER_LETTER_COMPLETION_MARKER}"
+
+
+def test_cover_letter_use_case_rejects_fabricated_skill(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """The #1 leak: the letter claims a job-target tool the profile cannot back
+    (Kubernetes). The prose skill/tool gate downgrades it to REJECTED — never
+    shipped as approved — and the failure is recorded as inspectable audit
+    history."""
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("I automated backend deployments with Kubernetes."),
+    ])
+    publisher = _RecordingPublisher()
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        publisher=publisher,
+        analysis_repository=_FakeAnalysisRepository(
+            _analysis_with_keywords(job, ["python", "backend", "Kubernetes"])
+        ),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "failed_validation"
+    assert outcome.materials is not None
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.REJECTED
+    assert outcome.materials.status != MaterialsLifecycle.COVER_LETTER_READY
+    errors = outcome.materials.last_validation.errors
+    assert any("Kubernetes" in error for error in errors)
+    assert any("never_fabricate_skills" in error for error in errors)
+    audit = cover.metadata["fabrication_audit"]
+    assert audit["checked"] is True
+    assert audit["grounded"] is False
+    assert any(
+        item["kind"] == "skill" and item["token"] == "Kubernetes"
+        for item in audit["findings"]
+    )
+    # A fabricated cover letter is never announced as generated.
+    assert not any(
+        getattr(event, "event_type", "") == "CoverLetterGenerated"
+        for event in publisher.events
+    )
+
+
+def test_cover_letter_use_case_rejects_fabricated_metric(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A fabricated metric (300%, absent from the profile's real metrics) is
+    hard-rejected. No analysis repository is wired, proving the never-fabricate
+    detector runs over the cover letter independently of the skill/tool gate."""
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("I increased revenue 300% at my last company."),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "failed_validation"
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.REJECTED
+    errors = outcome.materials.last_validation.errors
+    assert any("300%" in error for error in errors)
+    assert any("never_fabricate_metrics" in error for error in errors)
+    assert any(item["kind"] == "numeric" for item in cover.metadata["fabrication_audit"]["findings"])
+
+
+def test_cover_letter_use_case_rejects_fabricated_employer(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A company-suffixed employer the candidate never worked at (Initech
+    Corporation) is a fabricated employer and is rejected — while the target
+    company is allowed (see the grounded-letter test)."""
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("At Initech Corporation I owned the API."),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "failed_validation"
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.REJECTED
+    errors = outcome.materials.last_validation.errors
+    assert any("Initech Corporation" in error for error in errors)
+    assert any("never_fabricate_employers" in error for error in errors)
+    assert any(item["kind"] == "employer" for item in cover.metadata["fabrication_audit"]["findings"])
+
+
+def test_cover_letter_use_case_rejects_fabricated_title(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A claimed seniority the profile does not carry (Chief Technology Officer)
+    is a fabricated title and is rejected. The mandatory ``Dear Hiring Manager``
+    salutation is NOT read as a claimed title (it is excluded from the scan)."""
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("As a Chief Technology Officer I scaled the platform."),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "failed_validation"
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.REJECTED
+    errors = outcome.materials.last_validation.errors
+    assert any("Chief" in error for error in errors)
+    assert any("never_fabricate_titles" in error for error in errors)
+    assert any(item["kind"] == "title" for item in cover.metadata["fabrication_audit"]["findings"])
+
+
+def test_cover_letter_use_case_accepts_grounded_letter_and_persists_audit(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """No false reject: a real metric (40%), a declared/evidence skill (Python),
+    and the target company (Acme Corporation) all pass; a target tool absent from
+    the prose (Kubernetes) is not conjured into a finding. The accepted letter is
+    generated at the lowered temperature and carries its grounded audit trail."""
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("I cut API latency 40% using Python at Acme Corporation."),
+    ])
+    publisher = _RecordingPublisher()
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        publisher=publisher,
+        analysis_repository=_FakeAnalysisRepository(
+            _analysis_with_keywords(
+                job, ["python", "postgresql", "api", "latency", "backend", "Kubernetes"]
+            )
+        ),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "ok"
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.APPROVED
+    assert outcome.materials.status == MaterialsLifecycle.COVER_LETTER_READY
+    audit = cover.metadata["fabrication_audit"]
+    assert audit["checked"] is True
+    assert audit["grounded"] is True
+    assert audit["findings"] == []
+    assert audit["target_keyword_count"] == 6
+    assert "never_fabricate_skills" in audit["controls"]
+    assert llm.kwargs[0]["temperature"] == 0.4
+    assert any(
+        getattr(event, "event_type", "") == "CoverLetterGenerated"
+        for event in publisher.events
     )
 
 

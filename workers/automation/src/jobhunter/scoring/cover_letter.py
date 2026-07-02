@@ -29,12 +29,17 @@ from jobhunter.domain.materials.use_cases import (
 )
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmPort
-from jobhunter.domain.ports.materials import MaterialsRepository, PdfRendererPort
+from jobhunter.domain.ports.materials import (
+    EmployerAnalysisRepository,
+    MaterialsRepository,
+    PdfRendererPort,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobhunter.infrastructure.materials import (
     PlaywrightHtmlPdfAdapter,
+    SqliteEmployerAnalysisRepository,
     SqliteMaterialsRepository,
 )
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -60,6 +65,7 @@ def _build_use_case(
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
     validator: ContentValidator | None = None,
+    analysis_repository: EmployerAnalysisRepository | None = None,
 ) -> GenerateCoverLetterUseCase:
     if repository is None:
         repository = SqliteMaterialsRepository(get_connection())
@@ -71,11 +77,14 @@ def _build_use_case(
         )
     if validator is None:
         validator = ContentValidator()
+    if analysis_repository is None:
+        analysis_repository = SqliteEmployerAnalysisRepository(get_connection())
     return GenerateCoverLetterUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
         publisher=publisher,
+        analysis_repository=analysis_repository,
     )
 
 

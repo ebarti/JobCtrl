@@ -291,6 +291,24 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   `ArtifactTailoringExplanation.bulletProvenance` (a PDF artifact resolves it from
   the sibling tailored-resume row). A cross-runtime projection parity test covers
   the table on both runtimes.
+- **Cover-letter truthfulness gate** (`scan_cover_letter`, same module): the cover
+  letter ships to the employer as a first-person claims document, so before it is
+  accepted `GenerateCoverLetterUseCase` runs the SAME deterministic guards over the
+  generated body — the never-fabricate detector (metrics/dates/titles/employers)
+  plus the prose skill/tool gate (`build_skill_vocabulary` + the persisted
+  `EmployerAnalysis` keywords as targets). Two cover-letter allowances keep it
+  precise, since a letter legitimately names the job it targets: the mandatory
+  `Dear …` salutation is excluded from the scan (its addressee title is not a
+  claim), the target role's title tokens ground the title arm, and an employer
+  mention containing the target company is not a fabricated employer. The
+  numeric/date arms stay strict (job-post text is never folded into the evidence
+  corpus). A detected fabrication downgrades validation so the letter is
+  **REJECTED, never shipped as approved** (the aggregate stays `resume_approved`,
+  not `cover_letter_ready`), and the retry loop is told exactly what to drop. The
+  generator runs at temperature 0.4 (lowered from 0.7). Every accepted or rejected
+  letter carries a minimal truthfulness trail (`fabrication_audit`: the controls
+  run, the target-keyword count, and each finding) on its artifact `metadata_json`,
+  so a rejected letter's failure survives as inspectable audit history.
 
 ## Voice Pass + Final Audit Against Rendered Text (Materials sub-step)
 
