@@ -519,6 +519,14 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         });
         expect(detailRes.statusCode, detailRes.body).toBe(200);
 
+        // Two columns are parity-safe here only because of deliberate fixture
+        // value choices, NOT because the builders agree in general — see
+        // projectionParity.knownDivergences in the shared fixture
+        // (job_list.location: TS normalizeJobLocation vs Python raw, worked around
+        // with a normalization fixed point; dashboard.ready: TS also requires
+        // has_resume, worked around with a fully-applied job). Editing job.location
+        // to a non-normalized value or the apply stage to pending would trip those
+        // divergences; the production fix is tracked as follow-up B2b.
         const db = new Database(dbPath, { readonly: true });
         try {
           const rows: Record<ProjectionTable, Record<string, unknown> | undefined> = {

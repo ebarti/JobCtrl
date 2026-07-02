@@ -267,7 +267,23 @@
       "dashboard": [
         "generated_at"
       ]
-    }
+    },
+    "knownDivergences": [
+      {
+        "column": "job_list_projections.location",
+        "python": "writes jobs.location verbatim",
+        "ts": "writes normalizeJobLocation(jobs.location) (apps/api/src/location-normalization.ts)",
+        "fixtureWorkaround": "job.location uses a normalization fixed point (\"Berlin, Germany\") so raw == normalized and both runtimes agree; a non-normalized value (e.g. \"Remote, EU\") would trip this divergence.",
+        "followUp": "B2b: normalize location in one place across both builders, then this column is fully parity-covered."
+      },
+      {
+        "column": "dashboard_projections.ready",
+        "python": "counts current_stage=='apply' AND current_state=='pending'",
+        "ts": "additionally requires has_resume==1",
+        "fixtureWorkaround": "the seeded job is fully applied (apply stage succeeded), so current_state != 'pending' and ready == 0 on both runtimes; a pending-apply job would trip this divergence.",
+        "followUp": "B2b: align the ready predicate across both builders, then a pending-apply job is parity-covered."
+      }
+    ]
   },
   "expectedProjections": {
     "jobList": {

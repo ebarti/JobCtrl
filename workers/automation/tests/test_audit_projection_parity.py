@@ -328,6 +328,15 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
     json_cols = fixture["projectionParity"]["jsonColumns"]
     non_det = fixture["projectionParity"]["nonDeterministicColumns"]
 
+    # Two columns are parity-safe here only because of deliberate fixture value
+    # choices, NOT because the builders agree in general — see
+    # projectionParity.knownDivergences in the shared fixture (job_list.location:
+    # Python raw vs TS normalizeJobLocation, worked around with a normalization
+    # fixed point; dashboard.ready: TS also requires has_resume, worked around
+    # with a fully-applied job). Editing job.location to a non-normalized value or
+    # the apply stage to pending would trip those divergences; the production fix
+    # is tracked as follow-up B2b.
+
     actual_rows = {
         "jobList": conn.execute(
             "SELECT * FROM job_list_projections WHERE job_id = ?", (job_url,)
