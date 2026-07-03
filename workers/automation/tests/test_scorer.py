@@ -1128,3 +1128,86 @@ def test_run_scoring_preselects_retrieval_top_k_before_llm(
     assert summary["errors"] == 0
     assert repo.load(LOCAL_TENANT, JobId(relevant_url)) is not None
     assert repo.load(LOCAL_TENANT, JobId(stale_irrelevant_url)) is None
+
+
+# ---------------------------------------------------------------------------
+# Score attempt cap (P1a): failures must advance
+# ``job_stage_states.attempt_count`` so the pending_score ``< 5`` cap can
+# engage and stop re-billing the LLM for a permanently-failing job.
+# ---------------------------------------------------------------------------
+
+
+def _score_attempt_count(conn: sqlite3.Connection, url: str) -> int:
+    row = conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE job_url=? AND stage='score'",
+        (url,),
+    ).fetchone()
+    return int(row["attempt_count"]) if row is not None else 0
+
+
+def _failing_llm() -> _ScriptedLlm:
+    # score=99 is outside [1, 10] → the parser flags ok=False, exercising
+    # the failure path without a network round-trip.
+    return _ScriptedLlm(
+        {
+            "score": 99,
+            "technical_fit": 0,
+            "experience_fit": 0,
+            "role_fit": 0,
+            "keywords": [],
+            "reasoning": "invalid",
+        }
+    )
+
+
+def test_run_scoring_increments_score_attempts_until_cap(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    url = "https://example.com/job/score-permafail"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    for expected in range(1, 6):
+        summary = scorer_module.run_scoring(
+            profile_snapshot=profile_snapshot,
+            repository=repo,
+            llm_port=_failing_llm(),
+            resume_text="anything",
+        )
+        assert summary["errors"] == 1
+        assert _score_attempt_count(conn, url) == expected
+
+    # 6th batch: the job is now capped out of pending_score, so run_scoring
+    # finds nothing and the LLM is never called again.
+    drained = _failing_llm()
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=drained,
+        resume_text="anything",
+    )
+    assert summary == {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
+    assert drained.calls == 0
+    assert _score_attempt_count(conn, url) == 5
+
+
+def test_score_job_by_url_increments_score_attempts_on_failure(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    url = "https://example.com/job/score-single-fail"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    for expected in (1, 2):
+        outcome = scorer_module.score_job_by_url(
+            url,
+            profile_snapshot=profile_snapshot,
+            resume_text="anything",
+            criteria=ScoringCriteria(),
+            repository=repo,
+            llm_port=_failing_llm(),
+        )
+        assert outcome.ok is False
+        assert _score_attempt_count(conn, url) == expected

@@ -11,7 +11,9 @@ LLM_MODEL env var overrides the model name for any provider.
 
 import json
 import logging
+import math
 import os
+import random
 import re
 import time
 
@@ -119,9 +121,42 @@ _MAX_RETRIES = 5
 _TIMEOUT = 180  # seconds — Gemini thinking models can take >120s on a single call.
 _JSON_PARSE_RETRIES = 2
 
-# Base wait on first 429/503 (doubles each retry, caps at 60s).
+# Base wait on first transient failure (doubles each retry, caps at _MAX_RETRY_WAIT).
 # Gemini free tier is 15 RPM = 4s minimum between requests; 10s gives headroom.
 _RATE_LIMIT_BASE_WAIT = 10
+# Ceiling (seconds) for any single retry sleep, including a server-supplied
+# Retry-After. A hostile or buggy Retry-After must never park an activity for
+# hours, so the honored wait is hard-capped here.
+_MAX_RETRY_WAIT = 60
+# Max random jitter (seconds) added to each retry sleep so concurrent workers
+# don't retry in lockstep.
+_RETRY_JITTER = 5
+
+
+def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
+    """Seconds to sleep before the next transient-failure retry.
+
+    Uses exponential backoff from ``_RATE_LIMIT_BASE_WAIT``, honoring a
+    server ``Retry-After`` (seconds) when present and finite. The result is
+    jittered to break retry lockstep and clamped to ``[0, _MAX_RETRY_WAIT]``
+    before it is returned, so a hostile or buggy ``Retry-After`` (huge,
+    negative, NaN, or infinite) can neither park an activity for hours nor
+    reach ``time.sleep()`` with a value it rejects.
+    """
+    wait = _RATE_LIMIT_BASE_WAIT * (2 ** attempt)
+    if retry_after is not None:
+        try:
+            parsed = float(retry_after)
+        except (ValueError, TypeError):
+            parsed = None
+        # Only honor a finite Retry-After; NaN/inf are meaningless, so fall
+        # back to the exponential backoff above.
+        if parsed is not None and math.isfinite(parsed):
+            wait = parsed
+    wait += random.uniform(0, _RETRY_JITTER)
+    # Floor at 0 (a negative Retry-After would make time.sleep raise
+    # ValueError) then cap at the ceiling.
+    return max(0.0, min(wait, _MAX_RETRY_WAIT))
 
 
 _GEMINI_COMPAT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -383,36 +418,36 @@ class LLMClient:
 
             except httpx.HTTPStatusError as exc:
                 resp = exc.response
-                if resp.status_code in (429, 503) and attempt < _MAX_RETRIES - 1:
-                    # Respect Retry-After header if provided (Gemini sends this).
+                status = resp.status_code
+                # Retry rate limits (429) and any server-side error (5xx);
+                # other 4xx client errors are not transient and fail fast.
+                retryable = status == 429 or 500 <= status < 600
+                if retryable and attempt < _MAX_RETRIES - 1:
+                    # Respect Retry-After header if provided (Gemini sends this),
+                    # but capped — see _retry_wait.
                     retry_after = (
                         resp.headers.get("Retry-After")
                         or resp.headers.get("X-RateLimit-Reset-Requests")
                     )
-                    if retry_after:
-                        try:
-                            wait = float(retry_after)
-                        except (ValueError, TypeError):
-                            wait = _RATE_LIMIT_BASE_WAIT * (2 ** attempt)
-                    else:
-                        wait = min(_RATE_LIMIT_BASE_WAIT * (2 ** attempt), 60)
-
+                    wait = _retry_wait(attempt, retry_after)
                     log.warning(
-                        "LLM rate limited (HTTP %s). Waiting %ds before retry %d/%d. "
+                        "LLM request failed (HTTP %s). Waiting %.1fs before retry %d/%d. "
                         "Tip: Gemini free tier = 15 RPM. Consider a paid account "
                         "or switching to a local model.",
-                        resp.status_code, wait, attempt + 1, _MAX_RETRIES,
+                        status, wait, attempt + 1, _MAX_RETRIES,
                     )
                     time.sleep(wait)
                     continue
                 raise
 
-            except httpx.TimeoutException:
+            except httpx.TransportError as exc:
+                # Connection-level failures — connect/read timeouts, network
+                # resets, protocol errors — are transient; retry with backoff.
                 if attempt < _MAX_RETRIES - 1:
-                    wait = min(_RATE_LIMIT_BASE_WAIT * (2 ** attempt), 60)
+                    wait = _retry_wait(attempt)
                     log.warning(
-                        "LLM request timed out, retrying in %ds (attempt %d/%d)",
-                        wait, attempt + 1, _MAX_RETRIES,
+                        "LLM request failed (%s: %s), retrying in %.1fs (attempt %d/%d)",
+                        type(exc).__name__, exc, wait, attempt + 1, _MAX_RETRIES,
                     )
                     time.sleep(wait)
                     continue
