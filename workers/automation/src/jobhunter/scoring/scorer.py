@@ -308,6 +308,9 @@ def run_scoring(
             job["url"],
             "score",
             "running",
+            # Preserve the attempt counter across re-selection — see
+            # _score_attempt_count; a bare running write would reset it to 0.
+            attempt_count=_score_attempt_count(conn, job["url"]),
             started_at=started_at,
             validate_transition=False,
         )
@@ -516,7 +519,7 @@ def run_scoring(
                 url,
                 "score",
                 "failed",
-                attempt_count=1,
+                attempt_count=_score_attempt_count(conn, url) + 1,
                 started_at=started_ats.get(url),
                 finished_at=finished_at,
                 error_code="SCORE_FAILED",
@@ -653,6 +656,9 @@ def score_job_by_url(
         job_url,
         "score",
         "running",
+        # Preserve the attempt counter across re-selection — see
+        # _score_attempt_count; a bare running write would reset it to 0.
+        attempt_count=_score_attempt_count(conn, job_url),
         started_at=started_at,
         validate_transition=False,
     )
@@ -702,7 +708,7 @@ def score_job_by_url(
             job_url,
             "score",
             "failed",
-            attempt_count=1,
+            attempt_count=_score_attempt_count(conn, job_url) + 1,
             started_at=started_at,
             finished_at=finished_at,
             error_code="SCORE_FAILED",
@@ -849,6 +855,23 @@ def _row_value(row: Any, key: str, index: int) -> Any:
     if isinstance(row, sqlite3.Row):
         return row[key]
     return row[index]
+
+
+def _score_attempt_count(conn: sqlite3.Connection, job_url: str) -> int:
+    """Current score-stage attempt count (0 if unrecorded).
+
+    ``set_stage_state`` resets ``attempt_count`` to 0 whenever it is
+    omitted, so a bare ``running`` write would wipe the counter between
+    batch re-selections. The score stage therefore threads the current
+    count through the ``running`` write and increments it on failure, so
+    the ``pending_score`` ``< 5`` cap can engage and stop a permanently-
+    failing job from re-billing the LLM on every batch.
+    """
+    row = conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (job_url,),
+    ).fetchone()
+    return int(_row_value(row, "attempt_count", 0) or 0)
 
 
 def _analysis_connection_for_repository(repository: ScoreRepository | None) -> sqlite3.Connection:

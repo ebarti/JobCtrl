@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from jobhunter import llm
 from jobhunter.domain.materials.use_cases import TAILORED_RESUME_RESPONSE_SCHEMA
@@ -175,3 +176,143 @@ def test_chat_json_retries_malformed_structured_output_without_token_cap() -> No
     assert response == {"score": 8}
     assert len(requests) == 2
     assert all("max_tokens" not in request for request in requests)
+
+
+# ---------------------------------------------------------------------------
+# Retry hardening (P1a): transient failures retry with bounded, jittered,
+# capped backoff; non-retryable client errors fail fast.
+# ---------------------------------------------------------------------------
+
+
+def _ok_response() -> httpx.Response:
+    return httpx.Response(
+        status_code=200,
+        json={
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        },
+    )
+
+
+def _client_with_handler(handler) -> LLMClient:
+    client = LLMClient(
+        base_url="https://api.openai.com/v1",
+        model="gpt-test",
+        api_key="test-key",
+    )
+    client._client.close()
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+    return client
+
+
+def test_chat_retries_5xx_then_succeeds(monkeypatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(status_code=500, json={"error": "server"})
+        return _ok_response()
+
+    client = _client_with_handler(handler)
+    try:
+        result = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert result == "ok"
+    assert calls["n"] == 2
+    assert len(sleeps) == 1
+
+
+def test_chat_retries_connection_error_then_succeeds(monkeypatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("connection refused", request=request)
+        return _ok_response()
+
+    client = _client_with_handler(handler)
+    try:
+        result = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert result == "ok"
+    assert calls["n"] == 2
+    assert len(sleeps) == 1
+
+
+def test_chat_caps_hostile_retry_after_header(monkeypatch) -> None:
+    """A 429 with an absurd ``Retry-After`` must not park the call for
+    hours — the honored wait is capped at the ceiling."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "86400"},
+                json={"error": "rate limited"},
+            )
+        return _ok_response()
+
+    client = _client_with_handler(handler)
+    try:
+        result = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert result == "ok"
+    assert len(sleeps) == 1
+    assert sleeps[0] <= llm._MAX_RETRY_WAIT
+
+
+def test_chat_does_not_retry_client_error(monkeypatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(status_code=400, json={"error": "bad request"})
+
+    client = _client_with_handler(handler)
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert calls["n"] == 1
+    assert sleeps == []
+
+
+def test_chat_bounds_retries_on_persistent_transient_failure(monkeypatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(status_code=503, json={"error": "unavailable"})
+
+    client = _client_with_handler(handler)
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert calls["n"] == llm._MAX_RETRIES
+    assert len(sleeps) == llm._MAX_RETRIES - 1
+    assert all(wait <= llm._MAX_RETRY_WAIT for wait in sleeps)

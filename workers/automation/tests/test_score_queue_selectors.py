@@ -140,6 +140,45 @@ def test_pending_score_excludes_jobs_already_in_job_scores(
     assert legacy["fit_score"] is None
 
 
+def test_pending_score_excludes_jobs_at_attempt_cap(
+    conn: sqlite3.Connection,
+) -> None:
+    """A job whose score stage has failed 5 times must drop out of
+    pending_score — otherwise a permanently-failing job re-bills the LLM
+    on every batch forever. Mirrors the tailor / cover ``< 5`` cap."""
+    url = "https://example.com/job/score-capped"
+    _seed_enriched_job(conn, url)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(
+        conn, url, "score", "running",
+        started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+    )
+    set_stage_state(
+        conn, url, "score", "failed", attempt_count=5, validate_transition=False,
+    )
+
+    assert get_jobs_by_stage(conn=conn, stage="pending_score") == []
+
+
+def test_pending_score_includes_jobs_under_attempt_cap(
+    conn: sqlite3.Connection,
+) -> None:
+    """A job with fewer than 5 score attempts is still eligible."""
+    url = "https://example.com/job/score-under-cap"
+    _seed_enriched_job(conn, url)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(
+        conn, url, "score", "running",
+        started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+    )
+    set_stage_state(
+        conn, url, "score", "failed", attempt_count=4, validate_transition=False,
+    )
+
+    urls = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_score")}
+    assert url in urls
+
+
 def test_closed_postings_are_excluded_from_score_and_tailor_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

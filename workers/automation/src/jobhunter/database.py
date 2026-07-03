@@ -2881,7 +2881,8 @@ _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 
 # ``job_scores``, downstream work requires a succeeded score-stage row.
 _SCORE_DOWNSTREAM_STATE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_s_job_url, state AS jss_s_state "
+    "SELECT job_url AS jss_s_job_url, state AS jss_s_state, "
+    "attempt_count AS jss_s_attempts "
     "FROM job_stage_states WHERE stage = 'score'"
     ") jss_s ON jss_s.jss_s_job_url = jobs.url "
     "LEFT JOIN ("
@@ -2895,6 +2896,12 @@ _SCORE_CURRENT_FOR_DOWNSTREAM: str = (
     "OR jss_s.jss_s_state = 'succeeded' "
     "OR (js.js_fit_score IS NULL AND jss_s.jss_s_state != 'stale')))"
 )
+# Score has no legacy ``jobs.score_attempts`` column, so the canonical
+# ``job_stage_states.attempt_count`` counter is the only source (default 0
+# for un-scored rows). ``pending_score`` uses this to mirror the tailor /
+# cover ``< 5`` cap so a permanently-failing job stops re-billing the LLM
+# on every batch. Requires ``_SCORE_DOWNSTREAM_STATE_JOIN`` in the FROM.
+_EFFECTIVE_SCORE_ATTEMPTS: str = "COALESCE(jss_s.jss_s_attempts, 0)"
 
 
 # ---------------------------------------------------------------------------
@@ -3505,6 +3512,7 @@ def get_jobs_by_stage(
         "pending_score": (
             f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {_EFFECTIVE_FIT_SCORE} IS NULL "
+            f"AND {_EFFECTIVE_SCORE_ATTEMPTS} < 5 "
             f"AND {_NOT_CLOSED_ACTIVE_STATE}"
         ),
         "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
