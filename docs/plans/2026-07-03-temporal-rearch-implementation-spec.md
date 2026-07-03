@@ -594,7 +594,10 @@ one new event type, item 3), `packages/contracts/src/schemas.ts`,
 `apps/api/src/read-model.ts`, `apps/api/src/write-model.ts`,
 `apps/api/src/server.ts` (settings + decision routes only),
 `apps/api/src/application-feedback.ts`, and in the web app: the settings
-form, `ApplyReviewView`, `JobActions`, apply-context components/hooks, plus
+form (`apps/web/src/contexts/profile/forms/settings-form.tsx`),
+`ApplyReviewView`, `JobActions`
+(`apps/web/src/contexts/pipeline/components/JobActions.tsx` — pipeline
+context, NOT apply), apply-context components/hooks, plus
 tests/fixtures/stories for those;
 `apps/web/src/views/jobs/JobDetailDrawer.tsx` (the ONLY `JobActions`
 consumer outside its own context, verified by `git grep` on main — the
@@ -708,8 +711,11 @@ wiring edit only); and the docs this phase's Definition of Done requires:
    - Inside `acquire_job`'s `BEGIN IMMEDIATE` transaction (guard location
      hint :288–343), when the claim is for a LIVE run and
      `approval_required` is true: `SELECT decision FROM
-     application_review_decisions WHERE <job predicate> ORDER BY
-     created_at DESC, id DESC LIMIT 1` — proceed only if it equals
+     application_review_decisions WHERE tenant_id = ? AND job_key = ?
+     ORDER BY decided_at DESC, decision_id DESC LIMIT 1` (these are the
+     REAL columns — the table has no `created_at`/`id`; see the DDL at
+     `infrastructure/gmail/feedback.py:252` and its
+     `(tenant_id, job_key, decided_at DESC)` index) — proceed only if it equals
      `approve_submit`; otherwise rollback/skip that job (leave it
      pending), record the skip reason in the existing skip/log channel so
      the UI can show "awaiting approval". Dry-run claims bypass the gate.
@@ -762,7 +768,9 @@ wiring edit only); and the docs this phase's Definition of Done requires:
    the hardcoded `verification_confidence=1.0`
    (`infrastructure/apply/claude_code_cli.py`, hint :364) with a derived
    value:
-   `1.0` only when a structured `RESULT: APPLIED` AND a confirmation
+   `1.0` only when a structured `RESULT:APPLIED` (no space — the real
+   marker, see `apply/prompt.py:609` and `_RESULT_CODES` in
+   `claude_code_cli.py:59`) AND a confirmation
    artifact exist; `0.6` when only the structured result exists; `0.2`
    when the outcome was inferred from unstructured output. Persist it
    where it is persisted today.
@@ -826,7 +834,9 @@ rollback) per frontend conventions.
 
 ### QA gate (run by the human/QA agent — list these steps in the PR)
 
-Blocker-level checks: fresh install (delete local `dashboard.json`) →
+Blocker-level checks: fresh install — against an ISOLATED `JOBHUNTER_DIR`
+(temp dir), delete THAT dir's `dashboard.json`; never touch
+`~/.jobhunter/dashboard.json` (the user's live settings) →
 settings show approval REQUIRED by default; with gate ON, calling the apply
 API directly (bypassing the UI) leaves the job unclaimed/pending —
 UI-bypass proof; with gate ON, approve in /apply-review → next apply batch
@@ -1014,11 +1024,14 @@ resumption after worker death, and (disabled-by-default) Temporal Schedules.
 `pipeline/runner.py` (discover paths only),
 `domain/discovery/scheduler.py`,
 `workers/automation/src/jobhunter/state.py` + `cli.py` (reaper #1 removal
-+ schedule bootstrap only), `source_quality.py`,
++ schedule bootstrap only),
+`infrastructure/projections/source_quality.py` (full path — there is no
+top-level `source_quality.py`),
 `infrastructure/temporal/registry.py`, `infrastructure/rpc/handlers.py`
 (`run_stage` discover mapping), `config.py` (discovery settings),
 `apps/api/src/discovery-controls.ts` + its contracts + the web discovery
-settings surface (for `scheduling_enabled` only), and — ONLY to delete
+settings surface (for the two scheduling fields `scheduling_enabled` and
+`schedule_cron` only), and — ONLY to delete
 `discovery_run_projections` — BOTH files that define it:
 `apps/api/src/projections.ts` and
 `workers/automation/src/jobhunter/infrastructure/projections/sqlite_projection_store.py`,
@@ -1156,8 +1169,11 @@ reality.
 re-exports — `run_pipeline` is re-exported there today),
 `workers/automation/src/jobhunter/actions.py` (top-level module, NOT under
 `pipeline/`),
-`workers/automation/src/jobhunter/profile/**` + compensation module (for
-the two new workflows), the five `*/activities.py` default paths,
+`workers/automation/src/jobhunter/profile/**` +
+`infrastructure/compensation/**` (for the two new workflows), the four
+`*/activities.py` files that wrap `run_pipeline` (`discovery/`,
+`enrichment/`, `materials/`, `scoring/` — profile and apply have no
+default wrap path),
 `llm.py` + agent-SDK client seam (spend recording only), `database.py`
 (spend table DDL in init_db), settings plumbing files from P2's list (for
 `dailyBudgetUsd`), `infrastructure/temporal/registry.py`,
@@ -1204,8 +1220,13 @@ component for item 2's spend-vs-budget line ONLY.
 3. **Convert the two heavy sync RPC handlers** (`refresh_compensation`,
    `profile_import`) into workflows (`CompensationRefreshWorkflow`,
    `ProfileImportWorkflow`, IDs `run-{uuid}` from the starter, finalize
-   pattern, single activity each wrapping the existing implementation
-   function with P1b error classification). Their RPC handlers now start
+   pattern, single activity each, with P1b error classification. For
+   `profile_import`, wrap the existing implementation function. For
+   `refresh_compensation` there is NO standalone implementation function —
+   its logic is inline in the RPC handler (`handlers.py`, hint :283):
+   first extract that body into a function in
+   `infrastructure/compensation/`, then wrap that function as the
+   activity). Their RPC handlers now start
    the workflow and return the workflow-run reference like every other
    dispatch (TS already handles that shape via P0). This removes the last
    head-of-line-blocking sync handlers.
@@ -1213,7 +1234,7 @@ component for item 2's spend-vs-budget line ONLY.
    paths from `cli.py`/`actions.py` (item 1 replaced them); remove the
    activity default paths that wrap `run_pipeline` (e.g.
    `scoring/activities.py` hint :81 and the analogous defaults in the
-   other four `activities.py`) — after P1b–P4 every activity calls its
+   other three: `discovery/`, `enrichment/`, `materials/`) — after P1b–P4 every activity calls its
    per-domain core directly; then delete
    `run_pipeline`/`_run_pipeline_inner` (`pipeline/runner.py`, hints
    :2422/:2492) once `grep -rn "run_pipeline" workers/` shows zero
