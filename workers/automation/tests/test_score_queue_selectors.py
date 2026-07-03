@@ -179,6 +179,30 @@ def test_pending_score_includes_jobs_under_attempt_cap(
     assert url in urls
 
 
+def test_count_pending_score_uses_same_attempt_cap_as_selector(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    capped_url = "https://example.com/job/count-score-capped"
+    eligible_url = "https://example.com/job/count-score-under-cap"
+    for url, attempts in ((capped_url, 5), (eligible_url, 4)):
+        _seed_enriched_job(conn, url)
+        ensure_job_stage_rows(conn, url)
+        set_stage_state(
+            conn, url, "score", "running",
+            started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+        )
+        set_stage_state(
+            conn, url, "score", "failed", attempt_count=attempts, validate_transition=False,
+        )
+
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    assert pipeline_runner._count_pending("score") == 1
+
+
 def test_closed_postings_are_excluded_from_score_and_tailor_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

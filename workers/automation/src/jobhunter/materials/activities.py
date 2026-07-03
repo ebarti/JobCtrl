@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import threading
 import time
 from typing import Any
 
 from temporalio import activity
 
+from jobhunter.domain.errors import JobHunterError, LlmTransientError, to_application_error
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -62,65 +64,91 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
-    if payload.current_policy_only:
+    cancel_event = threading.Event()
+    try:
+        if payload.current_policy_only:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_current_policy_tailoring(payload, cancel_event=cancel_event),
+                starting_message="current-policy tailor starting",
+                progress_message="current-policy tailor still running",
+                on_cancel=cancel_event.set,
+                activity_name="tailor",
+            )
+            _raise_on_failure("tailor", result, LlmTransientError)
+            return TailorActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        if payload.job_urls:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_selected_tailoring(payload, cancel_event=cancel_event),
+                starting_message="selected tailor starting",
+                progress_message="selected tailor still running",
+                on_cancel=cancel_event.set,
+                activity_name="tailor",
+            )
+            _raise_on_failure("tailor", result, LlmTransientError)
+            return TailorActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        def _do() -> dict[str, Any]:
+            return run_pipeline(
+                stages=["tailor"],
+                min_score=payload.min_score,
+                workers=payload.workers,
+                validation_mode=payload.validation_mode,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+                retailor=payload.retailor,
+                tailor_models=payload.tailor_models,
+                tailor_judge_model=payload.tailor_judge_model,
+                tailor_judge_min_score=payload.tailor_judge_min_score,
+                llm_model=payload.llm_model,
+                workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
+            )
+
         result = await run_blocking_with_heartbeat(
-            lambda: _run_current_policy_tailoring(payload),
-            starting_message="current-policy tailor starting",
-            progress_message="current-policy tailor still running",
+            _do,
+            starting_message="tailor starting",
+            progress_message="tailor still running",
+            on_cancel=cancel_event.set,
+            activity_name="tailor",
         )
+        stages = list(result.get("stages") or [])
+        errors = dict(result.get("errors") or {})
+        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        activity_result = {
+            "status": status,
+            "elapsed": float(result.get("elapsed") or 0.0),
+            "errors": errors,
+            "stages": stages,
+        }
+        _raise_on_failure("tailor", activity_result, LlmTransientError)
         return TailorActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
+            status=status,
+            elapsed=float(result.get("elapsed") or 0.0),
+            errors=errors,
+            stages=stages,
         )
-
-    if payload.job_urls:
-        result = await run_blocking_with_heartbeat(
-            lambda: _run_selected_tailoring(payload),
-            starting_message="selected tailor starting",
-            progress_message="selected tailor still running",
-        )
-        return TailorActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
-        )
-
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["tailor"],
-            min_score=payload.min_score,
-            workers=payload.workers,
-            validation_mode=payload.validation_mode,
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-            retailor=payload.retailor,
-            tailor_models=payload.tailor_models,
-            tailor_judge_model=payload.tailor_judge_model,
-            tailor_judge_min_score=payload.tailor_judge_min_score,
-            llm_model=payload.llm_model,
-            workflow_id=payload.workflow_id,
-        )
-
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="tailor starting",
-        progress_message="tailor still running",
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return TailorActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
 
 
-def _run_current_policy_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
+def _run_current_policy_tailoring(
+    payload: TailorActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.database import get_connection
     from jobhunter.pipeline.current_policy_selectors import tailoring_current_policy_job_urls
 
@@ -131,10 +159,14 @@ def _run_current_policy_tailoring(payload: TailorActivityInput) -> dict[str, Any
         limit=payload.limit,
         job_urls=payload.job_urls,
     )
-    return _run_selected_tailoring(replace(payload, job_urls=urls, limit=0))
+    return _run_selected_tailoring(replace(payload, job_urls=urls, limit=0), cancel_event=cancel_event)
 
 
-def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
+def _run_selected_tailoring(
+    payload: TailorActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.domain.tenant import TenantId
     from jobhunter.scoring.tailor import tailor_job_by_url
 
@@ -164,6 +196,8 @@ def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
     failed = 0
     errors: dict[str, str] = {}
     for url in urls:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError("tailor activity canceled")
         result = tailor_job_by_url(
             url,
             min_score=payload.min_score,
@@ -260,47 +294,70 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
-    if payload.job_urls:
+    cancel_event = threading.Event()
+    try:
+        if payload.job_urls:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_selected_cover(payload, cancel_event=cancel_event),
+                starting_message="selected cover starting",
+                progress_message="selected cover still running",
+                on_cancel=cancel_event.set,
+                activity_name="cover",
+            )
+            _raise_on_failure("cover", result, LlmTransientError)
+            return CoverActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        def _do() -> dict[str, Any]:
+            return run_pipeline(
+                stages=["cover"],
+                min_score=payload.min_score,
+                validation_mode=payload.validation_mode,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+                llm_model=payload.llm_model,
+                workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
+            )
+
         result = await run_blocking_with_heartbeat(
-            lambda: _run_selected_cover(payload),
-            starting_message="selected cover starting",
-            progress_message="selected cover still running",
+            _do,
+            starting_message="cover starting",
+            progress_message="cover still running",
+            on_cancel=cancel_event.set,
+            activity_name="cover",
         )
+        stages = list(result.get("stages") or [])
+        errors = dict(result.get("errors") or {})
+        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        activity_result = {
+            "status": status,
+            "elapsed": float(result.get("elapsed") or 0.0),
+            "errors": errors,
+            "stages": stages,
+        }
+        _raise_on_failure("cover", activity_result, LlmTransientError)
         return CoverActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
+            status=status,
+            elapsed=float(result.get("elapsed") or 0.0),
+            errors=errors,
+            stages=stages,
         )
-
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["cover"],
-            min_score=payload.min_score,
-            validation_mode=payload.validation_mode,
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-            llm_model=payload.llm_model,
-            workflow_id=payload.workflow_id,
-        )
-
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="cover starting",
-        progress_message="cover still running",
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return CoverActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
 
 
-def _run_selected_cover(payload: CoverActivityInput) -> dict[str, Any]:
+def _run_selected_cover(
+    payload: CoverActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.scoring.cover_letter import run_cover_letters
 
     urls = _limited_job_urls(payload.job_urls, payload.limit)
@@ -318,9 +375,11 @@ def _run_selected_cover(payload: CoverActivityInput) -> dict[str, Any]:
                     "dry_run": True,
                 }
             ],
-        }
+    }
 
     t0 = time.time()
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("cover activity canceled")
     result = run_cover_letters(
         min_score=payload.min_score,
         limit=payload.limit,
@@ -346,3 +405,14 @@ def _run_selected_cover(payload: CoverActivityInput) -> dict[str, Any]:
             }
         ],
     }
+
+
+_SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
+
+
+def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHunterError]) -> None:
+    errors = result.get("errors") or {}
+    status = str(result.get("status") or "ok").lower()
+    if errors or status not in _SUCCESS_STATUSES:
+        detail = errors or result.get("error") or result.get("status") or "stage failed"
+        raise error_type(f"{stage} failed: {detail}")

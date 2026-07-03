@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+import threading
 import time
 from typing import Any
 
 from temporalio import activity
 
+from jobhunter.domain.errors import JobHunterError, LlmTransientError, to_application_error
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -51,60 +53,86 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
-    if payload.current_policy_only:
+    cancel_event = threading.Event()
+    try:
+        if payload.current_policy_only:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_current_policy_scores(payload, cancel_event=cancel_event),
+                starting_message="current-policy score starting",
+                progress_message="current-policy score still running",
+                on_cancel=cancel_event.set,
+                activity_name="score",
+            )
+            _raise_on_failure("score", result, LlmTransientError)
+            return ScoreActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        if payload.job_urls:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_selected_scores(payload, cancel_event=cancel_event),
+                starting_message="selected score starting",
+                progress_message="selected score still running",
+                on_cancel=cancel_event.set,
+                activity_name="score",
+            )
+            _raise_on_failure("score", result, LlmTransientError)
+            return ScoreActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        def _do() -> dict[str, Any]:
+            return run_pipeline(
+                stages=["score"],
+                workers=payload.workers,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+                rescore=payload.rescore,
+                llm_model=payload.llm_model,
+                workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
+            )
+
         result = await run_blocking_with_heartbeat(
-            lambda: _run_current_policy_scores(payload),
-            starting_message="current-policy score starting",
-            progress_message="current-policy score still running",
+            _do,
+            starting_message="score starting",
+            progress_message="score still running",
+            on_cancel=cancel_event.set,
+            activity_name="score",
         )
+        stages = list(result.get("stages") or [])
+        errors = dict(result.get("errors") or {})
+        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        activity_result = {
+            "status": status,
+            "elapsed": float(result.get("elapsed") or 0.0),
+            "errors": errors,
+            "stages": stages,
+        }
+        _raise_on_failure("score", activity_result, LlmTransientError)
         return ScoreActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
+            status=status,
+            elapsed=float(result.get("elapsed") or 0.0),
+            errors=errors,
+            stages=stages,
         )
-
-    if payload.job_urls:
-        result = await run_blocking_with_heartbeat(
-            lambda: _run_selected_scores(payload),
-            starting_message="selected score starting",
-            progress_message="selected score still running",
-        )
-        return ScoreActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
-        )
-
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["score"],
-            workers=payload.workers,
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-            rescore=payload.rescore,
-            llm_model=payload.llm_model,
-            workflow_id=payload.workflow_id,
-        )
-
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="score starting",
-        progress_message="score still running",
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return ScoreActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
 
 
-def _run_current_policy_scores(payload: ScoreActivityInput) -> dict[str, Any]:
+def _run_current_policy_scores(
+    payload: ScoreActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.database import get_connection
     from jobhunter.pipeline.current_policy_selectors import scoring_current_policy_job_urls
 
@@ -114,10 +142,14 @@ def _run_current_policy_scores(payload: ScoreActivityInput) -> dict[str, Any]:
         limit=payload.limit,
         job_urls=payload.job_urls,
     )
-    return _run_selected_scores(replace(payload, job_urls=urls, limit=0))
+    return _run_selected_scores(replace(payload, job_urls=urls, limit=0), cancel_event=cancel_event)
 
 
-def _run_selected_scores(payload: ScoreActivityInput) -> dict[str, Any]:
+def _run_selected_scores(
+    payload: ScoreActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.domain.tenant import TenantId
     from jobhunter.scoring.scorer import score_job_by_url
 
@@ -143,6 +175,8 @@ def _run_selected_scores(payload: ScoreActivityInput) -> dict[str, Any]:
     scored = 0
 
     def score_one(url: str):
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError("score activity canceled")
         return url, score_job_by_url(
             url,
             tenant_id=TenantId(payload.tenant_id),
@@ -159,6 +193,8 @@ def _run_selected_scores(payload: ScoreActivityInput) -> dict[str, Any]:
             results = [future.result() for future in as_completed(futures)]
 
     for url, outcome in results:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError("score activity canceled")
         if outcome.ok:
             scored += 1
         else:
@@ -187,3 +223,14 @@ def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
     if limit > 0:
         return unique[:limit]
     return unique
+
+
+_SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
+
+
+def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHunterError]) -> None:
+    errors = result.get("errors") or {}
+    status = str(result.get("status") or "ok").lower()
+    if errors or status not in _SUCCESS_STATUSES:
+        detail = errors or result.get("error") or result.get("status") or "stage failed"
+        raise error_type(f"{stage} failed: {detail}")

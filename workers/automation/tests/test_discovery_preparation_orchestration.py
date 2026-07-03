@@ -563,16 +563,16 @@ def test_discovery_source_failure_records_failed_progress(
     def fail_source() -> None:
         raise RuntimeError("source outage")
 
-    result = runner._run_discovery_source(
-        "jobspy",
-        "JobSpy",
-        (scheduled,),
-        fail_source,
-        progress_completed=1,
-        progress_total=5,
-    )
+    with pytest.raises(runner.SourceUnavailableError, match="JobSpy failed: source outage"):
+        runner._run_discovery_source(
+            "jobspy",
+            "JobSpy",
+            (scheduled,),
+            fail_source,
+            progress_completed=1,
+            progress_total=5,
+        )
 
-    assert result == "error: source outage"
     failed_event = [event for event in events if event[1] == "StageFailed"][0]
     assert failed_event[0] == "discover"
     assert failed_event[2] == "Discovery source jobspy failed: source outage"

@@ -41,6 +41,7 @@ from jobhunter.domain.discovery.scheduler import (
     SourceQualitySnapshot,
 )
 from jobhunter.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
+from jobhunter.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
@@ -599,7 +600,7 @@ def _run_discovery_source(
                     ),
                 },
             )
-            return f"error: {exc}"
+            raise SourceUnavailableError(f"{label} failed: {exc}") from exc
 
         elapsed = time.time() - t0
         duration_ms = int(elapsed * 1000)
@@ -1313,6 +1314,7 @@ def _run_discover(
     source_results: dict[str, Any] = {}
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
+    provided_cancel_event = cancel_event
     cancel_event = cancel_event or threading.Event()
     conn = init_db()
     try:
@@ -1356,10 +1358,10 @@ def _run_discover(
         run_hygiene("before")
     except Exception:
         log.warning("Discovery hygiene failed", exc_info=True)
-    enrichment_done, enrichment_result, enrichment_thread = _start_discovery_enrichment_worker(
-        workers=bounded_workers,
-        limit=limit,
-    )
+    enrichment_kwargs: dict[str, Any] = {"workers": bounded_workers, "limit": limit}
+    if provided_cancel_event is not None:
+        enrichment_kwargs["cancel_event"] = cancel_event
+    enrichment_done, enrichment_result, enrichment_thread = _start_discovery_enrichment_worker(**enrichment_kwargs)
 
     def finish_discovery() -> dict:
         nonlocal progress_completed
@@ -1445,7 +1447,8 @@ def _run_discover(
             )
         except Exception as exc:
             log.exception("Discovery preparation orchestration failed")
-            stats["preparation"] = f"error: {exc}"
+            stats["preparation"] = "failed"
+            stats["preparation_error"] = str(exc)
             stats["status"] = "partial"
             progress_completed += 1
             _record_pipeline_event(
@@ -1554,7 +1557,7 @@ def _run_discover(
                 )
 
             run_kwargs["progress_callback"] = record_jobspy_progress
-        if accepts_cancel_event:
+        if accepts_cancel_event and provided_cancel_event is not None:
             run_kwargs["cancel_event"] = cancel_event
         source_results["jobspy"] = run_discovery(**run_kwargs)
         return source_results["jobspy"]
@@ -1604,13 +1607,14 @@ def _run_discover(
     if ats_sources:
         def run_ats(run_id: str | None = None) -> dict:
             console.print("  [cyan]Canonical ATS APIs...[/cyan]")
-            source_results["ats_api"] = run_scheduled_ats_sources(
-                conn,
-                ats_sources,
-                search_cfg=search_cfg,
-                run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
-                limit=_scheduled_limit_for_sources(ats_sources, _discover_remaining_limit(start_count, limit)),
-            )
+            ats_kwargs: dict[str, Any] = {
+                "search_cfg": search_cfg,
+                "run_id": run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
+                "limit": _scheduled_limit_for_sources(ats_sources, _discover_remaining_limit(start_count, limit)),
+            }
+            if provided_cancel_event is not None:
+                ats_kwargs["cancel_event"] = cancel_event
+            source_results["ats_api"] = run_scheduled_ats_sources(conn, ats_sources, **ats_kwargs)
             return source_results["ats_api"]
 
         stats["ats_api"] = _run_discovery_source(
@@ -1649,12 +1653,15 @@ def _run_discover(
     def run_workday(run_id: str | None = None) -> dict:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
-        source_results["workday"] = run_workday_discovery(
-            employers=_workday_employers_for_sources(workday_sources),
-            workers=bounded_workers,
-            limit=_scheduled_limit(schedule, "workday", _discover_remaining_limit(start_count, limit)),
-            run_id=run_id,
-        )
+        workday_kwargs: dict[str, Any] = {
+            "employers": _workday_employers_for_sources(workday_sources),
+            "workers": bounded_workers,
+            "limit": _scheduled_limit(schedule, "workday", _discover_remaining_limit(start_count, limit)),
+            "run_id": run_id,
+        }
+        if provided_cancel_event is not None:
+            workday_kwargs["cancel_event"] = cancel_event
+        source_results["workday"] = run_workday_discovery(**workday_kwargs)
         return source_results["workday"]
 
     if not source_filter_active or workday_sources:
@@ -1686,14 +1693,17 @@ def _run_discover(
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         enqueue_manual_action_for_sources(conn, smart_extract_sources)
         from jobhunter.discovery.smartextract import run_smart_extract
-        source_results["smartextract"] = run_smart_extract(
-            sites=_smart_extract_sites(smart_extract_sources),
-            workers=bounded_workers,
-            limit=_scheduled_limit_for_sources(
+        smart_kwargs: dict[str, Any] = {
+            "sites": _smart_extract_sites(smart_extract_sources),
+            "workers": bounded_workers,
+            "limit": _scheduled_limit_for_sources(
                 smart_extract_sources,
                 _discover_remaining_limit(start_count, limit),
             ),
-        )
+        }
+        if provided_cancel_event is not None:
+            smart_kwargs["cancel_event"] = cancel_event
+        source_results["smartextract"] = run_smart_extract(**smart_kwargs)
         return source_results["smartextract"]
 
     if not source_filter_active or smart_extract_sources:
@@ -1712,15 +1722,22 @@ def _run_discover(
     return finish_discovery()
 
 
-def _run_enrich(workers: int = 1, limit: int = 0) -> dict:
+def _run_enrich(
+    workers: int = 1,
+    limit: int = 0,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
-    try:
-        from jobhunter.enrichment.detail import run_enrichment
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("enrichment canceled before start")
+    from jobhunter.enrichment.detail import run_enrichment
+    if cancel_event is None:
         run_enrichment(limit=limit, workers=workers)
-        return {"status": "ok"}
-    except Exception as e:
-        log.error("Enrichment failed: %s", e)
-        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
+    else:
+        run_enrichment(limit=limit, workers=workers, cancel_event=cancel_event)
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("enrichment canceled")
+    return {"status": "ok"}
 
 
 def _run_score(
@@ -1728,15 +1745,16 @@ def _run_score(
     rescore: bool = False,
     workers: int = 1,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
-    try:
-        from jobhunter.scoring.scorer import run_scoring
-        run_scoring(limit=limit, rescore=rescore, workers=workers, llm_model=llm_model)
-        return {"status": "ok"}
-    except Exception as e:
-        log.error("Scoring failed: %s", e)
-        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("scoring canceled before start")
+    from jobhunter.scoring.scorer import run_scoring
+    run_scoring(limit=limit, rescore=rescore, workers=workers, llm_model=llm_model)
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("scoring canceled")
+    return {"status": "ok"}
 
 
 def _run_tailor(
@@ -1749,41 +1767,36 @@ def _run_tailor(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
-    try:
-        from jobhunter.scoring.tailor import run_tailoring
-        result = run_tailoring(
-            min_score=min_score,
-            limit=limit,
-            validation_mode=validation_mode,
-            workers=workers,
-            retailor=retailor,
-            tailor_models=tailor_models,
-            tailor_judge_model=tailor_judge_model,
-            tailor_judge_min_score=tailor_judge_min_score,
-            llm_model=llm_model,
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("tailoring canceled before start")
+    from jobhunter.scoring.tailor import run_tailoring
+    result = run_tailoring(
+        min_score=min_score,
+        limit=limit,
+        validation_mode=validation_mode,
+        workers=workers,
+        retailor=retailor,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+        llm_model=llm_model,
+    )
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("tailoring canceled")
+    failed = int(result.get("failed") or 0)
+    errors = int(result.get("errors") or 0)
+    if errors:
+        raise LlmTransientError(
+            f"{errors} tailoring error(s), {failed} failed quality gate(s)"
         )
-        failed = int(result.get("failed") or 0)
-        errors = int(result.get("errors") or 0)
-        if errors:
-            return {
-                **result,
-                "status": "error: tailor errors",
-                "error_class": "TailorStageErrors",
-                "error_message": f"{errors} tailoring error(s), {failed} failed quality gate(s)",
-            }
-        if failed:
-            return {
-                **result,
-                "status": "failed",
-                "error_class": "TailorQualityGateFailed",
-                "error_message": f"{failed} tailored resume(s) failed validation or judge approval",
-            }
-        return {**result, "status": "ok"}
-    except Exception as e:
-        log.error("Tailoring failed: %s", e)
-        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
+    if failed:
+        raise LlmTransientError(
+            f"{failed} tailored resume(s) failed validation or judge approval"
+        )
+    return {**result, "status": "ok"}
 
 
 def _run_cover(
@@ -1791,20 +1804,24 @@ def _run_cover(
     limit: int = 0,
     validation_mode: str = "normal",
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Stage: Cover letter generation."""
-    try:
-        from jobhunter.scoring.cover_letter import run_cover_letters
-        run_cover_letters(
-            min_score=min_score,
-            limit=limit,
-            validation_mode=validation_mode,
-            llm_model=llm_model,
-        )
-        return {"status": "ok"}
-    except Exception as e:
-        log.error("Cover letter generation failed: %s", e)
-        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("cover letter generation canceled before start")
+    from jobhunter.scoring.cover_letter import run_cover_letters
+    result = run_cover_letters(
+        min_score=min_score,
+        limit=limit,
+        validation_mode=validation_mode,
+        llm_model=llm_model,
+    )
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmTransientError("cover letter generation canceled")
+    errors = int(result.get("errors") or 0) if isinstance(result, dict) else 0
+    if errors:
+        raise LlmTransientError(f"{errors} cover letter error(s)")
+    return {"status": "ok"}
 
 
 # Map stage names to their runner functions. ``Callable`` (lowercase
@@ -1842,6 +1859,8 @@ def _build_stage_kwargs(
         kwargs["workers"] = workers
     if stage in ("discover", "enrich", "score"):
         kwargs["limit"] = limit
+    if cancel_event is not None and stage in ("discover", "enrich", "score", "tailor", "cover"):
+        kwargs["cancel_event"] = cancel_event
     if stage == "discover":
         kwargs["min_score"] = min_score
         kwargs["validation_mode"] = validation_mode
@@ -1851,8 +1870,6 @@ def _build_stage_kwargs(
         kwargs["tailor_judge_min_score"] = tailor_judge_min_score
         if source_ids:
             kwargs["source_ids"] = source_ids
-        if cancel_event is not None:
-            kwargs["cancel_event"] = cancel_event
     elif stage == "score":
         kwargs["rescore"] = rescore
         kwargs["llm_model"] = llm_model
@@ -1959,9 +1976,11 @@ _PENDING_SQL: dict[str, str] = {
     ),
     "score": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
-        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._SCORE_DOWNSTREAM_STATE_JOIN} "
+        f"{db_module._ACTIVE_STATE_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL "
+        f"AND {db_module._EFFECTIVE_SCORE_ATTEMPTS} < 5 "
         f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
     ),
     # Phase 6 (S-20 + round-2 H1): tailor + cover predicates read through
@@ -2061,6 +2080,7 @@ def _run_discovery_enrichment_until_idle(
     *,
     workers: int,
     limit: int,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs."""
     passes = 0
@@ -2068,6 +2088,8 @@ def _run_discovery_enrichment_until_idle(
 
     try:
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("discovery enrichment canceled")
             pending = _count_pending("enrich")
             if pending <= 0:
                 if discovery_done.is_set():
@@ -2076,7 +2098,10 @@ def _run_discovery_enrichment_until_idle(
                 discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
                 continue
 
-            enrichment_result = _run_enrich(workers=workers, limit=limit)
+            if cancel_event is None:
+                enrichment_result = _run_enrich(workers=workers, limit=limit)
+            else:
+                enrichment_result = _run_enrich(workers=workers, limit=limit, cancel_event=cancel_event)
             passes += 1
             after = _count_pending("enrich")
             status = str(enrichment_result.get("status", "ok"))
@@ -2091,7 +2116,7 @@ def _run_discovery_enrichment_until_idle(
                 if discovery_done.is_set() and no_progress_passes >= _DISCOVERY_ENRICH_NO_PROGRESS_LIMIT:
                     result.update(
                         {
-                            "status": f"stuck: {after} pending detail jobs after {passes} passes",
+                "status": f"stuck: {after} pending detail jobs after {passes} passes",
                             "passes": passes,
                             "pending": after,
                         }
@@ -2103,7 +2128,7 @@ def _run_discovery_enrichment_until_idle(
         log.exception("Discovery detail enrichment worker crashed")
         result.update(
             {
-                "status": f"error: {exc}",
+                "status": "failed",
                 "error_class": type(exc).__name__,
                 "error_message": str(exc),
                 "passes": passes,
@@ -2115,6 +2140,7 @@ def _start_discovery_enrichment_worker(
     *,
     workers: int,
     limit: int,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[threading.Event, dict[str, Any], threading.Thread]:
     """Start Discovery's internal detail-enrichment queue worker."""
     discovery_done = threading.Event()
@@ -2126,6 +2152,7 @@ def _start_discovery_enrichment_worker(
             "result": result,
             "workers": workers,
             "limit": limit,
+            "cancel_event": cancel_event,
         },
         name="discover-detail-enrichment",
         daemon=True,
@@ -2198,7 +2225,7 @@ def _run_stage_streaming(
             tracker.mark_done(stage, result)
         except Exception as e:
             log.exception("Stage '%s' crashed", stage)
-            tracker.mark_done(stage, {"status": f"error: {e}"})
+            tracker.mark_done(stage, {"status": "failed", "error_message": str(e)})
         return
 
     # For downstream stages: loop until upstream done + no pending work
@@ -2254,7 +2281,11 @@ def _run_stage_streaming(
                     if no_progress_passes >= 3:
                         tracker.mark_done(
                             stage,
-                            {"status": f"error: no progress after {passes} passes: {e}", "passes": passes},
+                            {
+                                "status": "failed",
+                                "error_message": f"no progress after {passes} passes: {e}",
+                                "passes": passes,
+                            },
                         )
                         return
         else:
@@ -2302,7 +2333,6 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
         console.print(f"  Started: {datetime.now().strftime('%H:%M:%S')}")
         console.print(f"{'=' * 70}")
 
-        t0 = time.time()
         runner = _STAGE_RUNNERS[name]
 
         try:
@@ -2330,10 +2360,9 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
             )
 
         except Exception as e:
-            elapsed = time.time() - t0
-            status = f"error: {e}"
             log.exception("Stage '%s' crashed", name)
             console.print(f"\n  [red]STAGE FAILED:[/red] {e}")
+            raise
 
         results.append({"stage": name, "status": status, "elapsed": elapsed})
         if status not in ("ok", "partial"):
@@ -2929,13 +2958,13 @@ def run_single_job(
                     result["cover_letter_path"] = outcome.text_path
                     console.print("  Cover letter: [bold green]ok[/bold green]")
                 else:
-                    result["cover_status"] = f"error: {outcome.error or outcome.status}"
+                    result["cover_status"] = "failed"
                     result["errors"].append(
                         f"Cover letter failed: {outcome.error or outcome.status}"
                     )
                     console.print(f"  Cover letter: [red]error[/red] — {outcome.error or outcome.status}")
             except Exception as e:
-                result["cover_status"] = f"error: {e}"
+                result["cover_status"] = "failed"
                 result["errors"].append(f"Cover letter failed: {e}")
                 console.print(f"  Cover letter: [red]error[/red] — {e}")
         else:

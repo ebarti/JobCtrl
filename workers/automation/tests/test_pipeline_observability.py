@@ -152,11 +152,8 @@ def test_tailor_stage_fails_pipeline_when_quality_gate_fails(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 2, "errors": 0, "elapsed": 0.1},
     )
 
-    result = runner._run_tailor()
-
-    assert result["status"] == "failed"
-    assert result["failed"] == 2
-    assert result["error_class"] == "TailorQualityGateFailed"
+    with pytest.raises(runner.LlmTransientError, match="2 tailored resume"):
+        runner._run_tailor()
 
 
 def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
@@ -165,11 +162,8 @@ def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 1, "elapsed": 0.1},
     )
 
-    result = runner._run_tailor()
-
-    assert result["status"] == "error: tailor errors"
-    assert result["errors"] == 1
-    assert result["error_class"] == "TailorStageErrors"
+    with pytest.raises(runner.LlmTransientError, match="1 tailoring error"):
+        runner._run_tailor()
 
 
 def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
@@ -178,10 +172,8 @@ def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
     )
 
-    result = runner._run_sequential(["tailor"], min_score=7)
-
-    assert result["stages"][0]["status"] == "failed"
-    assert result["errors"] == {"tailor": "failed"}
+    with pytest.raises(runner.LlmTransientError, match="failed validation"):
+        runner._run_sequential(["tailor"], min_score=7)
 
 
 def test_tailor_quality_gate_failure_propagates_through_streaming_pipeline(monkeypatch):
@@ -254,7 +246,6 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
     ):
         assert run_id is not None
         assert progress_callback is not None
-        assert cancel_event is not None
         progress_callback(
             {
                 "completed": 35,

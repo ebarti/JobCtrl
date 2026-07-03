@@ -11,6 +11,8 @@ from typing import Any
 
 from temporalio import activity
 
+from jobhunter.domain.errors import JobHunterError, MissingInputError, to_application_error
+
 
 @dataclass(frozen=True)
 class ProfileImportActivityInput:
@@ -49,20 +51,22 @@ async def profile_import_activity(
             )
         )
 
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="profile_import starting",
-        progress_message="profile_import still running",
-    )
-    if not result.ok:
+    try:
+        result = await run_blocking_with_heartbeat(
+            _do,
+            starting_message="profile_import starting",
+            progress_message="profile_import still running",
+            activity_name="profile_import",
+        )
+        if not result.ok:
+            raise MissingInputError(result.error or result.status)
+        draft = dict(result.result.get("draft") or {})
         return ProfileImportActivityOutput(
             status=result.status,
-            draft={},
-            error=result.error or result.status,
+            draft=draft,
+            error=None,
         )
-    draft = dict(result.result.get("draft") or {})
-    return ProfileImportActivityOutput(
-        status=result.status,
-        draft=draft,
-        error=None,
-    )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc

@@ -12,6 +12,7 @@ from typing import Any
 
 from temporalio import activity
 
+from jobhunter.domain.errors import JobHunterError, SourceUnavailableError, to_application_error
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -59,35 +60,59 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
 
     cancel_event = threading.Event()
 
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["discover"],
-            workers=payload.workers,
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-            min_score=payload.min_score,
-            validation_mode=payload.validation_mode,
-            tailor_models=payload.tailor_models,
-            tailor_judge_model=payload.tailor_judge_model,
-            tailor_judge_min_score=payload.tailor_judge_min_score,
-            source_ids=payload.source_ids,
-            llm_model=payload.llm_model,
-            workflow_id=payload.workflow_id,
-            cancel_event=cancel_event,
-        )
+    try:
+        def _do() -> dict[str, Any]:
+            return run_pipeline(
+                stages=["discover"],
+                workers=payload.workers,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+                min_score=payload.min_score,
+                validation_mode=payload.validation_mode,
+                tailor_models=payload.tailor_models,
+                tailor_judge_model=payload.tailor_judge_model,
+                tailor_judge_min_score=payload.tailor_judge_min_score,
+                source_ids=payload.source_ids,
+                llm_model=payload.llm_model,
+                workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
+            )
 
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="discover starting",
-        progress_message="discover still running",
-        on_cancel=cancel_event.set,
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return DiscoverActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
+        result = await run_blocking_with_heartbeat(
+            _do,
+            starting_message="discover starting",
+            progress_message="discover still running",
+            on_cancel=cancel_event.set,
+            activity_name="discover",
+        )
+        stages = list(result.get("stages") or [])
+        errors = dict(result.get("errors") or {})
+        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        activity_result = {
+            "status": status,
+            "elapsed": float(result.get("elapsed") or 0.0),
+            "errors": errors,
+            "stages": stages,
+        }
+        _raise_on_failure("discover", activity_result, SourceUnavailableError)
+        return DiscoverActivityOutput(
+            status=status,
+            elapsed=float(result.get("elapsed") or 0.0),
+            errors=errors,
+            stages=stages,
+        )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
+
+
+_SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
+
+
+def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHunterError]) -> None:
+    errors = result.get("errors") or {}
+    status = str(result.get("status") or "ok").lower()
+    if errors or status not in _SUCCESS_STATUSES:
+        detail = errors or result.get("error") or result.get("status") or "stage failed"
+        raise error_type(f"{stage} failed: {detail}")
