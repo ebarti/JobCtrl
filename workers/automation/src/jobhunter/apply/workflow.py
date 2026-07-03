@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -20,6 +21,10 @@ with workflow.unsafe.imports_passed_through():
         ApplyActivityInput,
         ApplyActivityOutput,
         apply_activity,
+    )
+    from jobhunter.infrastructure.temporal.finalize import (
+        emit_workflow_outcome,
+        emit_workflow_started,
     )
 
 
@@ -64,6 +69,46 @@ class ApplyWorkflow:
 
     @workflow.run
     async def run(self, payload: ApplyWorkflowInput) -> ApplyWorkflowResult:
+        started_at = workflow.now()
+        await emit_workflow_started(
+            tenant_id=payload.tenant_id,
+            workflow_type="ApplyWorkflow",
+            input_summary=_apply_input_summary(payload),
+            started_at=started_at,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
+        # See JobPipelineWorkflow.run: the cancel path deliberately does not
+        # record here (Temporal cancels newly-scheduled activities during
+        # cancellation); the describe-reconciler terminalizes WorkflowCanceled.
+        try:
+            result = await self._run_apply(payload)
+        except Exception as exc:  # noqa: BLE001 — record then re-raise
+            await emit_workflow_outcome(
+                tenant_id=payload.tenant_id,
+                workflow_type="ApplyWorkflow",
+                status="failed",
+                started_at=started_at,
+                error_code="workflow_error",
+                error_message=str(exc),
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
+            raise
+
+        await emit_workflow_outcome(
+            tenant_id=payload.tenant_id,
+            workflow_type="ApplyWorkflow",
+            status="succeeded" if result.ok else "failed",
+            started_at=started_at,
+            error_code=None if result.ok else "apply_failed",
+            error_message=None if result.ok else result.error,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
+        return result
+
+    async def _run_apply(self, payload: ApplyWorkflowInput) -> ApplyWorkflowResult:
         info = workflow.info()
         try:
             result: ApplyActivityOutput = await workflow.execute_activity(
@@ -101,6 +146,16 @@ class ApplyWorkflow:
             applied=result.applied,
             failed=result.failed,
         )
+
+
+def _apply_input_summary(payload: ApplyWorkflowInput) -> dict[str, Any]:
+    """Compact, camelCase input summary for the workflow-run read-model."""
+    return {
+        "jobUrl": payload.job_url,
+        "dryRun": payload.dry_run,
+        "continuous": payload.continuous,
+        "limit": payload.limit,
+    }
 
 
 __all__ = ["ApplyWorkflow", "ApplyWorkflowInput", "ApplyWorkflowResult"]

@@ -15,6 +15,10 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobhunter.infrastructure.temporal.finalize import (
+    record_workflow_outcome,
+    record_workflow_started,
+)
 
 
 @pytest.mark.asyncio
@@ -31,7 +35,7 @@ async def test_apply_workflow_returns_ok_when_apply_main_succeeds():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity],
+                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -73,7 +77,7 @@ async def test_apply_workflow_retries_transient_failures_then_surfaces():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity],
+                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -112,7 +116,7 @@ async def test_apply_workflow_recovers_when_first_attempt_fails():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity],
+                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -148,7 +152,7 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity],
+                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
