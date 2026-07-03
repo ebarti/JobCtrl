@@ -352,6 +352,7 @@ async def _resumable_source_family(payload: DiscoverySourceActivityInput) -> Dis
 
 def _resumption_activities():
     return [
+        _check_spend_budget,
         _record_workflow_started,
         _record_workflow_outcome,
         _plan_discovery_sources,
