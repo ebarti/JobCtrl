@@ -833,6 +833,36 @@ is that whole-stage failures propagate into Temporal instead of being converted
 to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
 remain per-item facts when the owning context already records them that way.
 
+Pipeline activities translate Python exceptions into typed Temporal
+`ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
+as the durable error code:
+
+| Error type | Code | Retryable |
+| --- | --- | --- |
+| `ConfigurationError` | `configuration` | no |
+| `AuthenticationError` | `authentication` | no |
+| `MissingInputError` | `missing_input` | no |
+| `TransientNetworkError` | `transient_network` | yes |
+| `BrowserTransientError` | `browser_transient` | yes |
+| `LlmTransientError` | `llm_transient` | yes |
+| `SourceUnavailableError` | `source_unavailable` | yes |
+
+`JobPipelineWorkflow` applies stage-specific retry policies:
+
+| Stage | Attempts | Initial interval | Maximum interval | Non-retryable codes |
+| --- | --- | --- | --- | --- |
+| `discover` | 1 | default | default | `configuration`, `authentication`, `missing_input` |
+| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+
+The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
+operational metrics, and OTel spans through `_run_stage_observed`; the change
+is that whole-stage failures propagate into Temporal instead of being converted
+to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
+remain per-item facts when the owning context already records them that way.
+
 Two production workflows live alongside the activities:
 
 - `JobPipelineWorkflow` (`jobhunter/pipeline/workflow.py`) — drives the
