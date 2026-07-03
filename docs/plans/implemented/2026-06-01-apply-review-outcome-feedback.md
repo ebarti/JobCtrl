@@ -4,8 +4,6 @@
 > `README.md`, `docs/local-ts-api.md`, `docs/local-reliability-qa.md`, and
 > `docs/architecture.md`; the delivery summary is in `docs/delivered.md`.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Add a user-approved apply review queue and outcome tracking loop with Gmail-only email feedback.
 
 **Architecture:** Extend the existing Apply, Pipeline, Operations, and Profile/Gmail boundaries without introducing a new CRM context. Use local SQLite tables for review decisions, reviewed outcomes, linked email evidence, and outcome suggestions; expose typed API routes and React views over those read models. Keep raw Gmail bodies out of event payloads, telemetry, logs, and broad dashboard projections.

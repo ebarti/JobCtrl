@@ -126,7 +126,7 @@ describe("PdfAuditPreviewViewer line geometry", () => {
     const targets: PdfAuditLineTarget[] = [
       {
         lineNumber: 2,
-        text: "candidate@example.com | (+34) 611-682-399 | https://example.com | https://linkedin.com/in/example",
+        text: "candidate@example.test | (+1) 555-0104 | https://portfolio.example.test | https://linkedin.com/in/example",
       },
       {
         lineNumber: 5,
@@ -137,7 +137,7 @@ describe("PdfAuditPreviewViewer line geometry", () => {
     const lines = pdfTextLines(
       pdfjs,
       [
-        textItem("candidate@example.com • (+34) 611-682-399 • example.com", 80, 120, 360),
+        textItem("candidate@example.test • (+1) 555-0104 • portfolio.example.test", 80, 120, 360),
         textItem("Director of Engineering with 12+ years of experience leading platform organizations.", 80, 136, 430),
       ],
       viewport,
@@ -149,15 +149,15 @@ describe("PdfAuditPreviewViewer line geometry", () => {
 
   it("does not let tiny date fragments claim compact metadata lines", () => {
     const targets: PdfAuditLineTarget[] = [
-      { lineNumber: 9, text: "Barcelona, Spain (Remote) | Mar 2024 -- Present" },
-      { lineNumber: 22, text: "Berlin, Germany | Jul 2023 -- Mar 2024" },
+      { lineNumber: 9, text: "Harbor City (Remote) | Mar 2024 -- Present" },
+      { lineNumber: 22, text: "Riverton, USA | Jul 2023 -- Mar 2024" },
     ];
 
     const lines = pdfTextLines(
       pdfjs,
       [
         textItem("Mar 2024", 520, 120, 70),
-        textItem("Berlin, Germany Jul 2023 Mar 2024", 80, 145, 310),
+        textItem("Riverton, USA Jul 2023 Mar 2024", 80, 145, 310),
       ],
       viewport,
       targets,
@@ -171,16 +171,16 @@ describe("PdfAuditPreviewViewer line geometry", () => {
       {
         lineNumber: 36,
         text:
-          "- Preserved the Spanish market under aggressive legal deadlines by leading the cross-functional task force for the Rider Law regulation, partnering with Product, Legal, and Operations.",
+          "- Preserved the pilot market under aggressive compliance deadlines by leading the cross-functional task force for the Fleet Safety regulation, partnering with Product, Legal, and Operations.",
       },
     ];
 
     const lines = pdfTextLines(
       pdfjs,
       [
-        textItem("Preserved the Spanish market under aggressive legal deadlines by leading the cross-functional task force", 80, 120, 560),
-        textItem("for the Rider Law regulation, partnering with Product, Legal, and Operations.", 80, 134, 460),
-        textItem("Security Customer Advisory Board Member Sep 2022 Aug 2023", 80, 148, 390),
+        textItem("Preserved the pilot market under aggressive compliance deadlines by leading the cross-functional task force", 80, 120, 560),
+        textItem("for the Fleet Safety regulation, partnering with Product, Legal, and Operations.", 80, 134, 460),
+        textItem("Reliability Advisory Board Member Sep 2022 Aug 2023", 80, 148, 390),
         textItem("Influenced the product roadmap for enterprise-grade observability and security tools.", 80, 162, 520),
       ],
       viewport,
@@ -189,40 +189,40 @@ describe("PdfAuditPreviewViewer line geometry", () => {
 
     expect(lines.map((line) => line.resumeLineNumber)).toEqual([36, null, null]);
     expect(lines[0]?.text).toContain("Operations");
-    expect(lines[0]?.text).not.toContain("Security Customer");
+    expect(lines[0]?.text).not.toContain("Reliability Advisory");
     expect(lines[0]?.heightPct).toBeLessThan(4);
   });
 
   it("keeps heading rows separate while grouping wrapped bullet blocks", () => {
     const targets: PdfAuditLineTarget[] = [
-      { lineNumber: 61, text: "Software Engineer | Tesla" },
-      { lineNumber: 62, text: "Fremont & Palo Alto, USA | Feb 2016 -- Nov 2018" },
+      { lineNumber: 61, text: "Software Engineer | Northstar Robotics" },
+      { lineNumber: 62, text: "Riverton & Lakeview, USA | Feb 2016 -- Nov 2018" },
       {
         lineNumber: 63,
         text:
-          "- Designed the conveyor control layers for Model 3 general assembly automation and led 15 engineers through testing and deployment to get it running at production scale.",
+          "- Designed the conveyor control layers for autonomous warehouse assembly automation and led 15 engineers through testing and deployment to get it running at production scale.",
       },
       {
         lineNumber: 64,
         text:
-          "- Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast, high-volume links to the industrial control systems.",
+          "- Wrote Python APIs for real-time factory floor communication, giving the Factory Operating Platform (FOP) fast, high-volume links to the industrial control systems.",
       },
     ];
 
     const lines = pdfTextLines(
       pdfjs,
       [
-        textItem("Tesla Fremont & Palo Alto, USA", 80, 120, 330),
-        textItem("Software Engineer Feb 2016 – Nov 2018", 80, 134, 320),
+        textItem("Northstar Robotics Riverton & Lakeview, USA", 80, 120, 330),
+        textItem("Software Engineer Northstar Robotics Feb 2016 – Nov 2018", 80, 134, 420),
         textItem(
-          "○ Designed the conveyor control layers for Model 3 general assembly automation and led 15 engineers through testing and",
+          "○ Designed the conveyor control layers for autonomous warehouse assembly automation and led 15 engineers through testing and",
           80,
           158,
           610,
         ),
         textItem("deployment to get it running at production scale.", 100, 172, 330),
         textItem(
-          "○ Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast,",
+          "○ Wrote Python APIs for real-time factory floor communication, giving the Factory Operating Platform (FOP) fast,",
           80,
           196,
           610,
@@ -245,7 +245,7 @@ describe("PdfAuditPreviewViewer line geometry", () => {
       {
         lineNumber: 36,
         text:
-          "- Preserved the Spanish market under aggressive legal deadlines by leading the cross-functional task force for the Rider Law regulation, partnering with Product, Legal, and Operations.",
+          "- Preserved the pilot market under aggressive compliance deadlines by leading the cross-functional task force for the Fleet Safety regulation, partnering with Product, Legal, and Operations.",
       },
     ];
 
