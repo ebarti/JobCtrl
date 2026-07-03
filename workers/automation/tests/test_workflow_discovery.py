@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from temporalio import activity, workflow
+from temporalio import activity
 from temporalio.client import ScheduleOverlapPolicy, WorkflowFailureError
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -19,12 +19,19 @@ from jobhunter.domain.discovery.scheduler import DiscoveryRunProgress
 from jobhunter.discovery.activities import (
     DiscoveryEnrichmentActivityOutput,
     DiscoveryEnrichmentActivityInput,
+    DiscoveryPreparationFanoutInput,
+    DiscoveryPreparationFanoutOutput,
     DiscoverySourceActivityInput,
     DiscoverySourceActivityOutput,
     PlanDiscoverySourcesInput,
     PlanDiscoverySourcesOutput,
+    discovery_preparation_fanout_activity,
 )
-from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
+from jobhunter.discovery.workflow import (
+    DiscoverWorkflow,
+    DiscoverWorkflowInput,
+    _activity_error_was_cancelled,
+)
 from jobhunter.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
 from jobhunter.pipeline import runner
 
@@ -49,6 +56,49 @@ def _reset_state() -> None:
     _FAIL_FAMILY = None
 
 
+def test_discover_workflow_detects_activity_cancellation_cause() -> None:
+    exc = ActivityError(
+        "activity canceled",
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="pytest",
+        activity_type="discovery_source_family",
+        activity_id="activity-1",
+        retry_state=None,
+    )
+    exc.__cause__ = CancelledError("activity canceled")
+
+    assert _activity_error_was_cancelled(exc) is True
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_state()
+    workflow_instance = DiscoverWorkflow()
+
+    async def fake_started(**_kwargs) -> None:
+        _EVENTS.append(("workflow_started", "DiscoverWorkflow"))
+
+    async def fake_outcome(**kwargs) -> None:
+        _EVENTS.append(("workflow_outcome", kwargs["status"]))
+
+    async def fake_execute(_payload) -> None:
+        raise CancelledError("canceled by test")
+
+    monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
+    monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_started", fake_started)
+    monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_outcome", fake_outcome)
+    monkeypatch.setattr("jobhunter.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
+
+    with pytest.raises(CancelledError):
+        await workflow_instance.run(DiscoverWorkflowInput(tenant_id="local"))
+
+    assert _EVENTS == [
+        ("workflow_started", "DiscoverWorkflow"),
+        ("workflow_outcome", "canceled"),
+    ]
+
+
 def _discovery_activities():
     return [
         _record_workflow_started,
@@ -56,7 +106,7 @@ def _discovery_activities():
         _plan_discovery_sources,
         _discovery_source_family,
         _discovery_enrichment,
-        _derive_preparation_targets,
+        _discovery_preparation_fanout,
     ]
 
 
@@ -111,17 +161,72 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
 
 
-@activity.defn(name="derive_preparation_targets")
-async def _derive_preparation_targets(payload) -> list[_Target]:
-    _EVENTS.append(("derive", payload["min_score"], payload["limit"]))
-    return list(_TARGETS)
+@activity.defn(name="discovery_preparation_fanout")
+async def _discovery_preparation_fanout(
+    payload: DiscoveryPreparationFanoutInput,
+) -> DiscoveryPreparationFanoutOutput:
+    _EVENTS.append(("fanout", payload.min_score, payload.limit))
+    return DiscoveryPreparationFanoutOutput(started=len(_TARGETS), queued=0, targets=len(_TARGETS))
 
 
-@workflow.defn(name="JobPreparationWorkflow")
-class _StubPreparationWorkflow:
-    @workflow.run
-    async def run(self, payload: dict[str, Any]) -> dict[str, str]:
-        return {"job_url": str(payload.get("job_url") or "")}
+@pytest.mark.asyncio
+async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run_blocking(fn, **kwargs):
+        captured["activity_name"] = kwargs["activity_name"]
+        return fn()
+
+    def fake_start_fanout(**kwargs):
+        captured["fanout_kwargs"] = kwargs
+        return {
+            "started": {"job_preparation": 2},
+            "queued": {"job_preparation": 1},
+            "targets": 3,
+        }
+
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_discovery_preparation_workflows",
+        fake_start_fanout,
+    )
+
+    result = await discovery_preparation_fanout_activity(
+        DiscoveryPreparationFanoutInput(
+            tenant_id="local",
+            min_score=8,
+            limit=5,
+            workers=3,
+            validation_mode="strict",
+            tailor_models=("draft",),
+            tailor_judge_model="judge",
+            tailor_judge_min_score=8.5,
+            llm_model="local:model",
+        )
+    )
+
+    assert captured["activity_name"] == "discover:preparation"
+    assert captured["fanout_kwargs"] == {
+        "min_score": 8,
+        "limit": 5,
+        "workers": 3,
+        "validation_mode": "strict",
+        "llm_model": "local:model",
+        "tailor_models": ("draft",),
+        "tailor_judge_model": "judge",
+        "tailor_judge_min_score": 8.5,
+        "tenant_id": "local",
+    }
+    assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
 
 
 @pytest.mark.asyncio
@@ -141,7 +246,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
         async with Worker(
             env.client,
             task_queue=queue,
-            workflows=[DiscoverWorkflow, _StubPreparationWorkflow],
+            workflows=[DiscoverWorkflow],
             activities=_discovery_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -167,7 +272,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
         "source",
         "source",
         "enrichment",
-        "derive",
+        "fanout",
         "workflow_outcome",
     ]
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
@@ -184,7 +289,7 @@ async def test_discover_workflow_collects_source_failures_before_failing() -> No
         async with Worker(
             env.client,
             task_queue=queue,
-            workflows=[DiscoverWorkflow, _StubPreparationWorkflow],
+            workflows=[DiscoverWorkflow],
             activities=_discovery_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -239,22 +344,25 @@ def test_discovery_schedule_defaults_disabled() -> None:
 
 
 class _FakeScheduleHandle:
-    def __init__(self) -> None:
+    def __init__(self, *, update_raises: bool = False) -> None:
         self.deleted = 0
         self.updated = 0
         self.update_result = None
+        self.update_raises = update_raises
 
     async def delete(self) -> None:
         self.deleted += 1
 
     async def update(self, updater) -> None:
+        if self.update_raises:
+            raise RuntimeError("bad persisted schedule")
         self.updated += 1
         self.update_result = updater(None)
 
 
 class _FakeScheduleClient:
-    def __init__(self, *, create_raises: bool = False) -> None:
-        self.handle = _FakeScheduleHandle()
+    def __init__(self, *, create_raises: bool = False, update_raises: bool = False) -> None:
+        self.handle = _FakeScheduleHandle(update_raises=update_raises)
         self.create_raises = create_raises
         self.created: list[tuple[str, Any]] = []
 
@@ -316,3 +424,18 @@ async def test_discovery_schedule_reconcile_updates_existing_schedule(
     assert client.handle.updated == 1
     assert client.handle.update_result.schedule.spec.cron_expressions == ["30 6 * * *"]
     assert client.handle.update_result.schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
+
+
+@pytest.mark.asyncio
+async def test_discovery_schedule_reconcile_failure_does_not_block_worker_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobhunter.config.load_discovery_schedule_settings",
+        lambda: (True, "not a valid cron"),
+    )
+    client = _FakeScheduleClient(create_raises=True, update_raises=True)
+
+    await _reconcile_discovery_schedule(client, "jobhunter-test")
+
+    assert client.handle.updated == 0

@@ -117,11 +117,6 @@ _DEFAULT_TIMEOUT = timedelta(minutes=30)
 # dedupe, and progress persistence below the workflow boundary. Retrying the
 # entire activity can overlap with a still-running adapter thread after timeout
 # cancellation, which creates duplicate in-flight crawls.
-_DISCOVER_TIMEOUT = timedelta(hours=6)
-_DISCOVER_RETRY = RetryPolicy(
-    maximum_attempts=1,
-    non_retryable_error_types=_NON_RETRYABLE_ERROR_TYPES,
-)
 # 2 minutes gives the activity ~8 cycles of the 15s heartbeat poll inside
 # ``run_blocking_with_heartbeat`` before Temporal would consider the
 # activity dead. Without this knob Temporal never times out a stuck

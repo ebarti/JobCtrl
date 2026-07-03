@@ -23,8 +23,8 @@ from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
 from jobhunter.discovery.activities import (
     DiscoveryEnrichmentActivityOutput,
+    DiscoveryPreparationFanoutOutput,
     PlanDiscoverySourcesOutput,
-    discover_activity,
 )
 from jobhunter.discovery.workflow import DiscoverWorkflow
 from jobhunter.enrichment.activities import enrich_activity
@@ -37,10 +37,7 @@ from jobhunter.materials.activities import (
     tailor_activity,
 )
 from jobhunter.pipeline.workflow import (
-    _DEFAULT_TIMEOUT,
     _COVER_RETRY,
-    _DISCOVER_RETRY,
-    _DISCOVER_TIMEOUT,
     _ENRICH_RETRY,
     _SCORE_RETRY,
     _TAILOR_RETRY,
@@ -58,8 +55,6 @@ _OK_RESULT = {
 
 
 def test_stage_retry_policies_are_stage_specific():
-    assert _DISCOVER_TIMEOUT > _DEFAULT_TIMEOUT
-    assert _DISCOVER_RETRY.maximum_attempts == 1
     assert _ENRICH_RETRY.maximum_attempts == 3
     assert _SCORE_RETRY.maximum_attempts == 3
     assert _TAILOR_RETRY.maximum_attempts == 3
@@ -74,10 +69,9 @@ def test_stage_retry_policies_are_stage_specific():
 
 def _all_activities():
     return [
-        discover_activity,
         _plan_discovery_sources,
         _discovery_enrichment,
-        _derive_preparation_targets,
+        _discovery_preparation_fanout,
         enrich_activity,
         score_activity,
         tailor_activity,
@@ -98,9 +92,9 @@ async def _discovery_enrichment(_payload) -> DiscoveryEnrichmentActivityOutput:
     return DiscoveryEnrichmentActivityOutput(status="ok")
 
 
-@activity.defn(name="derive_preparation_targets")
-async def _derive_preparation_targets(_payload) -> list:
-    return []
+@activity.defn(name="discovery_preparation_fanout")
+async def _discovery_preparation_fanout(_payload) -> DiscoveryPreparationFanoutOutput:
+    return DiscoveryPreparationFanoutOutput(started=0, queued=0, targets=0)
 
 
 @pytest.mark.asyncio

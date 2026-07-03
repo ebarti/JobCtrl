@@ -13,9 +13,11 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 with workflow.unsafe.imports_passed_through():
     from jobhunter.discovery.activities import (
         DiscoveryEnrichmentActivityInput,
+        DiscoveryPreparationFanoutInput,
         DiscoverySourceActivityInput,
         PlanDiscoverySourcesInput,
         discovery_enrichment_activity,
+        discovery_preparation_fanout_activity,
         discovery_source_family_activity,
         plan_discovery_sources,
     )
@@ -51,14 +53,6 @@ class DiscoverWorkflowResult:
     error_code: str | None = None
 
 
-@dataclass(frozen=True)
-class _PreparationTargetPayload:
-    job_url: str
-    idempotency_key: str
-    target_version: str
-    steps: list[str]
-
-
 def discover_workflow_id(tenant_id: str) -> str:
     return f"discover-{tenant_id}"
 
@@ -81,7 +75,6 @@ _ENRICH_RETRY = RetryPolicy(
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
 _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
-_PREPARATION_CHILD_BATCH_SIZE = 25
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -189,6 +182,8 @@ class DiscoverWorkflow:
                 )
                 completed.append(family)
             except ActivityError as exc:
+                if _activity_error_was_cancelled(exc):
+                    raise CancelledError() from exc
                 failed.append(family)
                 failures.append(f"{family}: {exc.cause if exc.cause else exc}")
 
@@ -213,7 +208,7 @@ class DiscoverWorkflow:
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_ENRICH_RETRY,
         )
-        preparation_started = await _start_preparation_children(payload)
+        preparation_started = await _start_preparation_workflows(payload)
         return DiscoverWorkflowResult(
             families_completed=completed,
             families_failed=failed,
@@ -221,48 +216,27 @@ class DiscoverWorkflow:
         )
 
 
-async def _start_preparation_children(payload: DiscoverWorkflowInput) -> int:
-    targets = await workflow.execute_activity(
-        "derive_preparation_targets",
-        {
-            "tenant_id": payload.tenant_id,
-            "min_score": payload.min_score,
-            "limit": payload.limit,
-        },
+async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
+    result = await workflow.execute_activity(
+        discovery_preparation_fanout_activity,
+        DiscoveryPreparationFanoutInput(
+            tenant_id=payload.tenant_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+            min_score=payload.min_score,
+            limit=payload.limit,
+            workers=payload.workers,
+            validation_mode=payload.validation_mode,
+            tailor_models=payload.tailor_models,
+            tailor_judge_model=payload.tailor_judge_model,
+            tailor_judge_min_score=payload.tailor_judge_min_score,
+            llm_model=payload.llm_model,
+        ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
         retry_policy=_SOURCE_RETRY,
-        result_type=list[_PreparationTargetPayload],
     )
-    started = 0
-    for batch_start in range(0, len(targets), _PREPARATION_CHILD_BATCH_SIZE):
-        batch = targets[batch_start : batch_start + _PREPARATION_CHILD_BATCH_SIZE]
-        handles = []
-        for target in batch:
-            handles.append(
-                await workflow.start_child_workflow(
-                    "JobPreparationWorkflow",
-                    {
-                        "tenant_id": payload.tenant_id,
-                        "job_url": target.job_url,
-                        "steps": list(target.steps),
-                        "target_version": target.target_version,
-                        "idempotency_key": target.idempotency_key,
-                        "expected_app_dir": payload.expected_app_dir,
-                        "expected_db_path": payload.expected_db_path,
-                        "min_score": payload.min_score,
-                        "workers": payload.workers,
-                        "validation_mode": payload.validation_mode,
-                        "tailor_models": payload.tailor_models,
-                        "tailor_judge_model": payload.tailor_judge_model,
-                        "tailor_judge_min_score": payload.tailor_judge_min_score,
-                        "llm_model": payload.llm_model,
-                    },
-                    id=f"prep-{target.idempotency_key}",
-                )
-            )
-        started += len(handles)
-    return started
+    return result.started + result.queued
 
 
 def _input_summary(payload: DiscoverWorkflowInput) -> dict[str, Any]:
@@ -271,3 +245,15 @@ def _input_summary(payload: DiscoverWorkflowInput) -> dict[str, Any]:
         "workers": payload.workers,
         "sourceIds": list(payload.source_ids),
     }
+
+
+def _activity_error_was_cancelled(exc: ActivityError) -> bool:
+    cause: BaseException | None = exc
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, CancelledError):
+            return True
+        nested = getattr(cause, "cause", None) or getattr(cause, "__cause__", None)
+        cause = nested if isinstance(nested, BaseException) else None
+    return False

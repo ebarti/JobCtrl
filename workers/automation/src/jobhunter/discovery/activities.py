@@ -1,8 +1,4 @@
-"""Temporal activity for the discovery stage.
-
-Wraps the existing ``run_pipeline(stages=["discover"])`` orchestrator so the
-Temporal workflow consults the same stage runner the CLI uses.
-"""
+"""Temporal activities for decomposed discovery execution."""
 
 from __future__ import annotations
 
@@ -14,34 +10,6 @@ from temporalio import activity
 
 from jobhunter.domain.errors import JobHunterError, SourceUnavailableError, to_application_error
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
-
-
-@dataclass(frozen=True)
-class DiscoverActivityInput:
-    # ``tenant_id`` is currently informational; runners read from
-    # ``LOCAL_TENANT`` until tenant scoping lands.
-    tenant_id: str
-    expected_app_dir: str | None = None
-    expected_db_path: str | None = None
-    limit: int = 0
-    workers: int = 1
-    dry_run: bool = False
-    min_score: int = 7
-    validation_mode: str = "normal"
-    tailor_models: tuple[str, ...] = ()
-    tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
-    source_ids: tuple[str, ...] = ()
-    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
-    workflow_id: str | None = None
-
-
-@dataclass(frozen=True)
-class DiscoverActivityOutput:
-    status: str
-    elapsed: float
-    errors: dict[str, str] = field(default_factory=dict)
-    stages: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -96,6 +64,28 @@ class DiscoveryEnrichmentActivityOutput:
     pending: int = 0
     error_class: str | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class DiscoveryPreparationFanoutInput:
+    tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+    min_score: int = 7
+    limit: int = 0
+    workers: int = 1
+    validation_mode: str = "normal"
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float | None = None
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+
+@dataclass(frozen=True)
+class DiscoveryPreparationFanoutOutput:
+    started: int = 0
+    queued: int = 0
+    targets: int = 0
 
 
 @activity.defn(name="plan_discovery_sources")
@@ -212,67 +202,59 @@ async def discovery_enrichment_activity(
         raise to_application_error(exc) from exc
 
 
-@activity.defn(name="discover")
-async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityOutput:
-    """Run the discovery stage via ``run_pipeline``."""
+@activity.defn(name="discovery_preparation_fanout")
+async def discovery_preparation_fanout_activity(
+    payload: DiscoveryPreparationFanoutInput,
+) -> DiscoveryPreparationFanoutOutput:
+    """Fan out per-job preparation as ROOT workflows after discovery.
+
+    Reuses the P3 fan-out (`start_discovery_preparation_workflows`) so
+    preparation runs as independent root workflows via the Temporal client
+    (`USE_EXISTING` dedup). Starting them here — rather than as children of
+    ``DiscoverWorkflow`` — is what keeps them alive after discovery completes:
+    child workflows default to ``ParentClosePolicy.TERMINATE``.
+    """
+    from jobhunter.domain.tenant import TenantId
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
+    from jobhunter.pipeline.preparation import start_discovery_preparation_workflows
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
 
-    cancel_event = threading.Event()
-
     try:
-        def _do() -> dict[str, Any]:
-            return run_pipeline(
-                stages=["discover"],
-                workers=payload.workers,
-                limit=payload.limit,
-                dry_run=payload.dry_run,
+        stats = await run_blocking_with_heartbeat(
+            lambda: start_discovery_preparation_workflows(
                 min_score=payload.min_score,
+                limit=payload.limit,
+                workers=payload.workers,
                 validation_mode=payload.validation_mode,
+                llm_model=payload.llm_model,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
-                source_ids=payload.source_ids,
-                llm_model=payload.llm_model,
-                workflow_id=payload.workflow_id,
-                cancel_event=cancel_event,
-            )
-
-        result = await run_blocking_with_heartbeat(
-            _do,
-            starting_message="discover starting",
-            progress_message="discover still running",
-            on_cancel=cancel_event.set,
-            activity_name="discover",
-        )
-        stages = list(result.get("stages") or [])
-        errors = dict(result.get("errors") or {})
-        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-        activity_result = {
-            "status": status,
-            "elapsed": float(result.get("elapsed") or 0.0),
-            "errors": errors,
-            "stages": stages,
-        }
-        _raise_on_failure("discover", activity_result, SourceUnavailableError)
-        return DiscoverActivityOutput(
-            status=status,
-            elapsed=float(result.get("elapsed") or 0.0),
-            errors=errors,
-            stages=stages,
+                tenant_id=TenantId(payload.tenant_id),
+            ),
+            starting_message="discovery preparation fan-out starting",
+            progress_message="discovery preparation fan-out still running",
+            activity_name="discover:preparation",
         )
     except JobHunterError as exc:
         raise to_application_error(exc) from exc
     except Exception as exc:
         raise to_application_error(exc) from exc
+
+    started = int((stats.get("started") or {}).get("job_preparation") or 0)
+    queued = int((stats.get("queued") or {}).get("job_preparation") or 0)
+    return DiscoveryPreparationFanoutOutput(
+        started=started,
+        queued=queued,
+        targets=int(stats.get("targets") or 0),
+    )
 
 
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}

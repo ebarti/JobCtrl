@@ -13,8 +13,8 @@ from typing import Any
 from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
 from jobhunter.discovery.activities import (
-    discover_activity,
     discovery_enrichment_activity,
+    discovery_preparation_fanout_activity,
     discovery_source_family_activity,
     plan_discovery_sources,
 )
@@ -45,10 +45,10 @@ WORKFLOWS: list[type] = [
 ]
 
 ACTIVITIES: list[Callable[..., Any]] = [
-    discover_activity,
     plan_discovery_sources,
     discovery_source_family_activity,
     discovery_enrichment_activity,
+    discovery_preparation_fanout_activity,
     enrich_activity,
     score_activity,
     score_job_activity,

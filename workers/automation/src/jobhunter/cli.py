@@ -1381,7 +1381,10 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
     try:
         await client.create_schedule(schedule_id, schedule)
     except Exception:
-        await handle.update(lambda _input: ScheduleUpdate(schedule))
+        try:
+            await handle.update(lambda _input: ScheduleUpdate(schedule))
+        except Exception:
+            log.warning("Discovery schedule %s reconcile failed", schedule_id, exc_info=True)
 
 
 @app.command()
