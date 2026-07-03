@@ -1,0 +1,29 @@
+name: Release Privacy Gate
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  release-check:
+    name: Release check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: Run release check
+        run: python3 scripts/release_check.py
+
+      - name: Run release check self-test
+        run: python3 -m pytest -q workers/automation/tests/test_release_check.py
