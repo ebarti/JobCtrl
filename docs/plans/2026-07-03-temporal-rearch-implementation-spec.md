@@ -85,6 +85,18 @@ may-touch lists, deletions, Definition of Done — is unchanged.
   `workers/automation/src/jobhunter/pipeline/runner.py`) must still be
   emitted with the same semantics after your change. Fixture-compare when in
   doubt.
+- **Implicit may-touch closure (all phases).** Two cases are in-scope even
+  when a phase's may-touch list omits them, and are NOT stop conditions:
+  (a) any file this phase's own Work Items, Deletions, QA gate, or
+  Definition of Done explicitly requires you to create or update —
+  including docs (`README.md`, `docs/**`) and `pyproject.toml`/`package.json`
+  when an allowed work item demands it; (b) when a work item changes a
+  component's props/behavior and `git grep` shows exactly ONE consumer file
+  outside the component's own folder, that single consumer is in-scope for
+  the minimal wiring edit. If there are multiple consumers, or the wiring
+  requires a design decision this spec doesn't give, STOP as usual. Never
+  use this rule to widen an edit beyond what the requirement itself
+  demands; note every use of it in the PR's Deviations section.
 
 ### 0.3 Verification command matrix
 
@@ -569,7 +581,15 @@ one new event type, item 3), `packages/contracts/src/schemas.ts`,
 `apps/api/src/server.ts` (settings + decision routes only),
 `apps/api/src/application-feedback.ts`, and in the web app: the settings
 form, `ApplyReviewView`, `JobActions`, apply-context components/hooks, plus
-tests/fixtures/stories for those.
+tests/fixtures/stories for those;
+`apps/web/src/views/jobs/JobDetailDrawer.tsx` (the ONLY `JobActions`
+consumer outside its own context, verified by `git grep` on main — the
+view-level composition point where item 4's approval-aware "Apply" routing
+is wired: read the setting via the existing settings read hook at the
+view/composition layer and pass it into `JobActions` as a prop; minimal
+wiring edit only); and the docs this phase's Definition of Done requires:
+`README.md` (repo root), `docs/architecture.md`,
+`docs/local-reliability-qa.md`, `docs/decisions.md`.
 
 **Files you must NOT touch:** `pipeline/runner.py`, `scoring/**`,
 `materials/**`, `enrichment/**`, `discovery/**`,
@@ -813,7 +833,7 @@ injection) and is resolvable from the UI.
 - [ ] The CDP integration test proves zero cross-origin POST/PUT/PATCH in
       dry-run with a hostile page.
 - [ ] Kill-after-intent fault test proves no second submission attempt.
-- [ ] `docs/README.md` safety notes + new setting; `docs/architecture.md`
+- [ ] `README.md` (repo root) safety notes + new setting; `docs/architecture.md`
       apply section; `docs/local-reliability-qa.md` apply regression
       matrix rows (the QA gate list above); `docs/decisions.md` ADR
       "At-most-once apply: intent event + needs_verification + browser-layer
@@ -997,6 +1017,11 @@ plus tests.
 orchestrator's discover phase, which becomes "start child
 `DiscoverWorkflow` and await it".)
 
+(May-touch addition — the docs this phase's Definition of Done requires:
+`README.md` (repo root), `docs/architecture.md`,
+`docs/job-pipeline-architecture.md`, `docs/local-reliability-qa.md`,
+`docs/decisions.md`.)
+
 ### Work items
 
 1. **`DiscoverWorkflow`** (`discover-{tenant_id}` ID via the P0 seam,
@@ -1123,7 +1148,9 @@ the two new workflows), the five `*/activities.py` default paths,
 (spend table DDL in init_db), settings plumbing files from P2's list (for
 `dailyBudgetUsd`), `infrastructure/temporal/registry.py`,
 `infrastructure/rpc/handlers.py` (the two converted handlers),
-`docs/**`, plus tests. Also allowed: ONE new shared module under
+`docs/**`, `README.md` (repo root, item 6),
+`workers/automation/pyproject.toml` (only if a dependency was added),
+plus tests. Also allowed: ONE new shared module under
 `workers/automation/src/jobhunter/` (e.g. `workflow_specs.py`) for the
 extracted spec builders of item 1, and the web operations/health surface
 component for item 2's spend-vs-budget line ONLY.
