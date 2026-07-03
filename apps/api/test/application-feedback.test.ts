@@ -542,7 +542,7 @@ describe("application feedback API", () => {
 
   it("returns full resume text for apply-review PDF audit targets", async () => {
     const longResumeText = [
-      "Eloi Example",
+      "Jordan Example",
       "",
       "Experience",
       ...Array.from({ length: 90 }, (_, index) =>
@@ -636,7 +636,7 @@ describe("application feedback API", () => {
        ) VALUES ('local', 'default', ?, ?, ?, ?)`,
     ).run(
       "Jordan Candidate",
-      "42 Profile Street, Barcelona",
+      "42 Example Avenue, Harbor City",
       "do-not-send-this-field",
       "Experienced platform leader with reliable operations depth.",
     );
@@ -658,7 +658,7 @@ describe("application feedback API", () => {
         {
           path: "personal.address",
           label: "Profile > Personal information > Address",
-          value: "42 Profile Street, Barcelona",
+          value: "42 Example Avenue, Harbor City",
           section: "profile_personal",
         },
         {

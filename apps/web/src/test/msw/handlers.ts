@@ -643,7 +643,7 @@ export const handlers = [
       `
         <main class="resume-page">
           <section class="resume-section">
-            <h1 data-resume-layout-target="profile-name">Eloi Barti Tremoleda</h1>
+            <h1 data-resume-layout-target="profile-name">Jordan Vale</h1>
             <p>Engineering leader with platform, security, and infrastructure experience.</p>
           </section>
         </main>

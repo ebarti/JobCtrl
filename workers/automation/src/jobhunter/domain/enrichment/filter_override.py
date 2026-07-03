@@ -45,7 +45,7 @@ class FilterOverrideLogger:
             policy=source.policy.content_filter_override,
             overridden_filter="low_confidence_extraction",
             reason="user marked source trusted for discovery",
-            requested_by="user:eloi",
+            requested_by="user:example",
             overridden_at="2026-05-13T00:00:00+00:00",
         )
 
