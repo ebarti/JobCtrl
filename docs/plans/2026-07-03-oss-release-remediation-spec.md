@@ -320,22 +320,29 @@ locations. Because history is being kept, that map remains reachable in
 old commits. Every item in it must be dispositioned before the repo goes
 public.
 
-**Branch:** none (this is an audit deliverable, delivered as a PR comment
-thread or issue, not a code change — unless dispositions add
-`docs/backlog.md` entries, then `docs/w0-6-concerns-dispositions`).
+**Branch:** `docs/w0-6-concerns-dispositions` ONLY if dispositions add
+sanitized `docs/backlog.md` entries; otherwise no branch — the table is
+not a code change.
 
 Work items: for every numbered concern in the file, record exactly one
 disposition: **fixed** (link the commit/PR), **fixed-by** (link the W1/W2
 item that fixes it), **public-backlog** (add a sanitized entry to
 `docs/backlog.md` — no exploit detail, no file-located vulnerability
 descriptions), or **accepted** (owner approval required per §0.5.3). The
-disposition table itself is delivered in the PR/issue body, NOT committed
-to the tree, because it inherits the sensitivity of its source.
+disposition table is a PRIVATE, off-repo owner artifact: write it into
+the now-untracked local `.planning/` directory (or wherever the owner
+designates). It must NOT be committed, and it must NOT be posted in PR
+comments, PR descriptions, or issues — all of those become public
+surface when repository visibility flips. The only public traces are the
+sanitized backlog entries, links to fixing PRs, and the §5 checklist
+line stating dispositions are complete.
 
 **Definition of Done**
 - [ ] Every concern has exactly one disposition; none is silently dropped.
 - [ ] All "fixed-by" references point at real items in this spec.
 - [ ] Owner has approved every "accepted" entry.
+- [ ] No concern-derived content appears in any committed file, PR text,
+      or issue — the table lives only at the owner's private location.
 
 ---
 
@@ -386,30 +393,43 @@ Work items:
    `BEGIN IMMEDIATE`): claim a LIVE run only when the latest decision is
    `approve_submit` AND its bound materials generation equals the job's
    current one AND bound profile version equals current AND bound URL
-   equals the job's current application URL AND (a dry-run completion
-   with `coverage = "full"` exists for that same materials generation OR
-   the decision row has `partial_override = 1`). Record distinct skip
-   reasons in the existing skip channel: `awaiting_approval`,
+   equals the job's current application URL AND dry-run evidence holds:
+   EITHER a dry-run completion with `coverage = "full"` exists for that
+   same materials generation and URL, OR the decision row's
+   `partial_override_run_id` references a specific dry-run run that
+   exists with `coverage = "partial"` for that same materials generation
+   and URL. An override that references no run, a missing run, or a run
+   for stale materials/URL is INVALID — the override weakens "full" to
+   "partial"; it never waives dry-run evidence entirely. Record distinct
+   skip reasons in the existing skip channel: `awaiting_approval`,
    `awaiting_dry_run`, `approval_stale_materials`,
-   `approval_stale_profile`, `approval_stale_url`.
-4. **Partial override.** New nullable column `partial_override` on the
-   decision row, settable only through an explicit UI affordance on the
-   approve action ("Approve with partial dry-run evidence") that renders a
-   persistent `role="alert"` warning naming what was not verified. Never
-   set implicitly.
+   `approval_stale_profile`, `approval_stale_url`,
+   `override_evidence_invalid`.
+4. **Partial override.** New nullable column `partial_override_run_id` on
+   the decision row (the dry-run run id accepted as evidence — not a
+   boolean), settable only through an explicit UI affordance on the
+   approve action ("Approve with partial dry-run evidence"). The
+   affordance is offered ONLY when a partial-coverage dry-run exists for
+   the current materials generation; it displays that run's
+   blocked-channel evidence and renders a persistent `role="alert"`
+   warning naming what was not verified. Never set implicitly.
 5. **UI.** The apply-review approval card shows what is being bound
    (materials generation, dry-run evidence status/coverage, URL) and the
    skip reasons from item 3 when a claim was refused.
 
 Tests: one claim fixture per predicate arm (no approval / no dry-run /
-each staleness dimension / valid / valid-with-override); API test that the
-decision write captures bindings; component test for the override warning.
+each staleness dimension / valid / valid-with-override /
+override-referencing-no-run refused / override-bound-to-stale-run
+refused); API test that the decision write captures bindings; component
+test for the override affordance gating and its warning.
 
 **Definition of Done**
 - [ ] A live claim is impossible without a fresh, fully-bound approval —
       proven by the per-arm pytest fixtures.
 - [ ] Regenerating materials or mutating the profile invalidates a prior
       approval (fixtures prove both).
+- [ ] An approval whose override references no matching partial dry-run
+      run cannot claim (fixtures prove it).
 - [ ] Skip reasons visible in apply-review.
 - [ ] Full sweep (§0.3) passes, including `pnpm qa:test`.
 
@@ -424,23 +444,38 @@ per-request intent breadcrumbs.
 **PR title:** `feat(apply): dry-run coverage classification, violation outcomes, live-mode breadcrumbs`
 
 Work items:
-1. **Method set.** Add `DELETE` to the blocked method set.
-2. **DOM layer.** Extend the injected script to also wrap
-   `navigator.sendBeacon` (return `false`) and
-   `WebSocket.prototype.send` (drop + report) during dry-run, reporting
-   through a `Runtime.addBinding` channel rather than a window flag.
+1. **Interception policy — replace P2's wholesale.** The temporal plan
+   and spec texts differ on P2's scoping (application-origin vs any
+   non-localhost host); regardless of which shipped, W1.2 replaces the
+   policy: during dry-run, allow ONLY `GET` and `HEAD`; block every
+   other method (`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, anything
+   nonstandard) to EVERY origin, from every frame and every
+   auto-attached target. ATS flows hop origins via redirects, iframes,
+   and vendor domains — origin scoping is bypassable by design. The
+   only exemption is localhost/127.0.0.1, solely so the test harness
+   can act as the employer.
+2. **DOM layer + WebSocket.** Extend the injected script to also wrap
+   `navigator.sendBeacon` (return `false`) and the `window.WebSocket`
+   constructor (throw + report — blocking creation beats wrapping
+   `send`) during dry-run, reporting through a `Runtime.addBinding`
+   channel rather than a window flag. Because document-injected scripts
+   do not reach dedicated workers, additionally listen for CDP
+   `Network.webSocketCreated` on every auto-attached target as a
+   backstop reporter: any WebSocket observed during dry-run is recorded
+   in the blocked-channel evidence and demotes coverage (item 4).
 3. **Blocked-request evidence.** Persist every blocked request (method,
    URL origin+path only — strip query strings, they can carry PII —
-   frame, timestamp, and whether it was same-site to the application
-   flow) into a `job_artifacts` row of kind `apply_dryrun_blocked` (JSON
-   list), one row per run.
+   frame, CDP resourceType, timestamp) into a `job_artifacts` row of
+   kind `apply_dryrun_blocked` (JSON list), one row per run.
 4. **Coverage classification.** `DryRunComplete` gains
-   `coverage: "full" | "partial"`. `partial` when any blocked mutating
-   request was **same-site** to the application flow (registrable domain
-   of the frame's document) or any DOM-submit interception fired before
-   the final page; third-party beacon/analytics blocks do NOT demote
-   coverage. Contracts + Python mirror + web ripple (the dry-run evidence
-   card shows coverage and the blocked-channel list).
+   `coverage: "full" | "partial"`. Classify by CDP `resourceType`, not
+   by origin (ATS steps legitimately cross origins): `partial` when any
+   blocked request had resourceType `Document`, `XHR`, or `Fetch` —
+   from ANY origin — or any DOM-submit/WebSocket interception fired
+   before the final page. Blocked `Ping`/`Beacon`/`Image`/analytics
+   resource types do NOT demote coverage. Contracts + Python mirror +
+   web ripple (the dry-run evidence card shows coverage and the
+   blocked-channel list).
 5. **Violation outcome.** Delete the coercion in
    `apply/claude_code_cli.py` (~:354–361) that maps `RESULT:APPLIED`
    during dry-run to `DryRunComplete`. Replace with a distinct
@@ -450,32 +485,42 @@ Work items:
    transmitted; the violation records that the agent attempted it —
    that's an injection/prompt-quality signal, not a success).
 6. **Live-mode breadcrumbs.** Run the interceptor in live mode too, in
-   observe mode: before `Fetch.continueRequest` of a same-site mutating
-   request, append a durable breadcrumb (run id, method, origin+path,
-   timestamp) — committed synchronously. The coarse P2
-   `ApplySubmitIntended` remains the recovery trigger; breadcrumbs refine
-   it: recovery MAY safe-rewind to `pending` (instead of
-   `needs_verification`) when intent exists but the breadcrumb log shows
-   zero same-site mutating requests were continued. Otherwise P2's rule
-   stands. Add this refinement to the recovery function with tests for
-   both branches.
+   observe mode: before `Fetch.continueRequest` of ANY mutating request
+   — every method except GET/HEAD, every origin, every frame/target —
+   append a durable breadcrumb (run id, method, origin+path,
+   resourceType, timestamp), committed synchronously. The coarse P2
+   `ApplySubmitIntended` remains the recovery trigger; breadcrumbs
+   refine it in ONE direction only: recovery MAY safe-rewind to
+   `pending` (instead of `needs_verification`) when intent exists but
+   the breadcrumb log shows ZERO mutating continuations of any kind for
+   the run. Any mutating continuation — including cross-origin and
+   beacon-type — means P2's park rule stands; never rewind based on
+   origin or resource-type filtering. Add this refinement to the
+   recovery function with tests for both branches.
 7. **Adversarial fixture.** Extend the P2 integration harness (local HTTP
    server as the "employer"): a page whose text contains an injection
    instruction to submit anyway plus an auto-POST and a form; under
    dry-run assert the server receives ZERO mutating requests, the blocked
    artifact exists, coverage classification is correct, and a synthetic
-   `RESULT:APPLIED` maps to `dry_run_violation`. Add a third-party-beacon
-   page asserting coverage stays `full`, and a same-site step-POST page
-   asserting `partial`.
+   `RESULT:APPLIED` maps to `dry_run_violation`. Add: a
+   third-party-beacon page asserting coverage stays `full`; a step-POST
+   page asserting `partial`; a cross-origin iframe form page (second
+   local server port acting as the "ATS vendor") asserting its POST is
+   blocked and demotes coverage; a redirect-then-POST page asserting the
+   post-redirect submit is blocked; and a WebSocket page asserting
+   construction is blocked and reported.
 
 **Definition of Done**
-- [ ] Zero mutating requests reach the harness server under dry-run
-      (POST/PUT/PATCH/DELETE, sendBeacon, WebSocket payloads).
+- [ ] Zero non-GET/HEAD requests reach either harness server
+      (same-origin AND cross-origin/iframe/redirect paths) under
+      dry-run, including sendBeacon and WebSocket traffic.
 - [ ] `dry_run_violation` replaces the coercion; no path can emit
       `applied` or `DryRunComplete` from a dry-run violation.
 - [ ] Coverage classification fixtures pass (full / partial /
       third-party-beacon cases).
-- [ ] Breadcrumb-refined recovery fixtures pass (rewind vs park).
+- [ ] Breadcrumb-refined recovery fixtures pass: rewind only on a
+      zero-continuation log; any mutating continuation (any origin or
+      resource type) parks as `needs_verification`.
 - [ ] Event/state ripple complete: both registries, handlers, fixtures,
       badges; parity tests green.
 - [ ] Full sweep (§0.3) passes.
@@ -497,10 +542,11 @@ unless noted):
 1. **Allowlist replaces bypass.** Drop
    `--permission-mode bypassPermissions` (~:151). Pass `--allowedTools`
    with the exact enumerated tool names: the Playwright MCP tools from the
-   pinned `@playwright/mcp` version MINUS `browser_evaluate` and any
-   code-execution/install tool, plus the two Gmail read tools
-   (`search_emails`, `read_email`). Later items append their owned tools
-   (W1.5 `type_credential`, W1.6 `solve_captcha`). Keep
+   pinned `@playwright/mcp` version MINUS `browser_evaluate`,
+   `browser_file_upload` (see item 7), and any code-execution/install
+   tool, plus the owned tools from items 5 and 7
+   (`get_verification_code`, `upload_artifact`). Later items append
+   their owned tools (W1.5 `type_credential`, W1.6 `solve_captcha`). Keep
    `--disallowedTools` as a belt listing the built-ins: `Bash`, `Edit`,
    `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`. Delete the current
    `_DISALLOWED_TOOLS` list of nonexistent Gmail write tools (~:47–56).
@@ -522,26 +568,57 @@ unless noted):
    installed CLI) from a new setting (default `5.00`), plumbed like the
    existing model setting; `doctor` warns when the installed CLI lacks
    the flag (probe `claude --help` output).
-5. **Scoped Gmail.** The Gmail MCP server accepts constraints at spawn
-   (argv from `_default_mcp_config`): earliest-timestamp = run start, and
-   an allowed-sender-domain set derived from the job's application URL
-   and company domain. Enforce in query construction AND post-filter on
-   read. Out-of-scope queries return empty with an explanatory string.
-6. **Prompt hard rule + fixture.** Add to the hard-rules section: email
-   tools are only for retrieving verification codes; never transcribe
-   email content into page fields. Unit tests prove the server-side scope
-   (out-of-scope sender/time rejected). Add a manual-QA checklist entry
-   in `docs/local-reliability-qa.md` for the full-agent exfiltration
-   probe (harness page instructing the agent to read and paste inbox
-   content), since it needs a live model.
+5. **Purpose-built verification tool replaces raw Gmail reads.** The
+   apply agent no longer gets `search_emails`/`read_email` — raw
+   subjects and bodies are an exfiltration payload under prompt
+   injection (those tools remain available to the feedback scanner
+   elsewhere, unchanged). When spawned for an apply run, the Gmail MCP
+   server exposes ONE tool instead: `get_verification_code()`.
+   Server-side it searches within a scope fixed at spawn (argv from
+   `_default_mcp_config`: earliest-timestamp = run start;
+   allowed-sender-domain set derived from the job's application URL and
+   company domain), extracts only OTP codes and verification links from
+   matching messages, and returns those extracted values. Raw
+   subjects/bodies never enter model context. Out-of-scope: returns
+   empty with an explanatory string.
+6. **Automated exfiltration fixtures (tool layer).** (a) A fixture
+   mailbox message carrying a decoy secret in its body: assert no
+   exposed tool-call sequence can return the body or the secret —
+   `get_verification_code` yields only the extracted code/link. (b)
+   Out-of-scope sender/time queries return empty. (c) `upload_artifact`
+   (item 7) refuses any kind outside the run's reviewed artifacts. Also
+   update the prompt hard rule: email tooling returns verification
+   codes only; never transcribe email-derived content into page fields.
+   Keep a full-agent live-model probe (harness page instructing the
+   agent to fetch and paste inbox content) as a manual-QA checklist
+   entry in `docs/local-reliability-qa.md` — the tool-layer fixtures
+   are the enforced guarantee; the live probe is defense-in-depth.
+7. **Owned artifact upload replaces raw file upload.** The current
+   prompt instructs uploading the résumé by absolute path (`prompt.py`
+   ~:620) via the Playwright file-upload tool — under prompt injection
+   that is an arbitrary-file exfiltration channel (any readable path
+   could be attached to an attacker's form). Exclude
+   `browser_file_upload` from the allowlist (item 1) and add an owned
+   `upload_artifact(kind: "resume" | "cover_letter")` tool (owned MCP
+   server; may share the W1.5 secure-input server process): the server
+   resolves the CURRENT run's reviewed artifact of that kind to a path
+   itself — the model never supplies a path — locates the pending file
+   chooser / file input through its own CDP connection
+   (`DOM.setFileInputFiles`), and attaches it. Refuses when the run has
+   no such artifact. Update the prompt's upload instruction to: click
+   the upload control, then call `upload_artifact`.
 
 **Definition of Done**
 - [ ] Golden test on the exact argv: no `bypassPermissions`, allowlist
       present, budget flag present.
-- [ ] Allowlist parity test green against pinned server versions.
+- [ ] Allowlist parity test green against pinned server versions; none
+      of `browser_evaluate`, `browser_file_upload`, `search_emails`,
+      `read_email` appears in the apply agent's allowlist.
 - [ ] Env-allowlist test: subprocess env contains exactly the allowlisted
       keys.
-- [ ] Gmail scope tests green (time bound + sender bound + post-filter).
+- [ ] Tool-layer exfiltration fixtures green: decoy body secret
+      unreachable through any exposed tool; out-of-scope queries empty;
+      out-of-run-artifact upload refused.
 - [ ] MCP config file is 0600 and removed after the run (test).
 - [ ] Full sweep (§0.3) passes.
 
@@ -609,12 +686,17 @@ Work items:
    modeled on the Gmail server) exposing `type_credential(kind:
    "email" | "password")`. The tool receives NO secret from the model: the
    server loads the profile itself, opens its own CDP connection to the
-   run's Chrome, verifies `document.activeElement` is an
-   `<input type="password">` (or email/text for `kind="email"`), and
-   types via CDP `Input.insertText`. Refuse (with a clear error string)
-   when the focused element doesn't match or the profile has no password.
-   Prompt: click the field, then call the tool. Add the tool to the W1.3
-   allowlist.
+   run's Chrome, and types via CDP `Input.insertText` — but ONLY after
+   verifying, via its own CDP inspection (pages are untrusted; a hostile
+   page can stage a decoy field to harvest the credential), that the
+   focused element: is an `<input type="password">` (or email/text for
+   `kind="email"`); is visible (non-zero box, within the viewport, no
+   `display:none` / `visibility:hidden` / zero-opacity ancestor);
+   belongs to the top frame or a visible frame whose registrable domain
+   matches the top-level document's (no hidden or cross-origin iframes);
+   and that the document has focus. Refuse with a distinct error string
+   per failed check, and when the profile has no password. Prompt: click
+   the field, then call the tool. Add the tool to the W1.3 allowlist.
 3. **Global redaction.** A `redact(text)` helper seeded at profile/config
    load with all secret values (profile password, any configured API
    keys) applied at every persistence sink: worker log writer, timeline/
@@ -622,11 +704,17 @@ Work items:
    (`apply_agent_output` etc.). Integration test: run the harness with a
    fake profile containing a distinctive fake password; assert it appears
    in NO persisted output.
+4. **Unique-password guidance.** Because this tool types the credential
+   into third-party pages, W2.2's responsible-use docs must instruct
+   operators to use a unique, dedicated password for job-site accounts
+   (never a reused personal password). The content lands in W2.2; this
+   item adds the cross-reference.
 
 **Definition of Done**
 - [ ] Password string absent from prompt text, argv, env, MCP config main
       body, logs, events, and artifacts (needle-based integration test).
-- [ ] `type_credential` refuses non-credential fields (test).
+- [ ] `type_credential` refusal fixtures green: non-credential field,
+      hidden input, off-screen input, cross-origin iframe field.
 - [ ] W0.3 password tripwire strict-green for `prompt.py`.
 - [ ] Full sweep (§0.3) passes.
 
@@ -796,7 +884,9 @@ Work items:
 1. `README.md` gains a "Responsible use" section and
    `docs/user/data-and-safety.md` is extended to cover, explicitly: live
    submissions to real employers; email applications (`gmail.send`
-   scope); CAPTCHA solving via a paid third-party service, disabled
+   scope); automated credential typing and the recommendation to use a
+   unique, dedicated password for job-site accounts (W1.5); CAPTCHA
+   solving via a paid third-party service, disabled
    unless a key is configured, with ToS/legal risk resting on the
    operator; scraping-source ToS risk including LinkedIn/Indeed defaults;
    the local API's unauthenticated-on-loopback boundary (per W2.3);
