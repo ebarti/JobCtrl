@@ -216,6 +216,17 @@ weaken an assertion.
 **Branch:** `chore/w0-2-scrub-fixtures` ·
 **PR title:** `chore(release): replace owner-derived fixture data with synthetic equivalents`
 
+**Work item 0 — capture the needle inventory FIRST.** Before replacing
+anything, record the exact forbidden values present at the leak sites
+below (owner identity strings, the two employer names used as owner
+evidence, the seed marker, private path fragments) into a private
+OFF-REPO needle inventory at the same owner-designated location as the
+W0.6 artifact (e.g., the untracked local `.planning/`). W0.3 consumes
+this inventory to build its needle list. Never commit it; never post it
+in PR/issue text (§0.2). Fallback if the inventory is ever lost: harvest
+from the pre-W0.2 parent commit via git history (`git show
+<pre-W0.2-commit>:<path>` — history is kept per §1).
+
 Known leak sites (line numbers are hints; each file must be fully re-read
 and scrubbed, not just at the hinted line):
 1. `apps/web/src/shared/ui/PdfPreviewViewer.test.ts` — embeds an
@@ -241,6 +252,8 @@ and scrubbed, not just at the hinted line):
    `user:` + owner-username seed marker → `user:example`.
 
 **Definition of Done**
+- [ ] The private needle inventory exists at the owner-designated
+      location and covers every value class scrubbed below.
 - [ ] Every file above (and any additional hit found by the W0.3 scanner
       run locally against your branch) contains only synthetic data.
 - [ ] No test was deleted; no assertion was weakened; suite counts did not
@@ -260,8 +273,10 @@ Work items:
    case-insensitively.
 2. **Needle classes** (literal values live ONLY inside
    `scripts/release_check.py`, using the existing string-concatenation
-   obfuscation): the existing FORBIDDEN_TEXT list, plus — reading values at
-   the W0.2 leak sites before scrubbing them — the owner first name, full
+   obfuscation): the existing FORBIDDEN_TEXT list, plus — sourced from
+   the private needle inventory W0.2 captured before scrubbing
+   (fallback: the pre-W0.2 parent commit via git history; the values are
+   no longer in the working tree) — the owner first name, full
    name, username, personal domain, LinkedIn profile slug, the two real
    employer names that appear as owner evidence in the leaked fixtures, the
    lowercase seed-marker token, private toolchain path fragments (the
@@ -485,9 +500,12 @@ Work items:
    other method (`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, anything
    nonstandard) to EVERY origin, from every frame and every
    auto-attached target. ATS flows hop origins via redirects, iframes,
-   and vendor domains — origin scoping is bypassable by design. The
-   only exemption is localhost/127.0.0.1, solely so the test harness
-   can act as the employer.
+   and vendor domains — origin scoping is bypassable by design. There
+   is NO exemption — not even localhost/127.0.0.1 (P2's carve-out is
+   removed): the test harness only needs to SERVE pages, which is GET;
+   mutating page-origin requests to localhost-bound services are
+   blocked and recorded like any other, and the harness asserts
+   non-receipt precisely because the guard blocks them.
 2. **DOM layer + WebSocket.** Extend the injected script to also wrap
    `navigator.sendBeacon` (return `false`) and the `window.WebSocket`
    constructor (throw + report — blocking creation beats wrapping
@@ -546,8 +564,9 @@ Work items:
 
 **Definition of Done**
 - [ ] Zero non-GET/HEAD requests reach either harness server
-      (same-origin AND cross-origin/iframe/redirect paths) under
-      dry-run, including sendBeacon and WebSocket traffic.
+      (page-origin localhost AND cross-origin/iframe/redirect paths)
+      under dry-run, including sendBeacon and WebSocket traffic — no
+      localhost carve-out exists.
 - [ ] `dry_run_violation` replaces the coercion; no path can emit
       `applied` or `DryRunComplete` from a dry-run violation.
 - [ ] Coverage classification fixtures pass (full / partial /
@@ -633,9 +652,14 @@ unless noted):
    that is an arbitrary-file exfiltration channel (any readable path
    could be attached to an attacker's form). Exclude
    `browser_file_upload` from the allowlist (item 1) and add an owned
-   `upload_artifact(kind: "resume" | "cover_letter")` tool (owned MCP
-   server; may share the W1.5 secure-input server process): the server
-   resolves the CURRENT run's reviewed artifact of that kind to a path
+   `upload_artifact(kind: "resume" | "cover_letter")` tool hosted on a
+   NEW dedicated owned apply-tools MCP server
+   (`workers/automation/src/jobhunter/infrastructure/apply_tools/mcp_server.py`,
+   modeled on the Gmail server). This server is THE home for owned
+   apply-run tools: W1.5 adds `type_credential` to it and W1.6 adds
+   `solve_captcha` to it — later items extend this server, never create
+   another. The server resolves the CURRENT run's reviewed artifact of
+   that kind to a path
    itself — the model never supplies a path — locates the pending file
    chooser / file input through its own CDP connection
    (`DOM.setFileInputFiles`), and attaches it. Refuses when the run has
@@ -715,10 +739,10 @@ any persisted artifact.
 Work items:
 1. **Remove interpolation** of the profile password (and paired email
    sign-in/sign-up lines) from `prompt.py` (~:614–615).
-2. **Owned secure-input tool.** New owned MCP server
-   (`workers/automation/src/jobhunter/infrastructure/secure_input/mcp_server.py`,
-   modeled on the Gmail server) exposing `type_credential(kind:
-   "email" | "password")`. The tool receives NO secret from the model: the
+2. **Owned secure-input tool.** Extend the W1.3 apply-tools MCP server
+   (`workers/automation/src/jobhunter/infrastructure/apply_tools/mcp_server.py`)
+   with `type_credential(kind: "email" | "password")` — do NOT create a
+   second owned server. The tool receives NO secret from the model: the
    server loads the profile itself, opens its own CDP connection to the
    run's Chrome, and types via CDP `Input.insertText` — but ONLY after
    verifying, via its own CDP inspection (pages are untrusted; a hostile
@@ -761,24 +785,28 @@ and the API key move out of the prompt into owned code.
 **PR title:** `feat(apply): move CapSolver solving into an owned MCP tool; key leaves model context`
 
 Work items:
-1. New owned MCP server
-   (`workers/automation/src/jobhunter/infrastructure/captcha/mcp_server.py`)
-   exposing `solve_captcha(kind, sitekey, page_url)`. Port the
+1. Add `solve_captcha(kind, sitekey, page_url)` to the W1.3 apply-tools
+   MCP server; the solver implementation lives in
+   `workers/automation/src/jobhunter/infrastructure/captcha/` (imported
+   by the server — no separate server process). Port the
    createTask/poll flow and the token-injection JavaScript currently
    embedded in `_build_captcha_section`
    (`prompt.py` ~:217–424) into Python (`httpx` for REST — this is a REST
    integration, not an LLM client) + CDP `Runtime.evaluate` injection.
    Return `{solved, kind, elapsed_s, cost_usd?}`; record a usage event or
    artifact per solve with observable cost.
-2. The key reaches ONLY this server via its per-server `env` block in the
-   generated MCP config (W1.3 item 3). The tool is registered only when
-   the key is configured; otherwise it is absent.
+2. The key reaches ONLY the apply-tools server via its per-server `env`
+   block in the generated MCP config (W1.3 item 3); it stays
+   server-side. The tool is registered only when the key is configured;
+   otherwise it is absent AND the W1.3 allowlist omits it.
 3. Shrink the prompt's CAPTCHA section to: if a CAPTCHA blocks progress
    and `solve_captcha` is available, call it once with the visible
    sitekey; on failure or absence output `RESULT:CAPTCHA`. Delete the
    embedded REST/JS block. Keep `doctor`/wizard behavior (key optional,
    default off).
-4. Add `solve_captcha` to the W1.3 allowlist and parity test.
+4. Add `solve_captcha` to the W1.3 allowlist and extend the parity test
+   to cover BOTH configurations (key present: tool advertised and
+   allowlisted; key absent: neither).
 
 Tests: server unit tests with a mocked CapSolver API (success, failure,
 timeout); needle test that the key env var name and value appear nowhere
