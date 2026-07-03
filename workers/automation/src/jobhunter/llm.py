@@ -11,6 +11,7 @@ LLM_MODEL env var overrides the model name for any provider.
 
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -136,18 +137,26 @@ def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
     """Seconds to sleep before the next transient-failure retry.
 
     Uses exponential backoff from ``_RATE_LIMIT_BASE_WAIT``, honoring a
-    server ``Retry-After`` (seconds) when present. The result is jittered to
-    break retry lockstep and hard-capped at ``_MAX_RETRY_WAIT`` so a hostile
-    or buggy ``Retry-After`` cannot sleep for hours inside an activity.
+    server ``Retry-After`` (seconds) when present and finite. The result is
+    jittered to break retry lockstep and clamped to ``[0, _MAX_RETRY_WAIT]``
+    before it is returned, so a hostile or buggy ``Retry-After`` (huge,
+    negative, NaN, or infinite) can neither park an activity for hours nor
+    reach ``time.sleep()`` with a value it rejects.
     """
     wait = _RATE_LIMIT_BASE_WAIT * (2 ** attempt)
     if retry_after is not None:
         try:
-            wait = float(retry_after)
+            parsed = float(retry_after)
         except (ValueError, TypeError):
-            pass
+            parsed = None
+        # Only honor a finite Retry-After; NaN/inf are meaningless, so fall
+        # back to the exponential backoff above.
+        if parsed is not None and math.isfinite(parsed):
+            wait = parsed
     wait += random.uniform(0, _RETRY_JITTER)
-    return min(wait, _MAX_RETRY_WAIT)
+    # Floor at 0 (a negative Retry-After would make time.sleep raise
+    # ValueError) then cap at the ceiling.
+    return max(0.0, min(wait, _MAX_RETRY_WAIT))
 
 
 _GEMINI_COMPAT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"

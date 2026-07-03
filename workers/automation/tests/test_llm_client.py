@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import httpx
 import pytest
@@ -275,6 +276,68 @@ def test_chat_caps_hostile_retry_after_header(monkeypatch) -> None:
     assert result == "ok"
     assert len(sleeps) == 1
     assert sleeps[0] <= llm._MAX_RETRY_WAIT
+
+
+def test_chat_retries_on_negative_retry_after(monkeypatch) -> None:
+    """A negative ``Retry-After`` must not reach ``time.sleep`` (which rejects
+    it with ValueError). The honored wait is floored to a finite, non-negative
+    value and the request is retried."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "-100"},
+                json={"error": "rate limited"},
+            )
+        return _ok_response()
+
+    client = _client_with_handler(handler)
+    try:
+        result = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert result == "ok"
+    assert calls["n"] == 2
+    assert len(sleeps) == 1
+    assert math.isfinite(sleeps[0])
+    assert 0 <= sleeps[0] <= llm._MAX_RETRY_WAIT
+
+
+def test_chat_retries_on_nan_retry_after(monkeypatch) -> None:
+    """A NaN ``Retry-After`` must not reach ``time.sleep`` (which rejects it
+    with ValueError). It is treated as an absent header, so the call falls back
+    to bounded backoff and retries."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "nan"},
+                json={"error": "rate limited"},
+            )
+        return _ok_response()
+
+    client = _client_with_handler(handler)
+    try:
+        result = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        client.close()
+
+    assert result == "ok"
+    assert calls["n"] == 2
+    assert len(sleeps) == 1
+    assert math.isfinite(sleeps[0])
+    assert 0 <= sleeps[0] <= llm._MAX_RETRY_WAIT
 
 
 def test_chat_does_not_retry_client_error(monkeypatch) -> None:
