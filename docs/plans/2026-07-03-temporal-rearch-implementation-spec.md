@@ -41,9 +41,12 @@ P1b  →  P2 and P3 (parallelizable, disjoint files)  →  P4  →  P5
 
 - P1b requires P0 merged.
 - P2 requires P0 + P1b merged. P3 requires P0 + P1b merged.
-- P2 ∥ P3 is allowed ONLY as two separate sessions/branches; their "may
-  touch" lists are disjoint by construction. If one session does both, do
-  P3 then P2.
+- P2 ∥ P3 is allowed ONLY as two separate sessions/branches. Their "may
+  touch" lists are disjoint EXCEPT `infrastructure/rpc/handlers.py` (P3
+  edits the three prep handlers; P2 edits the apply dispatch seam) — in
+  parallel-session mode sequence P3's handlers.py change first or accept a
+  trivial merge; in single-session stacking this is moot. If one session
+  does both, do P3 then P2.
 - P4 requires P3 merged. P5 requires P4 merged.
 
 **Single-session mode (implementing all phases in one run):** work the
@@ -550,7 +553,13 @@ enforced in the atomic claim; every run leaves inspectable evidence.
 (the dashboard-settings reader),
 AND everything under `workers/automation/src/jobhunter/domain/apply/` —
 `process_manager.py` (ApplySaga) lives HERE in the domain layer, not under
-`apply/`; one COMMENT-ONLY edit in
+`apply/`; `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`
+(the APPLY dispatch seam ONLY — `apply_action` / `_apply_workflow_id` and
+the apply branch of the pipeline spec builder; item 1's workflow_id change
+happens HERE, since the start spec is built at dispatch time and the
+apply-layer files only receive the payload after the workflow started);
+`workers/automation/pyproject.toml` (ONLY if the CDP client of item 7
+genuinely needs a new dependency); one COMMENT-ONLY edit in
 `workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`
 (a stale comment describing the deleted `release_lock` rewind, hint
 ~:1998); `database.py` (init_db
@@ -984,6 +993,10 @@ plus tests.
 **Files you must NOT touch:** `apply/**`, `scoring/**` cores,
 `materials/**`, the preparation workflow from P3 (start it, don't edit it).
 
+(May-touch addition for item 5: `pipeline/workflow.py` — ONLY the
+orchestrator's discover phase, which becomes "start child
+`DiscoverWorkflow` and await it".)
+
 ### Work items
 
 1. **`DiscoverWorkflow`** (`discover-{tenant_id}` ID via the P0 seam,
@@ -1110,7 +1123,10 @@ the two new workflows), the five `*/activities.py` default paths,
 (spend table DDL in init_db), settings plumbing files from P2's list (for
 `dailyBudgetUsd`), `infrastructure/temporal/registry.py`,
 `infrastructure/rpc/handlers.py` (the two converted handlers),
-`docs/**`, plus tests.
+`docs/**`, plus tests. Also allowed: ONE new shared module under
+`workers/automation/src/jobhunter/` (e.g. `workflow_specs.py`) for the
+extracted spec builders of item 1, and the web operations/health surface
+component for item 2's spend-vs-budget line ONLY.
 
 ### Work items
 
