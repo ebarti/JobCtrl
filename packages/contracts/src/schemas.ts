@@ -1640,11 +1640,13 @@ export type ActivityListQuery = z.infer<typeof ActivityListQuerySchema>;
 // ---------------------------------------------------------------------------
 // Workflow runs (PR 5 of the Temporal stack)
 //
-// `apply_run_projections` is the unified workflow-run row after PR 4. The
-// run id is the Temporal workflow id (see `ApplyWorkflow.run` —
-// `run_id=info.workflow_id`), so the deep-link uses it verbatim.
-// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so future non-
-// apply workflows can land here without another migration.
+// `workflow_run_projections` is the unified workflow-run source (Python-sole-
+// writer, folded from the `Workflow*` lifecycle events) covering every
+// workflow type. Apply rows are enriched with job context via a LEFT JOIN to
+// `apply_run_projections`, the apply-specific detail projection. The run id is
+// the Temporal workflow id, so the deep-link uses it verbatim.
+// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so non-apply
+// workflows land here without another migration.
 // ---------------------------------------------------------------------------
 
 export const WORKFLOW_RUN_STATUSES = [

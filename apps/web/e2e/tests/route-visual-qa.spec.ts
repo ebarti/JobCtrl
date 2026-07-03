@@ -483,12 +483,12 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
     .getByRole("button", { name: /Open run/i })
     .first()
     .click();
-  const runDialog = page.getByRole("dialog", { name: "Apply run details" });
+  const runDialog = page.getByRole("dialog", { name: "Workflow run details" });
   await expect(runDialog).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("button", { name: /Close apply run details/i }),
-    "apply run detail close",
+    page.getByRole("button", { name: /Close workflow run details/i }),
+    "workflow run detail close",
   );
   await page.keyboard.press("Escape");
   await expect(runDialog).toHaveCount(0);
