@@ -392,12 +392,20 @@ contain source text, market source snapshots, profile compensation preferences,
 credentials, local paths, or provider payloads. The frontend Operations
 invalidation router uses the event to refresh job list/detail queries.
 
-`/v1/workflow-runs` reads `apply_run_projections` and projects each row to a
-`WorkflowRunSummary`, including the Temporal
-workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
-uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
-`/runs` deep-links each row to the local Temporal Web UI
+`/v1/workflow-runs` reads the unified `workflow_run_projections` table (the
+Python-sole-writer projection folded from the `Workflow*` lifecycle events) and
+projects each row to a `WorkflowRunSummary` across **all** workflow types —
+pipeline orchestrator, apply, and future workflows. Apply rows are enriched with
+job context (title/company/dry-run/model) via a LEFT JOIN to
+`apply_run_projections`; non-apply rows surface their `workflowType` instead of a
+job title. The `runId` equals the Temporal workflow id, so the web Workflow Runs
+view at `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
+`GET /v1/workflow-runs/:runId` returns a `WorkflowRunDetail` for one run — its
+status, input summary, failure cause (`errorCode` / `errorMessage` /
+`retryable`), Temporal run id, and the folded lifecycle timeline — or `404`
+(`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The `/runs`
+detail drawer renders it for every workflow type.
 `POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
 `cancel_run` request for in-flight workflow IDs that are not tied to a concrete
 job row, such as global Discover or Apply runs started from the Pipelines tab.
@@ -703,6 +711,24 @@ the same lifecycle rows plus `DiscoveryRunStarted`,
 Smart Extract source steps. Those event types are part of the SSE domain
 catalog, so the dashboard can refresh recent activity and source health while a
 long synchronous stage request is still running.
+
+Every Temporal workflow additionally emits a `Workflow*` lifecycle event
+(`WorkflowStarted` at the top; `WorkflowCompleted` / `WorkflowFailed` on exit),
+recorded by a finalize activity and folded into `workflow_run_projections`. A
+describe-based reconciler in the worker heartbeat loop (15s) terminalizes any
+open run whose Temporal execution has closed or vanished (dev-server restart →
+`WorkflowTerminated`), so a killed or timed-out worker's runs terminalize on
+their own without a reaper. The `Workflow*` types are in the SSE catalog, so the
+`/runs` view refreshes as runs start and terminalize.
+
+The JSON-RPC transport is hang-hardened end to end: the Python `jobhunter rpc`
+server dispatches each request on a bounded thread pool (responses serialized
+under a stdout lock and correlated by JSON-RPC `id`), so a slow or hung handler
+no longer head-of-line-blocks `cancel_run` or other fast calls; the TS
+subprocess adapter applies a per-request timeout so a dead handler rejects
+instead of hanging forever; and the api-client wraps every fetch in an
+`AbortController` timeout so a stuck request fails cleanly rather than freezing
+the browser tab.
 
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
 `activity[].eventType` so the web UI can render started, completed, and failed

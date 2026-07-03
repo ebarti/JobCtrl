@@ -813,6 +813,48 @@ The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 Live workflow state — running workflows, history, signals, retries — is
 visible at `http://127.0.0.1:8233` in the Temporal Web UI.
 
+#### Loop Closure — Visibility, Finalize, Reconciler
+
+Workflow execution is made durable and visible in the read-model without a
+TypeScript Temporal SDK and without trigger-coupled reapers:
+
+- **`Workflow*` event family (6 types)** — `WorkflowStarted`,
+  `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`,
+  `WorkflowTimedOut`, `WorkflowTerminated` — mirrored 1:1 across the Python and
+  TS event registries and the web invalidation router. Each carries
+  `workflowId`, `workflowType`, an input summary, and a terminal status within
+  the 12-state `WORKFLOW_RUN_STATUSES` contract.
+- **Finalize activities** (`infrastructure/temporal/finalize.py`) —
+  `JobPipelineWorkflow` and `ApplyWorkflow` emit a `WorkflowStarted` marker at
+  the top of `run` and record exactly one terminal event on exit
+  (`WorkflowCompleted` on success, `WorkflowFailed` on a stage/exception
+  failure) via `record_workflow_started` / `record_workflow_outcome`. Those
+  activities reuse `record_job_event` + a projection refresh; workflow bodies
+  stay deterministic (all SQLite/clock IO is inside the activities).
+- **Describe-based reconciler** — `_reconcile_workflow_runs` runs in the worker
+  heartbeat loop (15s). It `describe`s each open `workflow_run_projections` row
+  and terminalizes CLOSED executions (mapped to the matching terminal event) or
+  NOT_FOUND executions (dev-server history loss → `WorkflowTerminated`), leaving
+  RUNNING rows alone. This is what makes a `kill -9`'d, timed-out, or cancelled
+  worker's runs terminalize on their own — replacing the trigger-coupled
+  reapers. (Cancellation of the pipeline/apply workflows currently surfaces as a
+  visible failed terminal because those workflows catch the cancellation
+  `ActivityError` as a stage failure; true `WorkflowCanceled` status is P1/CC6
+  cancellation work, and the reconciler already maps genuinely-CANCELED
+  executions to `WorkflowCanceled`.)
+- **Deterministic workflow IDs** — `WorkflowStartSpec` carries
+  `id_conflict_policy` / `id_reuse_policy`; the default starter passes
+  `USE_EXISTING` + `ALLOW_DUPLICATE`, so a double-start of a deterministic id
+  returns the running handle instead of duplicating execution. `apply` derives a
+  stable `apply-{jobKey}` id for single-job applies; the pipeline orchestrator
+  keeps `run-{uuid}`.
+
+The read side is `workflow_run_projections` (Python-sole-writer, folded from the
+`Workflow*` events under the shared `operations_projections` watermark, mirrored
+read-only in `apps/api/src/projections.ts`) — the unified list source for all
+workflow types. See `docs/local-ts-api.md` for the `GET /v1/workflow-runs` and
+`GET /v1/workflow-runs/:runId` read model.
+
 ### Observability
 
 The Python automation worker exports OpenTelemetry spans over OTLP/HTTP to a
