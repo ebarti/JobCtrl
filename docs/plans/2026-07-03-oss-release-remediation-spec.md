@@ -63,7 +63,7 @@ of one temporal-stack rebase — an owner call, not the default.
 Sequencing summary:
 
 ```
-now         ──► W0.1→W0.2→W0.3→W0.4→W0.5→W0.6   (first: privacy CI gates every later PR)
+now         ──► W0.1→W0.2→W0.5→W0.3→W0.4→W0.6   (first: privacy CI gates every later PR)
             ──► W2.1, W2.2(docs), W2.5            (fully parallel)
 #233 merged ──► W2.3
 P2 merged   ──► W1.1→W1.2→W1.3→W1.4→W1.5→W1.6→W1.7  (stacked; do NOT wait for P4/P5)
@@ -268,6 +268,11 @@ actually occurred, not just four exact-case tokens, and is itself tested.
 **Branch:** `feat/w0-3-release-check-v2` ·
 **PR title:** `feat(release): broaden release_check needles, file-type checks, and add a self-test`
 
+**Ordering:** stacks on W0.5, not W0.2 — item 7 fails on any tree where
+the tag trigger is live under the blocked distribution name, which
+includes the post-W0.2 tree. Section numbers are stable IDs, not
+sequence; see §0.1 and the W0.5 ordering note.
+
 Work items:
 1. **Case-insensitive identity matching.** All identity needles match
    case-insensitively.
@@ -302,7 +307,9 @@ Work items:
 7. **Structural checks:** fail if any tracked path starts with
    `.planning/`; fail if `.github/workflows/publish.yml` has an enabled
    tag trigger while `workers/automation/pyproject.toml` still declares the
-   PyPI-blocked distribution name (this check is retired by W2.1).
+   PyPI-blocked distribution name. W0.5 lands before this item, so the
+   check is green on arrival; it exists to prevent a silent re-enable and
+   is retired by W2.1. Do not soften it with a bypass flag.
 8. **Source tripwires** (pinned to specific files): fail if
    `workers/automation/src/jobhunter/apply/prompt.py` interpolates the
    CapSolver key env var into prompt text, contains the hardcoded
@@ -321,7 +328,7 @@ Work items:
 
 **Definition of Done**
 - [ ] `python3 scripts/release_check.py` exits 0 with zero findings on the
-      post-W0.2 tree, and non-zero when any self-test violation is
+      post-W0.5 tree, and non-zero when any self-test violation is
       introduced.
 - [ ] Byline collision test passes.
 - [ ] Self-test runs in the Python test suite.
@@ -353,13 +360,24 @@ Python/TS CI workflows keep their path scoping.
 **Branch:** `ci/w0-5-guard-publish` ·
 **PR title:** `ci(release): disable tag publishing until distribution rename`
 
+**Ordering:** lands immediately after W0.2 and BEFORE W0.3, out of
+numeric order. W0.3 item 7 fails whenever the tag trigger is live under
+the blocked distribution name — true of the tree today — so the trigger
+must be disabled first for W0.3's exit-0 DoD to be satisfiable; landing
+this first also closes the accidental-publish window sooner. Do not
+resolve the conflict the other way (a bypass flag on item 7): the item-8
+`--strict-prompt` pattern is reserved for tripwires whose fix is gated on
+W1, and this one's fix is the two-line edit right here.
+
 Work items: change `.github/workflows/publish.yml` trigger to
 `workflow_dispatch` only, with a header comment pointing at W2.1. The W0.3
-structural check enforces this cannot silently revert.
+structural check (landing next in the stack) enforces this cannot
+silently revert.
 
 **Definition of Done**
 - [ ] No `push`/tag trigger remains in `publish.yml`.
-- [ ] `python3 scripts/release_check.py` passes.
+- [ ] `python3 scripts/release_check.py` passes (v1 at this point in the
+      stack).
 
 ### W0.6 — CONCERNS disposition gate
 
