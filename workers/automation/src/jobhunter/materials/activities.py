@@ -76,12 +76,12 @@ class TailorJobActivityOutput:
 
 @activity.defn(name="tailor")
 async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
-    """Run the tailor stage via ``run_pipeline``."""
+    """Run the tailor stage."""
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
+    from jobhunter.pipeline.runner import _run_stage_observed, _run_tailor
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -122,43 +122,66 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        def _do() -> dict[str, Any]:
-            return run_pipeline(
-                stages=["tailor"],
-                min_score=payload.min_score,
-                workers=payload.workers,
-                validation_mode=payload.validation_mode,
-                limit=payload.limit,
-                dry_run=payload.dry_run,
-                retailor=payload.retailor,
-                tailor_models=payload.tailor_models,
-                tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
-                llm_model=payload.llm_model,
-                workflow_id=payload.workflow_id,
-                cancel_event=cancel_event,
+        if payload.dry_run:
+            return TailorActivityOutput(
+                status="ok",
+                elapsed=0.0,
+                errors={},
+                stages=[
+                    {
+                        "stage": "tailor",
+                        "status": "ok",
+                        "elapsed": 0.0,
+                        "dry_run": True,
+                        "selectedJobUrls": [],
+                        "approvedJobUrls": [],
+                    }
+                ],
             )
 
         result = await run_blocking_with_heartbeat(
-            _do,
+            lambda: _run_stage_observed(
+                "tailor",
+                _run_tailor,
+                {
+                    "min_score": payload.min_score,
+                    "workers": payload.workers,
+                    "validation_mode": payload.validation_mode,
+                    "limit": payload.limit,
+                    "retailor": payload.retailor,
+                    "tailor_models": payload.tailor_models,
+                    "tailor_judge_model": payload.tailor_judge_model,
+                    "tailor_judge_min_score": payload.tailor_judge_min_score,
+                    "llm_model": payload.llm_model,
+                    "cancel_event": cancel_event,
+                },
+                mode="workflow",
+                pass_number=1,
+            ),
             starting_message="tailor starting",
             progress_message="tailor still running",
             on_cancel=cancel_event.set,
             activity_name="tailor",
         )
-        stages = list(result.get("stages") or [])
-        errors = dict(result.get("errors") or {})
-        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        stage_result, elapsed, status = result
+        errors: dict[str, str] = {}
+        if status not in _SUCCESS_STATUSES:
+            errors["tailor"] = str(
+                stage_result.get("error")
+                or stage_result.get("error_message")
+                or status
+            )
+        stages = [{"stage": "tailor", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
-            "elapsed": float(result.get("elapsed") or 0.0),
+            "elapsed": float(elapsed),
             "errors": errors,
             "stages": stages,
         }
         _raise_on_failure("tailor", activity_result, LlmTransientError)
         return TailorActivityOutput(
             status=status,
-            elapsed=float(result.get("elapsed") or 0.0),
+            elapsed=float(elapsed),
             errors=errors,
             stages=stages,
         )
@@ -385,12 +408,12 @@ class RenderPdfActivityOutput:
 
 @activity.defn(name="cover")
 async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
-    """Run the cover-letter stage via ``run_pipeline``."""
+    """Run the cover-letter stage."""
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
+    from jobhunter.pipeline.runner import _run_cover, _run_stage_observed
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -415,38 +438,59 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        def _do() -> dict[str, Any]:
-            return run_pipeline(
-                stages=["cover"],
-                min_score=payload.min_score,
-                validation_mode=payload.validation_mode,
-                limit=payload.limit,
-                dry_run=payload.dry_run,
-                llm_model=payload.llm_model,
-                workflow_id=payload.workflow_id,
-                cancel_event=cancel_event,
+        if payload.dry_run:
+            return CoverActivityOutput(
+                status="ok",
+                elapsed=0.0,
+                errors={},
+                stages=[
+                    {
+                        "stage": "cover",
+                        "status": "ok",
+                        "elapsed": 0.0,
+                        "dry_run": True,
+                    }
+                ],
             )
 
         result = await run_blocking_with_heartbeat(
-            _do,
+            lambda: _run_stage_observed(
+                "cover",
+                _run_cover,
+                {
+                    "min_score": payload.min_score,
+                    "validation_mode": payload.validation_mode,
+                    "limit": payload.limit,
+                    "llm_model": payload.llm_model,
+                    "cancel_event": cancel_event,
+                },
+                mode="workflow",
+                pass_number=1,
+            ),
             starting_message="cover starting",
             progress_message="cover still running",
             on_cancel=cancel_event.set,
             activity_name="cover",
         )
-        stages = list(result.get("stages") or [])
-        errors = dict(result.get("errors") or {})
-        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        stage_result, elapsed, status = result
+        errors: dict[str, str] = {}
+        if status not in _SUCCESS_STATUSES:
+            errors["cover"] = str(
+                stage_result.get("error")
+                or stage_result.get("error_message")
+                or status
+            )
+        stages = [{"stage": "cover", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
-            "elapsed": float(result.get("elapsed") or 0.0),
+            "elapsed": float(elapsed),
             "errors": errors,
             "stages": stages,
         }
         _raise_on_failure("cover", activity_result, LlmTransientError)
         return CoverActivityOutput(
             status=status,
-            elapsed=float(result.get("elapsed") or 0.0),
+            elapsed=float(elapsed),
             errors=errors,
             stages=stages,
         )

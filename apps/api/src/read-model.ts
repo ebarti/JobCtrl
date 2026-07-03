@@ -105,6 +105,7 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   autoApply: false,
   applyApprovalRequired: true,
   applyConcurrency: 1,
+  dailyBudgetUsd: 25,
   scoreCriteria: "",
   targetCriteria: "",
 };
@@ -5213,6 +5214,12 @@ function normalizeSettings(raw: unknown): DashboardSettings {
       1,
       16,
     ),
+    dailyBudgetUsd: normalizeNumber(
+      source.dailyBudgetUsd ?? source.daily_budget_usd,
+      DEFAULT_SETTINGS.dailyBudgetUsd,
+      0,
+      Number.POSITIVE_INFINITY,
+    ),
     scoreCriteria: normalizeText(source.scoreCriteria ?? source.score_criteria, DEFAULT_SETTINGS.scoreCriteria),
     targetCriteria: normalizeText(source.targetCriteria ?? source.target_criteria, DEFAULT_SETTINGS.targetCriteria),
   };
@@ -5225,6 +5232,15 @@ function normalizeText(value: unknown, fallback: string): string {
 
 function normalizeInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const numberValue = Number.parseInt(stringField(value), 10);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.min(maximum, Math.max(minimum, numberValue));
+}
+
+function normalizeNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  if (value === null || value === undefined) return fallback;
+  const text = stringField(value).trim();
+  if (text === "") return fallback;
+  const numberValue = Number(text);
   if (!Number.isFinite(numberValue)) return fallback;
   return Math.min(maximum, Math.max(minimum, numberValue));
 }

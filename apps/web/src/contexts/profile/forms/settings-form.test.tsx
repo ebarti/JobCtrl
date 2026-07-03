@@ -19,6 +19,7 @@ describe("<SettingsForm>", () => {
     const { container } = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
 
     expect(screen.getByLabelText("Apply concurrency")).toHaveValue(2);
+    expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveValue(25);
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Auto apply")).not.toBeInTheDocument();
@@ -50,7 +51,7 @@ describe("<SettingsForm>", () => {
     });
 
     expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith({ applyConcurrency: 4 });
+    expect(updateSettings).toHaveBeenCalledWith({ applyConcurrency: 4, dailyBudgetUsd: 25 });
   });
 
   it("keeps newer execution edits when an autosave response returns for an older snapshot", async () => {
@@ -109,6 +110,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
     expect(screen.getByLabelText("Auto apply")).not.toBeChecked();
     expect(screen.queryByLabelText("Apply concurrency")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Daily LLM budget (USD)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Scoring rubric" })).not.toBeInTheDocument();
     expect(screen.queryByText("Ranking priorities")).not.toBeInTheDocument();

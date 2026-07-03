@@ -48,11 +48,7 @@ _P1B_RETRY = RetryPolicy(
     maximum_attempts=3,
     non_retryable_error_types=["configuration", "authentication", "missing_input"],
 )
-_OK_RESULT = {
-    "stages": [{"stage": "_", "status": "ok", "elapsed": 0.0}],
-    "errors": {},
-    "elapsed": 0.0,
-}
+_OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
 
 @workflow.defn(name="P1bScoreHarness")
@@ -190,7 +186,7 @@ async def test_activity_wrapper_configuration_error_is_non_retryable(case: _Acti
         raise ConfigurationError("missing local config")
 
     queue = f"p1b-{case.name}-config-{uuid.uuid4()}"
-    with patch("jobhunter.pipeline.run_pipeline", side_effect=_raise_configuration):
+    with patch("jobhunter.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -223,10 +219,10 @@ async def test_activity_wrapper_transient_error_retries_then_succeeds(case: _Act
         attempts += 1
         if attempts < 3:
             raise TransientNetworkError("temporary outage")
-        return _OK_RESULT
+        return _OK_OBSERVED
 
     queue = f"p1b-{case.name}-transient-{uuid.uuid4()}"
-    with patch("jobhunter.pipeline.run_pipeline", side_effect=_transient_then_ok):
+    with patch("jobhunter.pipeline.runner._run_stage_observed", side_effect=_transient_then_ok):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,

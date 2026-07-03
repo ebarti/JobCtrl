@@ -46,11 +46,11 @@ class LocalScoringCriteriaProvider:
 
 
 def read_apply_approval_required(
-    path: Path | str = DEFAULT_SETTINGS_PATH,
+    path: Path | str | None = None,
     *,
     default: bool = True,
 ) -> bool:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
     value = settings.get("apply_approval_required")
     if value is None:
         value = settings.get("applyApprovalRequired")
@@ -63,6 +63,22 @@ def read_apply_approval_required(
         if normalized in {"false", "0", "no", "off"}:
             return False
     return bool(default)
+
+
+def read_daily_budget_usd(
+    path: Path | str | None = None,
+    *,
+    default: float = 25.0,
+) -> float:
+    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    value = settings.get("daily_budget_usd")
+    if value is None:
+        value = settings.get("dailyBudgetUsd")
+    try:
+        budget = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return max(0.0, budget)
 
 
 def _int(value: Any, default: int) -> int:

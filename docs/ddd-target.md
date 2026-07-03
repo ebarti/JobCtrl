@@ -1278,7 +1278,7 @@ transport is an adapter concern behind the `StageCommandDispatcher` port.
 |---|---|---|
 | **Local-first** | `SubprocessJsonRpcAdapter` | TS API spawns `uv run jobhunter rpc` subprocess. Request written to stdin as JSON-RPC. Response read from stdout. Existing `local-actions.ts` pattern, formalized. |
 | **Cloud** | `HttpJsonRpcAdapter` | TS API sends HTTP POST to Python worker service endpoint (`POST /rpc`). Same JSON-RPC body. Worker service is a FastAPI/Starlette app exposing the same handlers. |
-| **Cloud (async)** | `TemporalActivityAdapter` | For long-running stages (apply, discover), the TS API enqueues a Temporal activity. The activity worker deserializes the JSON-RPC params, runs the handler, and returns the JSON-RPC result. |
+| **Cloud (async)** | `HttpJsonRpcAdapter` to Python workflow starter | For long-running stages, the TS API sends the same JSON-RPC command to the Python worker service. The Python handler builds a workflow spec, starts Temporal behind its port, and returns the workflow handle. |
 
 **Protocol shape (unchanged across transports):**
 
@@ -1332,13 +1332,12 @@ The Python worker handler receives `tenantId` as a first-class parameter and
 passes it to all repository and event publisher calls.
 
 **Transport scope:** JSON-RPC over subprocess is the **local-mode transport**.
-In cloud mode, synchronous calls use `HttpJsonRpcAdapter` (same JSON-RPC body
-over HTTP POST). For long-running stages, the `StageCommandDispatcher` port
-switches to `TemporalWorkflowAdapter`, where each stage dispatch becomes a
-Temporal activity call over gRPC. The JSON-RPC envelope is not used in cloud
-async mode — the Temporal SDK provides typed request/response semantics
-natively. **Evolution trigger:** multi-process deployment requiring durable
-workflow orchestration (see Section 9.4).
+In cloud mode, calls use `HttpJsonRpcAdapter` (same JSON-RPC body over HTTP
+POST) to reach the Python worker service. Temporal stays behind a Python port:
+the Python handler builds and starts the workflow, then returns the workflow
+handle through JSON-RPC. The TS API does not enqueue Temporal work directly.
+**Evolution trigger:** multi-process deployment requiring durable workflow
+orchestration (see Section 9.4).
 
 **Shared contract:** Both sides import the event type definitions from a shared
 schema. Today this is `packages/contracts` (Zod schemas) and mirrored Python

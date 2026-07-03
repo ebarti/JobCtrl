@@ -36,12 +36,12 @@ class EnrichActivityOutput:
 
 @activity.defn(name="enrich")
 async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
-    """Run the enrichment stage via ``run_pipeline``."""
+    """Run the enrichment stage."""
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
+    from jobhunter.pipeline.runner import _run_enrich, _run_stage_observed
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -66,36 +66,57 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        def _do() -> dict[str, Any]:
-            return run_pipeline(
-                stages=["enrich"],
-                workers=payload.workers,
-                limit=payload.limit,
-                dry_run=payload.dry_run,
-                workflow_id=payload.workflow_id,
-                cancel_event=cancel_event,
+        if payload.dry_run:
+            return EnrichActivityOutput(
+                status="ok",
+                elapsed=0.0,
+                errors={},
+                stages=[
+                    {
+                        "stage": "enrich",
+                        "status": "ok",
+                        "elapsed": 0.0,
+                        "dry_run": True,
+                    }
+                ],
             )
 
         result = await run_blocking_with_heartbeat(
-            _do,
+            lambda: _run_stage_observed(
+                "enrich",
+                _run_enrich,
+                {
+                    "workers": payload.workers,
+                    "limit": payload.limit,
+                    "cancel_event": cancel_event,
+                },
+                mode="workflow",
+                pass_number=1,
+            ),
             starting_message="enrich starting",
             progress_message="enrich still running",
             on_cancel=cancel_event.set,
             activity_name="enrich",
         )
-        stages = list(result.get("stages") or [])
-        errors = dict(result.get("errors") or {})
-        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        stage_result, elapsed, status = result
+        errors: dict[str, str] = {}
+        if status not in _SUCCESS_STATUSES:
+            errors["enrich"] = str(
+                stage_result.get("error")
+                or stage_result.get("error_message")
+                or status
+            )
+        stages = [{"stage": "enrich", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
-            "elapsed": float(result.get("elapsed") or 0.0),
+            "elapsed": float(elapsed),
             "errors": errors,
             "stages": stages,
         }
         _raise_on_failure("enrich", activity_result, TransientNetworkError)
         return EnrichActivityOutput(
             status=status,
-            elapsed=float(result.get("elapsed") or 0.0),
+            elapsed=float(elapsed),
             errors=errors,
             stages=stages,
         )

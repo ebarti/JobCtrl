@@ -1554,6 +1554,7 @@ export const SettingsUpdateRequestSchema = z
     autoApply: z.boolean().optional(),
     applyApprovalRequired: z.boolean().optional(),
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
+    dailyBudgetUsd: z.coerce.number().min(0).optional(),
     scoreCriteria: z.string().max(8000).optional(),
     targetCriteria: z.string().max(8000).optional(),
   })
@@ -2742,6 +2743,7 @@ export interface DashboardSettings {
   autoApply: boolean;
   applyApprovalRequired: boolean;
   applyConcurrency: number;
+  dailyBudgetUsd: number;
   scoreCriteria: string;
   targetCriteria: string;
 }

@@ -22,6 +22,19 @@ from jobhunter.pipeline import preparation
 from jobhunter.preparation import workflow as prep_workflow_mod
 from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobhunter.scoring.activities import score_job_activity
+from jobhunter.llm import SpendBudgetStatus
+
+
+@activity.defn(name="check_spend_budget")
+async def _check_spend_budget(_payload) -> SpendBudgetStatus:
+    return SpendBudgetStatus(
+        day="2026-07-03",
+        input_tokens=0,
+        output_tokens=0,
+        estimated_usd=0.0,
+        daily_budget_usd=25.0,
+        exceeded=False,
+    )
 
 
 @pytest.mark.asyncio
@@ -195,6 +208,7 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
             task_queue=queue,
             workflows=[JobPreparationWorkflow],
             activities=[
+                _check_spend_budget,
                 record_started,
                 record_outcome,
                 score_job,
@@ -273,6 +287,7 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     monkeypatch.setattr("jobhunter.materials.activities._render_pdf_for_job", fake_render_pdf)
 
     activities = [
+        _check_spend_budget,
         record_started,
         record_outcome,
         score_job_activity,

@@ -16,11 +16,10 @@
  *     the next call respawns transparently.
  *   * ``close()`` shuts the worker down cleanly (used in tests).
  *
- * Per ddd-target.md §6.5 the JSON-RPC handler set covers both sync
- * commands (``profile_import``, simple state transitions) and
- * fire-and-forget commands (``apply``, batched ``run_stage``).  The
- * server emits exactly one response envelope per request; ``call()``
- * resolves on that envelope.
+ * Per ddd-target.md §6.5 the JSON-RPC handler set covers sync commands
+ * and workflow-start commands (``profile_import``, ``apply``, batched
+ * ``run_stage``). The server emits exactly one response envelope per
+ * request; ``call()`` resolves on that envelope.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";

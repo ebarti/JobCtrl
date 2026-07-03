@@ -20,10 +20,15 @@ from jobhunter.discovery.activities import (
 )
 from jobhunter.discovery.workflow import DiscoverWorkflow
 from jobhunter.enrichment.activities import enrich_activity
+from jobhunter.infrastructure.compensation.workflow import (
+    CompensationRefreshWorkflow,
+    refresh_compensation_activity,
+)
 from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
+from jobhunter.llm import check_spend_budget
 from jobhunter.materials.activities import (
     cover_letter_activity,
     cover_activity,
@@ -35,6 +40,7 @@ from jobhunter.pipeline.workflow import JobPipelineWorkflow
 from jobhunter.pipeline.preparation import derive_preparation_targets
 from jobhunter.preparation.workflow import JobPreparationWorkflow
 from jobhunter.profile.activities import profile_import_activity
+from jobhunter.profile.workflow import ProfileImportWorkflow
 from jobhunter.scoring.activities import score_activity, score_job_activity
 
 WORKFLOWS: list[type] = [
@@ -42,6 +48,8 @@ WORKFLOWS: list[type] = [
     JobPipelineWorkflow,
     JobPreparationWorkflow,
     ApplyWorkflow,
+    ProfileImportWorkflow,
+    CompensationRefreshWorkflow,
 ]
 
 ACTIVITIES: list[Callable[..., Any]] = [
@@ -60,6 +68,8 @@ ACTIVITIES: list[Callable[..., Any]] = [
     derive_preparation_targets,
     apply_activity,
     profile_import_activity,
+    refresh_compensation_activity,
+    check_spend_budget,
     record_workflow_started,
     record_workflow_outcome,
 ]

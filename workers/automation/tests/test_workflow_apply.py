@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -21,6 +22,23 @@ from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
+from jobhunter.llm import SpendBudgetStatus
+
+
+@activity.defn(name="check_spend_budget")
+async def _check_spend_budget(_payload) -> SpendBudgetStatus:
+    return SpendBudgetStatus(
+        day="2026-07-03",
+        input_tokens=0,
+        output_tokens=0,
+        estimated_usd=0.0,
+        daily_budget_usd=25.0,
+        exceeded=False,
+    )
+
+
+def _activities():
+    return [apply_activity, _check_spend_budget, record_workflow_started, record_workflow_outcome]
 
 
 @pytest.mark.asyncio
@@ -37,7 +55,7 @@ async def test_apply_workflow_returns_ok_when_apply_main_succeeds():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
+                activities=_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -79,7 +97,7 @@ async def test_live_apply_workflow_does_not_retry_transient_failures():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
+                activities=_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -115,7 +133,7 @@ async def test_dry_run_apply_workflow_recovers_when_first_attempt_fails():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
+                activities=_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(
@@ -218,7 +236,7 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
                 env.client,
                 task_queue=queue,
                 workflows=[ApplyWorkflow],
-                activities=[apply_activity, record_workflow_started, record_workflow_outcome],
+                activities=_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
                 result = await env.client.execute_workflow(

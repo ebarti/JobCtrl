@@ -13,7 +13,7 @@ export interface SettingsFormProps {
   initial: DashboardSettings;
 }
 
-type ExecutionSettingsValues = Pick<SettingsUpdateRequest, "applyConcurrency">;
+type ExecutionSettingsValues = Pick<SettingsUpdateRequest, "applyConcurrency" | "dailyBudgetUsd">;
 type DiscoveryAutomationSettingsValues = Pick<
   SettingsUpdateRequest,
   "autoApply" | "minFitScore" | "applyApprovalRequired"
@@ -22,6 +22,7 @@ type DiscoveryAutomationSettingsValues = Pick<
 function toExecutionSettingsValues(values: DashboardSettings): ExecutionSettingsValues {
   return {
     applyConcurrency: values.applyConcurrency,
+    dailyBudgetUsd: values.dailyBudgetUsd,
   };
 }
 
@@ -126,6 +127,24 @@ export function SettingsForm({ initial }: SettingsFormProps) {
               onChange={(event) => field.handleChange(Number(event.target.value))}
             />
           </label>
+        )}
+      </form.Field>
+      <form.Field name="dailyBudgetUsd">
+        {(field) => (
+          <div className="field">
+            <label htmlFor="settings-daily-budget-usd">Daily LLM budget (USD)</label>
+            <input
+              id="settings-daily-budget-usd"
+              type="number"
+              min={0}
+              step={0.01}
+              aria-describedby="settings-daily-budget-usd-help"
+              value={field.state.value ?? 0}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(Number(event.target.value))}
+            />
+            <small id="settings-daily-budget-usd-help">Use 0 for unlimited.</small>
+          </div>
         )}
       </form.Field>
       <form.Subscribe

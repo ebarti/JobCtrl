@@ -17,6 +17,7 @@ from jobhunter.discovery.workflow import DiscoverWorkflow
 from jobhunter.infrastructure.temporal.registry import WORKFLOWS
 from jobhunter.pipeline import preparation, runner
 from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobhunter.workflow_specs import build_run_stage_workflow_spec
 
 
 @pytest.fixture()
@@ -36,42 +37,12 @@ def test_discover_workflow_is_registered() -> None:
     assert DiscoverWorkflow in WORKFLOWS
 
 
-def test_run_pipeline_default_uses_primary_stage_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
+def test_default_workflow_spec_uses_primary_stage_order() -> None:
+    spec = build_run_stage_workflow_spec({"tenantId": "local", "minScore": 8})
 
-    monkeypatch.setattr(runner, "load_env", lambda: None)
-    monkeypatch.setattr(runner, "ensure_dirs", lambda: None)
-    monkeypatch.setattr(runner, "init_db", lambda: None)
-    monkeypatch.setattr(
-        runner,
-        "get_stats",
-        lambda: {
-            "total": 0,
-            "pending_detail": 0,
-            "with_description": 0,
-            "scored": 0,
-            "tailored": 0,
-            "with_cover_letter": 0,
-            "ready_to_apply": 0,
-            "applied": 0,
-        },
-    )
-
-    def fake_run_sequential(ordered, min_score, **_kwargs):
-        captured["ordered"] = ordered
-        captured["min_score"] = min_score
-        return {
-            "stages": [{"stage": stage, "status": "ok", "elapsed": 0.0} for stage in ordered],
-            "errors": {},
-            "elapsed": 0.0,
-        }
-
-    monkeypatch.setattr(runner, "_run_sequential", fake_run_sequential)
-
-    result = runner.run_pipeline(stages=None, min_score=8)
-
-    assert captured == {"ordered": ["discover"], "min_score": 8}
-    assert [stage["stage"] for stage in result["stages"]] == ["discover"]
+    assert spec.workflow is DiscoverWorkflow
+    payload = spec.args[0]
+    assert payload.min_score == 8
 
 
 def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(

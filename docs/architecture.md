@@ -83,10 +83,11 @@ flowchart LR
 
 Each context exposes its **driving ports** (use cases) and depends on **driven
 ports** (capabilities) for I/O. The local-mode adapters satisfy each driven
-port via SQLite, the local filesystem, the local Chrome / Playwright stack, and
-the local LLM clients. The hosted-mode adapters (Postgres, S3, SQS, Browserbase,
-Temporal) are named in `docs/ddd-target.md` §5 but not implemented yet — they
-are the next-evolution seam, not a parallel codepath today.
+port via SQLite, the local filesystem, the local Chrome / Playwright stack, the
+local Temporal dev server, and the local LLM clients. The hosted-mode adapters
+(Postgres, S3, SQS, Browserbase, managed Temporal) are named in
+`docs/ddd-target.md` §5 but not implemented yet — they are the next-evolution
+seam, not a parallel codepath today.
 
 Cross-context integration uses the **`InProcessEventBus`** for domain events and
 the **`SubprocessJsonRpcAdapter`** for the TS↔Python integration protocol
@@ -737,7 +738,8 @@ Current responsibilities:
 - artifacts list/detail endpoints
 - artifact open endpoint with known-path validation
 - profile/settings read and write endpoints
-- resume PDF import draft endpoint (via JSON-RPC `profile_import`)
+- resume PDF import draft endpoint (via JSON-RPC `profile_import`, which starts
+  `ProfileImportWorkflow`)
 - structured job action endpoints for retry, material generation, dry-run apply,
   cancel, mark-applied, mark-skipped
 - current-policy preparation maintenance endpoints for per-job/bulk rescore and
@@ -749,9 +751,11 @@ Current responsibilities:
 Simple state-transition writes (`resetJobStage`, `markJobApplied`,
 `markJobSkipped`, `cancelJobAction`, `softDeleteJob`, `restoreJob`) execute
 inline in the TS process against shared `@jobhunter/domain-types` value
-objects. Complex commands (`apply`, `profile_import`, batched stage runs)
+objects. Complex commands (`apply`, `profile_import`, `refresh_compensation`,
+batched stage runs)
 travel through `SubprocessJsonRpcAdapter` to the long-lived
-`jobhunter rpc` worker.
+`jobhunter rpc` worker, where Python-native handlers start Temporal workflows
+and return workflow handles.
 
 ### Python Automation Engine
 
@@ -765,6 +769,7 @@ Python owns automation execution:
 - cover letters
 - PDF generation
 - profile import from resume PDF
+- compensation refresh
 - apply automation
 
 The worker package lives under `workers/automation`. Each bounded context owns
@@ -824,17 +829,21 @@ as the durable error code:
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
 | `SourceUnavailableError` | `source_unavailable` | yes |
+| `BudgetExceededError` | `budget_exceeded` | no |
 
 Workflow and activity retry policies are stage-specific:
 
 | Unit | Attempts | Initial interval | Maximum interval | Non-retryable codes |
 | --- | --- | --- | --- | --- |
-| `DiscoverWorkflow` source-family activities | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `DiscoverWorkflow` enrichment activity | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
-| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+| `DiscoverWorkflow` source-family activities | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `DiscoverWorkflow` enrichment activity | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `ApplyWorkflow` | 1 live / 2 dry-run | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `ProfileImportWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `CompensationRefreshWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 
 The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
 operational metrics, and OTel spans through `_run_stage_observed`; the change
@@ -870,11 +879,24 @@ Production workflows live alongside the activities:
   `cover`, and `pdf` in canonical order. Each step is an idempotent activity;
   already-complete steps return `already_done`, and Temporal resumes at the
   failed step after a worker interruption.
+- `ProfileImportWorkflow` (`jobhunter/profile/workflow.py`) — starts profile
+  PDF import through the same workflow visibility/finalize path as other heavy
+  work, then calls the existing profile-import activity.
+- `CompensationRefreshWorkflow`
+  (`jobhunter/infrastructure/compensation/workflow.py`) — wraps the extracted
+  compensation refresh core so posted facts and market estimates no longer run
+  inside the JSON-RPC request thread.
 
 The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
-(the existing batch orchestrator that the activities call) and
-`workflow.py` (the Temporal workflow). `__init__.py` re-exports
-`run_pipeline` so existing imports keep working.
+(stage-core functions and `_run_stage_observed`) and `workflow.py` (the
+Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
+not re-exported; every CLI, API, and local-action entry point starts a workflow.
+
+All workflows that can spend LLM tokens run `check_spend_budget` before their
+heavy activity. Usage is recorded in `llm_spend` from existing LLM usage capture
+points, `dailyBudgetUsd` defaults to `25`, and `0` means unlimited. When the
+current day is at or above the configured budget, the preflight raises
+non-retryable `budget_exceeded`; finalize still records the workflow outcome.
 
 `jobhunter worker` is the long-lived process that runs the worker loop. At
 startup it reconciles the local discovery Temporal Schedule:

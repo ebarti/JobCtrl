@@ -181,7 +181,7 @@ import {
   recordProfileUpdatedEvent,
   shouldRetailorForProfileUpdate,
 } from "./profile-events.js";
-import { dbFileIdentity, readWorkerHealth } from "./worker-health.js";
+import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
 import {
   cancelJobAction,
   correctScore,
@@ -278,6 +278,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     appDir,
     dbExists: databaseExists(options.dbPath),
     dbIdentity: dbFileIdentity(options.dbPath),
+    llmSpend: readLlmSpendHealth(options.dbPath, options.settingsPath),
     worker: readWorkerHealth(options.dbPath),
   }));
 

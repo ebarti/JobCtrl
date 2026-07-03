@@ -2,12 +2,10 @@
 
 The method set covers:
 
-* Local-action wrappers — ``profile_import`` delegates to
-  ``actions.run_local_action``.
-* Workflow starters — ``apply`` returns a :class:`WorkflowStartSpec` for
-  :class:`ApplyWorkflow`; ``run_stage`` and the current-policy maintenance
-  methods return one for :class:`JobPipelineWorkflow`. The server starts them
-  on the Temporal task queue and ships back
+* Workflow starters — ``run_stage``, ``apply``, ``profile_import``,
+  ``refresh_compensation``, and current-policy maintenance methods return
+  :class:`WorkflowStartSpec` values. The server starts them on the Temporal task
+  queue and ships back
   ``{"runId", "workflowId", "firstExecutionRunId"}``.
 * Cooperative cancellation — ``cancel_run`` cancels an in-flight workflow
   via the injected canceler.
@@ -21,18 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from jobhunter.actions import LocalActionRequest, run_local_action
-from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobhunter.database import get_connection
-from jobhunter.discovery.workflow import (
-    DiscoverWorkflow,
-    DiscoverWorkflowInput,
-    discover_workflow_id,
-)
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.preparation import PreparationWorkItemKind
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
@@ -45,7 +34,14 @@ from jobhunter.pipeline.preparation import (
     current_tailoring_policy_version,
     latest_source_event_id,
 )
-from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
+from jobhunter.workflow_specs import (
+    apply_workflow_id,
+    build_apply_workflow_spec,
+    build_compensation_refresh_workflow_spec,
+    build_pipeline_workflow_spec,
+    build_profile_import_workflow_spec,
+    build_run_stage_workflow_spec,
+)
 
 logger = logging.getLogger(__name__)
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
@@ -112,65 +108,10 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
 
 
 def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
-    tenant_id = _tenant_id(params)
-    stages = _stage_list(params)
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
-    if stages == ["discover"]:
-        payload = DiscoverWorkflowInput(
-            tenant_id=tenant_id,
-            expected_app_dir=params.get("expectedAppDir"),
-            expected_db_path=params.get("expectedDbPath"),
-            min_score=int(params.get("minScore", 7)),
-            workers=int(params.get("workers", 1)),
-            limit=int(params.get("limit", 0)),
-            validation_mode=str(params.get("validationMode", "normal")),
-            tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
-            tailor_judge_model=(
-                str(params["tailorJudgeModel"])
-                if params.get("tailorJudgeModel")
-                else None
-            ),
-            tailor_judge_min_score=(
-                float(raw_judge_min_score) if raw_judge_min_score is not None else None
-            ),
-            source_ids=_source_ids(params),
-            llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
-        )
-        return WorkflowStartSpec(
-            workflow=DiscoverWorkflow,
-            args=(payload,),
-            workflow_id=discover_workflow_id(tenant_id),
-        )
-    payload = JobPipelineWorkflowInput(
-        tenant_id=tenant_id,
-        expected_app_dir=params.get("expectedAppDir"),
-        expected_db_path=params.get("expectedDbPath"),
-        stages=stages,
-        min_score=int(params.get("minScore", 7)),
-        workers=int(params.get("workers", 1)),
-        limit=int(params.get("limit", 0)),
-        validation_mode=str(params.get("validationMode", "normal")),
-        dry_run=bool(params.get("dryRun", False)),
-        rescore=bool(params.get("rescore", False)),
-        retailor=bool(params.get("retailor", False)),
-        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
-        tailor_judge_model=(
-            str(params["tailorJudgeModel"])
-            if params.get("tailorJudgeModel")
-            else None
-        ),
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
-        job_url=params.get("jobUrl") if params.get("jobUrl") else None,
-        job_urls=_job_urls(params),
-        source_ids=_source_ids(params),
-        headless=bool(params.get("headless", False)),
-        model=str(params.get("model", "default")),
-        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
-        continuous=bool(params.get("continuous", False)),
-    )
-    return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
+    try:
+        return build_run_stage_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def rescore_job(params: dict[str, Any]) -> WorkflowStartSpec:
@@ -310,95 +251,12 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def refresh_compensation(params: dict[str, Any]) -> dict[str, Any]:
-    """Refresh compensation facts without running a pipeline."""
-    tenant_id = _tenant_id(params)
-    job_url_param = params.get("jobUrl")
-    all_jobs = params.get("allJobs") is True
-    if job_url_param and all_jobs:
-        raise invalid_params("provide exactly one of jobUrl or allJobs")
-    if not job_url_param and not all_jobs:
-        raise invalid_params("provide exactly one of jobUrl or allJobs")
-    job_url = str(job_url_param) if job_url_param else None
-
-    from jobhunter.infrastructure.compensation import (
-        SqliteMarketCompensationRepository,
-        SqlitePostedCompensationRepository,
-        load_default_reported_compensation_observations,
-        posted_compensation_source_from_job,
-    )
-    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-
-    conn = get_connection()
-    refreshed_at = datetime.now(timezone.utc).isoformat()
-    posted_repository = SqlitePostedCompensationRepository(conn)
-    if job_url:
-        row = conn.execute(
-            "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
-            (job_url,),
-        ).fetchone()
-        if row is None:
-            raise invalid_params(f"unknown jobUrl: {job_url}")
-        source_text, source_field = posted_compensation_source_from_job(row)
-        posted_repository.parse_and_save_job_salary(
-            job_url,
-            source_text,
-            tenant_id=tenant_id,
-            source_field=source_field,
-            parsed_at=refreshed_at,
-        )
-        posted_count = 1
-    else:
-        posted_count = posted_repository.backfill_from_legacy_jobs(
-            tenant_id=tenant_id,
-            parsed_at=refreshed_at,
-        )
-
-    include_eurotoptech_param = params.get("includeEuroTopTech")
-    include_eurotoptech = bool(include_eurotoptech_param) if include_eurotoptech_param is not None else True
-    observations_path = params.get("observationsJsonPath")
-    observation_file = Path(str(observations_path)) if observations_path else None
-    if observation_file is not None and not observation_file.exists():
-        raise invalid_params(f"observationsJsonPath does not exist: {observation_file}")
+def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
+    """Build a workflow spec for compensation refresh."""
     try:
-        source_load = load_default_reported_compensation_observations(
-            local_observations_path=observation_file,
-            include_eurotoptech=include_eurotoptech,
-            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
-        )
-    except Exception as exc:  # noqa: BLE001 - manual refresh should degrade to local evidence
-        logger.warning("Reported compensation sources could not be fully loaded: %s", exc)
-        source_load = load_default_reported_compensation_observations(
-            local_observations_path=observation_file,
-            include_eurotoptech=False,
-            eurotoptech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
-        )
-
-    observations = source_load.observations
-    estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
-        observations,
-        tenant_id=tenant_id,
-        estimated_at=refreshed_at,
-        limit=1 if job_url else 0,
-        job_url=job_url,
-    )
-
-    ProjectionBuilder(conn_factory=get_connection).refresh()
-    return {
-        "ok": True,
-        "status": "succeeded",
-        "jobUrl": job_url,
-        "postedFactsRefreshed": posted_count,
-        "reportedObservationsLoaded": len(observations),
-        "localReportedObservationsLoaded": source_load.local_count,
-        "licensedReportedObservationsLoaded": source_load.licensed_count,
-        "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
-        "glassdoorObservationsLoaded": source_load.glassdoor_count,
-        "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
-        "estimatesRefreshed": estimate_count,
-        "marketRefreshSkipped": False,
-        "tenantId": tenant_id,
-    }
+        return build_compensation_refresh_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
@@ -429,50 +287,26 @@ def _pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
-    tenant_id = _tenant_id(params)
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
-    payload = JobPipelineWorkflowInput(
-        tenant_id=tenant_id,
-        expected_app_dir=params.get("expectedAppDir"),
-        expected_db_path=params.get("expectedDbPath"),
+    return build_pipeline_workflow_spec(
+        params,
         stages=stages,
-        min_score=int(params.get("minScore", 7)),
-        workers=int(params.get("workers", 1)),
         limit=limit,
-        validation_mode=str(params.get("validationMode", "normal")),
-        dry_run=bool(params.get("dryRun", False)),
         rescore=rescore,
         retailor=retailor,
-        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
-        tailor_judge_model=(
-            str(params["tailorJudgeModel"])
-            if params.get("tailorJudgeModel")
-            else None
-        ),
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
         job_url=job_url,
         job_urls=job_urls,
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
-        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
     )
-    return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
 
 
-def profile_import(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    pdf_path = str(_require(params, "pdfPath"))
-    request = LocalActionRequest(
-        stage="profile_import",
-        pdf_path=pdf_path,
-        import_profile=bool(params.get("importProfile", True)),
-        import_style=bool(params.get("importStyle", True)),
-    )
-    return run_local_action(request).to_dict()
+def profile_import(params: dict[str, Any]) -> WorkflowStartSpec:
+    try:
+        return build_profile_import_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -484,35 +318,12 @@ def _apply_workflow_id(tenant_id: str, job_key: str) -> str:
     """Deterministic ``apply-{tenant}-{jobKey}`` id so a double-click apply for one job
     attaches to the running workflow (USE_EXISTING) instead of double-submitting.
     """
-    return f"apply-{tenant_id}-{job_key}"
+    return apply_workflow_id(tenant_id, job_key)
 
 
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
-    tenant_id = _tenant_id(params)
-    job_url = params.get("jobUrl")
-    payload = ApplyWorkflowInput(
-        tenant_id=tenant_id,
-        expected_app_dir=params.get("expectedAppDir"),
-        expected_db_path=params.get("expectedDbPath"),
-        job_url=job_url,
-        dry_run=bool(params.get("dryRun", False)),
-        headless=bool(params.get("headless", False)),
-        model=str(params.get("model", "default")),
-        min_score=int(params.get("minScore", 7)),
-        workers=int(params.get("workers", 1)),
-        limit=int(params.get("limit", 1)),
-        continuous=bool(params.get("continuous", False)),
-        approval_required=bool(params.get("applyApprovalRequired", True)),
-    )
-    # Single-job applies get a deterministic id for real no-overlap; batch /
-    # continuous applies (no jobUrl) stay on ``run-{uuid}``.
-    workflow_id = _apply_workflow_id(tenant_id, str(job_url)) if job_url else None
-    return WorkflowStartSpec(
-        workflow=ApplyWorkflow,
-        args=(payload,),
-        workflow_id=workflow_id,
-    )
+    return build_apply_workflow_spec(params)
 
 
 def make_cancel_run(canceler: WorkflowCanceler):
@@ -540,9 +351,7 @@ def make_cancel_run(canceler: WorkflowCanceler):
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobHunter method set onto *server*."""
-    # Local-action wrapper — synchronous import until the profile workflow
-    # becomes the API path.
-    server.register("profile_import", profile_import, mode="sync")
+    server.register("profile_import", profile_import, mode="workflow")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")
     server.register("rescore_job", rescore_job, mode="workflow")
@@ -557,7 +366,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # Standalone employer-analysis trigger (D-10) — synchronous; runs the
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
-    server.register("refresh_compensation", refresh_compensation, mode="sync")
+    server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

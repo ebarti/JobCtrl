@@ -28,6 +28,7 @@ from jobhunter.apply.dashboard import get_recent_events
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
+from jobhunter.workflow_specs import StartedWorkflowResult
 
 
 def _insert_ready_job(
@@ -439,88 +440,39 @@ def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
-def test_single_job_tailor_rejects_blocked_candidate(tmp_path, monkeypatch):
+def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
     import jobhunter.config as config_module
-    import jobhunter.database as database_module
     import jobhunter.pipeline.runner as runner_module
 
     app_dir = Path(tmp_path) / "app"
-    resume_path = app_dir / "resume.txt"
     db_path = Path(tmp_path) / "jobs.db"
     app_dir.mkdir()
-    resume_path.write_text("Resume baseline.", encoding="utf-8")
 
     monkeypatch.setattr(config_module, "APP_DIR", app_dir)
     monkeypatch.setattr(config_module, "DB_PATH", db_path)
-    monkeypatch.setattr(config_module, "RESUME_PATH", resume_path)
-    monkeypatch.setattr(config_module, "TAILORED_DIR", app_dir / "tailored_resumes")
-    monkeypatch.setattr(config_module, "COVER_LETTER_DIR", app_dir / "cover_letters")
-    monkeypatch.setattr(config_module, "LOG_DIR", app_dir / "logs")
-    monkeypatch.setattr(config_module, "ENV_PATH", app_dir / ".env")
-    monkeypatch.setattr(database_module, "DB_PATH", db_path)
-
-    conn = init_db(db_path)
     url = "https://example.com/blocked"
-    _insert_single_job_tailor_candidate(conn, url=url)
-    _insert_blocked_score(conn, url, fit_score=10)
+    specs = []
 
-    class FakeProfileRepository:
-        def load_snapshot(self, tenant_id):
-            return object()
-
-    def fail_tailor(*args, **kwargs):
-        raise AssertionError("blocked score must not tailor")
-
-    def fail_cover_use_case(*args, **kwargs):
-        raise AssertionError("blocked score must not generate cover letters")
-
-    try:
-        monkeypatch.setattr(
-            "jobhunter.infrastructure.profile.get_profile_repository",
-            lambda: FakeProfileRepository(),
-        )
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor)
-        monkeypatch.setattr(
-            "jobhunter.scoring.cover_letter._build_use_case",
-            fail_cover_use_case,
+    def fake_start(spec):
+        specs.append(spec)
+        return StartedWorkflowResult(
+            run_id="run-single",
+            workflow_id="workflow-single",
+            first_execution_run_id="first-single",
+            result={"status": "succeeded", "stages_completed": ["enrich", "score", "tailor", "cover"]},
         )
 
-        result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
+    monkeypatch.setattr("jobhunter.workflow_specs.start_workflow_spec_and_wait_sync", fake_start)
 
-        assert result["tailor_status"] == "blocked_score_eligibility"
-        assert result["cover_status"] == "blocked_score_eligibility"
-        assert result["errors"] == [
-            "Score eligibility blocks tailoring: No sponsorship."
-        ]
-        row = conn.execute(
-            "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
-            (url,),
-        ).fetchone()
-        assert row["tailored_resume_path"] is None
-        assert row["cover_letter_path"] is None
-        stage_rows = conn.execute(
-            """
-            SELECT stage, state, error_code, blocked_by_json, next_action
-            FROM job_stage_states
-            WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
-            ORDER BY stage
-            """,
-            (url,),
-        ).fetchall()
-        assert {stage["stage"]: stage["state"] for stage in stage_rows} == {
-            "apply": "blocked",
-            "cover": "blocked",
-            "tailor": "blocked",
-        }
-        assert {stage["error_code"] for stage in stage_rows} == {
-            "SCORE_ELIGIBILITY_BLOCKED"
-        }
-        assert {stage["blocked_by_json"] for stage in stage_rows} == {'["score"]'}
-        assert {stage["next_action"] for stage in stage_rows} == {
-            "review score hard blockers"
-        }
-    finally:
-        close_connection(db_path)
+    result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
+
+    payload = specs[0].args[0]
+    assert payload.job_url == url
+    assert payload.stages == ["enrich", "score", "tailor", "cover"]
+    assert payload.expected_app_dir == str(app_dir)
+    assert payload.expected_db_path == str(db_path)
+    assert result["workflowId"] == "workflow-single"
+    assert result["stages_completed"] == ["enrich", "score", "tailor", "cover"]
 
 
 def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatch):

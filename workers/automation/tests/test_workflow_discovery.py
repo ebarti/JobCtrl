@@ -33,6 +33,7 @@ from jobhunter.discovery.workflow import (
     _activity_error_was_cancelled,
 )
 from jobhunter.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
+from jobhunter.llm import SpendBudgetStatus
 from jobhunter.pipeline import runner
 
 
@@ -101,6 +102,7 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
 
 def _discovery_activities():
     return [
+        _check_spend_budget,
         _record_workflow_started,
         _record_workflow_outcome,
         _plan_discovery_sources,
@@ -108,6 +110,18 @@ def _discovery_activities():
         _discovery_enrichment,
         _discovery_preparation_fanout,
     ]
+
+
+@activity.defn(name="check_spend_budget")
+async def _check_spend_budget(_payload) -> SpendBudgetStatus:
+    return SpendBudgetStatus(
+        day="2026-07-03",
+        input_tokens=0,
+        output_tokens=0,
+        estimated_usd=0.0,
+        daily_budget_usd=25.0,
+        exceeded=False,
+    )
 
 
 @activity.defn(name="record_workflow_started")

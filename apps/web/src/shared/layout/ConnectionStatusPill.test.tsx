@@ -33,6 +33,24 @@ describe("<ConnectionStatusPill>", () => {
     const pill = screen.getByText("live");
     expect(pill).toHaveAttribute("aria-live", "polite");
     expect(pill).toHaveAttribute("data-status", "open");
+    expect(await screen.findByText("LLM $0.12 / $25.00")).toHaveAttribute("data-status", "ok");
+  });
+
+  it("renders unlimited daily LLM budgets in the health line", async () => {
+    renderConnectionStatusPill({
+      health: {
+        ...sampleHealthResponse,
+        llmSpend: {
+          ...sampleHealthResponse.llmSpend,
+          dailyBudgetUsd: 0,
+          remainingUsd: null,
+          unlimited: true,
+          message: "LLM spend is $0.12 / unlimited today.",
+        },
+      },
+    });
+
+    expect(await screen.findByText("LLM $0.12 / unlimited")).toBeInTheDocument();
   });
 
   it("keeps worker health failures visible as an alert", async () => {

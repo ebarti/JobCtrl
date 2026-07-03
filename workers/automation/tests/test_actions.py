@@ -4,24 +4,32 @@ from typer.testing import CliRunner
 
 from jobhunter import actions, cli
 from jobhunter.actions import LocalActionRequest, run_local_action
-from jobhunter.apply import launcher
 from jobhunter.cli import app
 from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.domain.profile.ports import ProfileImportResult
+from jobhunter.workflow_specs import StartedWorkflowResult
+
+
+def _started(result: dict | None = None) -> StartedWorkflowResult:
+    return StartedWorkflowResult(
+        run_id="run-test",
+        workflow_id="workflow-test",
+        first_execution_run_id="first-test",
+        result=result or {"status": "succeeded"},
+    )
 
 
 def test_local_stage_action_records_events(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    calls = []
-
-    def fake_pipeline(**kwargs):
-        calls.append(kwargs)
-        return {"stages": [{"stage": "score", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+    specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started({"status": "succeeded", "stages_completed": ["score"]}),
+    )
 
     try:
         result = run_local_action(LocalActionRequest(stage="score", limit=3, workers=2))
@@ -29,9 +37,10 @@ def test_local_stage_action_records_events(tmp_path, monkeypatch):
 
         assert result.ok is True
         assert result.stage == "score"
-        assert calls[0]["stages"] == ["score"]
-        assert calls[0]["limit"] == 3
-        assert calls[0]["workers"] == 2
+        payload = specs[0].args[0]
+        assert payload.stages == ["score"]
+        assert payload.limit == 3
+        assert payload.workers == 2
         assert [(row["event_type"], row["stage"], row["level"]) for row in rows] == [
             ("ActionStarted", "score", "info"),
             ("ActionSucceeded", "score", "info"),
@@ -43,15 +52,15 @@ def test_local_stage_action_records_events(tmp_path, monkeypatch):
 def test_tailor_action_passes_tailoring_model_controls(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
-    calls = []
-
-    def fake_pipeline(**kwargs):
-        calls.append(kwargs)
-        return {"stages": [{"stage": "tailor", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+    specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started(),
+    )
 
     try:
         result = run_local_action(
@@ -64,9 +73,10 @@ def test_tailor_action_passes_tailoring_model_controls(tmp_path, monkeypatch):
         )
 
         assert result.ok is True
-        assert calls[0]["tailor_models"] == ("local:draft-a", "openai:draft-b")
-        assert calls[0]["tailor_judge_model"] == "gemini:judge-c"
-        assert calls[0]["tailor_judge_min_score"] == 0.9
+        payload = specs[0].args[0]
+        assert payload.tailor_models == ("local:draft-a", "openai:draft-b")
+        assert payload.tailor_judge_model == "gemini:judge-c"
+        assert payload.tailor_judge_min_score == 0.9
     finally:
         close_connection(db_path)
 
@@ -75,16 +85,13 @@ def test_tailor_action_fails_when_pipeline_reports_quality_gate_failure(tmp_path
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
 
-    def fake_pipeline(**_kwargs):
-        return {
-            "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.01}],
-            "errors": {"tailor": "failed"},
-            "elapsed": 0.01,
-        }
-
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda _spec: _started({"status": "failed", "errors": {"tailor": "failed"}}),
+    )
 
     try:
         result = run_local_action(LocalActionRequest(stage="tailor"))
@@ -106,12 +113,12 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
 
-    def broken_pipeline(**_kwargs):
+    def broken_start(_spec):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", broken_pipeline)
+    monkeypatch.setattr(actions, "start_workflow_spec_and_wait_sync", broken_start)
 
     try:
         result = run_local_action(LocalActionRequest(stage="tailor"))
@@ -130,13 +137,15 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
 def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
-
-    def should_not_run(**_kwargs):  # pragma: no cover - assertion guard
-        raise AssertionError("pipeline should not run")
+    specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", should_not_run)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started({"status": "succeeded", "dryRun": True}),
+    )
 
     try:
         result = run_local_action(
@@ -150,11 +159,12 @@ def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
             )
         )
         assert result.ok is True
-        assert result.status == "dry_run"
-        assert result.result["planned"]["stage"] == "enrich"
-        assert result.result["planned"]["rescore"] is True
-        assert result.result["planned"]["retailor"] is True
-        assert result.result["planned"]["import_profile"] is False
+        assert result.status == "succeeded"
+        payload = specs[0].args[0]
+        assert payload.stages == ["enrich"]
+        assert payload.dry_run is True
+        assert payload.rescore is True
+        assert payload.retailor is True
     finally:
         close_connection(db_path)
 
@@ -165,7 +175,11 @@ def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(launcher, "main", lambda **_kwargs: (0, 1))
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda _spec: _started({"status": "failed", "failed": 1}),
+    )
 
     try:
         result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job", limit=1))
@@ -180,22 +194,23 @@ def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
 def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
-    calls = []
-
-    def fake_apply(**kwargs):
-        calls.append(kwargs)
-        return (1, 0)
+    specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(launcher, "main", fake_apply)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started(),
+    )
 
     try:
         result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job"))
 
         assert result.ok is True
-        assert calls[0]["limit"] == 1
-        assert calls[0]["continuous"] is False
+        payload = specs[0].args[0]
+        assert payload.limit == 1
+        assert payload.continuous is False
     finally:
         close_connection(db_path)
 
@@ -203,15 +218,15 @@ def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
 def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
-    calls = []
-
-    def fake_apply(**kwargs):
-        calls.append(kwargs)
-        return (1, 0)
+    specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(launcher, "main", fake_apply)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started(),
+    )
 
     try:
         result = CliRunner().invoke(
@@ -228,8 +243,9 @@ def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatc
         )
 
         assert result.exit_code == 0
-        assert calls[0]["model"] == "sonnet"
-        assert calls[0]["headless"] is True
+        payload = specs[0].args[0]
+        assert payload.model == "sonnet"
+        assert payload.headless is True
     finally:
         close_connection(db_path)
 
@@ -250,34 +266,24 @@ def test_profile_import_action_expands_user_paths(tmp_path, monkeypatch):
     init_db(db_path)
     pdf_path = tmp_path / "resume.pdf"
     pdf_path.write_bytes(b"%PDF")
-
-    captured: dict[str, object] = {}
-
-    class FakeRepository:
-        def import_from_pdf(self, tenant_id, pdf_bytes, *, filename):
-            captured["tenant_id"] = tenant_id
-            captured["filename"] = filename
-            captured["bytes"] = len(pdf_bytes)
-            return ProfileImportResult(
-                profile={"filename": filename, "bytes": len(pdf_bytes)},
-                style={"font": "moderncv"},
-                source={"filename": filename, "pages": 1},
-            )
+    specs = []
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "get_profile_repository", lambda: FakeRepository())
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started({"status": "succeeded", "draft": {"source": "pdf"}}),
+    )
 
     try:
         result = run_local_action(LocalActionRequest(stage="profile_import", pdf_path="~/resume.pdf"))
 
         assert result.ok is True
-        assert captured["filename"] == "resume.pdf"
-        assert captured["bytes"] == 4
-        assert result.result["draft"]["profile"] == {"filename": "resume.pdf", "bytes": 4}
-        assert result.result["draft"]["style"] == {"font": "moderncv"}
-        assert result.result["draft"]["source"] == {"filename": "resume.pdf", "pages": 1}
+        payload = specs[0].args[0]
+        assert payload.pdf_path == str(pdf_path)
+        assert result.result["draft"] == {"source": "pdf"}
     finally:
         close_connection(db_path)
 
@@ -286,12 +292,13 @@ def test_action_cli_prints_json(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
 
-    def fake_pipeline(**_kwargs):
-        return {"stages": [{"stage": "cover", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
-
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda _spec: _started({"status": "succeeded", "stages_completed": ["cover"]}),
+    )
 
     try:
         result = CliRunner().invoke(app, ["action", "cover", "--limit", "1"])
@@ -303,24 +310,27 @@ def test_action_cli_prints_json(tmp_path, monkeypatch):
 
 
 def test_stage_cli_commands_accept_limits(monkeypatch):
-    calls = []
-
-    def fake_pipeline(**kwargs):
-        calls.append(kwargs)
-        stage = kwargs["stages"][0]
-        return {"stages": [{"stage": stage, "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+    specs = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
     monkeypatch.setattr("jobhunter.config.check_tier", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        cli,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started({"status": "succeeded"}),
+    )
 
     runner = CliRunner()
     for command in (["discover", "--limit", "1"], ["enrich", "--limit", "1"], ["run", "discover", "--limit", "1"]):
         result = runner.invoke(app, command)
         assert result.exit_code == 0
 
-    assert [call["stages"] for call in calls] == [["discover"], ["enrich"], ["discover"]]
-    assert [call["limit"] for call in calls] == [1, 1, 1]
+    assert [spec.workflow.__name__ for spec in specs] == [
+        "DiscoverWorkflow",
+        "JobPipelineWorkflow",
+        "DiscoverWorkflow",
+    ]
+    assert [spec.args[0].limit for spec in specs] == [1, 1, 1]
 
 
 def test_discover_cli_requires_tier2_guard(monkeypatch):
@@ -330,12 +340,12 @@ def test_discover_cli_requires_tier2_guard(monkeypatch):
         guard_calls.append((required, feature))
         raise SystemExit(1)
 
-    def should_not_run_pipeline(**_kwargs):
-        raise AssertionError("discover should be tier-gated before pipeline execution")
+    def should_not_start_workflow(*_args, **_kwargs):
+        raise AssertionError("discover should be tier-gated before workflow start")
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
     monkeypatch.setattr("jobhunter.config.check_tier", fake_check_tier)
-    monkeypatch.setattr(cli, "run_pipeline", should_not_run_pipeline)
+    monkeypatch.setattr(cli, "_run_workflow_spec_from_cli", should_not_start_workflow)
 
     result = CliRunner().invoke(app, ["discover", "--limit", "1"])
 
@@ -350,12 +360,12 @@ def test_run_discover_requires_tier2_guard(monkeypatch):
         guard_calls.append((required, feature))
         raise SystemExit(1)
 
-    def should_not_run_pipeline(**_kwargs):
-        raise AssertionError("run discover should be tier-gated before pipeline execution")
+    def should_not_start_workflow(*_args, **_kwargs):
+        raise AssertionError("run discover should be tier-gated before workflow start")
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
     monkeypatch.setattr("jobhunter.config.check_tier", fake_check_tier)
-    monkeypatch.setattr(cli, "run_pipeline", should_not_run_pipeline)
+    monkeypatch.setattr(cli, "_run_workflow_spec_from_cli", should_not_start_workflow)
 
     result = CliRunner().invoke(app, ["run", "discover", "--limit", "1"])
 

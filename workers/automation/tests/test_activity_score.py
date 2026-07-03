@@ -30,18 +30,13 @@ class _ScoreHarness:
 
 
 @pytest.mark.asyncio
-async def test_score_activity_invokes_run_pipeline_with_score_stage():
-    fake_pipeline_result = {
-        "stages": [{"stage": "score", "status": "ok", "elapsed": 0.3}],
-        "errors": {},
-        "elapsed": 0.3,
-    }
+async def test_score_activity_invokes_observed_score_core():
     queue = f"score-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=fake_pipeline_result,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=({"status": "ok"}, 0.3, "ok"),
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -57,10 +52,11 @@ async def test_score_activity_invokes_run_pipeline_with_score_stage():
                     task_queue=queue,
                 )
 
-    runner_mock.assert_called_once()
-    kwargs = runner_mock.call_args.kwargs
-    assert kwargs["stages"] == ["score"]
-    assert kwargs["limit"] == 10
-    assert kwargs["rescore"] is True
+    observed_mock.assert_called_once()
+    args, kwargs = observed_mock.call_args
+    assert args[0] == "score"
+    assert args[2]["limit"] == 10
+    assert args[2]["rescore"] is True
+    assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.3)

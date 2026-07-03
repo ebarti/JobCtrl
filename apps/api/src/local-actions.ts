@@ -30,7 +30,6 @@ import {
   type ActionRunResponse,
   type RpcMethod,
 } from "./contracts.js";
-import { ProfileSchema } from "./contracts.js";
 import {
   getDefaultJsonRpcDispatcher,
   type JsonRpcDispatcher,
@@ -70,10 +69,9 @@ export interface ProfileImportInput {
 }
 
 export interface ProfileImportResult {
-  /** Draft profile data. Validated server-side against ``ProfileSchema`` in
-   * ``extractProfileImportDraft`` before being placed on this field; tests
-   * may inject partial drafts through the ``ProfileImporter`` injection
-   * point, so the static type stays ``unknown`` to keep that seam open. */
+  /** Draft profile data. Tests may inject partial drafts through the
+   * ``ProfileImporter`` injection point, so the static type stays ``unknown``
+   * to keep that seam open. */
   profile?: unknown;
   style?: unknown;
   templateText?: string;
@@ -183,48 +181,47 @@ export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
 };
 
 export const defaultProfileImporter: ProfileImporter = async (input, context) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-profile-import-"));
-  const pdfPath = path.join(tempDir, sanitizeFilename(input.filename));
-  try {
-    fs.writeFileSync(pdfPath, input.pdfBytes);
-    const command: ActionCommandPayload = {
-      action: "profile_import",
-      jobKey: "profile",
-    };
-    const actionId = `act-${randomUUID()}`;
-    const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
-    const response = await dispatcher.call("profile_import", {
-      tenantId: "local",
-      pdfPath,
-      importProfile: input.importProfile,
-      importStyle: input.importStyle,
-    });
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-    const draft = extractProfileImportDraft(response.result);
-    if (!input.importProfile) {
-      delete draft.profile;
-    }
-    if (!input.importStyle) {
-      delete draft.style;
-    }
-    return {
-      ...draft,
-      action: {
-        ok: true,
-        runId: actionId,
-        actionId,
-        action: command.action,
-        status: "succeeded",
-        jobKey: command.jobKey,
-        command,
-        result: response.result,
-      },
-    };
-  } finally {
-    fs.rmSync(tempDir, { force: true, recursive: true });
+  const importDir = path.join(context.appDir, "profile-imports");
+  fs.mkdirSync(importDir, { recursive: true });
+  const pdfPath = path.join(importDir, `${randomUUID()}-${sanitizeFilename(input.filename)}`);
+  fs.writeFileSync(pdfPath, input.pdfBytes);
+  const command: ActionCommandPayload = {
+    action: "profile_import",
+    jobKey: "profile",
+  };
+  const actionId = `act-${randomUUID()}`;
+  const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
+  const response = await dispatcher.call("profile_import", {
+    tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
+    pdfPath,
+    importProfile: input.importProfile,
+    importStyle: input.importStyle,
+  });
+  if (response.error) {
+    throw new Error(response.error.message);
   }
+  const workflowStart = extractWorkflowStart(response.result);
+  const runId = workflowStart.runId ?? workflowStart.workflowId ?? actionId;
+  const workflowId = workflowStart.workflowId ?? runId;
+  const action: ActionRunResponse = {
+    ok: true,
+    runId,
+    workflowId,
+    actionId,
+    action: command.action,
+    status: "queued",
+    jobKey: command.jobKey,
+    command,
+    result: response.result,
+  };
+  if (workflowStart.firstExecutionRunId) {
+    action.firstExecutionRunId = workflowStart.firstExecutionRunId;
+  }
+  return {
+    action,
+  };
 };
 
 export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
@@ -695,40 +692,6 @@ HtmlResumePdfAdapter().render_resume_to_pdf(
     created_at=datetime.now(timezone.utc).isoformat(),
 )
 `;
-
-function extractProfileImportDraft(result: unknown): Omit<ProfileImportResult, "action"> {
-  // The JSON-RPC ``profile_import`` handler returns the
-  // ``LocalActionResult`` dict; the draft lives at ``result.draft``.
-  const record = isRecord(result) ? result : {};
-  const draftRoot = isRecord(record.result) ? record.result : record;
-  const draft =
-    isRecord(draftRoot) && isRecord(draftRoot.draft) ? draftRoot.draft : draftRoot;
-  const response: Omit<ProfileImportResult, "action"> = {};
-  if (isRecord(draft) && "profile" in draft) {
-    // Drafts often miss optional sections (the importer is best-effort) —
-    // surface a typed profile when validation succeeds, drop it otherwise so
-    // callers don't get back a half-shaped object that fails downstream.
-    const parsed = ProfileSchema.safeParse(draft.profile);
-    if (parsed.success) {
-      response.profile = parsed.data;
-    }
-  }
-  if (isRecord(draft) && "style" in draft) {
-    response.style = draft.style;
-  }
-  if (
-    isRecord(draft) &&
-    "latex_template" in draft &&
-    isRecord(draft.latex_template) &&
-    typeof draft.latex_template.text === "string"
-  ) {
-    response.templateText = draft.latex_template.text;
-  }
-  if (isRecord(draft) && "source" in draft) {
-    response.source = draft.source;
-  }
-  return response;
-}
 
 function sanitizeFilename(filename: string): string {
   const base = path.basename(filename).replace(/[^A-Za-z0-9._-]/g, "_");

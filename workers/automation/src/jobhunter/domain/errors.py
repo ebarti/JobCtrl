@@ -39,6 +39,11 @@ class LlmTransientError(JobHunterError):
     code = "llm_transient"
 
 
+class BudgetExceededError(JobHunterError):
+    retryable = False
+    code = "budget_exceeded"
+
+
 class SourceUnavailableError(JobHunterError):
     code = "source_unavailable"
 
@@ -57,6 +62,7 @@ def to_application_error(exc: Exception) -> ApplicationError:
 __all__ = [
     "AuthenticationError",
     "BrowserTransientError",
+    "BudgetExceededError",
     "ConfigurationError",
     "JobHunterError",
     "LlmTransientError",

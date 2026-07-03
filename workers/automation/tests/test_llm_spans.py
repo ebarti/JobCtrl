@@ -37,6 +37,28 @@ def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
     assert attrs["gen_ai.usage.output_tokens"] == 2
 
 
+def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter):
+    from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+
+    calls: list[dict] = []
+
+    def fake_record_llm_spend(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("jobhunter.llm.record_llm_spend", fake_record_llm_spend)
+
+    with llm_generation_span(model="gemini-3.5-flash", messages=[], params={}) as record:
+        record("hello", input_tokens=5, output_tokens=2)
+
+    assert calls == [
+        {
+            "input_tokens": 5,
+            "output_tokens": 2,
+            "model": "gemini-3.5-flash",
+        }
+    ]
+
+
 def test_llm_generation_span_handles_unknown_tokens(in_memory_exporter):
     from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 

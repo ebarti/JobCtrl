@@ -56,12 +56,12 @@ class ScoreJobActivityOutput:
 
 @activity.defn(name="score")
 async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
-    """Run the scoring stage via ``run_pipeline``."""
+    """Run the scoring stage."""
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
+    from jobhunter.pipeline.runner import _run_score, _run_stage_observed
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -102,38 +102,59 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        def _do() -> dict[str, Any]:
-            return run_pipeline(
-                stages=["score"],
-                workers=payload.workers,
-                limit=payload.limit,
-                dry_run=payload.dry_run,
-                rescore=payload.rescore,
-                llm_model=payload.llm_model,
-                workflow_id=payload.workflow_id,
-                cancel_event=cancel_event,
+        if payload.dry_run:
+            return ScoreActivityOutput(
+                status="ok",
+                elapsed=0.0,
+                errors={},
+                stages=[
+                    {
+                        "stage": "score",
+                        "status": "ok",
+                        "elapsed": 0.0,
+                        "dry_run": True,
+                    }
+                ],
             )
 
         result = await run_blocking_with_heartbeat(
-            _do,
+            lambda: _run_stage_observed(
+                "score",
+                _run_score,
+                {
+                    "workers": payload.workers,
+                    "limit": payload.limit,
+                    "rescore": payload.rescore,
+                    "llm_model": payload.llm_model,
+                    "cancel_event": cancel_event,
+                },
+                mode="workflow",
+                pass_number=1,
+            ),
             starting_message="score starting",
             progress_message="score still running",
             on_cancel=cancel_event.set,
             activity_name="score",
         )
-        stages = list(result.get("stages") or [])
-        errors = dict(result.get("errors") or {})
-        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        stage_result, elapsed, status = result
+        errors: dict[str, str] = {}
+        if status not in _SUCCESS_STATUSES:
+            errors["score"] = str(
+                stage_result.get("error")
+                or stage_result.get("error_message")
+                or status
+            )
+        stages = [{"stage": "score", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
-            "elapsed": float(result.get("elapsed") or 0.0),
+            "elapsed": float(elapsed),
             "errors": errors,
             "stages": stages,
         }
         _raise_on_failure("score", activity_result, LlmTransientError)
         return ScoreActivityOutput(
             status=status,
-            elapsed=float(result.get("elapsed") or 0.0),
+            elapsed=float(elapsed),
             errors=errors,
             stages=stages,
         )

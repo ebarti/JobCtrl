@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
         emit_workflow_outcome,
         emit_workflow_started,
     )
+    from jobhunter.llm import SpendBudgetInput, check_spend_budget
     from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -57,7 +58,7 @@ def discover_workflow_id(tenant_id: str) -> str:
     return f"discover-{tenant_id}"
 
 
-_NON_RETRYABLE_ERROR_TYPES = ["configuration", "authentication", "missing_input"]
+_NON_RETRYABLE_ERROR_TYPES = ["configuration", "authentication", "missing_input", "budget_exceeded"]
 _SOURCE_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=5),
     backoff_coefficient=2.0,
@@ -93,6 +94,7 @@ class DiscoverWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
+            await _check_spend(payload)
             result = await self._execute(payload)
         except CancelledError:
             await emit_workflow_outcome(
@@ -112,7 +114,7 @@ class DiscoverWorkflow:
                 workflow_type="DiscoverWorkflow",
                 status="failed",
                 started_at=started_at,
-                error_code="workflow_error",
+                error_code=_exception_error_code(exc) or "workflow_error",
                 error_message=str(exc),
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
@@ -239,6 +241,15 @@ async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
     return result.started + result.queued
 
 
+async def _check_spend(payload: DiscoverWorkflowInput) -> None:
+    await workflow.execute_activity(
+        check_spend_budget,
+        SpendBudgetInput(tenant_id=payload.tenant_id),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+
 def _input_summary(payload: DiscoverWorkflowInput) -> dict[str, Any]:
     return {
         "limit": payload.limit,
@@ -257,3 +268,18 @@ def _activity_error_was_cancelled(exc: ActivityError) -> bool:
         nested = getattr(cause, "cause", None) or getattr(cause, "__cause__", None)
         cause = nested if isinstance(nested, BaseException) else None
     return False
+
+
+def _activity_error_code(exc: ActivityError) -> str | None:
+    cause = exc.cause
+    if isinstance(cause, ApplicationError):
+        return cause.type or None
+    return None
+
+
+def _exception_error_code(exc: Exception) -> str | None:
+    if isinstance(exc, ActivityError):
+        return _activity_error_code(exc)
+    if isinstance(exc, ApplicationError):
+        return exc.type or None
+    return None

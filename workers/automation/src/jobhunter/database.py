@@ -182,6 +182,14 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn = get_connection(path)
     _ensure_schema_version(conn)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS llm_spend (
+            day           TEXT PRIMARY KEY,
+            input_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            estimated_usd REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             -- Discovery stage (smart_extract / job_search)
             url                   TEXT PRIMARY KEY,

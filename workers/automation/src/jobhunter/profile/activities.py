@@ -1,8 +1,4 @@
-"""Temporal activity for the profile-import action.
-
-Wraps ``actions.run_local_action`` because ``profile_import`` already lives
-behind that single entry point — there is no separate stage runner.
-"""
+"""Temporal activity for the profile-import action."""
 
 from __future__ import annotations
 
@@ -11,7 +7,7 @@ from typing import Any
 
 from temporalio import activity
 
-from jobhunter.domain.errors import JobHunterError, MissingInputError, to_application_error
+from jobhunter.domain.errors import JobHunterError, to_application_error
 
 
 @dataclass(frozen=True)
@@ -20,6 +16,8 @@ class ProfileImportActivityInput:
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     pdf_path: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     import_profile: bool = True
     import_style: bool = True
 
@@ -36,33 +34,33 @@ async def profile_import_activity(
     payload: ProfileImportActivityInput,
 ) -> ProfileImportActivityOutput:
     """Import a profile draft from an uploaded resume PDF."""
-    from jobhunter.actions import LocalActionRequest, run_local_action
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
+    from jobhunter.profile.importer import import_profile_pdf
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _do() -> Any:
-        return run_local_action(
-            LocalActionRequest(
-                stage="profile_import",
-                pdf_path=payload.pdf_path,
-                import_profile=payload.import_profile,
-                import_style=payload.import_style,
-            )
+        return import_profile_pdf(
+            payload.pdf_path,
+            import_profile=payload.import_profile,
+            import_style=payload.import_style,
         )
 
     try:
-        result = await run_blocking_with_heartbeat(
+        draft = await run_blocking_with_heartbeat(
             _do,
             starting_message="profile_import starting",
             progress_message="profile_import still running",
             activity_name="profile_import",
         )
-        if not result.ok:
-            raise MissingInputError(result.error or result.status)
-        draft = dict(result.result.get("draft") or {})
         return ProfileImportActivityOutput(
-            status=result.status,
+            status="succeeded",
             draft=draft,
             error=None,
         )

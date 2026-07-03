@@ -33,18 +33,13 @@ class _TailorHarness:
 
 
 @pytest.mark.asyncio
-async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
-    fake_pipeline_result = {
-        "stages": [{"stage": "tailor", "status": "ok", "elapsed": 0.4}],
-        "errors": {},
-        "elapsed": 0.4,
-    }
+async def test_tailor_activity_invokes_observed_tailor_core():
     queue = f"tailor-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=fake_pipeline_result,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=({"status": "ok"}, 0.4, "ok"),
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -69,31 +64,27 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
                     task_queue=queue,
                 )
 
-    runner_mock.assert_called_once()
-    kwargs = runner_mock.call_args.kwargs
-    assert kwargs["stages"] == ["tailor"]
-    assert kwargs["min_score"] == 8
-    assert kwargs["limit"] == 3
-    assert kwargs["retailor"] is True
-    assert kwargs["tailor_models"] == ("local:draft-a", "openai:draft-b")
-    assert kwargs["tailor_judge_model"] == "gemini:judge-c"
-    assert kwargs["tailor_judge_min_score"] == 0.9
+    observed_mock.assert_called_once()
+    args, kwargs = observed_mock.call_args
+    assert args[0] == "tailor"
+    assert args[2]["min_score"] == 8
+    assert args[2]["limit"] == 3
+    assert args[2]["retailor"] is True
+    assert args[2]["tailor_models"] == ("local:draft-a", "openai:draft-b")
+    assert args[2]["tailor_judge_model"] == "gemini:judge-c"
+    assert args[2]["tailor_judge_min_score"] == 0.9
+    assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.4)
 
 
 @pytest.mark.asyncio
-async def test_tailor_activity_raises_pipeline_failure_status():
-    fake_pipeline_result = {
-        "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.4}],
-        "errors": {"tailor": "failed"},
-        "elapsed": 0.4,
-    }
+async def test_tailor_activity_raises_observed_failure_status():
     queue = f"tailor-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=fake_pipeline_result,
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=({"status": "failed", "error": "failed"}, 0.4, "failed"),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
