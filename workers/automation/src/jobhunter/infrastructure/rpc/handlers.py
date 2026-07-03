@@ -24,6 +24,7 @@ target §6.5).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -496,14 +497,27 @@ def profile_import(params: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _apply_workflow_id(job_url: str) -> str:
+    """Deterministic ``apply-{jobKey}`` id so a double-click apply for one job
+    attaches to the running workflow (USE_EXISTING) instead of double-submitting.
+
+    P0 keys off a stable hash of the job URL at the dispatch surface only — no
+    apply-internals change. P2 owns the full at-most-once apply semantics and
+    may refine this key.
+    """
+    digest = hashlib.sha256(job_url.strip().encode("utf-8")).hexdigest()[:16]
+    return f"apply-{digest}"
+
+
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
     tenant_id = _tenant_id(params)
+    job_url = params.get("jobUrl")
     payload = ApplyWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
-        job_url=params.get("jobUrl"),
+        job_url=job_url,
         dry_run=bool(params.get("dryRun", False)),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -512,7 +526,16 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
         limit=int(params.get("limit", 1)),
         continuous=bool(params.get("continuous", False)),
     )
-    return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,))
+    # Single-job applies get a deterministic id for real no-overlap; batch /
+    # continuous applies (no jobUrl) stay on ``run-{uuid}`` until P2 gives the
+    # apply path its own overlap semantics. TODO(P2): apply-{jobKey} for the
+    # batch/continuous dispatch surface.
+    workflow_id = _apply_workflow_id(str(job_url)) if job_url else None
+    return WorkflowStartSpec(
+        workflow=ApplyWorkflow,
+        args=(payload,),
+        workflow_id=workflow_id,
+    )
 
 
 def make_cancel_run(canceler: WorkflowCanceler):

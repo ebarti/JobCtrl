@@ -110,3 +110,23 @@ def test_apply_handler_continuous_defaults_to_false() -> None:
     (payload,) = spec.args
     assert isinstance(payload, ApplyWorkflowInput)
     assert payload.continuous is False
+
+
+def test_apply_handler_sets_deterministic_workflow_id_for_single_job() -> None:
+    """A single-job apply gets a stable ``apply-{jobKey}`` id so a double-click
+    attaches to the running run (USE_EXISTING) instead of double-submitting."""
+    spec_a = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/1"})
+    spec_b = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/1"})
+    spec_c = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/2"})
+
+    assert spec_a.workflow_id is not None
+    assert spec_a.workflow_id.startswith("apply-")
+    # Deterministic: same job URL ⇒ same id; different URL ⇒ different id.
+    assert spec_a.workflow_id == spec_b.workflow_id
+    assert spec_a.workflow_id != spec_c.workflow_id
+
+
+def test_apply_handler_batch_keeps_uuid_id() -> None:
+    """Batch / continuous apply (no jobUrl) stays on the starter's uuid id."""
+    spec = apply_action({"tenantId": "local", "continuous": True})
+    assert spec.workflow_id is None
