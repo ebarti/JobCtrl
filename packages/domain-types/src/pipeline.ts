@@ -80,6 +80,7 @@ export const STAGE_STATE_KINDS = [
   "Blocked",
   "Skipped",
   "Exhausted",
+  "NeedsVerification",
   "Stale",
   "Canceled",
 ] as const;
@@ -96,6 +97,7 @@ export type SerializedStageState =
   | "blocked"
   | "skipped"
   | "exhausted"
+  | "needs_verification"
   | "stale"
   | "canceled";
 
@@ -155,6 +157,12 @@ export interface Exhausted {
   readonly nextAction?: string | undefined;
 }
 
+export interface NeedsVerification {
+  readonly kind: "NeedsVerification";
+  readonly reason: string;
+  readonly nextAction?: string | undefined;
+}
+
 export interface Stale {
   readonly kind: "Stale";
   readonly reason: string;
@@ -176,17 +184,24 @@ export type StageState =
   | Blocked
   | Skipped
   | Exhausted
+  | NeedsVerification
   | Stale
   | Canceled;
 
 /** Convert a domain StageState kind to its lowercase serialized form. */
 export function serializeStageState(state: StageState): SerializedStageState {
+  if (state.kind === "NeedsVerification") {
+    return "needs_verification";
+  }
   return state.kind.toLowerCase() as SerializedStageState;
 }
 
 /** Convert a lowercase string to a StageState kind. Throws on invalid input. */
 export function deserializeStageStateKind(value: string): StageStateKind {
   const lower = value.toLowerCase();
+  if (lower === "needs_verification") {
+    return "NeedsVerification";
+  }
   const found = STAGE_STATE_KINDS.find((k) => k.toLowerCase() === lower);
   if (found === undefined) {
     throw new Error(`Invalid serialized stage state: "${value}"`);

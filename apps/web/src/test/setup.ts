@@ -30,6 +30,45 @@ afterAll(() => {
   server.close();
 });
 
+function createMemoryStorage(): Storage {
+  const items = new Map<string, string>();
+  return {
+    get length() {
+      return items.size;
+    },
+    clear() {
+      items.clear();
+    },
+    getItem(key: string) {
+      return items.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(items.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      items.delete(key);
+    },
+    setItem(key: string, value: string) {
+      items.set(key, value);
+    },
+  };
+}
+
+function hasWindowLocalStorage(): boolean {
+  try {
+    return typeof window.localStorage !== "undefined";
+  } catch {
+    return false;
+  }
+}
+
+if (typeof window !== "undefined" && !hasWindowLocalStorage()) {
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
+}
+
 if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   Object.defineProperty(window, "matchMedia", {
     writable: true,

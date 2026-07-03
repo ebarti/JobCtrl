@@ -21,6 +21,7 @@ dependencies = [
     "typer>=0.9.0",
     "rich>=13.0",
     "httpx>=0.24",
+    "websocket-client>=1.8",
     "beautifulsoup4>=4.12",
     "playwright>=1.40",
     "python-dotenv>=1.0",

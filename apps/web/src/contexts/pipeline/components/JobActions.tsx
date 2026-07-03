@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { Stage } from "@jobhunter/contracts";
+import { Link } from "@tanstack/react-router";
 
 import { ApplyButton } from "../../apply/components/ApplyButton.js";
 import { CancelApplyButton } from "../../apply/components/CancelApplyButton.js";
@@ -17,6 +18,7 @@ export interface JobActionsProps {
   currentStage: Stage;
   canRetryStage?: boolean;
   canRetailor?: boolean;
+  applyApprovalRequired?: boolean;
 }
 
 export function JobActions({
@@ -24,6 +26,7 @@ export function JobActions({
   currentStage,
   canRetryStage = false,
   canRetailor = false,
+  applyApprovalRequired = true,
 }: JobActionsProps): JSX.Element {
   return (
     <div className="action-panel" role="toolbar" aria-label="Job actions">
@@ -39,7 +42,13 @@ export function JobActions({
       <GenerateMaterialsButton jobId={jobId} />
       {canRetailor ? <RetailorJobButton jobId={jobId} /> : null}
       <DryRunButton jobId={jobId} />
-      <ApplyButton jobId={jobId} />
+      {applyApprovalRequired ? (
+        <Link className="tab on" search={{ jobKey: jobId }} to="/apply-review">
+          apply review
+        </Link>
+      ) : (
+        <ApplyButton jobId={jobId} />
+      )}
       <CancelApplyButton jobId={jobId} />
       <MarkAppliedButton jobId={jobId} />
       <MarkSkippedButton jobId={jobId} />

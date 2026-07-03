@@ -316,6 +316,33 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("surfaces needs-verification apply rows in the review queue", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'needs_verification',
+             error_code = 'APPLY_NEEDS_VERIFICATION',
+             error_message = 'Submit intent was recorded but no terminal result exists.'
+       WHERE job_url = ?
+         AND stage = 'apply'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "apply",
+      currentState: "needs_verification",
+      blockers: ["Submit intent was recorded but no terminal result exists."],
+    });
+
+    await app.close();
+  });
+
   it("repairs stale apply material blockers before listing the review queue", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
@@ -1010,6 +1037,17 @@ describe("application feedback API", () => {
       },
     });
     expect(actionDispatcher).not.toHaveBeenCalled();
+    const db = new Database(options.dbPath);
+    try {
+      const row = db
+        .prepare(
+          "SELECT decision FROM application_review_decisions WHERE job_key = ? ORDER BY decided_at DESC LIMIT 1",
+        )
+        .get(READY_JOB) as { decision?: string } | undefined;
+      expect(row?.decision).toBe("approve_submit");
+    } finally {
+      db.close();
+    }
 
     const afterApprove = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
     expect(queueItem(afterApprove.json(), READY_JOB)).toMatchObject({

@@ -1079,6 +1079,7 @@ export const sampleSettingsResponse: SettingsResponse = {
     locationFilter: "Remote",
     minFitScore: 7,
     autoApply: false,
+    applyApprovalRequired: true,
     applyConcurrency: 2,
     scoreCriteria: "Platform reliability and team leadership.",
     targetCriteria: "Director-plus infrastructure roles.",

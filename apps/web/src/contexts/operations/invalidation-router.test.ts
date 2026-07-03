@@ -258,6 +258,14 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ApplyRunEventRecorded: [],
+  ApplySubmitIntended: [
+    applyRunsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   ApplicationEmailFeedbackIngested: [
     outcomesKeys.lists(LOCAL_TENANT),
     outcomesKeys.detail(LOCAL_TENANT, JOB_ID),

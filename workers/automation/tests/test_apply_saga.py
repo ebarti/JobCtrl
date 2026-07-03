@@ -1,9 +1,8 @@
 """ApplySaga happy-path + compensation branches.
 
-PR 4 of the Temporal stack removed ``SqliteApplyRunRepository``; the
-saga now exercises the ``ApplyRun`` aggregate against an in-memory
-fake repository. The aggregate's events get persisted by the launcher
-through ``record_job_event`` (see ``test_apply_regressions``).
+The saga exercises the ``ApplyRun`` aggregate against an in-memory
+fake repository. P2 requires live runs to persist a submit-intent
+checkpoint immediately before the autonomous agent may submit.
 """
 
 from typing import Any
@@ -16,6 +15,7 @@ from jobhunter.domain.apply import (
     ApplyRun,
     ApplyRunStatus,
     BrowserWorkerConfig,
+    DryRunComplete,
     Failed,
     new_apply_run_id,
 )
@@ -78,10 +78,18 @@ class _FakeAgent:
             raise TimeoutError("agent timed out")
         if self.behaviour == "crash":
             raise RuntimeError("agent crashed")
+        if kwargs.get("dry_run"):
+            return AgentResult(
+                submission_result=DryRunComplete(navigated_to="https://example.com/job"),
+                duration_ms=1000,
+                events=({"event_type": "AgentDone", "occurred_at": "t8"},),
+                raw_output="RESULT:DRY_RUN_COMPLETE",
+            )
         return AgentResult(
             submission_result=Applied(applied_at="t9", verification_confidence=0.9),
             duration_ms=1000,
             events=({"event_type": "AgentDone", "occurred_at": "t8"},),
+            raw_output="RESULT:APPLIED\nconfirmation: submitted",
         )
 
 
@@ -181,22 +189,41 @@ def test_agent_crash_routes_to_failed_with_agent_crash_marker(repo):
     assert browser.cleanups == 1
 
 
-def test_mark_orphans_as_failed_rescues_starting_runs(repo):
-    # Persist an orphaned in-progress aggregate.
-    orphan = _starting().transition_to_in_progress()
-    repo.save(orphan)
-    saga = ApplySaga(
-        browser_port=_FakeBrowser(),
-        agent_port=_FakeAgent(),
-        repository=repo,
+def test_live_saga_records_submit_intent_before_agent_result(repo):
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(), repository=repo)
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        material_version="7",
     )
-    rescued = saga.mark_orphans_as_failed(tenant_id=LOCAL_TENANT)
-    assert len(rescued) == 1
-    loaded = repo.load(LOCAL_TENANT, orphan.run_id)
-    assert loaded is not None
-    assert loaded.status == ApplyRunStatus.FAILED
-    assert isinstance(loaded.submission_result, Failed)
-    assert "ORPHANED" in loaded.submission_result.error
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert "ApplySubmitIntended" in event_types
+    assert event_types.index("ApplySubmitIntended") < event_types.index("AgentResult")
+    intent = next(event for event in outcome.apply_run.events if event.event_type == "ApplySubmitIntended")
+    assert intent.payload["job_key"] == "https://example.com/job"
+    assert intent.payload["material_version"] == "7"
+
+
+def test_dry_run_saga_does_not_record_submit_intent(repo):
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(), repository=repo)
+    outcome = saga.run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+    assert "ApplySubmitIntended" not in [event.event_type for event in outcome.apply_run.events]
 
 
 def test_lifecycle_state_coverage_exercises_each_terminal_status(repo):

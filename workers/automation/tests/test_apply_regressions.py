@@ -12,18 +12,19 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections import Counter
 from pathlib import Path
-from unittest.mock import patch
 
 from jobhunter.apply import launcher as launcher_module
 from jobhunter.apply.launcher import (
     _kill_claude_processes_for_interrupt,
-    _rescue_orphaned_running_apply,
     acquire_job,
     mark_result,
+    recover_ambiguous_running_apply,
     release_lock,
     worker_loop,
 )
+from jobhunter.apply.dashboard import get_recent_events
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
@@ -121,6 +122,25 @@ def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> 
     conn.commit()
 
 
+def _insert_review_decision(
+    conn: sqlite3.Connection,
+    *,
+    job_key: str = "https://example.com/job",
+    decision: str = "approve_submit",
+    decided_at: str = "2026-01-01T00:00:00+00:00",
+    decision_id: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO application_review_decisions (
+            tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at
+        ) VALUES ('local', ?, ?, ?, 'test', 'pytest', ?)
+        """,
+        (decision_id or f"decision-{decision}-{decided_at}", job_key, decision, decided_at),
+    )
+    conn.commit()
+
+
 def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
     """The lock now lives on ``job_stage_states.apply.state == 'running'``.
     Legacy ``jobs.apply_status`` stays NULL."""
@@ -132,7 +152,11 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        job = acquire_job(target_url="https://example.com/job", worker_id=1)
+        job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=1,
+            approval_required=False,
+        )
         assert job is not None
         assert job["url"] == "https://example.com/job"
         # Legacy column stays NULL on the new path.
@@ -164,6 +188,104 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
+def test_application_review_decisions_table_exists_on_fresh_db(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'application_review_decisions'"
+        ).fetchone()
+        assert row is not None
+    finally:
+        close_connection(db_path)
+
+
+def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        prior_event_count = len(get_recent_events())
+        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert row is None or row["state"] == "pending"
+        assert any(
+            "Awaiting apply approval" in event
+            for event in get_recent_events()[prior_event_count:]
+        )
+    finally:
+        close_connection(db_path)
+
+
+def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=1,
+            approval_required=False,
+        )
+        assert job is not None
+        set_stage_state(conn, job["url"], "apply", "pending", validate_transition=False)
+        conn.commit()
+
+        dry_job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=1,
+            run_ctx={"dry_run": True},
+            approval_required=True,
+        )
+        assert dry_job is not None
+    finally:
+        close_connection(db_path)
+
+
+def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _insert_review_decision(
+        conn,
+        decision="approve_submit",
+        decided_at="2026-01-01T00:00:00+00:00",
+        decision_id="decision-old-approve",
+    )
+    _insert_review_decision(
+        conn,
+        decision="decline",
+        decided_at="2026-01-02T00:00:00+00:00",
+        decision_id="decision-new-decline",
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
+        _insert_review_decision(
+            conn,
+            decision="approve_submit",
+            decided_at="2026-01-03T00:00:00+00:00",
+            decision_id="decision-new-approve",
+        )
+        assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
+    finally:
+        close_connection(db_path)
+
+
 def test_acquire_job_accepts_posting_url_when_direct_apply_url_missing(tmp_path, monkeypatch):
     """The agent can start from the posting URL and click through to Apply."""
     db_path = Path(tmp_path) / "jobs.db"
@@ -178,7 +300,7 @@ def test_acquire_job_accepts_posting_url_when_direct_apply_url_missing(tmp_path,
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        job = acquire_job(worker_id=1)
+        job = acquire_job(worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == "https://example.com/posting-only"
         assert job["application_url"] is None
@@ -271,7 +393,7 @@ def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatc
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        job = acquire_job(min_score=7, worker_id=1)
+        job = acquire_job(min_score=7, worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == "https://example.com/allowed"
     finally:
@@ -288,8 +410,12 @@ def test_acquire_job_excludes_closed_candidates(tmp_path, monkeypatch):
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        assert acquire_job(min_score=7, worker_id=1) is None
-        assert acquire_job(target_url="https://example.com/closed", worker_id=1) is None
+        assert acquire_job(min_score=7, worker_id=1, approval_required=False) is None
+        assert acquire_job(
+            target_url="https://example.com/closed",
+            worker_id=1,
+            approval_required=False,
+        ) is None
     finally:
         close_connection(db_path)
 
@@ -304,7 +430,11 @@ def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        assert acquire_job(target_url="https://example.com/blocked", worker_id=1) is None
+        assert acquire_job(
+            target_url="https://example.com/blocked",
+            worker_id=1,
+            approval_required=False,
+        ) is None
     finally:
         close_connection(db_path)
 
@@ -438,7 +568,11 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        job = acquire_job(target_url="https://example.com/job", worker_id=1)
+        job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=1,
+            approval_required=False,
+        )
         assert job is not None
         assert job["apply_status"] == "failed"
         assert job["apply_attempts"] == 1
@@ -493,7 +627,7 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
-        job = acquire_job(target_url=url, worker_id=1)
+        job = acquire_job(target_url=url, worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == url
         assert job["application_url"] == "https://example.com/apply-new"
@@ -572,7 +706,10 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         )
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job", worker_id=2, run_ctx=run_ctx
+            target_url="https://example.com/job",
+            worker_id=2,
+            run_ctx=run_ctx,
+            approval_required=False,
         )
         assert job is not None
         # Sanity: the lock acquired -> Running.
@@ -617,11 +754,8 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         close_connection(db_path)
 
 
-def test_release_lock_releases_running_row_back_to_pending(tmp_path, monkeypatch):
-    """Reviewer-reported regression (PR 37 High #2): ``release_lock``
-    used to raise ``ValueError: Invalid state transition for apply:
-    running -> pending`` because Running -> Pending is not in §8.5.
-    """
+def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
+    """P2: cleanup logging must not blindly requeue an ambiguous live apply."""
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_ready_job(conn)
@@ -632,7 +766,10 @@ def test_release_lock_releases_running_row_back_to_pending(tmp_path, monkeypatch
         )
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job", worker_id=3, run_ctx=run_ctx
+            target_url="https://example.com/job",
+            worker_id=3,
+            run_ctx=run_ctx,
+            approval_required=False,
         )
         assert job is not None
         before = conn.execute(
@@ -642,7 +779,6 @@ def test_release_lock_releases_running_row_back_to_pending(tmp_path, monkeypatch
         ).fetchone()
         assert before["state"] == "running"
 
-        # Used to raise ValueError; now bypasses validation.
         release_lock(job["url"], run_ctx=run_ctx)
 
         after = conn.execute(
@@ -650,20 +786,13 @@ def test_release_lock_releases_running_row_back_to_pending(tmp_path, monkeypatch
             "WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
-        assert after["state"] == "pending"
+        assert after["state"] == "running"
     finally:
         close_connection(db_path)
 
 
-def test_orphan_rescue_keeps_original_run_id(tmp_path, monkeypatch):
-    """Reviewer-reported regression (PR 37 Medium #1): the orphan
-    rescue path used to mint a fresh ``run_id`` via ``new_apply_run_id()``
-    and write the terminal ``ApplicationFailed`` event under it,
-    leaving the ORIGINAL ``ApplyRunStarted`` row stuck in
-    ``status='starting'`` forever.  ``release_lock`` now looks up the
-    prior ``ApplyRunStarted`` event for the URL and reuses its
-    ``run_id`` when no ``run_ctx`` is provided.
-    """
+def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
+    """P2: if the agent never reached submit intent, recovery may requeue."""
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_ready_job(conn)
@@ -676,96 +805,89 @@ def test_orphan_rescue_keeps_original_run_id(tmp_path, monkeypatch):
         #    flips stage to running).
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job", worker_id=5, run_ctx=run_ctx
+            target_url="https://example.com/job",
+            worker_id=5,
+            run_ctx=run_ctx,
+            approval_required=False,
         )
         assert job is not None
-        original_run_id = run_ctx["run_id"]
-        assert original_run_id
-
-        # 2. Simulate orphan rescue (no run_ctx — same shape the
-        #    sweep in ``_rescue_orphaned_running_apply`` uses).
-        release_lock(job["url"])
-
-        # 3. Refresh the projection.
-        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
-
-        # 4. The projection row uses the ORIGINAL run_id and is failed.
-        rows = conn.execute(
-            "SELECT run_id, status FROM apply_run_projections WHERE job_id = ?",
+        recovered = recover_ambiguous_running_apply()
+        assert recovered == 1
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
-        ).fetchall()
-        assert len(rows) == 1
-        row = rows[0]
-        assert row["run_id"] == original_run_id
-        assert row["status"] == "failed"
+        ).fetchone()
+        assert row["state"] == "pending"
     finally:
         close_connection(db_path)
 
 
-def test_orphan_rescue_continues_past_failing_row(tmp_path, monkeypatch):
-    """Reviewer-reported regression (PR 37 High #2): one bad row used
-    to abort the entire orphan sweep via the outer ``try/except`` in
-    ``_rescue_orphaned_running_apply``.  The sweep now catches per-row
-    exceptions and continues so all healthy orphans are rescued.
-    """
+def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeypatch):
+    """P2: after submit intent, recovery must never auto-requeue."""
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-
-    # Two ready jobs, both put into running state directly so the rescue
-    # finds them as orphans on a fresh worker boot.
-    for url in (
-        "https://example.com/job-a",
-        "https://example.com/job-b",
-    ):
-        conn.execute(
-            "INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path, "
-            "application_url) VALUES (?, ?, ?, ?, ?, ?)",
-            (url, "Engineer", "ExampleCo", 9, "/tmp/r.txt", url),
-        )
-        ensure_job_stage_rows(conn, url)
-        set_stage_state(
-            conn,
-            url,
-            "apply",
-            "running",
-            attempt_count=1,
-            started_at="2026-01-01T00:00:00+00:00",
-            validate_transition=False,
-        )
-    conn.commit()
+    _insert_ready_job(conn)
 
     try:
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
+        run_ctx: dict = {"workflow_id": "apply-local-https://example.com/job"}
+        job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=5,
+            run_ctx=run_ctx,
+            approval_required=False,
+        )
+        assert job is not None
+        record_job_event(
+            conn,
+            job["url"],
+            "apply",
+            "ApplySubmitIntended",
+            message="apply submission intent recorded",
+            payload={
+                "tenant_id": "local",
+                "job_key": job["url"],
+                "run_id": run_ctx["run_id"],
+                "material_version": "1",
+                "intended_at": utc_now(),
+            },
+        )
+        conn.commit()
 
-        # Inject a failure for the FIRST URL while letting the second
-        # succeed: patch ``release_lock`` so it raises only for job-a.
-        original_release_lock = release_lock
+        recovered = recover_ambiguous_running_apply()
+        assert recovered == 1
+        row = conn.execute(
+            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            (job["url"],),
+        ).fetchone()
+        assert row["state"] == "needs_verification"
+        assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
 
-        def flaky_release_lock(url, run_ctx=None):
-            if url == "https://example.com/job-a":
-                raise RuntimeError("simulated per-row failure")
-            return original_release_lock(url, run_ctx=run_ctx)
-
-        with patch(
-            "jobhunter.apply.launcher.release_lock", side_effect=flaky_release_lock
-        ):
-            from rich.console import Console
-
-            rescued = _rescue_orphaned_running_apply(Console(quiet=True))
-
-        # Exactly the healthy row was rescued; the failing row's
-        # exception didn't poison the loop.
-        assert rescued == 1
-        states = {
-            row["job_url"]: row["state"]
-            for row in conn.execute(
-                "SELECT job_url, state FROM job_stage_states WHERE stage = 'apply'"
-            ).fetchall()
-        }
-        assert states["https://example.com/job-a"] == "running"
-        assert states["https://example.com/job-b"] == "pending"
+        _insert_review_decision(conn, job_key=job["url"], decision="approve_submit")
+        assert (
+            acquire_job(
+                target_url=job["url"],
+                worker_id=6,
+                run_ctx={"workflow_id": "apply-targeted-reclaim"},
+                approval_required=True,
+            )
+            is None
+        )
+        assert (
+            acquire_job(
+                worker_id=7,
+                run_ctx={"workflow_id": "apply-batch-reclaim"},
+                approval_required=True,
+            )
+            is None
+        )
+        parked = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            (job["url"],),
+        ).fetchone()
+        assert parked["state"] == "needs_verification"
     finally:
         close_connection(db_path)
 
@@ -798,7 +920,9 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
             ready.wait()
             try:
                 outcome = acquire_job(
-                    target_url="https://example.com/job", worker_id=worker_id
+                    target_url="https://example.com/job",
+                    worker_id=worker_id,
+                    approval_required=False,
                 )
             except sqlite3.OperationalError:
                 outcome = None
@@ -1024,13 +1148,12 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
     """Reviewer-reported regression (PR 37 High #3): saga events
     (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
     ``AgentResult`` / per-``AgentEvent``) used to be lost because
-    ``_NoopApplyRunRepository.save`` is a no-op AND the use case had
-    no publisher.  The launcher now persists the saga's intermediate
-    timeline into ``job_events`` after the use case returns, so
+    saga checkpoints were not written until run end. The repository now persists
+    the saga's intermediate timeline into ``job_events`` as checkpoints occur, so
     ``apply_run_projections.events_json`` reflects the complete
     timeline.
     """
-    from jobhunter.apply.launcher import _persist_saga_event_timeline
+    from jobhunter.apply.launcher import SqliteApplyRunRepository
     from jobhunter.domain.apply.aggregate import ApplyRun
     from jobhunter.domain.apply.value_objects import (
         Applied,
@@ -1052,7 +1175,10 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
         # Seed the launcher-emitted ApplyRunStarted (acquire_job's job).
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job", worker_id=1, run_ctx=run_ctx
+            target_url="https://example.com/job",
+            worker_id=1,
+            run_ctx=run_ctx,
+            approval_required=False,
         )
         assert job is not None
         run_id = run_ctx["run_id"]
@@ -1099,9 +1225,8 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             duration_ms=60000,
         )
 
-        # The launcher's helper persists saga events to job_events
-        # keyed by run_id.
-        _persist_saga_event_timeline(run, run_id=run_id)
+        # The repository persists saga events once as the saga checkpoints progress.
+        SqliteApplyRunRepository().save(run)
 
         # Mark the terminal applied result via the launcher.
         mark_result(
@@ -1117,6 +1242,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "WHERE job_url = ? AND stage = 'apply' ORDER BY event_id ASC",
             (job["url"],),
         ).fetchall()
+        counts = Counter(evt["event_type"] for evt in events)
         recorded: dict[str, dict] = {}
         for evt in events:
             payload = json.loads(evt["payload_json"]) if evt["payload_json"] else {}
@@ -1143,6 +1269,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "ToolUse",
         ):
             assert recorded[evt_type].get("run_id") == run_id, (evt_type, recorded[evt_type])
+            assert counts[evt_type] == 1, (evt_type, counts)
 
         # apply_run_projections.events_json carries the full timeline.
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
@@ -1164,6 +1291,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "ToolUse",
         ):
             assert required in event_types, (required, event_types)
+            assert event_types.count(required) == 1, (required, event_types)
         # The ToolUse payload survives the round-trip into events_json.
         tool_use_entry = next(
             (e for e in events_json if e.get("event_type") == "ToolUse"),

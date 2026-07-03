@@ -218,3 +218,15 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
     kill_active_claude_processes()
 
     assert killed == [12345]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("RESULT:APPLIED\nconfirmation: submitted", 1.0),
+        ("RESULT:APPLIED", 0.6),
+        ("submitted successfully", 0.2),
+    ],
+)
+def test_applied_confidence_matrix(output: str, expected: float) -> None:
+    assert claude_code_cli._applied_confidence(output) == expected

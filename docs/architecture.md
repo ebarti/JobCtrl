@@ -446,8 +446,18 @@ creation and read/write helpers for:
   suggestions.
 
 Apply-review approval is modeled as a recorded decision, not as an automatic
-worker dispatch. Manual outcome notes are stored only in the local outcome
-table.
+worker dispatch. Live apply claims require the latest decision for the job to
+be `approve_submit` by default (`applyApprovalRequired: true`); the check runs
+inside the Python launcher's atomic claim transaction, so a direct API or RPC
+call cannot bypass the gate. Dry-run claims bypass this approval gate. Manual
+outcome notes are stored only in the local outcome table.
+
+Apply has an at-most-once checkpoint before autonomous submission:
+`ApplySubmitIntended` is durably recorded immediately before the agent may
+submit in a live run. If a live run dies after that checkpoint and no terminal
+submit result exists, recovery parks the apply stage in `needs_verification`
+instead of blindly re-queueing it. Runs without submit intent can be safely
+rewound to `pending`.
 
 Apply Review resume edits are modeled as a local feedback/draft layer in the
 TypeScript API, not as direct writes to the Materials aggregate. The generated
@@ -833,36 +843,6 @@ is that whole-stage failures propagate into Temporal instead of being converted
 to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
 remain per-item facts when the owning context already records them that way.
 
-Pipeline activities translate Python exceptions into typed Temporal
-`ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
-as the durable error code:
-
-| Error type | Code | Retryable |
-| --- | --- | --- |
-| `ConfigurationError` | `configuration` | no |
-| `AuthenticationError` | `authentication` | no |
-| `MissingInputError` | `missing_input` | no |
-| `TransientNetworkError` | `transient_network` | yes |
-| `BrowserTransientError` | `browser_transient` | yes |
-| `LlmTransientError` | `llm_transient` | yes |
-| `SourceUnavailableError` | `source_unavailable` | yes |
-
-`JobPipelineWorkflow` applies stage-specific retry policies:
-
-| Stage | Attempts | Initial interval | Maximum interval | Non-retryable codes |
-| --- | --- | --- | --- | --- |
-| `discover` | 1 | default | default | `configuration`, `authentication`, `missing_input` |
-| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
-| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
-| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
-
-The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
-operational metrics, and OTel spans through `_run_stage_observed`; the change
-is that whole-stage failures propagate into Temporal instead of being converted
-to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
-remain per-item facts when the owning context already records them that way.
-
 Two production workflows live alongside the activities:
 
 - `JobPipelineWorkflow` (`jobhunter/pipeline/workflow.py`) — drives the
@@ -872,10 +852,12 @@ Two production workflows live alongside the activities:
   request on the same pipeline workflow path; the workflow delegates that stage
   to `ApplyWorkflow` as a child workflow.
 - `ApplyWorkflow` (`jobhunter/apply/workflow.py`) — single-activity,
-  **per-job** workflow with its own retry policy (`max_attempts=2`) and
-  parameter shape. `apply_activity` re-raises transient failures so the
+  **per-job** workflow with live retry capped at one attempt and dry-run retry
+  capped at two attempts. `apply_activity` re-raises transient failures so the
   retry policy fires; `LookupError` is wrapped in a non-retryable
-  `ApplicationError` so operator errors fail fast.
+  `ApplicationError` so operator errors fail fast. Continuous apply runs are
+  bounded to batches of 25 and continue-as-new rather than growing one workflow
+  forever.
 - `JobPreparationWorkflow` (`jobhunter/preparation/workflow.py`) — durable
   **per-job** workflow that runs the requested subset of `score`, `tailor`,
   `cover`, and `pdf` in canonical order. Each step is an idempotent activity;
@@ -930,8 +912,8 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   `id_conflict_policy` / `id_reuse_policy`; the default starter passes
   `USE_EXISTING` + `ALLOW_DUPLICATE`, so a double-start of a deterministic id
   returns the running handle instead of duplicating execution. `apply` derives a
-  stable `apply-{jobKey}` id for single-job applies; the pipeline orchestrator
-  keeps `run-{uuid}`.
+  stable `apply-{tenantId}-{jobKey}` id for single-job applies; the pipeline
+  orchestrator keeps `run-{uuid}`.
 
 The read side is `workflow_run_projections` (Python-sole-writer, folded from the
 `Workflow*` events under the shared `operations_projections` watermark, mirrored
@@ -1086,6 +1068,17 @@ The apply launcher records each per-worker agent log
 `job_artifacts` row of kind `apply_log` in the same transaction as the
 terminal `ApplicationSubmitted` / `ApplicationFailed` / `DryRunCompleted`
 event.
+Every run also persists the agent's raw output as `apply_agent_output`, and
+successful live results persist confirmation evidence as `apply_confirmation`.
+Verification confidence is derived from the evidence: `1.0` only when a
+structured applied result and confirmation evidence are present, `0.6` for the
+structured result alone, and `0.2` for inferred/unstructured outcomes.
+
+Dry-run Chrome launches install a CDP guard in addition to the prompt
+instruction. The guard attaches to page targets, blocks non-local
+POST/PUT/PATCH requests with `Fetch.failRequest`, and injects a form-submit
+interceptor that marks `window.__jobhunter_dryrun_blocked` when a hostile page
+tries to submit.
 
 ## Core Data Flow
 

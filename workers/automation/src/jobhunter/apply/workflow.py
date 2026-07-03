@@ -40,6 +40,7 @@ class ApplyWorkflowInput:
     min_score: int = 7
     workers: int = 1
     limit: int = 1
+    approval_required: bool = True
     # Run-forever poll mode — when True, the activity translates to the
     # ``apply.launcher`` ``limit=0`` sentinel that drives the continuous loop.
     continuous: bool = False
@@ -55,12 +56,19 @@ class ApplyWorkflowResult:
     failed: int = 0
 
 
-_APPLY_RETRY = RetryPolicy(
+_APPLY_LIVE_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    maximum_interval=timedelta(minutes=1),
+    maximum_attempts=1,
+)
+_APPLY_DRY_RUN_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     maximum_interval=timedelta(minutes=1),
     maximum_attempts=2,
 )
 _APPLY_TIMEOUT = timedelta(hours=2)
+_APPLY_CONTINUOUS_BATCH_TIMEOUT = timedelta(hours=1)
+_APPLY_CONTINUOUS_EMPTY_POLL_DELAY = timedelta(seconds=30)
 
 
 @workflow.defn(name="ApplyWorkflow")
@@ -106,10 +114,15 @@ class ApplyWorkflow:
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
         )
+        if payload.continuous:
+            if result.applied + result.failed == 0:
+                await workflow.sleep(_APPLY_CONTINUOUS_EMPTY_POLL_DELAY)
+            workflow.continue_as_new(payload)
         return result
 
     async def _run_apply(self, payload: ApplyWorkflowInput) -> ApplyWorkflowResult:
         info = workflow.info()
+        activity_limit = 25 if payload.continuous else payload.limit
         try:
             result: ApplyActivityOutput = await workflow.execute_activity(
                 apply_activity,
@@ -118,16 +131,21 @@ class ApplyWorkflow:
                     expected_app_dir=payload.expected_app_dir,
                     expected_db_path=payload.expected_db_path,
                     job_url=payload.job_url,
-                    limit=payload.limit,
+                    limit=activity_limit,
                     min_score=payload.min_score,
                     model=payload.model,
                     headless=payload.headless,
                     dry_run=payload.dry_run,
                     workers=payload.workers,
-                    continuous=payload.continuous,
+                    approval_required=payload.approval_required,
+                    continuous=False,
                 ),
-                start_to_close_timeout=_APPLY_TIMEOUT,
-                retry_policy=_APPLY_RETRY,
+                start_to_close_timeout=(
+                    _APPLY_CONTINUOUS_BATCH_TIMEOUT
+                    if payload.continuous
+                    else _APPLY_TIMEOUT
+                ),
+                retry_policy=_APPLY_DRY_RUN_RETRY if payload.dry_run else _APPLY_LIVE_RETRY,
                 heartbeat_timeout=timedelta(seconds=60),
             )
         except ActivityError as exc:

@@ -234,6 +234,21 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_posted_compensation_tables(conn)
     ensure_market_compensation_tables(conn)
     ensure_state_tables(conn)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS application_review_decisions (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            decision_id         TEXT PRIMARY KEY,
+            job_key             TEXT NOT NULL,
+            decision            TEXT NOT NULL,
+            reason              TEXT,
+            decided_by          TEXT,
+            decided_at          TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
+        ON application_review_decisions(tenant_id, job_key, decided_at DESC)
+    """)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
     ensure_tailoring_policy_tables(conn)

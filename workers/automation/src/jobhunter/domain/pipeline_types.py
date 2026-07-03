@@ -63,11 +63,13 @@ STAGE_STATE_KINDS: tuple[str, ...] = (
     "Blocked",
     "Skipped",
     "Exhausted",
+    "NeedsVerification",
     "Stale",
     "Canceled",
 )
 
 _SERIALIZED_TO_KIND: dict[str, str] = {k.lower(): k for k in STAGE_STATE_KINDS}
+_SERIALIZED_TO_KIND["needs_verification"] = "NeedsVerification"
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,13 @@ class Exhausted:
 
 
 @dataclass(frozen=True)
+class NeedsVerification:
+    kind: str = field(default="NeedsVerification", init=False)
+    reason: str = ""
+    next_action: str | None = None
+
+
+@dataclass(frozen=True)
 class Stale:
     kind: str = field(default="Stale", init=False)
     reason: str = ""
@@ -147,11 +156,13 @@ class Canceled:
     reason: str | None = None
 
 
-StageState = Pending | Queued | Running | Succeeded | Failed | Blocked | Skipped | Exhausted | Stale | Canceled
+StageState = Pending | Queued | Running | Succeeded | Failed | Blocked | Skipped | Exhausted | NeedsVerification | Stale | Canceled
 
 
 def serialize_stage_state(state: StageState) -> str:
     """Convert a domain StageState to its lowercase serialized form."""
+    if state.kind == "NeedsVerification":
+        return "needs_verification"
     return state.kind.lower()
 
 

@@ -63,6 +63,25 @@ export function createApplyRunStarted(
   return createDomainEvent("ApplyRunStarted", tenantId, payload);
 }
 
+// -- ApplySubmitIntended ----------------------------------------------------
+
+export interface ApplySubmitIntendedPayload {
+  readonly tenantId: string;
+  readonly jobKey: string;
+  readonly runId: string;
+  readonly materialVersion: string;
+  readonly intendedAt: string;
+}
+
+export type ApplySubmitIntended = DomainEvent<"ApplySubmitIntended", ApplySubmitIntendedPayload>;
+
+export function createApplySubmitIntended(
+  tenantId: TenantId,
+  payload: ApplySubmitIntendedPayload,
+): ApplySubmitIntended {
+  return createDomainEvent("ApplySubmitIntended", tenantId, payload);
+}
+
 // -- ApplyRunEventRecorded --------------------------------------------------
 
 export interface ApplyRunEventRecordedPayload {

@@ -46,6 +46,7 @@ class LocalChromeAdapter:
             worker_id=config.worker_id,
             port=config.cdp_port,
             headless=config.headless,
+            dry_run=config.dry_run,
         )
         log.info(
             "LocalChromeAdapter.launch: worker_id=%d port=%d pid=%d headless=%s",

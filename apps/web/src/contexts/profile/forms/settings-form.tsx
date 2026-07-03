@@ -14,7 +14,10 @@ export interface SettingsFormProps {
 }
 
 type ExecutionSettingsValues = Pick<SettingsUpdateRequest, "applyConcurrency">;
-type DiscoveryAutomationSettingsValues = Pick<SettingsUpdateRequest, "autoApply" | "minFitScore">;
+type DiscoveryAutomationSettingsValues = Pick<
+  SettingsUpdateRequest,
+  "autoApply" | "minFitScore" | "applyApprovalRequired"
+>;
 
 function toExecutionSettingsValues(values: DashboardSettings): ExecutionSettingsValues {
   return {
@@ -25,6 +28,7 @@ function toExecutionSettingsValues(values: DashboardSettings): ExecutionSettings
 function toDiscoveryAutomationSettingsValues(values: DashboardSettings): DiscoveryAutomationSettingsValues {
   return {
     autoApply: values.autoApply,
+    applyApprovalRequired: values.applyApprovalRequired,
     minFitScore: values.minFitScore,
   };
 }
@@ -253,6 +257,34 @@ export function DiscoveryAutomationSettingsForm({ initial }: SettingsFormProps) 
           </label>
         )}
       </form.Field>
+      <form.Field name="applyApprovalRequired">
+        {(field) => (
+          <label className="field check">
+            <input
+              type="checkbox"
+              checked={field.state.value ?? true}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.checked)}
+            />
+            <span>
+              <span>Require approval before live submit</span>
+              <small>
+                Live (non-dry-run) applications must be approved in Apply Review before the agent may submit.
+              </small>
+            </span>
+          </label>
+        )}
+      </form.Field>
+      <form.Subscribe selector={(state) => state.values.applyApprovalRequired}>
+        {(applyApprovalRequired) =>
+          applyApprovalRequired === false ? (
+            <div className="status-line warning" role="alert">
+              Approval gate is off: the agent may submit applications to employers immediately after claiming a job,
+              without human review.
+            </div>
+          ) : null
+        }
+      </form.Subscribe>
       <form.Subscribe
         selector={(state) => ({
           canSubmit: state.canSubmit,

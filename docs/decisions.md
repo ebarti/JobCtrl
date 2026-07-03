@@ -586,6 +586,37 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
 
+## 2026-07-03: At-Most-Once Apply With Binding Approval Gate
+
+Status: accepted
+
+Decision: live apply submission is at-most-once across Temporal retries and
+worker crashes. Single-job apply uses a deterministic
+`apply-{tenantId}-{jobKey}` workflow id, live apply activity retry is capped at
+one attempt, and the domain records `ApplySubmitIntended` immediately before an
+autonomous agent may submit. The default settings require a committed
+`approve_submit` Apply Review decision before a live claim can proceed; the
+approval check runs in the launcher's `BEGIN IMMEDIATE` claim transaction. Dry
+run remains available without approval but is physically guarded at the browser
+layer by CDP request/form interception.
+
+Rationale:
+
+- retrying after the agent reached a submit button can create duplicate employer
+  submissions
+- approval is only binding if it is enforced by the backend claim, not only by
+  UI affordances
+- prompt-only dry-run instructions are insufficient protection against hostile
+  or surprising pages
+
+Consequences:
+
+- ambiguous live runs after submit intent park in `needs_verification` for
+  human resolution instead of being auto-requeued
+- live runs without approval stay pending and record an awaiting-approval event
+- every run persists raw agent output, and successful live results persist
+  confirmation evidence with conservative verification confidence
+
 ## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
 
 Decision: Temporal workflow execution becomes visible and self-terminalizing

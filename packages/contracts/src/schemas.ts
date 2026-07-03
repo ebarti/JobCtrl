@@ -22,6 +22,7 @@ export const STAGE_STATES = [
   "blocked",
   "skipped",
   "exhausted",
+  "needs_verification",
   "canceled",
   "stale",
 ] as const;
@@ -1551,6 +1552,7 @@ export const SettingsUpdateRequestSchema = z
     locationFilter: z.string().trim().max(240).optional(),
     minFitScore: z.coerce.number().int().min(0).max(10).optional(),
     autoApply: z.boolean().optional(),
+    applyApprovalRequired: z.boolean().optional(),
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     scoreCriteria: z.string().max(8000).optional(),
     targetCriteria: z.string().max(8000).optional(),
@@ -2738,6 +2740,7 @@ export interface DashboardSettings {
   locationFilter: string;
   minFitScore: number;
   autoApply: boolean;
+  applyApprovalRequired: boolean;
   applyConcurrency: number;
   scoreCriteria: string;
   targetCriteria: string;

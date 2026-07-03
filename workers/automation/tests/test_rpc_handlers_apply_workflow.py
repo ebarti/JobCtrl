@@ -120,10 +120,17 @@ def test_apply_handler_sets_deterministic_workflow_id_for_single_job() -> None:
     spec_c = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/2"})
 
     assert spec_a.workflow_id is not None
-    assert spec_a.workflow_id.startswith("apply-")
+    assert spec_a.workflow_id == "apply-local-https://example.com/job/1"
     # Deterministic: same job URL ⇒ same id; different URL ⇒ different id.
     assert spec_a.workflow_id == spec_b.workflow_id
     assert spec_a.workflow_id != spec_c.workflow_id
+
+
+def test_apply_handler_forwards_approval_required_flag() -> None:
+    spec = apply_action({"tenantId": "local", "applyApprovalRequired": False})
+    (payload,) = spec.args
+    assert isinstance(payload, ApplyWorkflowInput)
+    assert payload.approval_required is False
 
 
 def test_apply_handler_batch_keeps_uuid_id() -> None:

@@ -12,6 +12,7 @@ export function stageStateTone(state: StageState): StageStateTone {
     case "queued":
       return "info";
     case "blocked":
+    case "needs_verification":
       return "warn";
     case "failed":
     case "exhausted":

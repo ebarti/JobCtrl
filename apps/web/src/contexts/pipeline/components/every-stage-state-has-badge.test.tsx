@@ -20,14 +20,14 @@ function serializedFor(kind: StageStateKind): SerializedStageState {
 
 describe("stage-state parity (the second-most important test in the app)", () => {
   it("STAGE_STATE_KINDS lists exactly the variants the app supports", () => {
-    expect(STAGE_STATE_KINDS).toHaveLength(10);
+    expect(STAGE_STATE_KINDS).toHaveLength(11);
     expect(new Set(STAGE_STATE_KINDS).size).toBe(STAGE_STATE_KINDS.length);
   });
 
   it("every domain kind serializes to the contracts StageState alphabet `<StageBadge>` accepts", () => {
     for (const kind of STAGE_STATE_KINDS) {
       const serialized = serializedFor(kind);
-      expect(serialized).toMatch(/^[a-z]+$/);
+      expect(serialized).toMatch(/^[a-z_]+$/);
     }
   });
 

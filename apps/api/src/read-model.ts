@@ -80,14 +80,15 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
 const STATE_RANK: Record<StageState, number> = {
   failed: 0,
   exhausted: 1,
-  blocked: 2,
-  running: 3,
-  queued: 4,
-  pending: 5,
-  stale: 6,
-  canceled: 7,
-  skipped: 8,
-  succeeded: 9,
+  needs_verification: 2,
+  blocked: 3,
+  running: 4,
+  queued: 5,
+  pending: 6,
+  stale: 7,
+  canceled: 8,
+  skipped: 9,
+  succeeded: 10,
 };
 
 function sqlRankCase(column: string, ranks: Record<string, number>, fallback: number): string {
@@ -102,6 +103,7 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   locationFilter: "",
   minFitScore: 7,
   autoApply: false,
+  applyApprovalRequired: true,
   applyConcurrency: 1,
   scoreCriteria: "",
   targetCriteria: "",
@@ -5151,6 +5153,7 @@ function isStageState(value: unknown): value is StageState {
     value === "blocked" ||
     value === "skipped" ||
     value === "exhausted" ||
+    value === "needs_verification" ||
     value === "canceled" ||
     value === "stale"
   );
@@ -5200,6 +5203,10 @@ function normalizeSettings(raw: unknown): DashboardSettings {
     locationFilter: normalizeText(source.locationFilter ?? source.location_filter, DEFAULT_SETTINGS.locationFilter),
     minFitScore: normalizeInt(source.minFitScore ?? source.min_fit_score, DEFAULT_SETTINGS.minFitScore, 0, 10),
     autoApply: normalizeBool(source.autoApply ?? source.auto_apply, DEFAULT_SETTINGS.autoApply),
+    applyApprovalRequired: normalizeBool(
+      source.applyApprovalRequired ?? source.apply_approval_required,
+      DEFAULT_SETTINGS.applyApprovalRequired,
+    ),
     applyConcurrency: normalizeInt(
       source.applyConcurrency ?? source.apply_concurrency,
       DEFAULT_SETTINGS.applyConcurrency,

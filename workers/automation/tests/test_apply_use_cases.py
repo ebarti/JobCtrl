@@ -261,7 +261,7 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
     monkeypatch.setattr(
         chrome_mod,
         "launch_chrome",
-        lambda *, worker_id, port, headless: FakeChromeProc(),
+        lambda *, worker_id, port, headless, dry_run=False: FakeChromeProc(),
     )
 
     class PathCheckingAgent:

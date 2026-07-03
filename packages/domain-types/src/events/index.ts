@@ -177,6 +177,9 @@ export {
   type ApplyRunEventRecordedPayload,
   type ApplyRunEventRecorded,
   createApplyRunEventRecorded,
+  type ApplySubmitIntendedPayload,
+  type ApplySubmitIntended,
+  createApplySubmitIntended,
 } from "./apply.js";
 
 export {
@@ -303,6 +306,7 @@ import type {
   ApplicationSubmitted,
   ApplyRunEventRecorded,
   ApplyRunStarted,
+  ApplySubmitIntended,
 } from "./apply.js";
 import type {
   StageBlocked,
@@ -371,6 +375,7 @@ export type DomainEventUnion =
   | PreparationWorkItemCompleted
   | PreparationWorkItemFailed
   | ApplyRunStarted
+  | ApplySubmitIntended
   | ApplyRunEventRecorded
   | ApplicationEmailFeedbackIngested
   | ApplicationSubmitted
@@ -442,6 +447,7 @@ export const DOMAIN_EVENT_TYPES = [
   "PreparationWorkItemCompleted",
   "PreparationWorkItemFailed",
   "ApplyRunStarted",
+  "ApplySubmitIntended",
   "ApplyRunEventRecorded",
   "ApplicationEmailFeedbackIngested",
   "ApplicationSubmitted",
