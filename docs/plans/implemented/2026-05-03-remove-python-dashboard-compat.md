@@ -1,7 +1,5 @@
 # Remove Python Dashboard Compatibility Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Remove the Python web dashboard compatibility layer so JobHunter has only the TypeScript API, TypeScript UI, and Python automation engine.
 
 **Architecture:** The TypeScript API and React UI are the only local product surface. Python remains responsible for CLI automation, workers, state transitions, profile import, PDF generation, and apply execution. The removed layer is the Python HTTP dashboard server, generated/static dashboard HTML, its CLI command, and tests/docs that describe it as a supported surface.

@@ -1,7 +1,5 @@
 # Job State Dashboard Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Add explicit per-job pipeline state and an operations dashboard that shows stuck, failed, blocked, ready, and applied jobs without requiring SQLite inspection.
 
 **Architecture:** SQLite owns durable state in normalized `job_stage_states`, `job_events`, and `job_artifacts` tables. The dashboard is still a static generated HTML file, but it receives a structured JSON payload derived from explicit state where available and legacy `jobs` columns as fallback.
