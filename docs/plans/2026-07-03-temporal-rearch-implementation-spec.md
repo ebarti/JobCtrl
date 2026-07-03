@@ -46,16 +46,21 @@ P1b  →  P2 and P3 (parallelizable, disjoint files)  →  P4  →  P5
   P3 then P2.
 - P4 requires P3 merged. P5 requires P4 merged.
 
+**Single-session mode (implementing all phases in one run):** work the
+phases as a stacked series in the order **P1b → P3 → P2 → P4 → P5**. The
+first branch is cut from `main` (which must already contain P0 + P1a — the
+§3 substrate check enforces this); every later phase's branch is cut from
+the previous phase's branch, and each PR targets its predecessor's branch
+(GitHub retargets to `main` as predecessors merge). In this mode, read
+each phase's "merged" precondition as "present in the branch you are
+building on". Everything else — one PR per phase, exact branch/PR names,
+may-touch lists, deletions, Definition of Done — is unchanged.
+
 ### 0.2 Non-negotiable ground rules
 
-- **Never edit code on `main`; never leave `main` dirty.** Work in a fresh
-  worktree per phase:
-  ```bash
-  cd <repo-root>
-  git switch main && git pull --ff-only origin main
-  git worktree add .worktrees/<phase> -b <branch-name> main
-  cd .worktrees/<phase>
-  ```
+- **Never edit code on `main`; never leave `main` dirty.** Do each phase on
+  its own branch (fresh from up-to-date `main`, or from the predecessor
+  branch in single-session mode), in a clean checkout or worktree.
 - Conventional Commits for every commit and PR title.
 - Never commit: SQLite databases, `*.pdf`, resumes, cover letters, browser
   profiles, `dashboard.json` with real data, logs, `worker/` runtime dirs,
