@@ -704,7 +704,7 @@ describe("local TypeScript API", () => {
               total: 72,
               unit: "searches",
               currentQuery: "Head of Platform",
-              currentLocation: "Spain (remote)",
+              currentLocation: "Exampleland (remote)",
               newJobs: 13,
               existingJobs: 46,
               filteredJobs: 412,
@@ -738,7 +738,7 @@ describe("local TypeScript API", () => {
           total: 72,
           unit: "searches",
           currentQuery: "Head of Platform",
-          currentLocation: "Spain (remote)",
+          currentLocation: "Exampleland (remote)",
           newJobs: 13,
           existingJobs: 46,
           filteredJobs: 412,
@@ -3484,7 +3484,7 @@ describe("local TypeScript API", () => {
     seedDb.prepare(`
       INSERT INTO candidate_profile_achievement_evidence (
         tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text
-      ) VALUES ('local', 'default', 'rider_law', 0, 'ev_rider_law', 'Preserved the Spanish market under aggressive legal deadlines.')
+      ) VALUES ('local', 'default', 'fleet_safety', 0, 'ev_fleet_safety', 'Preserved the pilot market under aggressive compliance deadlines.')
     `).run();
     insertJob(seedDb, {
       url: "https://example.com/jobs/tailoring-skill-source",
@@ -3511,7 +3511,7 @@ describe("local TypeScript API", () => {
       bulletId: "skills:leadership#0",
       section: "skills",
       sourceId: "leadership",
-      evidenceIds: ["ev_rider_law"],
+      evidenceIds: ["ev_fleet_safety"],
       requirementIds: ["req_leadership"],
       matchedKeywords: ["global teams"],
       transformType: "rephrase",
@@ -6358,18 +6358,18 @@ describe("local TypeScript API", () => {
   });
 
   it("validates target-search locations before saving profile preferences", async () => {
-    const placeValidator = vi.fn(async (place: string) => place === "Barcelona, Spain");
+    const placeValidator = vi.fn(async (place: string) => place === "Austin, TX");
     const app = buildApp({ ...options, placeValidator });
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: {
-        profile: profileWithTargetSearch("Location Target", "Barcelona, Spain", "Remote"),
+        profile: profileWithTargetSearch("Location Target", "Austin, TX", "Remote"),
       },
     });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(placeValidator).toHaveBeenCalledWith("Barcelona, Spain");
+    expect(placeValidator).toHaveBeenCalledWith("Austin, TX");
     const db = new Database(options.dbPath);
     try {
       expect(
@@ -6390,7 +6390,7 @@ describe("local TypeScript API", () => {
         experience_target_seniority_floor: "Principal",
         experience_target_functions: "Platform",
         experience_target_specializations: "SaaS",
-        experience_target_locations: "Barcelona, Spain",
+        experience_target_locations: "Austin, TX",
         experience_target_work_models: "Remote",
       });
     } finally {

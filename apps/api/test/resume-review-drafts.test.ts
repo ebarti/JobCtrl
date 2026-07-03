@@ -526,13 +526,13 @@ describe("resume review draft API", () => {
       url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
       payload: {
         editedText: [
-          "Eloi Example",
+          "Jordan Example",
           "Experience",
           "- Led platform reliability work across 3 critical services.",
           "Skills",
           "- TypeScript, Python, Temporal",
         ].join("\n"),
-        plateDocument: [{ type: "p", children: [{ text: "Eloi Example" }] }],
+        plateDocument: [{ type: "p", children: [{ text: "Jordan Example" }] }],
         editDeltas: [
           {
             kind: "replace_text",
@@ -655,7 +655,7 @@ describe("resume review draft API", () => {
 
     const longBullet =
       "- Owned the end-to-end reliability roadmap across ingestion, streaming, storage, and serving tiers while mentoring a large distributed platform engineering organization.";
-    const editedLines = ["Eloi Example", "Experience"];
+    const editedLines = ["Jordan Example", "Experience"];
     for (let index = 1; index <= 70; index += 1) {
       editedLines.push(
         index === 30 ? longBullet : `- Delivered platform outcome number ${index} across critical services.`,
@@ -718,7 +718,7 @@ describe("resume review draft API", () => {
       method: "POST",
       url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
       payload: {
-        editedText: ["Eloi Example", "Experience", "- Led reliability work across services.", "Skills", "- TypeScript"].join(
+        editedText: ["Jordan Example", "Experience", "- Led reliability work across services.", "Skills", "- TypeScript"].join(
           "\n",
         ),
         editDeltas: [],

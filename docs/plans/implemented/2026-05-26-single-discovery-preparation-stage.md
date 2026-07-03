@@ -5,8 +5,6 @@
 > and `docs/architecture.md`; the delivery summary is in
 > `docs/delivered.md`.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Make Discovery the single user-facing preparation stage while keeping scoring and tailoring as separate internal bounded contexts with versioned, event-driven orchestration.
 
 **Architecture:** The UI and API expose one preparation stage named `discover`; internally, Pipeline Orchestration dispatches Discovery, Enrichment, Scoring, and Materials work through durable domain events and idempotent work items. Scoring remains owned by the Scoring context and Materials remains owned by the Materials Generation context; Discovery does not write scores or artifacts directly.

@@ -1706,6 +1706,8 @@ def run_discovery_legacy_once(
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
+    source_failures: dict[str, str] = {}
+    source_succeeded = False
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
     provided_cancel_event = cancel_event
@@ -1860,6 +1862,43 @@ def run_discovery_legacy_once(
             )
         return stats
 
+    def _run_source_isolated(
+        key: str,
+        label: str,
+        sources: tuple[ScheduledSource, ...],
+        run_fn: Callable[..., Any],
+    ) -> None:
+        """Run one discovery source group, tolerating a per-source failure.
+
+        A raised ``SourceUnavailableError`` has already been durably recorded
+        inside ``_run_discovery_source`` (DiscoveryRunFailed event, StageFailed
+        pipeline event, failed operational attempt). Catch it here so the
+        remaining source groups still run and the stage yields the healthy
+        sources' jobs as a partial result. When every source fails the caller
+        raises an aggregated ``SourceUnavailableError`` from the stage.
+        """
+        nonlocal progress_completed, source_succeeded
+        try:
+            status = _run_discovery_source(
+                key,
+                label,
+                sources,
+                run_fn,
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            stats[key] = status
+            if status == "ok":
+                source_succeeded = True
+        except SourceUnavailableError as exc:
+            cause = str(exc)
+            source_failures[label] = cause
+            stats[key] = "failed"
+            stats[f"{key}_error"] = cause
+            stats["status"] = "partial"
+            console.print(f"  [red]{label} error:[/red] {cause}")
+        progress_completed += 1
+
     def run_jobspy(run_id: str | None = None) -> dict:
         if search_cfg.get("disable_jobspy", False):
             console.print("  [dim]JobSpy disabled in discovery settings[/dim]")
@@ -1957,17 +1996,7 @@ def run_discovery_legacy_once(
         return source_results["jobspy"]
 
     if not source_filter_active or jobspy_sources:
-        stats["jobspy"] = _run_discovery_source(
-            "jobspy",
-            "JobSpy",
-            jobspy_sources,
-            run_jobspy,
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        progress_completed += 1
-        if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
-            console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
+        _run_source_isolated("jobspy", "JobSpy", jobspy_sources, run_jobspy)
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
         if ats_sources:
             stats["ats_api"] = _skip_discovery_source(
@@ -2011,17 +2040,7 @@ def run_discovery_legacy_once(
             source_results["ats_api"] = run_scheduled_ats_sources(conn, ats_sources, **ats_kwargs)
             return source_results["ats_api"]
 
-        stats["ats_api"] = _run_discovery_source(
-            "ats_api",
-            "Canonical ATS APIs",
-            ats_sources,
-            run_ats,
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        progress_completed += 1
-        if isinstance(stats["ats_api"], str) and stats["ats_api"].startswith("error"):
-            console.print(f"  [red]Canonical ATS API error:[/red] {stats['ats_api'][7:]}")
+        _run_source_isolated("ats_api", "Canonical ATS APIs", ats_sources, run_ats)
         if _discover_limit_consumed(start_count, limit, source_results.get("ats_api")):
             if not source_filter_active or workday_sources:
                 stats["workday"] = _skip_discovery_source(
@@ -2059,17 +2078,7 @@ def run_discovery_legacy_once(
         return source_results["workday"]
 
     if not source_filter_active or workday_sources:
-        stats["workday"] = _run_discovery_source(
-            "workday",
-            "Workday scraper",
-            workday_sources,
-            run_workday,
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        progress_completed += 1
-        if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
-            console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
+        _run_source_isolated("workday", "Workday scraper", workday_sources, run_workday)
         if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
             if not source_filter_active or smart_extract_sources:
                 stats["smartextract"] = _skip_discovery_source(
@@ -2101,19 +2110,16 @@ def run_discovery_legacy_once(
         return source_results["smartextract"]
 
     if not source_filter_active or smart_extract_sources:
-        stats["smartextract"] = _run_discovery_source(
-            "smartextract",
-            "Smart extract",
-            smart_extract_sources,
-            run_smart_extract_source,
-            progress_completed=progress_completed,
-            progress_total=progress_total,
+        _run_source_isolated(
+            "smartextract", "Smart extract", smart_extract_sources, run_smart_extract_source
         )
-        progress_completed += 1
-        if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
-            console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
 
-    return finish_discovery()
+    result = finish_discovery()
+    if source_failures and not source_succeeded:
+        raise SourceUnavailableError(
+            "All discovery sources failed: " + "; ".join(source_failures.values())
+        )
+    return result
 
 
 def _run_enrich(

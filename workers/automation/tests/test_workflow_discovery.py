@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -48,11 +50,13 @@ class _Target:
 _EVENTS: list[tuple[str, Any]] = []
 _FAIL_FAMILY: str | None = None
 _TARGETS: list[_Target] = []
+_RESUME_GATE: dict[str, asyncio.Event] = {}
 
 
 def _reset_state() -> None:
     _EVENTS.clear()
     _TARGETS.clear()
+    _RESUME_GATE.clear()
     global _FAIL_FAMILY
     _FAIL_FAMILY = None
 
@@ -324,6 +328,120 @@ async def test_discover_workflow_collects_source_failures_before_failing() -> No
     assert ("workflow_outcome", "failed") in _EVENTS
     assert not any(event[0] == "enrichment" for event in _EVENTS)
     assert not any(event[0] == "derive" for event in _EVENTS)
+
+
+@activity.defn(name="discovery_source_family")
+async def _resumable_source_family(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+    attempt = activity.info().attempt
+    _EVENTS.append(("source_attempt", payload.family, attempt))
+    if payload.family == "jobspy" and attempt == 1:
+        # First attempt heartbeats like a real source crawl but never
+        # completes; when the worker hosting it is killed the heartbeats stop
+        # and the server detects the death via the heartbeat timeout.
+        _RESUME_GATE["first_attempt_started"].set()
+        while True:
+            activity.heartbeat("mid-flight")
+            await asyncio.sleep(0.2)
+    return DiscoverySourceActivityOutput(
+        family=payload.family,
+        status="ok",
+        result={"new": 1},
+        source_ids=[f"{payload.family}:source"],
+    )
+
+
+def _resumption_activities():
+    return [
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _resumable_source_family,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.MonkeyPatch) -> None:
+    """THE resumption proof: kill the worker mid source activity, restart a
+    fresh worker on the same task queue, and the discovery workflow completes
+    (sources, enrichment, prep fan-out, terminal outcome) with zero manual
+    action and no reaper."""
+    _reset_state()
+    # Production heartbeat timeout is 2 minutes; shrink it so the server
+    # detects the killed worker in seconds instead of stalling the suite. The
+    # recovery mechanism under test (heartbeat-timeout -> retry -> redelivery
+    # to the surviving worker) is unchanged.
+    monkeypatch.setattr(
+        "jobhunter.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT",
+        timedelta(seconds=2),
+    )
+    _RESUME_GATE["first_attempt_started"] = asyncio.Event()
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-resume-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        # max_cached_workflows=0 disables sticky task queues: the time-skipping
+        # test server never fires the sticky schedule-to-start timeout for a
+        # dead worker's queue, so without this the post-crash workflow task
+        # would wait forever on the killed worker's sticky queue. A real server
+        # reposts to the shared queue after the sticky timeout; this routes
+        # there directly.
+        first_worker = Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_resumption_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            graceful_shutdown_timeout=timedelta(0),
+            max_cached_workflows=0,
+        )
+        first_worker_run = asyncio.create_task(first_worker.run())
+
+        handle = await env.client.start_workflow(
+            DiscoverWorkflow.run,
+            DiscoverWorkflowInput(tenant_id="local", min_score=8),
+            id=f"discover-resume-{uuid.uuid4()}",
+            task_queue=queue,
+        )
+
+        # Wait until the first source-family attempt is genuinely mid-flight,
+        # then kill the worker without letting it complete the activity.
+        await asyncio.wait_for(_RESUME_GATE["first_attempt_started"].wait(), timeout=30)
+        first_worker_run.cancel()
+        await asyncio.gather(first_worker_run, return_exceptions=True)
+
+        # Fresh worker on the same task queue: Temporal redelivers the
+        # incomplete source activity and the workflow runs to completion.
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_resumption_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            max_cached_workflows=0,
+        ):
+            result = await asyncio.wait_for(handle.result(), timeout=120)
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert result.families_failed == []
+    assert result.preparation_started == 1
+
+    attempts = [event for event in _EVENTS if event[0] == "source_attempt"]
+    assert ("source_attempt", "jobspy", 1) in attempts, "first attempt never started"
+    assert any(
+        event[1] == "jobspy" and event[2] > 1 for event in attempts
+    ), "jobspy was not redelivered to the restarted worker"
+    assert any(event[0] == "enrichment" for event in _EVENTS)
+    assert any(event[0] == "fanout" for event in _EVENTS), "prep fan-out did not run after restart"
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 
 def test_discovery_source_progress_emits_temporal_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:

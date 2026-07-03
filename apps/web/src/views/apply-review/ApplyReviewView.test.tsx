@@ -258,7 +258,7 @@ function savedDraftPlateDocumentWithEntryHeading() {
               className: "resume-entry-heading",
               lineNumber: 30,
               pageNumber: 1,
-              semanticId: "experience:entry:datadog:heading",
+              semanticId: "experience:entry:northstar:heading",
               children: [
                 { text: "" },
                 {
@@ -271,14 +271,14 @@ function savedDraftPlateDocumentWithEntryHeading() {
                       type: "resume_inline",
                       tagName: "span",
                       className: "resume-entry-company",
-                      children: [{ text: "Datadog" }],
+                      children: [{ text: "Northstar Labs" }],
                     },
                     { text: "" },
                     {
                       type: "resume_inline",
                       tagName: "span",
                       className: "resume-entry-location",
-                      children: [{ text: "Barcelona, Spain" }],
+                      children: [{ text: "Harbor City, Remote" }],
                     },
                     { text: "" },
                   ],
@@ -293,7 +293,7 @@ function savedDraftPlateDocumentWithEntryHeading() {
                       type: "resume_inline",
                       tagName: "span",
                       className: "resume-entry-title",
-                      children: [{ text: "Security Customer Advisory Board Member" }],
+                      children: [{ text: "Reliability Advisory Board Member" }],
                     },
                     {
                       type: "resume_inline",
@@ -1328,7 +1328,7 @@ describe("<ApplyReviewView>", () => {
   it("normalizes saved entry heading rows so editing does not add spacer grid tracks", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
       editedText:
-        "Datadog Barcelona, Spain\nSecurity Customer Advisory Board Member Sep 2022 | Aug 2023",
+        "Northstar Labs Harbor City, Remote\nReliability Advisory Board Member Sep 2022 | Aug 2023",
       plateDocument: savedDraftPlateDocumentWithEntryHeading(),
     });
 
@@ -1342,7 +1342,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     const shadow = await findResumeShadowRoot();
-    const heading = shadowElementWithText(shadow, "Datadog");
+    const heading = shadowElementWithText(shadow, "Northstar Labs");
     const rows = Array.from(heading.querySelectorAll<HTMLElement>(".resume-entry-row"));
 
     expect(rows).toHaveLength(2);
@@ -2074,20 +2074,20 @@ describe("<ApplyReviewView>", () => {
               materialsPreview: {
                 ...item.materialsPreview,
                 resumeText: [
-                  "Eloi Barti Tremoleda",
-                  "eloibarti@gmail.com | (+34) 611-682-399 | https://eloibarti.com | https://linkedin.com/in/ebarti",
+                  "Jordan Vale",
+                  "jordan.vale@example.test | (+1) 555-0104 | https://portfolio.example.test | https://linkedin.com/in/jordan-vale",
                   "",
                   "EXECUTIVE PROFILE",
                   "Engineering Director with 12+ years of experience.",
                   "",
                   "EXPERIENCE",
-                  "Director of Engineering / Acting CISO | Welltech",
-                  "Barcelona, Spain (Remote) | Mar 2024 -- Present",
+                  "Director of Engineering / Acting CISO | Northstar Labs",
+                  "Harbor City (Remote) | Mar 2024 -- Present",
                   "- Rebuilt engineering and IT organizations to 30+ engineers.",
                   "",
                   "EDUCATION",
-                  "Master's Degree in Aerospace and Mechanical Engineering",
-                  "Illinois Institute of Technology (IIT) | Chicago, IL | Aug 2014",
+                  "Master's Degree in Systems Engineering",
+                  "Example Institute of Technology | Chicago, IL | Aug 2014",
                   "",
                   "SKILLS",
                   "Platform & Cloud: Kubernetes, Docker, GCP",
@@ -2108,9 +2108,9 @@ describe("<ApplyReviewView>", () => {
     });
 
     const shadow = await findResumeShadowRoot();
-    expect(shadowText(shadow)).toContain("Director of Engineering / Acting CISO | Welltech");
-    expect(shadowText(shadow)).toContain("Barcelona, Spain (Remote) | Mar 2024 -- Present");
-    expect(shadowText(shadow)).toContain("Master's Degree in Aerospace and Mechanical Engineering");
+    expect(shadowText(shadow)).toContain("Director of Engineering / Acting CISO | Northstar Labs");
+    expect(shadowText(shadow)).toContain("Harbor City (Remote) | Mar 2024 -- Present");
+    expect(shadowText(shadow)).toContain("Master's Degree in Systems Engineering");
     expect(shadowText(shadow)).toContain("Platform & Cloud: Kubernetes, Docker, GCP");
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();

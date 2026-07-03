@@ -243,6 +243,8 @@ def test_discover_emits_source_events(monkeypatch):
     ]
 
 
+
+
 def test_discover_persists_jobspy_source_progress(monkeypatch):
     events: list[tuple[str, str, str, dict]] = []
 

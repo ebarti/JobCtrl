@@ -23,6 +23,26 @@ frontend a11y deferrals, and tooling / CI enforcement gaps. Hosted product,
 hosted data, hosted automation, packaging, and cloud-mode frontend adapters
 remain deferred until the local product is solid.
 
+## Release Hardening Follow-Ups
+
+- Add a shared schema-contract check for database tables initialized by both
+  the TypeScript API and Python worker so cross-runtime table ownership cannot
+  drift silently.
+- Harden local file and artifact handling with canonical artifact roots,
+  storage provenance, containment checks, and explicit retention/cleanup
+  controls for generated prompts, email-derived evidence, logs, telemetry
+  payloads, and other sensitive local artifacts.
+- Expand platform and dependency health checks for local-only integrations:
+  credential storage support by OS, browser/PDF/Temporal readiness, external
+  board dependencies, and bounded live-smoke diagnostics.
+- Add local scalability instrumentation and budgets for projection refresh,
+  SSE polling, in-memory list/search paths, apply-review preview reads,
+  cross-process RPC calls, long-running workflow units, and LLM latency/cost.
+- Clarify quick versus full local verification by adding a root QA command or
+  equivalent documented alias that runs the full local quality bar, including
+  web unit tests, type-level tests, E2E where applicable, lint, and package
+  build checks.
+
 ## Local Product Validation
 
 ### Frontend/API Parity
@@ -185,6 +205,31 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   starting with experience bullets. Suggestions should cover grammar and
   wording, relevance to a target job, achievement framing, evidence strength,
   and whether the item deserves required placement in the final resume.
+
+### Known-Failing Web E2E Baseline (2026-07-03)
+
+Five Playwright specs fail identically on `main` and on every Temporal
+rearchitecture validation run (isolated stacks, 2026-07-02 → 2026-07-03,
+PR #233 / #235 / #237 gate runs). They pre-date that work and are not caused
+by it. QA gates treat them as the known baseline: "e2e passes" means **no NEW
+failures beyond these five**. Fixing any of them must remove it from this
+list so the baseline shrinks instead of masking regressions.
+
+- `apps/web/e2e/tests/dashboard.spec.ts:3` — dashboard KPIs render; clicking
+  the Jobs KPI navigates to `/jobs` with a matching row count.
+- `apps/web/e2e/tests/jobs-drawer.spec.ts:297` — compensation source-conflict
+  evidence stays product-visible on mobile viewport without unsafe requests.
+- `apps/web/e2e/tests/jobs-drawer.spec.ts:371` — job drawer opens with
+  requirement fit / stages / artifacts, survives reload, and close preserves
+  the URL filter.
+- `apps/web/e2e/tests/route-visual-qa.spec.ts:507` — requirement-fit drawer
+  and Apply Review cards visual regression coverage.
+- `apps/web/e2e/tests/token-foundation.spec.ts:349` — domain status surfaces
+  use painted semantic token classes (funnel segments, apply-run dots, tags).
+
+Root causes are untriaged; failure modes are assertion-level (seeded-fixture
+expectations and visual/painted-style assertions), not infrastructure. Triage
+each spec, fix or re-fixture it, and delete its bullet here.
 
 ## SaaS And Commercialization
 

@@ -23,7 +23,7 @@ logs/
 # Local design and planning scratchpads
 handoff_from_design/
 docs/superpowers/
-.planning/research/.cache/
+.planning/
 
 # MCP configs (per-machine)
 .mcp*.json

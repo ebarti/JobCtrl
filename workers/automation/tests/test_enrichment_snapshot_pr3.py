@@ -447,7 +447,7 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
         ),
         overridden_filter="low_confidence_extraction",
         reason="user approved trusted source",
-        requested_by="user:eloi",
+        requested_by="user:example",
         overridden_at=NOW,
     )
     assert audit.source_id == SOURCE_ID
@@ -484,7 +484,7 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
         "source_id": SOURCE_ID,
         "overridden_filter": "low_confidence_extraction",
         "reason": "user approved trusted source",
-        "requested_by": "user:eloi",
+        "requested_by": "user:example",
         "overridden_at": NOW,
     }
 
@@ -518,7 +518,7 @@ def test_filter_override_rejects_disallowed_policy() -> None:
             ),
             overridden_filter="low_confidence_extraction",
             reason="user approved trusted source",
-            requested_by="user:eloi",
+            requested_by="user:example",
             overridden_at=NOW,
         )
 
