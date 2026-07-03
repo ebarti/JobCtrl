@@ -161,14 +161,17 @@ explicitly left out, with the phase/owner it was routed to).
   (`workers/automation/src/jobhunter/domain/preparation/work_items.py`) —
   sha256 over (tenant, job, kind, target_version, source_event). P3 replaces
   this queue with per-job workflows but KEEPS the idempotency-key function
-  as the workflow-ID source.
+  as the workflow-ID source. The queue's lifecycle PORT lives in
+  `workers/automation/src/jobhunter/domain/ports/preparation.py` and is
+  deleted with the queue (P3).
 - **Apply run:** one attempt by the CLI agent (`claude` + Playwright MCP +
   Chrome) to fill/submit one application. Orchestrated by `ApplySaga`
-  (`workers/automation/src/jobhunter/apply/process_manager.py`), launched by
+  (`workers/automation/src/jobhunter/domain/apply/process_manager.py` —
+  note: DOMAIN layer, not the `apply/` package), launched by
   `workers/automation/src/jobhunter/apply/launcher.py`
   (`acquire_job` claims atomically with `BEGIN IMMEDIATE`; `mark_result`
   finalizes), agent adapter
-  `workers/automation/src/jobhunter/apply/claude_code_cli.py`.
+  `workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py`.
 - **Reapers (legacy recovery, being deleted):**
   - Reaper #1: `recover_orphaned_running_stages` +
     `recover_orphaned_discovery_runs` (`state.py`), called at worker boot and
@@ -391,6 +394,9 @@ them), anything TS/web.
      silently shielded.
    - Heartbeating behavior (periodic heartbeat while the thread runs)
      stays.
+   - Rewrite the module docstring while you are in there — it still
+     describes wrapping a legacy `run_pipeline(...)` call; that stale
+     mention must go (P5's final `run_pipeline` grep depends on it).
 
 6. **Cancellation reaches every runner.** A `cancel_event`
    (`threading.Event`) parameter already exists on parts of the discovery
@@ -460,7 +466,12 @@ them), anything TS/web.
   returns no stage-runner catch-all conversions (targeted per-item error
   records inside loops are fine; whole-stage catch-alls are not).
 - `asyncio.shield` usage in `run_in_activity.py` — 
-  `grep -rn "asyncio.shield" workers/automation/src/` returns nothing.
+  `grep -n "asyncio.shield" workers/automation/src/jobhunter/infrastructure/temporal/run_in_activity.py`
+  returns nothing. SCOPE NOTE: two other shield references exist in the
+  repo and are NOT yours — the cancellation-drain in `apply/activities.py`
+  (P2 deletes it; `apply/**` is on your must-NOT-touch list) and a prose
+  mention in `finalize.py`'s docstring (rewritten by your item 10). Do not
+  attempt a repo-wide empty grep in this phase.
 
 ### Tests (all in `workers/automation/tests/`)
 
@@ -496,7 +507,9 @@ them), anything TS/web.
 
 - [ ] All §0.3 Python commands pass; full `pnpm test` passes (no TS files
       changed — still run it).
-- [ ] `grep -rn "asyncio.shield" workers/automation/src/` → empty.
+- [ ] `grep -n "asyncio.shield" workers/automation/src/jobhunter/infrastructure/temporal/run_in_activity.py`
+      → empty (repo-wide shield removal completes in P2, which owns the
+      remaining `apply/activities.py` occurrence).
 - [ ] Whole-stage exception-to-status conversions removed (deletion check
       above).
 - [ ] A forced transient failure in a workflow integration test retries
@@ -529,9 +542,18 @@ enforced in the atomic claim; every run leaves inspectable evidence.
 **PR title:** `feat(apply): at-most-once submission, binding configurable approval gate, browser-layer dry-run (P2)`
 
 **Files you may touch:** everything under
-`workers/automation/src/jobhunter/apply/` (`launcher.py`,
-`process_manager.py`, `activities.py`, `workflow.py`, `chrome.py`,
-`claude_code_cli.py`, `criteria_provider.py`), `database.py` (init_db
+`workers/automation/src/jobhunter/apply/` (`launcher.py`, `activities.py`,
+`workflow.py`, `chrome.py`),
+`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py`
+(the agent adapter),
+`workers/automation/src/jobhunter/infrastructure/scoring/criteria_provider.py`
+(the dashboard-settings reader),
+AND everything under `workers/automation/src/jobhunter/domain/apply/` —
+`process_manager.py` (ApplySaga) lives HERE in the domain layer, not under
+`apply/`; one COMMENT-ONLY edit in
+`workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`
+(a stale comment describing the deleted `release_lock` rewind, hint
+~:1998); `database.py` (init_db
 ensure-block ONLY), the event registries + web handlers/fixtures (for the
 one new event type, item 3), `packages/contracts/src/schemas.ts`,
 `apps/api/src/read-model.ts`, `apps/api/src/write-model.ts`,
@@ -567,7 +589,7 @@ tests/fixtures/stories for those.
    artifact/material version in use, timestamp) to BOTH registries + web
    handler + fixture, exactly the way P0 added the `Workflow*` family
    (copy that commit's file list; the parity tests will catch any missed
-   surface). In `ApplySaga.run` (`apply/process_manager.py`), immediately
+   surface). In `ApplySaga.run` (`domain/apply/process_manager.py`), immediately
    BEFORE the agent is allowed to perform submission (the seam is the
    no-op `save` call right before `submit_application` — hint line ~213/218),
    write `ApplySubmitIntended` durably (committed transaction) and
@@ -631,13 +653,15 @@ tests/fixtures/stories for those.
 6. **Gate enforcement inside the atomic claim.** Thread
    `approval_required: bool` from the settings read into the claim:
    - Python reads the setting fresh per claim via a small extension of
-     `apply/criteria_provider.py` (hint :20–33 — it already reads
-     dashboard-config-derived criteria; add the new field, default True
-     when absent).
+     `infrastructure/scoring/criteria_provider.py`
+     (`LocalScoringCriteriaProvider._read_settings` already reads
+     `dashboard.json`; add the new field there or in a sibling reader,
+     default True when absent).
    - Thread it like the existing `min_score` parameter:
      `ApplyActivityInput` (`apply/activities.py`, hint :19–36) →
-     `apply_main` (`launcher.py`, hint :75–84) → `acquire_job`
-     (hint :181).
+     `launcher.main` (imported as `apply_main` at `apply/activities.py:63`
+     and called at `:75`; the function itself is `launcher.py`, hint
+     :1229) → `acquire_job` (hint :181).
    - Inside `acquire_job`'s `BEGIN IMMEDIATE` transaction (guard location
      hint :288–343), when the claim is for a LIVE run and
      `approval_required` is true: `SELECT decision FROM
@@ -649,8 +673,8 @@ tests/fixtures/stories for those.
      The SELECT must run INSIDE the claim transaction (race-safety).
    - **F1 (required):** `application_review_decisions` is today created
      lazily only by the gmail feedback path
-     (`workers/automation/src/jobhunter/.../feedback.py`, DDL hint
-     :252–261). Register the same DDL in `init_db`'s ensure-block
+     (`workers/automation/src/jobhunter/infrastructure/gmail/feedback.py`,
+     DDL hint :252–261). Register the same DDL in `init_db`'s ensure-block
      (`database.py`, hint :233–253) so the gate never hits a missing
      table.
    - **F2 (required):** verify the web "Approve" action actually INSERTs
@@ -692,8 +716,9 @@ tests/fixtures/stories for those.
    HTML — whichever the existing artifact pipeline supports; grep
    `job_artifacts` for the artifact-writing helper) as `job_artifacts`
    rows with kinds `apply_agent_output` and `apply_confirmation`. Replace
-   the hardcoded `verification_confidence = 1.0`
-   (`apply/claude_code_cli.py`, hint :362–364) with a derived value:
+   the hardcoded `verification_confidence=1.0`
+   (`infrastructure/apply/claude_code_cli.py`, hint :364) with a derived
+   value:
    `1.0` only when a structured `RESULT: APPLIED` AND a confirmation
    artifact exist; `0.6` when only the structured result exists; `0.2`
    when the outcome was inferred from unstructured output. Persist it
@@ -705,15 +730,36 @@ tests/fixtures/stories for those.
    timeout × 2 attempts). Add a workflow test asserting continue-as-new
    fires at the bound.
 
-### Deletions (each: `grep -rn "<symbol>" workers/ apps/ packages/` must be
-empty afterwards, excluding this spec and the plan doc)
+### Deletions
+
+Symbol-removal checks are scoped to `workers/automation/` (source AND
+tests — the tests that exercise a deleted symbol are deleted or rewritten
+in this same phase, e.g. in `test_apply_regressions.py` /
+`test_apply_saga.py`; they must not survive referencing dead code).
 
 - `_rescue_orphaned_running_apply` (+ call site) — replaced by item 5.
-- Unconditional rewind path in `release_lock` (the running→pending reset
-  branch) — keep the normal completed-run unlock.
+  Afterwards `grep -rn "_rescue_orphaned_running_apply" workers/automation/`
+  → empty.
+- Unconditional rewind path INSIDE `release_lock` (the running→pending
+  reset branch) — the `release_lock` function itself REMAINS for the
+  normal completed-run unlock, so there is deliberately NO empty-grep for
+  this one. Removal is proven behaviorally: the old rewind regression
+  tests are replaced by the intent-aware recovery tests. Also fix the one
+  stale comment referencing the rewind in `projection_builder.py`
+  (comment-only edit, explicitly allowed).
 - `_NoopApplyRunRepository` — replaced by the real repository (item 3).
-- `mark_orphans_as_failed` (`apply/process_manager.py`, hint :354) — dead
-  code today; delete.
+  Afterwards `grep -rn "_NoopApplyRunRepository" workers/automation/` →
+  empty.
+- `mark_orphans_as_failed` (`domain/apply/process_manager.py`, hint :354;
+  also drop its mention in the class docstring, hint :33) — dead code
+  today; delete. Afterwards
+  `grep -rn "mark_orphans_as_failed" workers/automation/` → empty.
+- The `asyncio.shield` cancellation-drain in `apply/activities.py` (hint
+  ~:95–:103) — replace with the P1b bounded-executor/cooperative-deadline
+  pattern when reworking apply-activity cancellation. Afterwards
+  `grep -rn "asyncio.shield" workers/automation/src/jobhunter/apply/` →
+  empty (this completes the repo-wide shield removal P1b deliberately
+  left unfinished).
 
 ### Tests
 
@@ -751,7 +797,9 @@ injection) and is resolvable from the UI.
 
 - [ ] Full §0.3 matrix green, including web e2e for the settings toggle +
       apply-review flow.
-- [ ] All four deletion greps empty.
+- [ ] All Deletions-section checks pass: the three symbol greps empty
+      within `workers/automation/`; apply-scoped `asyncio.shield` grep
+      empty; `release_lock` still present minus its rewind branch.
 - [ ] Fresh-DB test proves the decisions table exists via `init_db`.
 - [ ] The CDP integration test proves zero cross-origin POST/PUT/PATCH in
       dry-run with a hostile page.
@@ -791,7 +839,10 @@ package the repo's workflow modules conventionally live in — mirror
 `workers/automation/src/jobhunter/infrastructure/preparation/sqlite_repository.py`,
 `workers/automation/src/jobhunter/state.py` (ORPHAN_RECOVERY_STAGES only),
 `workers/automation/src/jobhunter/domain/preparation/work_items.py`
-(read-only reuse — keep `make_preparation_idempotency_key`), plus tests.
+(read-only reuse — keep `make_preparation_idempotency_key`),
+`workers/automation/src/jobhunter/domain/ports/preparation.py` (delete the
+queue-lifecycle port methods together with their sole implementation —
+required for the `claim_next` deletion grep to be satisfiable), plus tests.
 
 **Files you must NOT touch:** `apply/**` (P2), `llm.py`, discovery source
 adapters and `_run_discovery_source` (P4), `cli.py` (P5), any TS/web file
@@ -917,14 +968,18 @@ resumption after worker death, and (disabled-by-default) Temporal Schedules.
 
 **Files you may touch:** `workers/automation/src/jobhunter/discovery/**`
 (including a new `discovery/workflow.py`), `enrichment/detail.py`,
-`pipeline/runner.py` (discover paths only), `pipeline/scheduler.py`,
+`pipeline/runner.py` (discover paths only),
+`domain/discovery/scheduler.py`,
 `workers/automation/src/jobhunter/state.py` + `cli.py` (reaper #1 removal
 + schedule bootstrap only), `source_quality.py`,
 `infrastructure/temporal/registry.py`, `infrastructure/rpc/handlers.py`
 (`run_stage` discover mapping), `config.py` (discovery settings),
 `apps/api/src/discovery-controls.ts` + its contracts + the web discovery
-settings surface (for `scheduling_enabled` only), projections files ONLY
-to delete `discovery_run_projections`, plus tests.
+settings surface (for `scheduling_enabled` only), and — ONLY to delete
+`discovery_run_projections` — BOTH files that define it:
+`apps/api/src/projections.ts` and
+`workers/automation/src/jobhunter/infrastructure/projections/sqlite_projection_store.py`,
+plus tests.
 
 **Files you must NOT touch:** `apply/**`, `scoring/**` cores,
 `materials/**`, the preparation workflow from P3 (start it, don't edit it).
@@ -949,8 +1004,8 @@ to delete `discovery_run_projections`, plus tests.
    taxonomy, `maximum_attempts=3` — WITH cancel isolation from P1b this
    is now safe (the old attempts=1 was defensive against zombie
    overlap). Source activities heartbeat REAL progress: serialize the
-   family's `DiscoveryRunProgress` (`pipeline/scheduler.py`, hint :90 —
-   already a serializable frozen dataclass) into
+   family's `DiscoveryRunProgress` (`domain/discovery/scheduler.py`, hint
+   :90 — already a serializable frozen dataclass) into
    `activity.heartbeat(progress)` from the progress-record seam
    (`_record_discovery_source_progress`, hint runner.py:728).
 2. **Cancel to ALL sources.** P1b threaded `cancel_event` through the
@@ -1045,7 +1100,10 @@ reality.
 **PR title:** `feat(worker): CLI starts workflows, spend ceiling, delete in-process pipeline (P5)`
 
 **Files you may touch:** `workers/automation/src/jobhunter/cli.py`,
-`pipeline/runner.py` (deletions), `pipeline/actions.py`,
+`pipeline/runner.py` (deletions), `pipeline/__init__.py` (drop the deleted
+re-exports — `run_pipeline` is re-exported there today),
+`workers/automation/src/jobhunter/actions.py` (top-level module, NOT under
+`pipeline/`),
 `workers/automation/src/jobhunter/profile/**` + compensation module (for
 the two new workflows), the five `*/activities.py` default paths,
 `llm.py` + agent-SDK client seam (spend recording only), `database.py`
@@ -1059,7 +1117,8 @@ the two new workflows), the five `*/activities.py` default paths,
 1. **CLI starts workflows.** `jobhunter run` (`cli.py`, hint :685), the
    per-stage commands (`_run_stage_command`, hint :507),
    `run_single_job` (`pipeline/runner.py`, hint :2642), and
-   `run_local_action` (`pipeline/actions.py`, hint :175) build the same
+   `run_local_action` (`workers/automation/src/jobhunter/actions.py` —
+   top-level module — hint :175) build the same
    `WorkflowStartSpec`s the RPC handlers build (extract shared spec
    builders into one module both import — do not duplicate ID logic) and
    start them via the Temporal client, then WAIT on the handle and print
@@ -1129,9 +1188,13 @@ the two new workflows), the five `*/activities.py` default paths,
 ### Deletions
 
 - `run_pipeline`, `_run_pipeline_inner`, the activity default wrap paths,
-  and the CLI in-process execution branches. Final check:
-  `grep -rn "run_pipeline\|_run_pipeline_inner" workers/` → empty
-  (excluding docs history).
+  the `pipeline/__init__.py` re-exports, and the CLI in-process execution
+  branches. Final check:
+  `grep -rn "run_pipeline\|_run_pipeline_inner" workers/automation/src/` →
+  empty. (P1b already removed the stale `run_pipeline` docstring mention
+  in `run_in_activity.py`; tests exercising the deleted engine are deleted
+  or rewritten with it; if a stray prose mention survives in a comment,
+  fixing that comment line is allowed.)
 
 ### Tests
 
