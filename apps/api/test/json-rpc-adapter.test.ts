@@ -880,3 +880,27 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.params).toHaveProperty("tenantId", "local");
   });
 });
+
+describe("SubprocessJsonRpcAdapter per-request timeout", () => {
+  it("rejects a call whose worker never responds", async () => {
+    const { SubprocessJsonRpcAdapter } = await import("../src/json-rpc-adapter.js");
+    const os = await import("node:os");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-rpc-timeout-"));
+    // A worker stand-in that reads stdin forever and never writes a response.
+    const script = path.join(dir, "hang.sh");
+    fs.writeFileSync(script, "#!/bin/sh\nexec cat >/dev/null\n", { mode: 0o755 });
+
+    const adapter = new SubprocessJsonRpcAdapter({
+      uvBinary: script,
+      projectDir: dir,
+      appDir: dir,
+      requestTimeoutMs: 100,
+    });
+    try {
+      await expect(adapter.call("run_stage", { tenantId: "local" })).rejects.toThrow(/timed out/);
+    } finally {
+      await adapter.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

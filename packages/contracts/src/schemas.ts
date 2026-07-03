@@ -1640,11 +1640,13 @@ export type ActivityListQuery = z.infer<typeof ActivityListQuerySchema>;
 // ---------------------------------------------------------------------------
 // Workflow runs (PR 5 of the Temporal stack)
 //
-// `apply_run_projections` is the unified workflow-run row after PR 4. The
-// run id is the Temporal workflow id (see `ApplyWorkflow.run` —
-// `run_id=info.workflow_id`), so the deep-link uses it verbatim.
-// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so future non-
-// apply workflows can land here without another migration.
+// `workflow_run_projections` is the unified workflow-run source (Python-sole-
+// writer, folded from the `Workflow*` lifecycle events) covering every
+// workflow type. Apply rows are enriched with job context via a LEFT JOIN to
+// `apply_run_projections`, the apply-specific detail projection. The run id is
+// the Temporal workflow id, so the deep-link uses it verbatim.
+// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so non-apply
+// workflows land here without another migration.
 // ---------------------------------------------------------------------------
 
 export const WORKFLOW_RUN_STATUSES = [
@@ -1706,6 +1708,11 @@ export interface WorkflowRunSummary {
    * timeline events on a different id keep working.
    */
   readonly runId: string;
+  /**
+   * Temporal workflow type (e.g. `JobPipelineWorkflow`, `ApplyWorkflow`).
+   * Empty string for legacy apply rows that predate the Workflow* events.
+   */
+  readonly workflowType: string;
   readonly jobKey: string;
   readonly title: string;
   readonly company: string;
@@ -1716,6 +1723,35 @@ export interface WorkflowRunSummary {
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
+}
+
+export interface WorkflowRunTimelineEvent {
+  readonly eventType: string;
+  readonly occurredAt: string | null;
+  readonly status: string | null;
+  readonly message: string | null;
+}
+
+export interface WorkflowRunDetail {
+  readonly workflowId: string;
+  readonly runId: string;
+  readonly workflowType: string;
+  readonly status: WorkflowRunStatus;
+  readonly jobKey: string;
+  readonly title: string;
+  readonly company: string;
+  readonly dryRun: boolean;
+  readonly model: string | null;
+  readonly result: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly retryable: boolean;
+  readonly inputSummary: Record<string, unknown>;
+  readonly temporalRunId: string | null;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly durationMs: number | null;
+  readonly events: readonly WorkflowRunTimelineEvent[];
 }
 
 export interface StageSummary {

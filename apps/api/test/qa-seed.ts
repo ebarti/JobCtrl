@@ -259,6 +259,21 @@ export function seedQaDatabase(dbPath: string): void {
       duration_ms INTEGER,
       events_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE workflow_run_projections (
+      workflow_id            TEXT PRIMARY KEY,
+      tenant_id              TEXT NOT NULL DEFAULT 'local',
+      workflow_type          TEXT NOT NULL DEFAULT '',
+      status                 TEXT NOT NULL DEFAULT 'in_progress',
+      input_summary_json     TEXT NOT NULL DEFAULT '{}',
+      error_code             TEXT,
+      error_message          TEXT,
+      retryable              INTEGER NOT NULL DEFAULT 0,
+      started_at             TEXT,
+      finished_at            TEXT,
+      duration_ms            INTEGER,
+      temporal_run_id        TEXT,
+      events_json            TEXT NOT NULL DEFAULT '[]'
+    );
     CREATE TABLE worker_runtime_heartbeats (
       worker_id TEXT PRIMARY KEY,
       component TEXT NOT NULL,
@@ -508,6 +523,94 @@ export function seedQaDatabase(dbPath: string): void {
     "succeeded",
     1,
     QA_NOW,
+  );
+
+  // `listWorkflowRuns` now reads the unified `workflow_run_projections` table
+  // (Python-sole-writer at runtime, folded from the `Workflow*` lifecycle
+  // events). `qa-run-1` therefore needs a row here to appear on /runs; the
+  // job title/employer/model/mode are hydrated via the LEFT JOIN to the
+  // `apply_run_projections` row seeded above. These direct INSERTs simulate
+  // the Python writer inside the QA test database — the sole-writer rule
+  // governs runtime code, not test seeds.
+  const qaRunTemporalRunId = "qa-run-1-temporal-0001";
+  const qaRunFinishedAt = "2026-05-04T12:00:04+00:00";
+  const qaRunInputSummary = {
+    jobUrl: QA_PLATFORM_JOB_URL,
+    dryRun: true,
+    continuous: false,
+    limit: 1,
+  };
+  db.prepare(
+    `INSERT INTO workflow_run_projections (
+      workflow_id, tenant_id, workflow_type, status, input_summary_json,
+      retryable, started_at, finished_at, duration_ms, temporal_run_id, events_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "qa-run-1",
+    "local",
+    "ApplyWorkflow",
+    "succeeded",
+    JSON.stringify(qaRunInputSummary),
+    0,
+    QA_NOW,
+    qaRunFinishedAt,
+    4000,
+    qaRunTemporalRunId,
+    JSON.stringify([
+      {
+        eventType: "WorkflowStarted",
+        occurredAt: QA_NOW,
+        status: "in_progress",
+        message: "Apply workflow started (dry-run)",
+      },
+      {
+        eventType: "WorkflowCompleted",
+        occurredAt: qaRunFinishedAt,
+        status: "succeeded",
+        message: "Apply workflow completed",
+      },
+    ]),
+  );
+
+  // Canonical lifecycle events behind the projection above. Workflow events
+  // carry no job_url (stage "workflow"); identity travels in the camelCase
+  // payload, matching `infrastructure/temporal/finalize.py`. Seeding these
+  // keeps the run drawer timeline and the activity/SSE stream consistent with
+  // a real finalize + reconcile.
+  const insertWorkflowEvent = db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  );
+  insertWorkflowEvent.run(
+    null,
+    "workflow",
+    "WorkflowStarted",
+    "info",
+    "Apply workflow started (dry-run)",
+    QA_NOW,
+    JSON.stringify({
+      workflowId: "qa-run-1",
+      workflowType: "ApplyWorkflow",
+      status: "in_progress",
+      inputSummary: qaRunInputSummary,
+      startedAt: QA_NOW,
+      temporalRunId: qaRunTemporalRunId,
+    }),
+  );
+  insertWorkflowEvent.run(
+    null,
+    "workflow",
+    "WorkflowCompleted",
+    "info",
+    "Apply workflow completed",
+    qaRunFinishedAt,
+    JSON.stringify({
+      workflowId: "qa-run-1",
+      workflowType: "ApplyWorkflow",
+      status: "succeeded",
+      finishedAt: qaRunFinishedAt,
+      durationMs: 4000,
+      temporalRunId: qaRunTemporalRunId,
+    }),
   );
   db.close();
 }

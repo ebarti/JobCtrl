@@ -173,3 +173,41 @@ def test_serve_handles_missing_method_gracefully() -> None:
     server.serve(stdin=stdin, stdout=stdout)
     body = json.loads(stdout.getvalue().strip())
     assert body["error"]["code"] == INVALID_REQUEST
+
+
+def test_concurrent_dispatch_returns_out_of_order_responses() -> None:
+    """A slow handler must not head-of-line-block a later fast one; responses
+    come back out of order and are still correlated by id."""
+    import threading
+
+    server = JsonRpcServer()
+    fast_ran = threading.Event()
+
+    def slow(_params):
+        # Block until the later 'fast' request has completed. If dispatch were
+        # serial this would deadlock (fast never runs); the 5s guard fails loud.
+        assert fast_ran.wait(timeout=5), "fast request was head-of-line-blocked"
+        return {"who": "slow"}
+
+    def fast(_params):
+        fast_ran.set()
+        return {"who": "fast"}
+
+    server.register("slow", slow, mode="sync")
+    server.register("fast", fast, mode="sync")
+
+    stdin = io.StringIO(
+        json.dumps({"jsonrpc": "2.0", "method": "slow", "id": 1})
+        + "\n"
+        + json.dumps({"jsonrpc": "2.0", "method": "fast", "id": 2})
+        + "\n"
+    )
+    stdout = io.StringIO()
+    server.serve(stdin=stdin, stdout=stdout, max_workers=4)
+
+    lines = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    by_id = {line["id"]: line for line in lines}
+    assert by_id[1]["result"] == {"who": "slow"}
+    assert by_id[2]["result"] == {"who": "fast"}
+    # Fast (id=2, submitted second) completed and was written before slow (id=1).
+    assert [line["id"] for line in lines] == [2, 1]

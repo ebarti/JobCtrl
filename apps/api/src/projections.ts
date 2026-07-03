@@ -533,6 +533,21 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       duration_ms            INTEGER,
       events_json            TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE IF NOT EXISTS workflow_run_projections (
+      workflow_id            TEXT PRIMARY KEY,
+      tenant_id              TEXT NOT NULL DEFAULT 'local',
+      workflow_type          TEXT NOT NULL DEFAULT '',
+      status                 TEXT NOT NULL DEFAULT 'in_progress',
+      input_summary_json     TEXT NOT NULL DEFAULT '{}',
+      error_code             TEXT,
+      error_message          TEXT,
+      retryable              INTEGER NOT NULL DEFAULT 0,
+      started_at             TEXT,
+      finished_at            TEXT,
+      duration_ms            INTEGER,
+      temporal_run_id        TEXT,
+      events_json            TEXT NOT NULL DEFAULT '[]'
+    );
     CREATE TABLE IF NOT EXISTS discovery_run_projections (
       run_id                 TEXT PRIMARY KEY,
       tenant_id              TEXT NOT NULL DEFAULT 'local',

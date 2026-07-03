@@ -36,6 +36,7 @@ from jobhunter.domain.operations.projections import (
     JobDetailProjection,
     JobListProjection,
     SourceQualityStats,
+    WorkflowRunProjection,
 )
 
 
@@ -46,6 +47,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "artifact_list_projections",
     "apply_run_projections",
     "discovery_run_projections",
+    "workflow_run_projections",
     "source_quality_stats",
 )
 
@@ -219,6 +221,31 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             duration_ms            INTEGER,
             events_json            TEXT NOT NULL DEFAULT '[]'
         )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_run_projections (
+            workflow_id            TEXT PRIMARY KEY,
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            workflow_type          TEXT NOT NULL DEFAULT '',
+            status                 TEXT NOT NULL DEFAULT 'in_progress',
+            input_summary_json     TEXT NOT NULL DEFAULT '{}',
+            error_code             TEXT,
+            error_message          TEXT,
+            retryable              INTEGER NOT NULL DEFAULT 0,
+            started_at             TEXT,
+            finished_at            TEXT,
+            duration_ms            INTEGER,
+            temporal_run_id        TEXT,
+            events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_workflow_run_projections_tenant_started
+        ON workflow_run_projections(tenant_id, started_at DESC, workflow_id DESC)
         """
     )
     conn.execute(
@@ -683,6 +710,71 @@ class SqliteProjectionStore:
                 json.dumps(list(projection.events)),
             ),
         )
+
+    def upsert_workflow_run(self, projection: WorkflowRunProjection) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO workflow_run_projections (
+                workflow_id, tenant_id, workflow_type, status,
+                input_summary_json, error_code, error_message, retryable,
+                started_at, finished_at, duration_ms, temporal_run_id,
+                events_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(workflow_id) DO UPDATE SET
+                tenant_id          = excluded.tenant_id,
+                workflow_type      = excluded.workflow_type,
+                status             = excluded.status,
+                input_summary_json = excluded.input_summary_json,
+                error_code         = excluded.error_code,
+                error_message      = excluded.error_message,
+                retryable          = excluded.retryable,
+                started_at         = excluded.started_at,
+                finished_at        = excluded.finished_at,
+                duration_ms        = excluded.duration_ms,
+                temporal_run_id    = excluded.temporal_run_id,
+                events_json        = excluded.events_json
+            """,
+            (
+                projection.workflow_id,
+                str(projection.tenant_id),
+                projection.workflow_type,
+                projection.status,
+                json.dumps(projection.input_summary),
+                projection.error_code,
+                projection.error_message,
+                1 if projection.retryable else 0,
+                projection.started_at,
+                projection.finished_at,
+                projection.duration_ms,
+                projection.temporal_run_id,
+                json.dumps(list(projection.events)),
+            ),
+        )
+
+    # Terminal statuses a live workflow run can settle into. Rows NOT in this
+    # set are "open" and the reconciler describes them against Temporal.
+    WORKFLOW_TERMINAL_STATUSES: tuple[str, ...] = (
+        "succeeded",
+        "failed",
+        "canceled",
+        "terminated",
+        "timed_out",
+    )
+
+    def open_workflow_runs(self, tenant_id: str) -> list[dict]:
+        """Return non-terminal workflow-run rows for the describe-reconciler."""
+        placeholders = ",".join("?" for _ in self.WORKFLOW_TERMINAL_STATUSES)
+        cursor = self._conn.execute(
+            f"""
+            SELECT workflow_id, tenant_id, workflow_type, status, started_at,
+                   temporal_run_id
+            FROM workflow_run_projections
+            WHERE tenant_id = ? AND status NOT IN ({placeholders})
+            """,
+            (tenant_id, *self.WORKFLOW_TERMINAL_STATUSES),
+        )
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def upsert_discovery_run(self, projection: DiscoveryRunProjection) -> None:
         self._conn.execute(

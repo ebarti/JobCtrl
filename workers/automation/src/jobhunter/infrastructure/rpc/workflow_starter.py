@@ -27,6 +27,7 @@ from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
 from temporalio.client import WorkflowHandle
+from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.infrastructure.temporal.client import get_temporal_client
@@ -45,12 +46,21 @@ WorkflowCanceler = Callable[[str], Coroutine[Any, Any, None]]
 async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
     client = await get_temporal_client()
     workflow_id = spec.workflow_id or f"run-{uuid4().hex}"
+    # USE_EXISTING makes a double-start of a deterministic id (e.g.
+    # ``apply-{jobKey}``) return the already-running handle instead of a
+    # duplicate execution; ALLOW_DUPLICATE lets a fresh run reuse the id once
+    # the prior run has closed. For unique ``run-{uuid}`` ids these never
+    # trigger, so they are safe as global defaults.
+    id_conflict_policy = spec.id_conflict_policy or WorkflowIDConflictPolicy.USE_EXISTING
+    id_reuse_policy = spec.id_reuse_policy or WorkflowIDReusePolicy.ALLOW_DUPLICATE
     return await client.start_workflow(
         spec.workflow,
         *spec.args,
         id=workflow_id,
         task_queue=JOBHUNTER_TASK_QUEUE,
         retry_policy=spec.retry_policy,
+        id_conflict_policy=id_conflict_policy,
+        id_reuse_policy=id_reuse_policy,
     )
 
 

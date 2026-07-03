@@ -314,9 +314,8 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
     throw new InputError("Job not found.");
   }
   const stage = currentMutableStage(db, jobUrl);
-  // Manual cancel — admin override, bypasses §8.5 (parity with Python's
-  // `cancel_stage` JSON-RPC handler).  Cancel from any state is permitted
-  // when the user explicitly requests it from the UI.
+  // Manual cancel — admin override, bypasses §8.5.  Cancel from any state is
+  // permitted when the user explicitly requests it from the UI.
   upsertStageState(db, jobUrl, stage, "canceled", {
     retryable: true,
     finishedAt: new Date().toISOString(),
@@ -325,9 +324,8 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
   recordActionEvent(db, {
     jobUrl,
     stage,
-    // H1 (round-1 review): align with the new `StageCanceled` catalog event
-    // (added to `domain/events/orchestration.py` this round).  Python RPC
-    // `cancel_stage` handler writes the same string.
+    // Canonical `StageCanceled` catalog event (see
+    // `domain/events/orchestration.py`).
     eventType: "StageCanceled",
     level: "warning",
     message: "Cancel requested from the local API.",

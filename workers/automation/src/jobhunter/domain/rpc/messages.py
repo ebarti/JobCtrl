@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover — import only for type hints
-    from temporalio.common import RetryPolicy
+    from temporalio.common import (
+        RetryPolicy,
+        WorkflowIDConflictPolicy,
+        WorkflowIDReusePolicy,
+    )
 
 # JSON-RPC 2.0 reserved error codes (https://www.jsonrpc.org/specification).
 PARSE_ERROR: int = -32700
@@ -108,9 +112,16 @@ class WorkflowStartSpec:
     The handler converts JSON-RPC params into the workflow input shape and
     hands the spec to the server, which starts the workflow via the injected
     ``WorkflowStarter``.
+
+    ``workflow_id`` — when a handler sets a deterministic id (e.g.
+    ``apply-{jobKey}``), the conflict/reuse policies give real no-overlap: a
+    double-start returns the already-running handle instead of a duplicate
+    execution. ``None`` leaves the starter to generate a unique ``run-{uuid}``.
     """
 
     workflow: type
     args: tuple[Any, ...]
     workflow_id: str | None = None
     retry_policy: "RetryPolicy | None" = None
+    id_conflict_policy: "WorkflowIDConflictPolicy | None" = None
+    id_reuse_policy: "WorkflowIDReusePolicy | None" = None

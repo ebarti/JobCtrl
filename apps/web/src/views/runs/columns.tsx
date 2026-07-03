@@ -42,11 +42,11 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
   },
   {
     id: "workflow",
-    label: "Workflow",
-    getFilterValue: (row) => row.workflowId,
+    label: "Type",
+    getFilterValue: (row) => `${row.workflowType} ${row.workflowId}`,
     render: (row) => (
       <span className="mono" title={`Workflow id: ${row.workflowId}`}>
-        {row.workflowId}
+        {row.workflowType || "workflow"}
       </span>
     ),
   },

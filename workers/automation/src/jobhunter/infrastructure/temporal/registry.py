@@ -14,6 +14,10 @@ from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
 from jobhunter.discovery.activities import discover_activity
 from jobhunter.enrichment.activities import enrich_activity
+from jobhunter.infrastructure.temporal.finalize import (
+    record_workflow_outcome,
+    record_workflow_started,
+)
 from jobhunter.materials.activities import (
     cover_activity,
     tailor_activity,
@@ -35,6 +39,8 @@ ACTIVITIES: list[Callable[..., Any]] = [
     cover_activity,
     apply_activity,
     profile_import_activity,
+    record_workflow_started,
+    record_workflow_outcome,
 ]
 
 __all__ = ["ACTIVITIES", "WORKFLOWS"]

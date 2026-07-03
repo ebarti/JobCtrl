@@ -2,10 +2,10 @@ import type { TenantId } from "@jobhunter/domain-types";
 
 // The backend bundles apply runs in `DashboardSummary.applyRuns` rather than
 // exposing a dedicated `/v1/apply-runs` endpoint. Today's `useApplyRunsListQuery`
-// and `useApplyRunQuery` therefore key on `dashboardKeys.summary(tenantId)` and
-// derive via `select` (see hooks/useApplyRun*Query.ts). This factory is kept as
-// the seam for the future dedicated endpoint per target §4.1; the §8.4 event
-// → invalidation map will route `ApplyRun*` events here once the endpoint exists.
+// therefore keys on `dashboardKeys.summary(tenantId)` and derives via `select`
+// (see hooks/useApplyRunsListQuery.ts). This factory is kept as the seam for the
+// future dedicated endpoint per target §4.1; the §8.4 event → invalidation map
+// will route `ApplyRun*` events here once the endpoint exists.
 export const applyRunsKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "applyRuns"] as const,
   lists: (tenantId: TenantId) => [...applyRunsKeys.all(tenantId), "list"] as const,

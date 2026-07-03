@@ -70,9 +70,11 @@ import type {
   SourceUpsertRequest,
   Stage,
   StageState,
+  WorkflowRunDetail,
   WorkflowRunStatus,
   WorkflowRunStatusFilter,
   WorkflowRunSummary,
+  WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
 import type { DomainEventUnion } from "@jobhunter/domain-types";
@@ -149,9 +151,11 @@ export type {
   SourceUpsertRequest,
   Stage,
   StageState,
+  WorkflowRunDetail,
   WorkflowRunStatus,
   WorkflowRunStatusFilter,
   WorkflowRunSummary,
+  WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 };
 

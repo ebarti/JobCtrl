@@ -23,6 +23,10 @@ from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
 from jobhunter.discovery.activities import discover_activity
 from jobhunter.enrichment.activities import enrich_activity
+from jobhunter.infrastructure.temporal.finalize import (
+    record_workflow_outcome,
+    record_workflow_started,
+)
 from jobhunter.materials.activities import (
     cover_activity,
     tailor_activity,
@@ -59,6 +63,8 @@ def _all_activities():
         tailor_activity,
         cover_activity,
         apply_activity,
+        record_workflow_started,
+        record_workflow_outcome,
     ]
 
 
@@ -386,6 +392,10 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
 
     with (
         patch("jobhunter.database.get_connection", return_value=object()),
+        # This test mocks the DB layer wholesale (get_connection returns a
+        # dummy), so stub the finalize writer — the finalize wiring itself is
+        # covered by test_workflow_finalize.py.
+        patch("jobhunter.infrastructure.temporal.finalize._emit"),
         patch("jobhunter.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
         patch("jobhunter.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
         patch("jobhunter.scoring.cover_letter.run_cover_letters", side_effect=fake_run_cover_letters),

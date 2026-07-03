@@ -585,3 +585,64 @@ Consequences:
   `record_job_event`.
 
 Cites: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
+
+## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
+
+Decision: Temporal workflow execution becomes visible and self-terminalizing
+without a TypeScript Temporal SDK and without trigger-coupled reapers.
+
+- **`Workflow*` event family (6 types)** — `WorkflowStarted`,
+  `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`, `WorkflowTimedOut`,
+  `WorkflowTerminated` — landed in lockstep across the Python and TS event
+  registries and the web invalidation router (61 → 67 event types). They carry
+  `workflowId`, `workflowType`, an input summary, and a terminal status within
+  the existing 12-state `WORKFLOW_RUN_STATUSES`.
+- **Loop closure via finalize activities.** Every workflow emits a
+  `WorkflowStarted` marker at the top and records exactly one terminal event
+  through a finalize activity (`infrastructure/temporal/finalize.py`) that
+  reuses `record_job_event` + a projection refresh. Normal completion →
+  `WorkflowCompleted`; a stage/exception failure → `WorkflowFailed`.
+- **Describe-based reconciler** in the worker heartbeat loop (15s) backstops
+  finalize: it `describe`s each open `workflow_run_projections` row and
+  terminalizes CLOSED executions (mapped to the matching terminal event) or
+  NOT_FOUND executions (dev-server history loss → `WorkflowTerminated`), leaving
+  RUNNING rows alone. Cancellation and worker-crash/timeout terminalization
+  flow through the reconciler because Temporal cancels newly-scheduled
+  activities during workflow cancellation, so finalize cannot record from the
+  cancel path.
+- **`workflow_run_projections`** is a new Python-sole-writer projection (folded
+  from the `Workflow*` events under the shared `operations_projections`
+  watermark, mirrored read-only in `apps/api/src/projections.ts`). It is the
+  unified list source for the Workflow Runs view across all workflow types;
+  `apply_run_projections` remains the apply-specific detail projection and
+  enriches apply rows via a LEFT JOIN.
+- **Deterministic workflow IDs + overlap policy.** `WorkflowStartSpec` carries
+  `id_conflict_policy` / `id_reuse_policy`; the default starter passes
+  `USE_EXISTING` + `ALLOW_DUPLICATE`, so a double-start of a deterministic id
+  returns the running handle instead of a duplicate execution. `apply_action`
+  derives a stable `apply-{jobKey}` id for single-job applies; the pipeline
+  orchestrator keeps `run-{uuid}`. Batch/continuous apply ids are deferred to
+  P2.
+- **JSON-RPC hang closure.** The Python `JsonRpcServer` dispatches each request
+  on a bounded thread pool (stdout writes serialized under a lock), so a
+  slow/hung handler no longer head-of-line-blocks cancel; the TS adapter has a
+  per-request timeout; the api-client wraps every fetch in an AbortController
+  timeout. Out-of-order responses correlate by JSON-RPC `id`.
+
+Rationale: the 2026-07-02 resilience audit found Temporal wired but sidelined —
+results unread, failures invisible, recovery trigger-coupled. Finalize plus a
+describe reconciler make terminal state durable and self-healing while keeping
+the Python-native JSON-RPC boundary (no `@temporalio/*` in TS).
+
+Consequences:
+
+- Cancelling a pipeline/apply workflow currently surfaces as a visible failed
+  terminal (the workflows catch the cancellation `ActivityError` as a stage
+  failure); true `WorkflowCanceled` status for those workflows lands with P1's
+  cancellation work (CC6). The reconciler already maps genuinely-CANCELED
+  executions to `WorkflowCanceled`.
+- Historical apply runs that predate the `Workflow*` events do not appear in
+  the unified runs list until they re-run (accepted cutover loss per
+  `feedback_no_strangler.md`); the dashboard's recent-apply panel is unchanged.
+
+Cites: `docs/plans/2026-07-03-temporal-native-rearchitecture.md` (P0).

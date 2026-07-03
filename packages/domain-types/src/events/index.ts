@@ -225,6 +225,28 @@ export {
   createCompensationFactsUpdated,
 } from "./compensation.js";
 
+export {
+  type WorkflowLifecycleStatus,
+  type WorkflowStartedPayload,
+  type WorkflowStarted,
+  createWorkflowStarted,
+  type WorkflowCompletedPayload,
+  type WorkflowCompleted,
+  createWorkflowCompleted,
+  type WorkflowFailedPayload,
+  type WorkflowFailed,
+  createWorkflowFailed,
+  type WorkflowCanceledPayload,
+  type WorkflowCanceled,
+  createWorkflowCanceled,
+  type WorkflowTimedOutPayload,
+  type WorkflowTimedOut,
+  createWorkflowTimedOut,
+  type WorkflowTerminatedPayload,
+  type WorkflowTerminated,
+  createWorkflowTerminated,
+} from "./workflow.js";
+
 import type {
   JobDeleted,
   JobDiscovered,
@@ -294,6 +316,14 @@ import type {
 } from "./orchestration.js";
 import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
 import type { CompensationFactsUpdated } from "./compensation.js";
+import type {
+  WorkflowStarted,
+  WorkflowCompleted,
+  WorkflowFailed,
+  WorkflowCanceled,
+  WorkflowTimedOut,
+  WorkflowTerminated,
+} from "./workflow.js";
 
 export type DomainEventUnion =
   | JobDiscovered
@@ -356,7 +386,13 @@ export type DomainEventUnion =
   | ProfileUpdated
   | ProfileImported
   | TailoringPolicyUpdated
-  | CompensationFactsUpdated;
+  | CompensationFactsUpdated
+  | WorkflowStarted
+  | WorkflowCompleted
+  | WorkflowFailed
+  | WorkflowCanceled
+  | WorkflowTimedOut
+  | WorkflowTerminated;
 
 export type DomainEventType = DomainEventUnion["eventType"];
 
@@ -422,6 +458,12 @@ export const DOMAIN_EVENT_TYPES = [
   "ProfileImported",
   "TailoringPolicyUpdated",
   "CompensationFactsUpdated",
+  "WorkflowStarted",
+  "WorkflowCompleted",
+  "WorkflowFailed",
+  "WorkflowCanceled",
+  "WorkflowTimedOut",
+  "WorkflowTerminated",
 ] as const satisfies readonly DomainEventType[];
 
 type EnumeratedDomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];

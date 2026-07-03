@@ -17,6 +17,16 @@ from opentelemetry.trace import set_tracer_provider
 _TEST_APP_DIR = Path(tempfile.mkdtemp(prefix="jobhunter-pytest-"))
 os.environ["JOBHUNTER_DIR"] = str(_TEST_APP_DIR)
 
+# Initialise the session sandbox DB so activities that open the default
+# thread-local connection (e.g. the Temporal finalize activities) find their
+# tables. Per-test suites that need isolated state still use their own
+# ``tmp_path`` databases via ``init_db(path)``.
+from jobhunter.config import ensure_dirs  # noqa: E402
+from jobhunter.database import init_db  # noqa: E402
+
+ensure_dirs()
+init_db()
+
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session-scoped user-data sandbox after pytest exits."""

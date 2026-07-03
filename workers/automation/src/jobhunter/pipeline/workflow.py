@@ -12,6 +12,10 @@ from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+    from jobhunter.infrastructure.temporal.finalize import (
+        emit_workflow_outcome,
+        emit_workflow_started,
+    )
     from jobhunter.discovery.activities import (
         DiscoverActivityInput,
         discover_activity,
@@ -114,6 +118,61 @@ class JobPipelineWorkflow:
 
     @workflow.run
     async def run(self, payload: JobPipelineWorkflowInput) -> JobPipelineWorkflowResult:
+        started_at = workflow.now()
+        await emit_workflow_started(
+            tenant_id=payload.tenant_id,
+            workflow_type="JobPipelineWorkflow",
+            input_summary=_pipeline_input_summary(payload),
+            started_at=started_at,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
+        # NOTE on cancellation: Temporal cancels any newly-scheduled activity
+        # while a workflow is cancelling, and awaiting one inside the cancel
+        # handler corrupts the cancellation. So the cancel path deliberately
+        # does NOT record here — ``asyncio.CancelledError`` propagates cleanly
+        # (Temporal marks the execution CANCELED) and the describe-reconciler
+        # in the worker heartbeat loop terminalizes it as WorkflowCanceled.
+        try:
+            result = await self._execute_stages(payload)
+        except Exception as exc:  # noqa: BLE001 — record then re-raise
+            await emit_workflow_outcome(
+                tenant_id=payload.tenant_id,
+                workflow_type="JobPipelineWorkflow",
+                status="failed",
+                started_at=started_at,
+                error_code="workflow_error",
+                error_message=str(exc),
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
+            raise
+
+        if result.failure:
+            await emit_workflow_outcome(
+                tenant_id=payload.tenant_id,
+                workflow_type="JobPipelineWorkflow",
+                status="failed",
+                started_at=started_at,
+                error_code="workflow_stage_failed",
+                error_message=result.failure,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
+        else:
+            await emit_workflow_outcome(
+                tenant_id=payload.tenant_id,
+                workflow_type="JobPipelineWorkflow",
+                status="succeeded",
+                started_at=started_at,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
+        return result
+
+    async def _execute_stages(
+        self, payload: JobPipelineWorkflowInput
+    ) -> JobPipelineWorkflowResult:
         completed: list[str] = []
         failed: list[str] = []
         failure: str | None = None
@@ -285,6 +344,16 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
         f"Unknown stage: {stage}",
         non_retryable=True,
     )
+
+
+def _pipeline_input_summary(payload: JobPipelineWorkflowInput) -> dict[str, Any]:
+    """Compact, camelCase input summary for the workflow-run read-model."""
+    return {
+        "stages": list(payload.stages),
+        "dryRun": payload.dry_run,
+        "limit": payload.limit,
+        "jobUrl": payload.job_url,
+    }
 
 
 def _selected_job_urls(payload: JobPipelineWorkflowInput) -> tuple[str, ...]:

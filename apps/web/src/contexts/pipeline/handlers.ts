@@ -11,12 +11,19 @@ import type {
   PreparationWorkItemFailed,
   PreparationWorkItemQueued,
   PreparationWorkItemStarted,
+  WorkflowStarted,
+  WorkflowCompleted,
+  WorkflowFailed,
+  WorkflowCanceled,
+  WorkflowTimedOut,
+  WorkflowTerminated,
 } from "@jobhunter/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
 
 export const stageStartedHandler = (event: StageStarted): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
@@ -97,3 +104,30 @@ export const preparationWorkItemQueuedHandler = preparationWorkItemHandler;
 export const preparationWorkItemStartedHandler = preparationWorkItemHandler;
 export const preparationWorkItemCompletedHandler = preparationWorkItemHandler;
 export const preparationWorkItemFailedHandler = preparationWorkItemHandler;
+
+// Temporal workflow lifecycle (P0 loop closure). Every start marker and
+// terminal event refreshes the Workflow Runs list + the run's detail drawer
+// so a failed / canceled / terminated run terminalizes in-app without a
+// manual refresh. All six events carry `workflowId`, so one handler serves
+// the whole family.
+type WorkflowLifecycleEvent =
+  | WorkflowStarted
+  | WorkflowCompleted
+  | WorkflowFailed
+  | WorkflowCanceled
+  | WorkflowTimedOut
+  | WorkflowTerminated;
+
+const workflowLifecycleHandler = (
+  event: WorkflowLifecycleEvent,
+): readonly InvalidationItem[] => [
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.workflowId)),
+];
+
+export const workflowStartedHandler = workflowLifecycleHandler;
+export const workflowCompletedHandler = workflowLifecycleHandler;
+export const workflowFailedHandler = workflowLifecycleHandler;
+export const workflowCanceledHandler = workflowLifecycleHandler;
+export const workflowTimedOutHandler = workflowLifecycleHandler;
+export const workflowTerminatedHandler = workflowLifecycleHandler;

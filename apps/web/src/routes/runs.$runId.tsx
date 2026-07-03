@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ApplyRunDrawer } from "../views/dashboard/ApplyRunDrawer.js";
+import { WorkflowRunDrawer } from "../views/runs/WorkflowRunDrawer.js";
 
 export const Route = createFileRoute("/runs/$runId")({
-  component: ApplyRunRoute,
+  component: WorkflowRunRoute,
 });
 
-function ApplyRunRoute() {
+function WorkflowRunRoute() {
   const { runId } = Route.useParams();
-  return <ApplyRunDrawer runId={runId} />;
+  return <WorkflowRunDrawer runId={runId} />;
 }

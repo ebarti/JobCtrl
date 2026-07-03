@@ -1,12 +1,8 @@
 """Default JSON-RPC handler registry.
 
-Per S-11 the initial method set covers:
+The method set covers:
 
-* Simple state-transition commands — ``reset_stage``, ``mark_applied``,
-  ``mark_skipped``, ``cancel_stage``.  These mutate ``job_stage_states``
-  through the same write API the TS surface uses (``state.reset_job_stage``
-  / ``state.set_stage_state``).
-* Existing local-action wrappers — ``profile_import`` delegates to
+* Local-action wrappers — ``profile_import`` delegates to
   ``actions.run_local_action``.
 * Workflow starters — ``apply`` returns a :class:`WorkflowStartSpec` for
   :class:`ApplyWorkflow`; ``run_stage`` and the current-policy maintenance
@@ -24,6 +20,7 @@ target §6.5).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +35,6 @@ from jobhunter.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobhunter.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
-from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, utc_now
 
 logger = logging.getLogger(__name__)
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
@@ -85,102 +81,6 @@ def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise invalid_params("sourceIds must be an array")
     return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
-
-
-# ---------------------------------------------------------------------------
-# Simple state-transition handlers
-# ---------------------------------------------------------------------------
-
-
-def reset_stage(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    job_url = str(_require(params, "jobUrl"))
-    stage = str(_require(params, "stage"))
-    reset_attempts = bool(params.get("resetAttempts", False))
-
-    conn = get_connection()
-    canonical = reset_job_stage(conn, job_url, stage, reset_attempts=reset_attempts)
-    return {"jobUrl": canonical, "stage": stage, "state": "pending"}
-
-
-def mark_applied(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    job_url = str(_require(params, "jobUrl"))
-    now = utc_now()
-
-    conn = get_connection()
-    set_stage_state(
-        conn,
-        job_url,
-        "apply",
-        "succeeded",
-        finished_at=now,
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        job_url,
-        "apply",
-        "ApplicationManuallyMarked",
-        message="Marked applied via RPC",
-    )
-    conn.commit()
-    return {"jobUrl": job_url, "state": "succeeded"}
-
-
-def mark_skipped(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    job_url = str(_require(params, "jobUrl"))
-    stage = str(_require(params, "stage"))
-    reason = str(params.get("reason", "manual_skip"))
-
-    conn = get_connection()
-    set_stage_state(
-        conn,
-        job_url,
-        stage,
-        "skipped",
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        job_url,
-        stage,
-        "StageSkipped",
-        message=reason,
-        payload={"reason": reason},
-    )
-    conn.commit()
-    return {"jobUrl": job_url, "stage": stage, "state": "skipped"}
-
-
-# Post-hoc state-flip path — marks the stage canceled in SQLite without
-# touching the workflow runtime.  Pair with ``cancel_run`` for the
-# cooperative path that signals an in-flight workflow.
-def cancel_stage(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    job_url = str(_require(params, "jobUrl"))
-    stage = str(_require(params, "stage"))
-    now = utc_now()
-
-    conn = get_connection()
-    set_stage_state(
-        conn,
-        job_url,
-        stage,
-        "canceled",
-        finished_at=now,
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        job_url,
-        stage,
-        "StageCanceled",
-        message="Stage canceled via RPC",
-    )
-    conn.commit()
-    return {"jobUrl": job_url, "stage": stage, "state": "canceled"}
 
 
 # ---------------------------------------------------------------------------
@@ -496,14 +396,27 @@ def profile_import(params: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _apply_workflow_id(job_url: str) -> str:
+    """Deterministic ``apply-{jobKey}`` id so a double-click apply for one job
+    attaches to the running workflow (USE_EXISTING) instead of double-submitting.
+
+    P0 keys off a stable hash of the job URL at the dispatch surface only — no
+    apply-internals change. P2 owns the full at-most-once apply semantics and
+    may refine this key.
+    """
+    digest = hashlib.sha256(job_url.strip().encode("utf-8")).hexdigest()[:16]
+    return f"apply-{digest}"
+
+
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
     tenant_id = _tenant_id(params)
+    job_url = params.get("jobUrl")
     payload = ApplyWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
-        job_url=params.get("jobUrl"),
+        job_url=job_url,
         dry_run=bool(params.get("dryRun", False)),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -512,15 +425,25 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
         limit=int(params.get("limit", 1)),
         continuous=bool(params.get("continuous", False)),
     )
-    return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,))
+    # Single-job applies get a deterministic id for real no-overlap; batch /
+    # continuous applies (no jobUrl) stay on ``run-{uuid}`` until P2 gives the
+    # apply path its own overlap semantics. TODO(P2): apply-{jobKey} for the
+    # batch/continuous dispatch surface.
+    workflow_id = _apply_workflow_id(str(job_url)) if job_url else None
+    return WorkflowStartSpec(
+        workflow=ApplyWorkflow,
+        args=(payload,),
+        workflow_id=workflow_id,
+    )
 
 
 def make_cancel_run(canceler: WorkflowCanceler):
     """Build a ``cancel_run`` handler bound to *canceler*.
 
     Cooperative cancellation path — signals the workflow runtime to cancel
-    the in-flight run.  See :func:`cancel_stage` for the post-hoc state-flip
-    path that does not touch the workflow runtime.
+    the in-flight run. (The post-hoc state-flip cancel that marks a stage
+    ``canceled`` without touching the runtime lives in the TS write-model's
+    ``cancelJobAction``, not on this JSON-RPC surface.)
     """
 
     def cancel_run(params: dict[str, Any]) -> dict[str, Any]:
@@ -539,11 +462,6 @@ def make_cancel_run(canceler: WorkflowCanceler):
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobHunter method set onto *server*."""
-    # Simple state-transition commands — synchronous.
-    server.register("reset_stage", reset_stage, mode="sync")
-    server.register("mark_applied", mark_applied, mode="sync")
-    server.register("mark_skipped", mark_skipped, mode="sync")
-    server.register("cancel_stage", cancel_stage, mode="sync")
     # Local-action wrapper — synchronous import until the profile workflow
     # becomes the API path.
     server.register("profile_import", profile_import, mode="sync")

@@ -60,10 +60,6 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
-  ResetStage: "reset_stage",
-  MarkApplied: "mark_applied",
-  MarkSkipped: "mark_skipped",
-  CancelStage: "cancel_stage",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
@@ -79,80 +75,6 @@ export const RpcMethods = {
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
 const TenantParam = z.string().trim().min(1).default("local");
-
-/* --- simple state-transition commands ------------------------------------ */
-
-export const ResetStageParamsSchema = z
-  .object({
-    tenantId: TenantParam,
-    jobUrl: z.string().min(1),
-    stage: z.enum(STAGES),
-    resetAttempts: z.boolean().default(false),
-  })
-  .strict();
-export type ResetStageParams = z.infer<typeof ResetStageParamsSchema>;
-
-export const ResetStageResultSchema = z
-  .object({
-    jobUrl: z.string(),
-    stage: z.enum(STAGES),
-    state: z.literal("pending"),
-  })
-  .strict();
-export type ResetStageResult = z.infer<typeof ResetStageResultSchema>;
-
-export const MarkAppliedParamsSchema = z
-  .object({
-    tenantId: TenantParam,
-    jobUrl: z.string().min(1),
-  })
-  .strict();
-export type MarkAppliedParams = z.infer<typeof MarkAppliedParamsSchema>;
-
-export const MarkAppliedResultSchema = z
-  .object({
-    jobUrl: z.string(),
-    state: z.literal("succeeded"),
-  })
-  .strict();
-export type MarkAppliedResult = z.infer<typeof MarkAppliedResultSchema>;
-
-export const MarkSkippedParamsSchema = z
-  .object({
-    tenantId: TenantParam,
-    jobUrl: z.string().min(1),
-    stage: z.enum(STAGES),
-    reason: z.string().max(400).optional(),
-  })
-  .strict();
-export type MarkSkippedParams = z.infer<typeof MarkSkippedParamsSchema>;
-
-export const MarkSkippedResultSchema = z
-  .object({
-    jobUrl: z.string(),
-    stage: z.enum(STAGES),
-    state: z.literal("skipped"),
-  })
-  .strict();
-export type MarkSkippedResult = z.infer<typeof MarkSkippedResultSchema>;
-
-export const CancelStageParamsSchema = z
-  .object({
-    tenantId: TenantParam,
-    jobUrl: z.string().min(1),
-    stage: z.enum(STAGES),
-  })
-  .strict();
-export type CancelStageParams = z.infer<typeof CancelStageParamsSchema>;
-
-export const CancelStageResultSchema = z
-  .object({
-    jobUrl: z.string(),
-    stage: z.enum(STAGES),
-    state: z.literal("canceled"),
-  })
-  .strict();
-export type CancelStageResult = z.infer<typeof CancelStageResultSchema>;
 
 /* --- complex commands (delegated to Python via run_local_action) --------- */
 
@@ -356,69 +278,11 @@ export const ApplyResultSchema = z.object({
 });
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
 
-export const RescoreJobResultSchema = z
-  .object({
-    ok: z.literal(true),
-    status: z.string(),
-    jobUrl: z.string(),
-    currentPolicyVersion: z.number().int().nullable(),
-    actionId: z.string().optional(),
-    eventCursor: z.string().nullable().optional(),
-  })
-  .strict();
-export type RescoreJobResult = z.infer<typeof RescoreJobResultSchema>;
-
-export const RescoreJobsNotOnCurrentScoringPolicyResultSchema = z
-  .object({
-    ok: z.literal(true),
-    status: z.string(),
-    count: z.number().int().min(0),
-    jobUrls: z.array(z.string()),
-    currentPolicyVersion: z.number().int().nullable(),
-    actionId: z.string().optional(),
-    eventCursor: z.string().nullable().optional(),
-  })
-  .strict();
-export type RescoreJobsNotOnCurrentScoringPolicyResult = z.infer<
-  typeof RescoreJobsNotOnCurrentScoringPolicyResultSchema
->;
-
-export const RetailorJobResultSchema = z
-  .object({
-    ok: z.literal(true),
-    status: z.string(),
-    jobUrl: z.string(),
-    currentPolicyVersion: z.number().int().nullable(),
-    actionId: z.string().optional(),
-    eventCursor: z.string().nullable().optional(),
-  })
-  .strict();
-export type RetailorJobResult = z.infer<typeof RetailorJobResultSchema>;
-
-export const TailorJobResultSchema = z
-  .object({
-    ok: z.literal(true),
-    status: z.string(),
-    jobUrl: z.string(),
-    currentPolicyVersion: z.number().int().nullable(),
-    actionId: z.string().optional(),
-    eventCursor: z.string().nullable().optional(),
-  })
-  .strict();
-export type TailorJobResult = z.infer<typeof TailorJobResultSchema>;
-
-export const RetailorCurrentPolicyResultSchema = z
-  .object({
-    ok: z.literal(true),
-    status: z.string(),
-    count: z.number().int().min(0),
-    jobUrls: z.array(z.string()),
-    currentPolicyVersion: z.number().int().nullable(),
-    actionId: z.string().optional(),
-    eventCursor: z.string().nullable().optional(),
-  })
-  .strict();
-export type RetailorCurrentPolicyResult = z.infer<typeof RetailorCurrentPolicyResultSchema>;
+// NOTE: rescore_job / tailor_job / retailor_job / retailor_current_policy /
+// rescore_jobs_not_on_current_scoring_policy are ``mode="workflow"`` handlers.
+// They return the ``{runId, workflowId, firstExecutionRunId}`` start shape
+// (ApplyResult), so their old per-action result schemas were stale and have
+// been removed.
 
 /* --- cooperative workflow cancellation ----------------------------------- */
 

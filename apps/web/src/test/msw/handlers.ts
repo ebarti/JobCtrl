@@ -9,6 +9,7 @@ import {
   makeJobDetail,
   makeJobsPage,
   makeWorkflowRunsPage,
+  makeWorkflowRunDetail,
   sampleCredentialsResponse,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
@@ -596,6 +597,9 @@ export const handlers = [
   }),
 
   http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage())),
+  http.get("*/v1/workflow-runs/:runId", ({ params }) =>
+    HttpResponse.json(makeWorkflowRunDetail({ workflowId: String(params["runId"]), runId: String(params["runId"]) })),
+  ),
   http.post("*/v1/workflow-runs/:runId/actions/cancel", ({ params }) =>
     HttpResponse.json({
       ...actionRunResponse("pipeline", "cancel"),

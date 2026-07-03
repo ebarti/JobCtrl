@@ -67,6 +67,12 @@ import {
   stageResetHandler,
   stageSkippedHandler,
   stageStartedHandler,
+  workflowStartedHandler,
+  workflowCompletedHandler,
+  workflowFailedHandler,
+  workflowCanceledHandler,
+  workflowTimedOutHandler,
+  workflowTerminatedHandler,
 } from "../pipeline/handlers.js";
 import {
   profileImportedHandler,
@@ -179,6 +185,12 @@ export const handlers: HandlerMap = {
   ProfileUpdated: profileUpdatedHandler,
   ProfileImported: profileImportedHandler,
   CompensationFactsUpdated: compensationFactsUpdatedHandler,
+  WorkflowStarted: workflowStartedHandler,
+  WorkflowCompleted: workflowCompletedHandler,
+  WorkflowFailed: workflowFailedHandler,
+  WorkflowCanceled: workflowCanceledHandler,
+  WorkflowTimedOut: workflowTimedOutHandler,
+  WorkflowTerminated: workflowTerminatedHandler,
 };
 
 export interface InvalidationRouter {

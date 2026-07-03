@@ -16,6 +16,7 @@ import type {
   ProfileConfigResponse,
   ResumeTemplateListResponse,
   SettingsResponse,
+  WorkflowRunDetail,
   WorkflowRunSummary,
 } from "@jobhunter/contracts";
 
@@ -1152,6 +1153,7 @@ export const sampleDiscoverySettingsResponse = {
 export const sampleWorkflowRun: WorkflowRunSummary = {
   workflowId: "apply-run-1",
   runId: "apply-run-1",
+  workflowType: "ApplyWorkflow",
   jobKey: "job-1",
   title: sampleJob.title,
   company: sampleJob.company,
@@ -1167,6 +1169,7 @@ export const sampleWorkflowRun: WorkflowRunSummary = {
 export const sampleWorkflowRunCompleted: WorkflowRunSummary = {
   workflowId: "apply-run-2",
   runId: "apply-run-2",
+  workflowType: "ApplyWorkflow",
   jobKey: "job-2",
   title: sampleSecondaryJob.title,
   company: sampleSecondaryJob.company,
@@ -1178,6 +1181,66 @@ export const sampleWorkflowRunCompleted: WorkflowRunSummary = {
   finishedAt: "2026-05-06T06:35:00Z",
   durationMs: 300_000,
 };
+
+// A non-apply (pipeline orchestrator) run — no job context, surfaces its
+// workflow type instead of a job title. Exercises the P0 "runs UI renders
+// non-apply rows" path.
+export const samplePipelineWorkflowRun: WorkflowRunSummary = {
+  workflowId: "run-pipeline-1",
+  runId: "run-pipeline-1",
+  workflowType: "JobPipelineWorkflow",
+  jobKey: "",
+  title: "JobPipelineWorkflow",
+  company: "",
+  status: "failed",
+  result: null,
+  dryRun: false,
+  model: null,
+  startedAt: "2026-05-06T05:00:00Z",
+  finishedAt: "2026-05-06T05:02:00Z",
+  durationMs: 120_000,
+};
+
+export const sampleWorkflowRunDetail: WorkflowRunDetail = {
+  workflowId: "run-pipeline-1",
+  runId: "run-pipeline-1",
+  workflowType: "JobPipelineWorkflow",
+  status: "failed",
+  jobKey: "",
+  title: "JobPipelineWorkflow",
+  company: "",
+  dryRun: false,
+  model: null,
+  result: null,
+  errorCode: "activity_error",
+  errorMessage: "discover activity failed",
+  retryable: true,
+  inputSummary: { stages: ["discover"] },
+  temporalRunId: "temporal-run-1",
+  startedAt: "2026-05-06T05:00:00Z",
+  finishedAt: "2026-05-06T05:02:00Z",
+  durationMs: 120_000,
+  events: [
+    {
+      eventType: "WorkflowStarted",
+      occurredAt: "2026-05-06T05:00:00Z",
+      status: "in_progress",
+      message: null,
+    },
+    {
+      eventType: "WorkflowFailed",
+      occurredAt: "2026-05-06T05:02:00Z",
+      status: "failed",
+      message: "discover activity failed",
+    },
+  ],
+};
+
+export function makeWorkflowRunDetail(
+  overrides: Partial<WorkflowRunDetail> = {},
+): WorkflowRunDetail {
+  return { ...sampleWorkflowRunDetail, ...overrides };
+}
 
 export function makeWorkflowRunsPage(
   items: readonly WorkflowRunSummary[] = [sampleWorkflowRun, sampleWorkflowRunCompleted],

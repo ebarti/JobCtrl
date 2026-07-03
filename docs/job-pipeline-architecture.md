@@ -1096,8 +1096,8 @@ classDiagram
 `ApplyWorkflow` uses an apply-specific retry policy and a two-hour activity
 timeout. Transient activity failures can retry through Temporal. Operator
 errors such as no eligible job fail fast. `cancel_run` signals the workflow
-runtime to cancel an in-flight run; `cancel_stage` is the post-hoc SQLite state
-transition for marking a stage canceled.
+runtime to cancel an in-flight run; the post-hoc SQLite state transition for
+marking a stage canceled is the local API's `cancelJobAction` write.
 
 ## Operations Read-Side
 

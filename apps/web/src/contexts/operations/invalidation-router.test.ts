@@ -19,6 +19,8 @@ type ExpectedKeys = readonly QueryKey[];
 
 const JOB_ID = "job-1";
 const RUN_ID = "run-1";
+// Matches the workflowId in the Workflow* fixtures (test/fixtures/events.ts).
+const WORKFLOW_ID = "run-abc123";
 const ARTIFACT_ID = "artifact-1";
 
 const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys> = {
@@ -313,6 +315,30 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   StageCanceled: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
   ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
+  WorkflowStarted: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  WorkflowCompleted: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  WorkflowFailed: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  WorkflowCanceled: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  WorkflowTimedOut: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  WorkflowTerminated: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
 };
 
 describe("invalidationRouter", () => {

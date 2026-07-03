@@ -11,7 +11,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode, set_tracer_provider
 
 from jobhunter.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
-from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobhunter.infrastructure.rpc.server import JsonRpcServer, _LockedWriter
 
 
 @pytest.fixture
@@ -105,8 +105,8 @@ def test_rpc_streaming_dispatch_marks_error_on_mid_stream_failure(in_memory_expo
 
     server.register("watch", stream, mode="streaming")
 
-    stdout = io.StringIO()
-    server._handle_line('{"jsonrpc":"2.0","method":"watch","params":{},"id":1}', stdout)
+    writer = _LockedWriter(io.StringIO())
+    server._handle_line('{"jsonrpc":"2.0","method":"watch","params":{},"id":1}', writer)
 
     spans = in_memory_exporter.get_finished_spans()
     assert len(spans) == 1
