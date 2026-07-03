@@ -5,8 +5,6 @@
 > `docs/job-pipeline-architecture.md`; the delivery summary is in
 > `docs/delivered.md`.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Expand profile-driven discovery searches so strong non-verbatim matches are found without changing saved profile preferences or weakening location controls.
 
 **Architecture:** Keep exact target-role queries as tier 1. Add deterministic recall queries derived from the same target-role intent, keep them in the same tier, and mark them with a recall title-match mode so candidates can pass when they match the domain plus seniority/leadership intent. Broad-board providers use recall queries as retrieval probes; direct ATS and Workday sources enumerate known boards/employers and apply the same exact-plus-recall intent internally. Relevance remains a scoring concern after discovery; query generation should not downrank candidates before they are seen.
