@@ -9,11 +9,16 @@ from types import SimpleNamespace
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
 
-from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobhunter.domain.compensation import ReportedCompensationObservation
+from jobhunter.infrastructure.compensation import refresh as compensation_refresh_mod
 from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
+from jobhunter.infrastructure.compensation.refresh import refresh_compensation_facts
+from jobhunter.infrastructure.compensation.workflow import (
+    CompensationRefreshWorkflow,
+    CompensationRefreshWorkflowInput,
+)
 from jobhunter.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -29,14 +34,24 @@ from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline import workflow as workflow_mod
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobhunter.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
 from jobhunter.scoring import activities as scoring_activities_mod
 from jobhunter.scoring.activities import ScoreActivityInput, score_activity
 
 
 class _StubHandle:
-    def __init__(self, workflow_id: str, run_id: str = "first-run") -> None:
+    def __init__(
+        self,
+        workflow_id: str,
+        run_id: str = "first-run",
+        result_payload=None,
+    ) -> None:
         self.id = workflow_id
         self.first_execution_run_id = run_id
+        self._result_payload = result_payload if result_payload is not None else {"status": "succeeded"}
+
+    async def result(self):
+        return self._result_payload
 
 
 async def _stub_starter(spec):
@@ -52,6 +67,7 @@ def tmp_db(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     monkeypatch.setattr(handlers_mod, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(compensation_refresh_mod, "get_connection", lambda: get_connection(db_path))
     yield db_path
     close_connection(db_path)
 
@@ -132,19 +148,13 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
     )
     conn.commit()
 
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={"tenantId": "local", "jobUrl": selected_url},
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_url=selected_url,
+        include_euro_top_tech=False,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["status"] == "succeeded"
+    assert result["status"] == "succeeded"
 
     selected_posted = conn.execute(
         """
@@ -185,18 +195,13 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
     )
     conn.commit()
 
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={"tenantId": "local", "jobUrl": selected_url},
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_url=selected_url,
+        include_euro_top_tech=False,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
+    assert result["status"] == "succeeded"
 
     selected_posted = conn.execute(
         """
@@ -212,7 +217,57 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
     assert selected_posted["maximum_amount"] is None
 
 
-def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
+def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> None:
+    observations_path = tmp_path / "reported-comp.json"
+    observations_path.write_text("[]", encoding="utf-8")
+    started_workflows: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("compensation-wf", "compensation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="refresh_compensation",
+            params={
+                "tenantId": "local",
+                "allJobs": True,
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "observationsJsonPath": str(observations_path),
+                "includeEuroTopTech": False,
+                "euroTopTechMaxPages": 3,
+                "limit": 10,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["result"] == {
+        "runId": "compensation-wf",
+        "workflowId": "compensation-wf",
+        "firstExecutionRunId": "compensation-run",
+    }
+    assert len(started_workflows) == 1
+    assert started_workflows[0].workflow is CompensationRefreshWorkflow
+    (payload,) = started_workflows[0].args
+    assert payload == CompensationRefreshWorkflowInput(
+        tenant_id="local",
+        expected_app_dir="/tmp/jobhunter",
+        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        job_url=None,
+        limit=10,
+        observations_json_path=str(observations_path),
+        include_euro_top_tech=False,
+        euro_top_tech_max_pages=3,
+    )
+
+
+def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path) -> None:
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/platform"
     other_url = "https://example.com/jobs/other"
@@ -273,35 +328,17 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
         encoding="utf-8",
     )
 
-    started_workflows: list[WorkflowStartSpec] = []
-
-    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
-        started_workflows.append(spec)
-        return _StubHandle("unexpected")
-
-    server = JsonRpcServer(workflow_starter=starter)
-    register_default_handlers(server, canceler=_stub_canceler)
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={
-                "tenantId": "local",
-                "jobUrl": selected_url,
-                "observationsJsonPath": str(observations_path),
-                "includeEuroTopTech": False,
-            },
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_url=selected_url,
+        observations_json_path=str(observations_path),
+        include_euro_top_tech=False,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["status"] == "succeeded"
-    assert body["result"]["postedFactsRefreshed"] == 1
-    assert body["result"]["reportedObservationsLoaded"] == 2
-    assert body["result"]["estimatesRefreshed"] == 1
-    assert started_workflows == []
+    assert result["status"] == "succeeded"
+    assert result["postedFactsRefreshed"] == 1
+    assert result["reportedObservationsLoaded"] == 2
+    assert result["estimatesRefreshed"] == 1
 
     selected_posted = conn.execute(
         """
@@ -329,7 +366,7 @@ def test_refresh_compensation_updates_one_job_without_workflow(tmp_db: Path, tmp
     assert estimate["maximum_amount"] == 142_000
 
 
-def test_refresh_compensation_updates_all_jobs_without_workflow(tmp_db: Path, tmp_path: Path) -> None:
+def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path) -> None:
     conn = get_connection(tmp_db)
     first_url = "https://example.com/jobs/platform"
     second_url = "https://example.com/jobs/other"
@@ -366,36 +403,17 @@ def test_refresh_compensation_updates_all_jobs_without_workflow(tmp_db: Path, tm
     observations_path = tmp_path / "empty-reported-comp.json"
     observations_path.write_text("[]", encoding="utf-8")
 
-    started_workflows: list[WorkflowStartSpec] = []
-
-    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
-        started_workflows.append(spec)
-        return _StubHandle("unexpected")
-
-    server = JsonRpcServer(workflow_starter=starter)
-    register_default_handlers(server, canceler=_stub_canceler)
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={
-                "tenantId": "local",
-                "allJobs": True,
-                "observationsJsonPath": str(observations_path),
-                "includeEuroTopTech": False,
-            },
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        observations_json_path=str(observations_path),
+        include_euro_top_tech=False,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["status"] == "succeeded"
-    assert body["result"]["jobUrl"] is None
-    assert body["result"]["postedFactsRefreshed"] == 2
-    assert body["result"]["reportedObservationsLoaded"] == 0
-    assert body["result"]["estimatesRefreshed"] == 2
-    assert started_workflows == []
+    assert result["status"] == "succeeded"
+    assert result["jobUrl"] is None
+    assert result["postedFactsRefreshed"] == 2
+    assert result["reportedObservationsLoaded"] == 0
+    assert result["estimatesRefreshed"] == 2
 
     posted_rows = conn.execute(
         "SELECT job_url, parse_state FROM job_posted_compensation_facts ORDER BY job_url",
@@ -451,25 +469,15 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
 
     monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
 
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={
-                "tenantId": "local",
-                "jobUrl": job_url,
-            },
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_url=job_url,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["reportedObservationsLoaded"] == 1
-    assert body["result"]["localReportedObservationsLoaded"] == 0
-    assert body["result"]["euroTopTechObservationsLoaded"] == 1
-    assert body["result"]["marketRefreshSkipped"] is False
+    assert result["reportedObservationsLoaded"] == 1
+    assert result["localReportedObservationsLoaded"] == 0
+    assert result["euroTopTechObservationsLoaded"] == 1
+    assert result["marketRefreshSkipped"] is False
     estimate = conn.execute(
         """
         SELECT estimate_state, minimum_amount, maximum_amount, component, match_scope, source_snapshot_json
@@ -564,23 +572,16 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
 
     monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
 
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="refresh_compensation",
-            params={"tenantId": "local", "jobUrl": job_url},
-            id=1,
-        )
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_url=job_url,
     )
 
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["reportedObservationsLoaded"] == 3
-    assert body["result"]["licensedReportedObservationsLoaded"] == 2
-    assert body["result"]["levelsFyiObservationsLoaded"] == 1
-    assert body["result"]["glassdoorObservationsLoaded"] == 1
-    assert body["result"]["euroTopTechObservationsLoaded"] == 1
+    assert result["reportedObservationsLoaded"] == 3
+    assert result["licensedReportedObservationsLoaded"] == 2
+    assert result["levelsFyiObservationsLoaded"] == 1
+    assert result["glassdoorObservationsLoaded"] == 1
+    assert result["euroTopTechObservationsLoaded"] == 1
     estimate = conn.execute(
         """
         SELECT minimum_amount, maximum_amount, source_snapshot_json
@@ -610,15 +611,23 @@ def test_missing_required_param_returns_invalid_params(tmp_db: Path) -> None:
 
 def test_missing_tenant_id_falls_back_to_local(tmp_db: Path, caplog) -> None:
     _seed_job(tmp_db)
-    server = _server()
-    with caplog.at_level("WARNING", logger="jobhunter.infrastructure.rpc.handlers"):
-        # refresh_compensation calls _tenant_id first (logging the fallback
-        # warning) before its cheap param validation raises INVALID_PARAMS.
+    started_workflows: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("compensation-wf", "compensation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    with caplog.at_level("WARNING"):
         response = server.dispatch(
-            JsonRpcRequest(method="refresh_compensation", params={}, id=1)
+            JsonRpcRequest(method="refresh_compensation", params={"allJobs": True}, id=1)
         )
     assert response is not None
-    assert "tenantId" in caplog.text.lower() or "local_tenant" in caplog.text.lower()
+    assert "tenantid" in caplog.text.lower() or "local_tenant" in caplog.text.lower()
+    assert started_workflows
+    (payload,) = started_workflows[0].args
+    assert payload.tenant_id == "local"
 
 
 # ---------------------------------------------------------------------------
@@ -1391,44 +1400,62 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     assert result["stages"][0]["selected"] == 1
 
 
-def test_profile_import_remains_sync_local_action(tmp_db: Path, monkeypatch) -> None:
-    captured: list[LocalActionRequest] = []
+def test_profile_import_starts_workflow_and_can_return_draft(tmp_db: Path) -> None:
     started_workflows: list[WorkflowStartSpec] = []
-
-    def fake_run(request: LocalActionRequest) -> LocalActionResult:
-        captured.append(request)
-        return LocalActionResult(
-            ok=True,
-            action_id="act-profile",
-            stage=request.stage,
-            status="succeeded",
-            started_at="t0",
-            finished_at="t1",
-            duration_ms=1,
-            result={"draft": {}},
-        )
 
     async def starter(spec: WorkflowStartSpec) -> _StubHandle:
         started_workflows.append(spec)
-        return _StubHandle("unexpected-wf")
+        return _StubHandle(
+            "profile-wf",
+            "profile-run",
+            result_payload={
+                "status": "succeeded",
+                "draft": {
+                    "profile": {"personal": {"full_name": "Imported Candidate"}},
+                    "style": {"font_family": "imported"},
+                    "templateText": "\\documentclass{article}",
+                    "source": {"filename": "resume.pdf"},
+                },
+            },
+        )
 
-    monkeypatch.setattr(handlers_mod, "run_local_action", fake_run)
     server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_stub_canceler)
 
     response = server.dispatch(
         JsonRpcRequest(
             method="profile_import",
-            params={"tenantId": "local", "pdfPath": "/tmp/resume.pdf"},
+            params={"tenantId": "local", "pdfPath": "/tmp/resume.pdf", "awaitResult": True},
             id=1,
         )
     )
     assert response is not None
     body = response.to_dict()
-    assert body["result"]["ok"] is True
-    assert captured[0].stage == "profile_import"
-    assert captured[0].pdf_path == "/tmp/resume.pdf"
-    assert started_workflows == []
+    assert body["result"] == {
+        "runId": "profile-wf",
+        "workflowId": "profile-wf",
+        "firstExecutionRunId": "profile-run",
+        "result": {
+            "status": "succeeded",
+            "draft": {
+                "profile": {"personal": {"full_name": "Imported Candidate"}},
+                "style": {"font_family": "imported"},
+                "templateText": "\\documentclass{article}",
+                "source": {"filename": "resume.pdf"},
+            },
+        },
+    }
+    assert len(started_workflows) == 1
+    assert started_workflows[0].workflow is ProfileImportWorkflow
+    (payload,) = started_workflows[0].args
+    assert payload == ProfileImportWorkflowInput(
+        tenant_id="local",
+        pdf_path="/tmp/resume.pdf",
+        expected_app_dir=None,
+        expected_db_path=None,
+        import_profile=True,
+        import_style=True,
+    )
 
 
 def test_profile_import_requires_pdf_path(tmp_db: Path) -> None:

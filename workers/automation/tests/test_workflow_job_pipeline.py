@@ -45,13 +45,10 @@ from jobhunter.pipeline.workflow import (
     JobPipelineWorkflowInput,
 )
 from jobhunter.scoring.activities import score_activity
+from jobhunter.llm import SpendBudgetStatus
 
 
-_OK_RESULT = {
-    "stages": [{"stage": "_", "status": "ok", "elapsed": 0.0}],
-    "errors": {},
-    "elapsed": 0.0,
-}
+_OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
 
 def test_stage_retry_policies_are_stage_specific():
@@ -69,6 +66,7 @@ def test_stage_retry_policies_are_stage_specific():
 
 def _all_activities():
     return [
+        _check_spend_budget,
         _plan_discovery_sources,
         _discovery_enrichment,
         _discovery_preparation_fanout,
@@ -80,6 +78,18 @@ def _all_activities():
         record_workflow_started,
         record_workflow_outcome,
     ]
+
+
+@activity.defn(name="check_spend_budget")
+async def _check_spend_budget(_payload) -> SpendBudgetStatus:
+    return SpendBudgetStatus(
+        day="2026-07-03",
+        input_tokens=0,
+        output_tokens=0,
+        estimated_usd=0.0,
+        daily_budget_usd=25.0,
+        exceeded=False,
+    )
 
 
 @activity.defn(name="plan_discovery_sources")
@@ -102,9 +112,9 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
     queue = f"pipeline-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=_OK_RESULT,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=_OK_OBSERVED,
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -127,7 +137,7 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
     assert result.stages_failed == []
     assert result.failure is None
 
-    invoked_stages = [call.kwargs["stages"][0] for call in runner_mock.call_args_list]
+    invoked_stages = [call.args[0] for call in observed_mock.call_args_list]
     assert invoked_stages == ["enrich", "score"]
 
 
@@ -212,12 +222,12 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
 async def test_pipeline_workflow_records_failed_stage_and_stops():
     queue = f"pipeline-fail-{uuid.uuid4()}"
 
-    def _runner(*, stages: list[str], **kwargs):
-        if stages == ["enrich"]:
+    def _runner(stage, _runner_func, _kwargs, **_ignored):
+        if stage == "enrich":
             raise RuntimeError("boom")
-        return _OK_RESULT
+        return _OK_OBSERVED
 
-    with patch("jobhunter.pipeline.run_pipeline", side_effect=_runner):
+    with patch("jobhunter.pipeline.runner._run_stage_observed", side_effect=_runner):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -252,16 +262,16 @@ async def test_pipeline_workflow_records_failed_stage_and_stops():
 async def test_pipeline_workflow_records_failed_stage_output_and_stops():
     queue = f"pipeline-stage-output-fail-{uuid.uuid4()}"
 
-    def _runner(*, stages: list[str], **kwargs):
-        if stages == ["tailor"]:
-            return {
-                "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.1}],
-                "errors": {"tailor": "judge rejected all candidates"},
-                "elapsed": 0.1,
-            }
-        return _OK_RESULT
+    def _runner(stage, _runner_func, _kwargs, **_ignored):
+        if stage == "tailor":
+            return (
+                {"status": "failed", "error": "judge rejected all candidates"},
+                0.1,
+                "failed",
+            )
+        return _OK_OBSERVED
 
-    with patch("jobhunter.pipeline.run_pipeline", side_effect=_runner) as runner_mock:
+    with patch("jobhunter.pipeline.runner._run_stage_observed", side_effect=_runner) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -285,7 +295,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
     assert result.failure is not None
     assert result.failure.startswith("tailor: llm_transient")
     assert "judge rejected all candidates" in result.failure
-    invoked_stages = [call.kwargs["stages"][0] for call in runner_mock.call_args_list]
+    invoked_stages = [call.args[0] for call in observed_mock.call_args_list]
     assert invoked_stages == ["score", "tailor", "tailor", "tailor"]
 
 
@@ -293,10 +303,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
 async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
     queue = f"pipeline-apply-output-fail-{uuid.uuid4()}"
 
-    with (
-        patch("jobhunter.apply.launcher.main", return_value=(0, 1)) as apply_mock,
-        patch("jobhunter.pipeline.run_pipeline", return_value=_OK_RESULT) as runner_mock,
-    ):
+    with patch("jobhunter.apply.launcher.main", return_value=(0, 1)) as apply_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -320,7 +327,6 @@ async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
     assert result.stages_failed == ["apply"]
     assert result.failure == "apply: failed"
     apply_mock.assert_called_once()
-    runner_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -328,9 +334,9 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
     queue = f"pipeline-validation-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=_OK_RESULT,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=_OK_OBSERVED,
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -351,8 +357,8 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
                 )
 
     by_stage = {
-        call.kwargs["stages"][0]: call.kwargs.get("validation_mode")
-        for call in runner_mock.call_args_list
+        call.args[0]: call.args[2].get("validation_mode")
+        for call in observed_mock.call_args_list
     }
     assert by_stage == {"tailor": "lenient", "cover": "lenient"}
 
@@ -465,9 +471,9 @@ async def test_pipeline_workflow_preserves_stage_options():
     queue = f"pipeline-options-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=_OK_RESULT,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=_OK_OBSERVED,
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -481,7 +487,6 @@ async def test_pipeline_workflow_preserves_stage_options():
                     JobPipelineWorkflowInput(
                         tenant_id="local",
                         stages=["discover", "score", "tailor"],
-                        dry_run=True,
                         rescore=True,
                         retailor=True,
                         min_score=8,
@@ -495,13 +500,11 @@ async def test_pipeline_workflow_preserves_stage_options():
                 )
 
     by_stage = {
-        call.kwargs["stages"][0]: call.kwargs
-        for call in runner_mock.call_args_list
+        call.args[0]: call.args[2]
+        for call in observed_mock.call_args_list
     }
     assert "discover" not in by_stage
-    assert by_stage["score"]["dry_run"] is True
     assert by_stage["score"]["rescore"] is True
-    assert by_stage["tailor"]["dry_run"] is True
     assert by_stage["tailor"]["min_score"] == 8
     assert by_stage["tailor"]["retailor"] is True
     assert by_stage["tailor"]["tailor_models"] == ("local:fast", "openai:accurate")

@@ -138,6 +138,36 @@ def test_explicit_model_is_forwarded_to_claude(monkeypatch, tmp_path) -> None:
     assert _FakePopen.calls[0][1:3] == ["--model", "opus"]
 
 
+def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("jobhunter.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+    _FakePopen.calls.clear()
+    _FakePopen.kwargs.clear()
+
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    adapter.submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="opus",
+        dry_run=True,
+    )
+
+    assert calls == [
+        {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "estimated_usd": 0.0,
+            "model": "opus",
+        }
+    ]
+
+
 def test_claude_subprocess_starts_in_isolated_unix_session(
     monkeypatch, tmp_path
 ) -> None:

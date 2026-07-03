@@ -300,6 +300,15 @@ class ClaudeCodeCliAdapter:
                 if stats
                 else None
             )
+            if token_usage is not None:
+                from jobhunter.llm import record_llm_spend
+
+                record_llm_spend(
+                    input_tokens=token_usage.input + token_usage.cache_read + token_usage.cache_create,
+                    output_tokens=token_usage.output,
+                    estimated_usd=token_usage.cost_usd,
+                    model=model_label,
+                )
 
             # Negative returncode means the process was killed by a
             # signal (Ctrl+C skip from the launcher) — treat as a

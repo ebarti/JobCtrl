@@ -35,6 +35,7 @@ from jobhunter.discovery.workflow import (
     _activity_error_was_cancelled,
 )
 from jobhunter.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
+from jobhunter.llm import SpendBudgetStatus
 from jobhunter.pipeline import runner
 
 
@@ -89,7 +90,11 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
     async def fake_execute(_payload) -> None:
         raise CancelledError("canceled by test")
 
+    async def fake_check_spend(_payload) -> None:
+        return None
+
     monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
+    monkeypatch.setattr("jobhunter.discovery.workflow._check_spend", fake_check_spend)
     monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_started", fake_started)
     monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_outcome", fake_outcome)
     monkeypatch.setattr("jobhunter.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
@@ -105,6 +110,7 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
 
 def _discovery_activities():
     return [
+        _check_spend_budget,
         _record_workflow_started,
         _record_workflow_outcome,
         _plan_discovery_sources,
@@ -112,6 +118,18 @@ def _discovery_activities():
         _discovery_enrichment,
         _discovery_preparation_fanout,
     ]
+
+
+@activity.defn(name="check_spend_budget")
+async def _check_spend_budget(_payload) -> SpendBudgetStatus:
+    return SpendBudgetStatus(
+        day="2026-07-03",
+        input_tokens=0,
+        output_tokens=0,
+        estimated_usd=0.0,
+        daily_budget_usd=25.0,
+        exceeded=False,
+    )
 
 
 @activity.defn(name="record_workflow_started")
@@ -334,6 +352,7 @@ async def _resumable_source_family(payload: DiscoverySourceActivityInput) -> Dis
 
 def _resumption_activities():
     return [
+        _check_spend_budget,
         _record_workflow_started,
         _record_workflow_outcome,
         _plan_discovery_sources,

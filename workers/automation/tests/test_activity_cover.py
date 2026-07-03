@@ -30,18 +30,13 @@ class _CoverHarness:
 
 
 @pytest.mark.asyncio
-async def test_cover_activity_invokes_run_pipeline_with_cover_stage():
-    fake_pipeline_result = {
-        "stages": [{"stage": "cover", "status": "ok", "elapsed": 0.5}],
-        "errors": {},
-        "elapsed": 0.5,
-    }
+async def test_cover_activity_invokes_observed_cover_core():
     queue = f"cover-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.run_pipeline",
-        return_value=fake_pipeline_result,
-    ) as runner_mock:
+        "jobhunter.pipeline.runner._run_stage_observed",
+        return_value=({"status": "ok"}, 0.5, "ok"),
+    ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -57,10 +52,11 @@ async def test_cover_activity_invokes_run_pipeline_with_cover_stage():
                     task_queue=queue,
                 )
 
-    runner_mock.assert_called_once()
-    kwargs = runner_mock.call_args.kwargs
-    assert kwargs["stages"] == ["cover"]
-    assert kwargs["min_score"] == 6
-    assert kwargs["limit"] == 2
+    observed_mock.assert_called_once()
+    args, kwargs = observed_mock.call_args
+    assert args[0] == "cover"
+    assert args[2]["min_score"] == 6
+    assert args[2]["limit"] == 2
+    assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.5)

@@ -11,7 +11,6 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobhunter.actions import LocalActionResult
 from jobhunter.profile.activities import (
     ProfileImportActivityInput,
     ProfileImportActivityOutput,
@@ -33,30 +32,18 @@ class _ProfileImportHarness:
 
 
 @pytest.mark.asyncio
-async def test_profile_import_activity_returns_draft_from_local_action():
-    fake_result = LocalActionResult(
-        ok=True,
-        action_id="act-test",
-        stage="profile_import",
-        status="succeeded",
-        started_at="2026-05-07T00:00:00Z",
-        finished_at="2026-05-07T00:00:01Z",
-        duration_ms=1000,
-        result={
-            "status": "ok",
-            "draft": {
-                "source": "pdf",
-                "profile": {"name": "Test User"},
-                "style": {"tone": "professional"},
-            },
-        },
-    )
+async def test_profile_import_activity_returns_draft_from_importer():
+    fake_result = {
+        "source": "pdf",
+        "profile": {"name": "Test User"},
+        "style": {"tone": "professional"},
+    }
     queue = f"profile-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.actions.run_local_action",
+        "jobhunter.profile.importer.import_profile_pdf",
         return_value=fake_result,
-    ) as run_action_mock:
+    ) as import_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -75,10 +62,11 @@ async def test_profile_import_activity_returns_draft_from_local_action():
                     task_queue=queue,
                 )
 
-    run_action_mock.assert_called_once()
-    request = run_action_mock.call_args.args[0]
-    assert request.stage == "profile_import"
-    assert request.pdf_path == "/tmp/resume.pdf"
+    import_mock.assert_called_once_with(
+        "/tmp/resume.pdf",
+        import_profile=True,
+        import_style=True,
+    )
     assert output.status == "succeeded"
     assert output.draft["source"] == "pdf"
     assert output.draft["profile"] == {"name": "Test User"}

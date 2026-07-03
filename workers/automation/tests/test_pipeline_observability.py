@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import sys
+import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from temporalio import workflow
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -13,6 +18,18 @@ from opentelemetry.trace import set_tracer_provider
 
 from jobhunter.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobhunter.pipeline import runner
+from jobhunter.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
+
+
+@workflow.defn(name="PipelineObservableScoreHarness")
+class _PipelineObservableScoreHarness:
+    @workflow.run
+    async def run(self, payload: ScoreActivityInput) -> ScoreActivityOutput:
+        return await workflow.execute_activity(
+            score_activity,
+            payload,
+            start_to_close_timeout=timedelta(minutes=5),
+        )
 
 
 @pytest.fixture
@@ -120,10 +137,12 @@ def no_discovery_detail_enrichment(monkeypatch):
     )
 
 
-def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_memory_exporter):
+@pytest.mark.asyncio
+async def test_score_activity_emits_pipeline_span_and_stage_events(monkeypatch, in_memory_exporter):
     events: list[tuple[str, str, str, dict]] = []
+    queue = f"pipeline-observable-score-{uuid.uuid4()}"
 
-    monkeypatch.setitem(runner._STAGE_RUNNERS, "score", lambda **_kwargs: {"status": "ok"})
+    monkeypatch.setattr(runner, "_run_score", lambda **_kwargs: {"status": "ok"})
     monkeypatch.setattr(
         runner,
         "_record_pipeline_event",
@@ -133,9 +152,22 @@ def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_m
         raising=False,
     )
 
-    result = runner._run_sequential(["score"], min_score=7, limit=1)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[_PipelineObservableScoreHarness],
+            activities=[score_activity],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            output = await env.client.execute_workflow(
+                _PipelineObservableScoreHarness.run,
+                ScoreActivityInput(tenant_id="local", limit=1),
+                id=f"pipeline-observable-score-wf-{uuid.uuid4()}",
+                task_queue=queue,
+            )
 
-    assert result["errors"] == {}
+    assert output.status == "ok"
     assert [(event[0], event[1], event[2]) for event in events] == [
         ("score", "StageStarted", "info"),
         ("score", "StageCompleted", "info"),
@@ -164,29 +196,6 @@ def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
 
     with pytest.raises(runner.LlmTransientError, match="1 tailoring error"):
         runner._run_tailor()
-
-
-def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
-    monkeypatch.setattr(
-        "jobhunter.scoring.tailor.run_tailoring",
-        lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
-    )
-
-    with pytest.raises(runner.LlmTransientError, match="failed validation"):
-        runner._run_sequential(["tailor"], min_score=7)
-
-
-def test_tailor_quality_gate_failure_propagates_through_streaming_pipeline(monkeypatch):
-    monkeypatch.setattr(
-        "jobhunter.scoring.tailor.run_tailoring",
-        lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
-    )
-    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: 1)
-
-    result = runner._run_streaming(["tailor"], min_score=7)
-
-    assert result["stages"][0]["status"] == "failed"
-    assert result["errors"] == {"tailor": "failed"}
 
 
 def test_discover_emits_source_events(monkeypatch):
@@ -718,52 +727,6 @@ def test_discover_status_fails_when_internal_enrichment_fails():
     )
 
     assert status == "error: timeout"
-
-
-def test_sequential_pipeline_blocks_score_after_discovery_enrichment_failure(monkeypatch):
-    calls: list[str] = []
-
-    monkeypatch.setitem(
-        runner._STAGE_RUNNERS,
-        "discover",
-        lambda **_kwargs: calls.append("discover") or {"enrichment": "error: timeout"},
-    )
-    monkeypatch.setitem(
-        runner._STAGE_RUNNERS,
-        "score",
-        lambda **_kwargs: calls.append("score") or {"status": "ok"},
-    )
-    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
-
-    result = runner._run_sequential(["discover", "score"], min_score=7)
-
-    assert calls == ["discover"]
-    assert result["stages"] == [
-        {"stage": "discover", "status": "error: timeout", "elapsed": result["stages"][0]["elapsed"]},
-        {"stage": "score", "status": "blocked: upstream discover failed", "elapsed": 0.0},
-    ]
-    assert result["errors"] == {
-        "discover": "error: timeout",
-        "score": "blocked: upstream discover failed",
-    }
-
-
-def test_streaming_stage_blocks_on_failed_upstream(monkeypatch):
-    tracker = runner._StageTracker()
-    stop_event = runner.threading.Event()
-    tracker.mark_done("discover", {"status": "error: timeout"})
-
-    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: 1)
-    monkeypatch.setitem(
-        runner._STAGE_RUNNERS,
-        "score",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("score should not run")),
-    )
-
-    runner._run_stage_streaming("score", tracker, stop_event)
-
-    assert tracker.get_results()["score"]["status"] == "blocked: upstream discover failed"
-    assert tracker.get_results()["score"]["blocked_by"] == "discover"
 
 
 def test_enrich_limit_propagates_to_runner(monkeypatch):

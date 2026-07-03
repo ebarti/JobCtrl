@@ -41,6 +41,7 @@ from jobhunter.domain.rpc.messages import (
     WorkflowStartSpec,
 )
 from jobhunter.infrastructure.rpc.workflow_starter import WorkflowStarter
+from jobhunter.workflow_specs import workflow_result_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +217,17 @@ class JsonRpcServer:
             "workflowId": handle.id,
             "firstExecutionRunId": handle.first_execution_run_id,
         }
+        if bool((request.params or {}).get("awaitResult")):
+            try:
+                result["result"] = workflow_result_to_dict(asyncio.run(handle.result()))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Workflow result wait failed for %s", request.method)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
+                )
         if request.id is None:
             return None
         return JsonRpcResponse.success(request.id, result)

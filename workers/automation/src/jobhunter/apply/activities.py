@@ -1,10 +1,4 @@
-"""Temporal activity for the apply stage.
-
-Wraps ``apply.launcher.main`` directly (rather than ``run_pipeline``) because
-apply is its own stage with its own parameter shape — model, headless,
-min_score, workers — that the generic pipeline orchestrator does not pass
-through.
-"""
+"""Temporal activity for the apply stage."""
 
 from __future__ import annotations
 

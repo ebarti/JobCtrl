@@ -17,10 +17,16 @@ from uuid import uuid4
 
 from jobhunter import config
 from jobhunter.database import get_connection, init_db
-from jobhunter.infrastructure.profile import get_profile_repository
 from jobhunter.operational_metrics import record_operational_attempt_metric
-from jobhunter.pipeline import SUPPORTED_STAGE_ORDER, run_pipeline
+from jobhunter.pipeline import SUPPORTED_STAGE_ORDER
 from jobhunter.state import record_job_event, utc_now
+from jobhunter.workflow_specs import (
+    build_apply_workflow_spec,
+    build_profile_import_workflow_spec,
+    build_run_stage_workflow_spec,
+    start_workflow_spec_and_wait_sync,
+    workflow_result_to_dict,
+)
 
 INTERNAL_PIPELINE_ACTION_STAGES: tuple[str, ...] = (*SUPPORTED_STAGE_ORDER, "enrich")
 ACTION_STAGES: tuple[str, ...] = (*INTERNAL_PIPELINE_ACTION_STAGES, "apply", "profile_import")
@@ -101,7 +107,8 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
             {"action_id": action_id, "dry_run": request.dry_run},
         )
 
-        if request.dry_run:
+        if request.stage == "profile_import" and request.dry_run:
+            result = {"planned": _describe_action(request)}
             return _finish_action(
                 request,
                 action_id,
@@ -109,7 +116,7 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
                 start,
                 ok=True,
                 status="dry_run",
-                result={"planned": _describe_action(request)},
+                result=result,
             )
 
         result = _execute_action(request)
@@ -172,48 +179,66 @@ def _bootstrap_runtime() -> None:
 
 def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
     if request.stage in INTERNAL_PIPELINE_ACTION_STAGES:
-        return run_pipeline(
-            stages=[request.stage],
-            min_score=request.min_score,
-            dry_run=False,
-            workers=request.workers,
-            validation_mode=request.validation_mode,
-            limit=request.limit,
-            rescore=request.rescore,
-            retailor=request.retailor,
-            tailor_models=request.tailor_models,
-            tailor_judge_model=request.tailor_judge_model,
-            tailor_judge_min_score=request.tailor_judge_min_score,
+        return _start_and_wait(
+            build_run_stage_workflow_spec(
+                {
+                    "tenantId": "local",
+                    "stage": request.stage,
+                    "minScore": request.min_score,
+                    "dryRun": request.dry_run,
+                    "workers": request.workers,
+                    "validationMode": request.validation_mode,
+                    "limit": request.limit,
+                    "rescore": request.rescore,
+                    "retailor": request.retailor,
+                    "tailorModels": request.tailor_models,
+                    "tailorJudgeModel": request.tailor_judge_model,
+                    "tailorJudgeMinScore": request.tailor_judge_min_score,
+                }
+            )
         )
     if request.stage == "apply":
-        from jobhunter.apply.launcher import main as apply_main
-
-        applied, failed = apply_main(
-            limit=_effective_apply_limit(request),
-            target_url=request.job_url,
-            min_score=request.min_score,
-            headless=request.headless,
-            model=request.model,
-            dry_run=False,
-            continuous=request.continuous,
-            workers=request.workers,
+        return _start_and_wait(
+            build_apply_workflow_spec(
+                {
+                    "tenantId": "local",
+                    "jobUrl": request.job_url,
+                    "limit": _effective_apply_limit(request),
+                    "minScore": request.min_score,
+                    "headless": request.headless,
+                    "model": request.model,
+                    "dryRun": request.dry_run,
+                    "continuous": request.continuous,
+                    "workers": request.workers,
+                }
+            )
         )
-        return {"status": "ok" if failed == 0 else "failed", "applied": applied, "failed": failed}
     if request.stage == "profile_import":
         if not request.pdf_path:
             raise ValueError("profile_import requires pdf_path.")
-        from jobhunter.domain.profile.use_cases import ImportProfileUseCase
-
-        pdf_path = Path(request.pdf_path).expanduser()
-        use_case = ImportProfileUseCase(repository=get_profile_repository())
-        result = use_case(pdf_path.read_bytes(), filename=pdf_path.name)
-        draft: dict[str, Any] = {"source": result.source}
-        if request.import_profile:
-            draft["profile"] = result.profile
-        if request.import_style:
-            draft["style"] = result.style
-        return {"status": "ok", "draft": draft}
+        return _start_and_wait(
+            build_profile_import_workflow_spec(
+                {
+                    "tenantId": "local",
+                    "pdfPath": str(Path(request.pdf_path).expanduser()),
+                    "importProfile": request.import_profile,
+                    "importStyle": request.import_style,
+                }
+            )
+        )
     raise ValueError(f"Unknown action stage: {request.stage}")
+
+
+def _start_and_wait(spec) -> dict[str, Any]:
+    started = start_workflow_spec_and_wait_sync(spec)
+    result = workflow_result_to_dict(started.result)
+    return {
+        "status": _workflow_status(result),
+        "runId": started.run_id,
+        "workflowId": started.workflow_id,
+        "firstExecutionRunId": started.first_execution_run_id,
+        **(result if isinstance(result, dict) else {"result": result}),
+    }
 
 
 def _action_succeeded(result: dict[str, Any]) -> bool:
@@ -221,8 +246,20 @@ def _action_succeeded(result: dict[str, Any]) -> bool:
         return False
     if int(result.get("failed") or 0) > 0:
         return False
+    if result.get("failure") or result.get("error"):
+        return False
+    if result.get("ok") is False:
+        return False
     status = str(result.get("status") or "ok").lower()
     return not status.startswith("error") and status not in {"failed", "failure"}
+
+
+def _workflow_status(result: Any) -> str:
+    if isinstance(result, dict):
+        if result.get("failure") or result.get("error") or result.get("ok") is False:
+            return "failed"
+        return str(result.get("status") or "succeeded")
+    return "succeeded"
 
 
 def _effective_apply_limit(request: LocalActionRequest) -> int:

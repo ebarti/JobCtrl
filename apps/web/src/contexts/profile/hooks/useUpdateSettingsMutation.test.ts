@@ -18,6 +18,7 @@ const initialSettings = {
     autoApply: false,
     applyApprovalRequired: true,
     applyConcurrency: 2,
+    dailyBudgetUsd: 25,
     scoreCriteria: "x",
     targetCriteria: "y",
   },

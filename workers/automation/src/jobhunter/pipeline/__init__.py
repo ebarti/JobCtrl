@@ -1,9 +1,7 @@
 """JobHunter pipeline package.
 
-The orchestrator implementation lives in ``runner.py``. This package re-exports
-the historic public surface so existing callers (``cli``, ``actions``, tests)
-continue to import from ``jobhunter.pipeline``. The package also hosts the
-Temporal workflow definitions in ``workflow.py``.
+The package hosts the remaining per-domain runner helpers plus the Temporal
+workflow definitions in ``workflow.py``.
 """
 
 from jobhunter.pipeline.runner import (
@@ -15,10 +13,6 @@ from jobhunter.pipeline.runner import (
     _PENDING_SQL,
     _count_pending,
     _resolve_stages,
-    _run_sequential,
-    _run_streaming,
-    _StageTracker,
-    run_pipeline,
     run_single_job,
 )
 
@@ -31,9 +25,5 @@ __all__ = [
     "_PENDING_SQL",
     "_count_pending",
     "_resolve_stages",
-    "_run_sequential",
-    "_run_streaming",
-    "_StageTracker",
-    "run_pipeline",
     "run_single_job",
 ]

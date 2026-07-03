@@ -19,6 +19,7 @@ export function ConnectionStatusPill() {
   const workerUnhealthy = workerStatus !== "healthy";
   const lostForLong = useDisconnectedLongerThan(status, CONNECTION_LOST_THRESHOLD_MS);
   const label = workerUnhealthy ? "worker" : lostForLong ? "offline" : STATUS_LABEL[status];
+  const spend = health.data?.llmSpend;
   return (
     <div className="connection-pill-group">
       <span
@@ -28,6 +29,15 @@ export function ConnectionStatusPill() {
       >
         {label}
       </span>
+      {spend ? (
+        <span
+          className="connection-spend"
+          data-status={spend.status}
+          aria-live="polite"
+        >
+          {formatSpendLine(spend.estimatedUsd, spend.dailyBudgetUsd, spend.unlimited)}
+        </span>
+      ) : null}
       {workerUnhealthy ? (
         <div className="connection-banner" role="alert" aria-live="assertive">
           {health.data?.worker.message ?? "JobHunter automation worker health is unavailable."}
@@ -39,6 +49,11 @@ export function ConnectionStatusPill() {
       ) : null}
     </div>
   );
+}
+
+function formatSpendLine(estimatedUsd: number, dailyBudgetUsd: number, unlimited: boolean): string {
+  const budget = unlimited ? "unlimited" : `$${dailyBudgetUsd.toFixed(2)}`;
+  return `LLM $${estimatedUsd.toFixed(2)} / ${budget}`;
 }
 
 function useDisconnectedLongerThan(status: EventStreamStatus, thresholdMs: number): boolean {

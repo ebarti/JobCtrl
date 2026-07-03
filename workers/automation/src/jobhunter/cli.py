@@ -21,7 +21,14 @@ from rich.text import Text
 
 from jobhunter import __version__
 from jobhunter.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL
-from jobhunter.pipeline import SUPPORTED_STAGE_ORDER, run_pipeline, run_single_job
+from jobhunter.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
+from jobhunter.workflow_specs import (
+    build_apply_workflow_spec,
+    build_compensation_refresh_workflow_spec,
+    build_run_stage_workflow_spec,
+    start_workflow_spec_and_wait_sync,
+    workflow_result_to_dict,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,6 +149,53 @@ def _validate_validation_mode(validation: str) -> str:
 def _parse_tailor_models(value: str) -> tuple[str, ...]:
     """Parse comma-separated LLM model specs for tailoring candidates."""
     return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _run_workflow_spec_from_cli(spec, *, label: str) -> dict[str, Any]:
+    workflow_name = getattr(spec.workflow, "__name__", str(spec.workflow))
+    console.print(f"[cyan]Starting {workflow_name} via Temporal:[/cyan] {label}")
+    try:
+        started = start_workflow_spec_and_wait_sync(spec)
+    except Exception as exc:  # noqa: BLE001 - CLI surfaces runtime reachability plainly
+        console.print(
+            "[red]Temporal workflow runtime is unavailable.[/red]\n"
+            f"{exc}\n"
+            "Run [bold]jobhunter doctor[/bold] and start the Temporal server + worker "
+            "before retrying."
+        )
+        raise typer.Exit(code=1) from exc
+
+    result = workflow_result_to_dict(started.result)
+    console.print(
+        f"[green]Workflow completed:[/green] {started.workflow_id} "
+        f"(run {started.first_execution_run_id or started.run_id})"
+    )
+    if _workflow_result_failed(result):
+        error_code = _workflow_error_code(result)
+        if error_code:
+            console.print(f"[red]Workflow failed:[/red] {error_code}")
+        else:
+            console.print("[red]Workflow failed.[/red]")
+        raise typer.Exit(code=1)
+    return result if isinstance(result, dict) else {"result": result}
+
+
+def _workflow_result_failed(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("ok") is False:
+        return True
+    status = str(result.get("status") or "").lower()
+    if status in {"failed", "failure", "canceled", "cancelled", "timed_out", "terminated"}:
+        return True
+    return bool(result.get("failure") or result.get("error"))
+
+
+def _workflow_error_code(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    value = result.get("error_code") or result.get("errorCode")
+    return str(value) if value else None
 
 
 def _load_telemetry_module():
@@ -504,22 +558,25 @@ def _run_stage_command(
 
     validation = _validate_validation_mode(validation)
 
-    result = run_pipeline(
-        stages=[stage],
-        min_score=min_score,
-        dry_run=dry_run,
-        workers=workers,
-        validation_mode=validation,
-        limit=limit,
-        rescore=rescore,
-        retailor=retailor,
-        tailor_models=tailor_models,
-        tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
+    _run_workflow_spec_from_cli(
+        build_run_stage_workflow_spec(
+            {
+                "tenantId": "local",
+                "stage": stage,
+                "minScore": min_score,
+                "dryRun": dry_run,
+                "workers": workers,
+                "validationMode": validation,
+                "limit": limit,
+                "rescore": rescore,
+                "retailor": retailor,
+                "tailorModels": tailor_models,
+                "tailorJudgeModel": tailor_judge_model,
+                "tailorJudgeMinScore": tailor_judge_min_score,
+            }
+        ),
+        label=stage,
     )
-
-    if result.get("errors"):
-        raise typer.Exit(code=1)
 
 
 # ---------------------------------------------------------------------------
@@ -682,22 +739,27 @@ def run(
         )
         raise typer.Exit(code=1)
 
-    result = run_pipeline(
-        stages=stage_list,
-        min_score=min_score,
-        dry_run=dry_run,
-        stream=stream,
-        workers=workers,
-        validation_mode=validation,
-        limit=limit,
-        retailor=retailor,
-        tailor_models=_parse_tailor_models(tailor_models),
-        tailor_judge_model=tailor_judge_model.strip() or None,
-        tailor_judge_min_score=tailor_judge_min_score,
-    )
+    if stream:
+        console.print("[dim]Temporal owns workflow scheduling; --stream no longer selects an in-process runner.[/dim]")
 
-    if result.get("errors"):
-        raise typer.Exit(code=1)
+    _run_workflow_spec_from_cli(
+        build_run_stage_workflow_spec(
+            {
+                "tenantId": "local",
+                "stages": stage_list,
+                "minScore": min_score,
+                "dryRun": dry_run,
+                "workers": workers,
+                "validationMode": validation,
+                "limit": limit,
+                "retailor": retailor,
+                "tailorModels": _parse_tailor_models(tailor_models),
+                "tailorJudgeModel": tailor_judge_model.strip() or None,
+                "tailorJudgeMinScore": tailor_judge_min_score,
+            }
+        ),
+        label=" -> ".join(stage_list),
+    )
 
 
 @app.command()
@@ -835,58 +897,21 @@ def compensation_refresh(
 
     _bootstrap()
 
-    from jobhunter.database import get_connection
-    from jobhunter.infrastructure.compensation import (
-        SqliteMarketCompensationRepository,
-        SqlitePostedCompensationRepository,
-        load_default_reported_compensation_observations,
+    result = _run_workflow_spec_from_cli(
+        build_compensation_refresh_workflow_spec(
+            {
+                "tenantId": tenant_id,
+                "jobUrl": url,
+                "allJobs": url is None,
+                "limit": limit,
+                "observationsJsonPath": str(observations_json) if observations_json else None,
+                "includeEuroTopTech": include_eurotoptech if include_eurotoptech is not None else True,
+                "euroTopTechMaxPages": eurotoptech_max_pages,
+            }
+        ),
+        label="compensation refresh",
     )
-    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-
-    parsed_at = datetime.now(timezone.utc).isoformat()
-    should_include_eurotoptech = include_eurotoptech if include_eurotoptech is not None else True
-    try:
-        source_load = load_default_reported_compensation_observations(
-            local_observations_path=observations_json,
-            include_eurotoptech=should_include_eurotoptech,
-            eurotoptech_max_pages=eurotoptech_max_pages,
-        )
-    except Exception as exc:  # noqa: BLE001 - source loading should not block posted-salary refresh
-        log.warning("Reported compensation sources could not be fully loaded: %s", exc)
-        source_load = load_default_reported_compensation_observations(
-            local_observations_path=observations_json,
-            include_eurotoptech=False,
-            eurotoptech_max_pages=eurotoptech_max_pages,
-        )
-    observations = source_load.observations
-    conn = get_connection()
-    posted_count = SqlitePostedCompensationRepository(conn).backfill_from_legacy_jobs(
-        tenant_id=tenant_id,
-        parsed_at=parsed_at,
-    )
-    estimate_count = SqliteMarketCompensationRepository(conn).backfill_from_jobs(
-        observations,
-        tenant_id=tenant_id,
-        estimated_at=parsed_at,
-        limit=limit,
-        job_url=url,
-    )
-    ProjectionBuilder(conn_factory=get_connection).refresh()
-    console.print_json(
-        data={
-            "ok": True,
-            "postedFactsRefreshed": posted_count,
-            "reportedObservationsLoaded": len(observations),
-            "localReportedObservationsLoaded": source_load.local_count,
-            "licensedReportedObservationsLoaded": source_load.licensed_count,
-            "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
-            "glassdoorObservationsLoaded": source_load.glassdoor_count,
-            "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
-            "estimatesRefreshed": estimate_count,
-            "jobUrl": url,
-            "tenantId": tenant_id,
-        }
-    )
+    console.print_json(data=result)
 
 
 @app.command()
@@ -987,8 +1012,6 @@ def apply(
         )
         return
 
-    from jobhunter.apply.launcher import main as apply_main
-
     if limit is not None:
         effective_limit = limit
     elif continuous:
@@ -1007,15 +1030,21 @@ def apply(
         console.print(f"  Target:   {url}")
     console.print()
 
-    apply_main(
-        limit=effective_limit,
-        target_url=url,
-        min_score=min_score,
-        headless=headless,
-        model=model,
-        dry_run=dry_run,
-        continuous=continuous,
-        workers=workers,
+    _run_workflow_spec_from_cli(
+        build_apply_workflow_spec(
+            {
+                "tenantId": "local",
+                "jobUrl": url,
+                "limit": effective_limit,
+                "minScore": min_score,
+                "headless": headless,
+                "model": model,
+                "dryRun": dry_run,
+                "continuous": continuous,
+                "workers": workers,
+            }
+        ),
+        label="apply",
     )
 
 
@@ -1222,9 +1251,16 @@ def retry(
     console.print(f"[green]Reset {stage} for retry:[/green] {job_url}")
     if run_after:
         if stage == "apply":
-            from jobhunter.apply.launcher import main as apply_main
-
-            apply_main(limit=1, target_url=job_url)
+            _run_workflow_spec_from_cli(
+                build_apply_workflow_spec(
+                    {
+                        "tenantId": "local",
+                        "jobUrl": job_url,
+                        "limit": 1,
+                    }
+                ),
+                label="apply retry",
+            )
         elif stage in (*VALID_STAGES, "enrich"):
             _run_stage_command(stage, limit=1)
 

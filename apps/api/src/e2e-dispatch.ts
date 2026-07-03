@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { ActionDispatcher } from "./local-actions.js";
+import type { ActionDispatcher, ProfileImporter } from "./local-actions.js";
 
 /**
  * INSPECT-01 E2E support.
@@ -29,3 +29,34 @@ export const e2eStubActionDispatcher: ActionDispatcher = async () => ({
   actionId: `e2e-act-${randomUUID()}`,
   runId: `e2e-run-${randomUUID()}`,
 });
+
+export const e2eStubProfileImporter: ProfileImporter = async (input) => {
+  const actionId = `e2e-profile-act-${randomUUID()}`;
+  const runId = `e2e-profile-run-${randomUUID()}`;
+  return {
+    profile: {
+      personal: {
+        full_name: "E2E Imported Candidate",
+      },
+    },
+    style: {},
+    templateText: "\\documentclass{article}",
+    source: {
+      filename: input.filename,
+      bytes: input.pdfBytes.length,
+      e2e: true,
+    },
+    action: {
+      ok: true,
+      runId,
+      actionId,
+      action: "profile_import",
+      status: "queued",
+      jobKey: "profile",
+      command: {
+        action: "profile_import",
+        jobKey: "profile",
+      },
+    },
+  };
+};

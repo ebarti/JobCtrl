@@ -102,6 +102,7 @@ beforeEach(() => {
       min_fit_score: 8,
       auto_apply: true,
       apply_concurrency: 3,
+      daily_budget_usd: 12.5,
       score_criteria: "Security leadership and platform reliability.",
       target_criteria: "Director-plus infrastructure and security roles.",
     }),
@@ -154,11 +155,57 @@ describe("local TypeScript API", () => {
       appDir: tempDir,
       dbPath: options.dbPath,
       dbExists: true,
+      llmSpend: {
+        status: "ok",
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedUsd: 0,
+        dailyBudgetUsd: 12.5,
+        remainingUsd: 12.5,
+        unlimited: false,
+      },
       worker: {
         status: "missing",
         expectedDbPath: options.dbPath,
         expectedAppDir: tempDir,
         heartbeat: null,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports today's LLM spend against the configured budget", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const db = new Database(options.dbPath);
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS llm_spend (
+        day TEXT PRIMARY KEY,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_usd REAL NOT NULL DEFAULT 0
+      )`,
+    );
+    db.prepare(
+      `INSERT INTO llm_spend (day, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, ?, ?, ?)`,
+    ).run(day, 1234, 567, 13);
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/health" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      llmSpend: {
+        status: "over_budget",
+        day,
+        inputTokens: 1234,
+        outputTokens: 567,
+        estimatedUsd: 13,
+        dailyBudgetUsd: 12.5,
+        remainingUsd: 0,
+        unlimited: false,
       },
     });
 
@@ -6679,6 +6726,7 @@ describe("local TypeScript API", () => {
         autoApply: true,
         applyApprovalRequired: true,
         applyConcurrency: 3,
+        dailyBudgetUsd: 12.5,
         scoreCriteria: "Security leadership and platform reliability.",
         targetCriteria: "Director-plus infrastructure and security roles.",
       },
@@ -6704,6 +6752,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: true,
         applyConcurrency: 1,
+        dailyBudgetUsd: 25,
         scoreCriteria: "",
         targetCriteria: "",
       },
@@ -6724,6 +6773,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: false,
         applyConcurrency: 2,
+        dailyBudgetUsd: 19.75,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
         targetCriteria: "Target senior engineering leadership roles.",
       },
@@ -6739,6 +6789,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: false,
         applyConcurrency: 2,
+        dailyBudgetUsd: 19.75,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
         targetCriteria: "Target senior engineering leadership roles.",
       },
@@ -6749,6 +6800,7 @@ describe("local TypeScript API", () => {
       min_fit_score: 9,
       auto_apply: false,
       apply_concurrency: 2,
+      daily_budget_usd: 19.75,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
       target_criteria: "Target senior engineering leadership roles.",
     });

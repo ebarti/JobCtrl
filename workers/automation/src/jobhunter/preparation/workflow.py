@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
@@ -13,6 +15,7 @@ with workflow.unsafe.imports_passed_through():
         emit_workflow_outcome,
         emit_workflow_started,
     )
+    from jobhunter.llm import SpendBudgetInput, check_spend_budget
     from jobhunter.materials.activities import (
         CoverLetterActivityInput,
         RenderPdfActivityInput,
@@ -85,6 +88,8 @@ class JobPreparationWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
+            if _preparation_spends(payload):
+                await _check_spend(payload)
             result = await self._execute_steps(payload)
         except CancelledError:
             await emit_workflow_outcome(
@@ -215,6 +220,19 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             retry_policy=_COVER_RETRY,
         )
     raise ApplicationError(f"Unknown preparation step: {step}", non_retryable=True)
+
+
+async def _check_spend(payload: JobPreparationInput) -> None:
+    await workflow.execute_activity(
+        check_spend_budget,
+        SpendBudgetInput(tenant_id=payload.tenant_id),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+
+def _preparation_spends(payload: JobPreparationInput) -> bool:
+    return any(step in {"score", "tailor", "cover"} for step in payload.steps)
 
 
 def _ordered_steps(steps: list[str]) -> list[str]:

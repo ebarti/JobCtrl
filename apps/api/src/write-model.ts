@@ -653,6 +653,9 @@ export function writeSettingsConfig(paths: { settingsPath: string }, request: Se
   if (request.applyConcurrency !== undefined) {
     assign("apply_concurrency", request.applyConcurrency);
   }
+  if (request.dailyBudgetUsd !== undefined) {
+    assign("daily_budget_usd", request.dailyBudgetUsd);
+  }
   if (request.scoreCriteria !== undefined) {
     assign("score_criteria", request.scoreCriteria);
   }

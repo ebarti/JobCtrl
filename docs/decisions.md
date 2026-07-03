@@ -289,6 +289,14 @@ through an injected `WorkflowStarter` and returns
 handled by a new `cancel_run` method that signals the in-flight workflow.
 The supported modes are now `(sync, workflow, streaming)`.
 
+2026-07-03 update: `workflow` dispatch is Python-native. The TS API speaks
+JSON-RPC to the Python worker; Python handlers build `WorkflowStartSpec`s and
+start Temporal through the injected starter. TS does not enqueue Temporal work
+directly in local mode. The remaining heavy methods (`profile_import`,
+`refresh_compensation`, `apply`, batch/current-policy stage commands) return
+workflow handles instead of doing blocking work inside the JSON-RPC request
+thread.
+
 ## 2026-05-06: TanStack Family Adopted For The Frontend
 
 Status: accepted
@@ -710,3 +718,76 @@ Consequences:
   failures quarantine only the failing source
 - the removed `discovery_run_projections` write-only table no longer owns any
   read-model behavior; source health is projected through `source_quality_stats`
+
+## 2026-07-03: One Temporal Execution Path For Long-Running Work
+
+Status: accepted
+
+Decision: every long-running entry point starts a Temporal workflow. The CLI,
+JSON-RPC handlers, local actions, and API-facing dispatch paths share workflow
+spec builders; the in-process pipeline runner and compatibility re-exports are
+deleted.
+
+Rationale:
+
+- local workflow recovery, retries, cancellation, and visibility should be the
+  same whether a user starts work from the UI, CLI, or JSON-RPC
+- fallback execution hid failures from the runs UI and could not survive worker
+  interruption
+- deterministic workflow IDs preserve idempotency where duplicate dispatch is
+  unsafe
+
+Consequences:
+
+- `jobhunter run` and per-stage commands require a reachable Temporal server
+  plus a running JobHunter worker
+- workflow start failures are reported immediately with no in-process fallback
+- `_run_stage_observed` remains the stage event/metric/span boundary inside
+  activities
+
+## 2026-07-03: Local LLM Spend Ceiling
+
+Status: accepted
+
+Decision: record local LLM token usage into `llm_spend` and enforce a daily
+budget before workflows that can spend tokens begin their heavy activity.
+`dailyBudgetUsd` defaults to `25`; `0` means unlimited.
+
+Rationale:
+
+- local automation can issue many LLM calls after a broad discovery run
+- the budget check needs to happen in the durable workflow path, not only in UI
+  controls
+- spend visibility belongs in the same operations/health surface as worker
+  health because it is an operational readiness signal
+
+Consequences:
+
+- usage is captured at existing LLM span / SDK usage points without
+  double-counting
+- over-budget workflows fail fast with non-retryable `budget_exceeded`
+- Preferences and health expose the configured budget and today's estimated
+  spend
+
+## 2026-07-03: Heavy Sync RPC Handlers Become Workflows
+
+Status: accepted
+
+Decision: `profile_import` and `refresh_compensation` are Temporal workflows.
+Profile import wraps the existing implementation in an activity; compensation
+refresh has a shared core under `infrastructure/compensation/` and one workflow
+activity.
+
+Rationale:
+
+- both operations can block the long-lived JSON-RPC worker thread
+- workflow conversion gives the runs UI, finalize events, cancellation, and
+  reconciler the same visibility as stage/apply work
+- the TS API already handles the workflow-run result shape
+
+Consequences:
+
+- callers receive `{runId, workflowId, firstExecutionRunId}` and observe
+  completion through the workflow-runs read model
+- the old synchronous handler body is not retained as a compatibility wrapper
+- tests cover the extracted compensation core separately from RPC dispatch

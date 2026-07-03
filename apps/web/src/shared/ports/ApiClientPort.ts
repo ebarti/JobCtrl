@@ -111,6 +111,17 @@ export interface ApiHealthResponse {
   dbPath: string;
   dbExists: boolean;
   dbIdentity: string | null;
+  llmSpend: {
+    status: "ok" | "over_budget";
+    day: string;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedUsd: number;
+    dailyBudgetUsd: number;
+    remainingUsd: number | null;
+    unlimited: boolean;
+    message: string;
+  };
   worker: {
     status: "healthy" | "missing" | "stale" | "mismatched";
     expectedDbPath: string;

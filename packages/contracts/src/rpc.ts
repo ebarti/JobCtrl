@@ -76,7 +76,7 @@ export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
 const TenantParam = z.string().trim().min(1).default("local");
 
-/* --- complex commands (delegated to Python via run_local_action) --------- */
+/* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 
 export const RunStageParamsSchema = z
   .object({
@@ -305,6 +305,8 @@ export type CancelRunResult = z.infer<typeof CancelRunResultSchema>;
 export const ProfileImportParamsSchema = z
   .object({
     tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
     pdfPath: z.string().min(1),
     importProfile: z.boolean().default(true),
     importStyle: z.boolean().default(true),
@@ -312,7 +314,7 @@ export const ProfileImportParamsSchema = z
   .strict();
 export type ProfileImportParams = z.infer<typeof ProfileImportParamsSchema>;
 
-/* --- LocalActionResult shape (returned by run_stage / profile_import) ---- */
+/* --- Legacy LocalActionResult shape (still parsed for old sync adapters) -- */
 
 export const LocalActionResultSchema = z
   .object({

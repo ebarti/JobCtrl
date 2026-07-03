@@ -113,8 +113,20 @@ code,
   position: relative;
   flex: 0 0 auto;
   align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   margin-left: auto;
+}
+
+.connection-spend {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.connection-spend[data-status="over_budget"] {
+  color: var(--destructive);
 }
 
 .connection-banner {

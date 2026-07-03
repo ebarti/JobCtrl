@@ -84,6 +84,13 @@ the non-interactive Node + Python dependency sync.
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
 
+Commands that start work (`jobhunter run`, per-stage commands, apply, profile
+import, and compensation refresh) now start Temporal workflows and wait on their
+handles. They require a reachable Temporal server plus a running JobHunter
+worker: use `pnpm dev`, or start `temporal server start-dev` and
+`uv --project workers/automation run jobhunter worker` yourself. They do not
+fall back to the old in-process pipeline path.
+
 For the full first-run guide, see
 [docs/user/getting-started.md](docs/user/getting-started.md).
 
@@ -189,6 +196,12 @@ SQLite. `scheduling_enabled` defaults to `false`; `schedule_cron` defaults to
 `0 7 * * *` and is interpreted by the local Temporal dev server. When disabled,
 worker startup deletes any existing local discovery schedule instead of running
 background discovery.
+
+LLM spend is tracked locally in SQLite from the existing LLM usage capture
+points. `dailyBudgetUsd` defaults to `25`; set it to `0` in Preferences to make
+the local budget unlimited. Workflows that spend LLM tokens run a budget
+preflight before starting their heavy activity, and the health surface shows
+today's estimated spend against the configured budget.
 
 ## Development
 

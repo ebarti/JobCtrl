@@ -3,8 +3,8 @@
 This document explains how JobHunter's job pipeline executes today. It is the
 deep-dive companion to [`architecture.md`](architecture.md): the top-level
 architecture doc names the runtime boundaries, while this document follows each
-pipeline stage through the UI, API, JSON-RPC worker boundary, Python stage
-runner, persistence, events, and projections.
+pipeline stage through the UI, API, JSON-RPC worker boundary, Temporal
+workflow, Python activities, persistence, events, and projections.
 
 The canonical domain model remains [`ddd-target.md`](ddd-target.md). This file
 documents the implemented local execution shape.
@@ -71,11 +71,13 @@ implementations where possible, but they differ in orchestration.
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | The Jobs toolbar can explicitly continue active pending preparation backlogs. The API selects the first eligible pending preparation substage per matching job, groups selected job URLs by `enrich`, `score`, `tailor`, or `cover`, and dispatches bounded `run_stage` workflows without resetting failures or running `apply`. | Internal preparation recovery |
 | Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | The API resets retryable failed stages, and with `runAfter: true` groups reset preparation rows by internal stage before dispatching batch `run_stage` workflows with explicit `jobUrls` and requested workers. The route records the workflow id, job URLs, worker count, and per-job `StageQueued` events with `source: "bulk_retry_failed"`; it never auto-runs `apply`. | Internal preparation recovery |
-| CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
+| CLI batch run | `jobhunter run ...` | The CLI builds the same `WorkflowStartSpec` shape as JSON-RPC, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
 | Temporal discovery workflow | `DiscoverWorkflow` | Tenant-scoped workflow (`discover-{tenantId}`) with one activity per source family, one enrichment activity, and batched preparation child starts. | Discover |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow for remaining batch orchestration; it delegates `discover` to child `DiscoverWorkflow` and `apply` to child `ApplyWorkflow`. | Discover and Apply |
 | Temporal preparation workflow | `JobPreparationWorkflow` | Deterministic per-job workflow keyed by `prep-{idempotency_key}` that runs score, tailor, cover, and PDF steps in order. | Internal preparation |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
+| Temporal profile import workflow | `ProfileImportWorkflow` | Single-activity workflow for resume PDF profile import. | Profile |
+| Temporal compensation refresh workflow | `CompensationRefreshWorkflow` | Single-activity workflow for posted compensation and market estimate refresh. | Compensation |
 
 ### End-To-End UI/API Call Path
 
@@ -170,8 +172,7 @@ classDiagram
       +run enrichment activity
       +fan out prep children
     }
-    class PipelineRunner {
-      +run_pipeline()
+    class StageActivities {
       +_run_stage_observed()
       +run_discovery_source_family()
       +run_discovery_enrichment_stage()
@@ -199,8 +200,8 @@ classDiagram
     JsonRpcServer --> ApplyWorkflow : per-job apply
     JobPipelineWorkflow --> DiscoverWorkflow : discover child
     JobPipelineWorkflow --> ApplyWorkflow : apply child workflow
-    DiscoverWorkflow --> PipelineRunner
-    PipelineRunner --> OperationsReadSide : events
+    DiscoverWorkflow --> StageActivities
+    StageActivities --> OperationsReadSide : events
     ApplyWorkflow --> OperationsReadSide : events
 ```
 
@@ -243,9 +244,10 @@ left running by a prior worker process.
 
 ### Dry Run
 
-For non-apply stages, `dryRun=true` is passed through the workflow activity into
-`run_pipeline()`. The runner returns planned stage metadata and records dry-run
-operational attempts before executing any stage implementation.
+For non-apply maintenance stages, `dryRun=true` is passed through the workflow
+payload into the owning activity. The activity returns planned stage metadata
+and records dry-run operational attempts before executing any stage
+implementation.
 
 For apply, `dryRun` is passed into `ApplyWorkflowInput` and down to the apply
 launcher. The workflow still starts, but the launcher follows the dry-run path
@@ -267,22 +269,16 @@ instead of submitting applications.
 - Apply: cap for apply attempts unless `continuous=true`, in which case the
   apply launcher runs continuously.
 
-### Sequential And Streaming
+### Workflow Ordering
 
-`run_pipeline()` has two Python execution modes:
-
-- Sequential: stages run one at a time in canonical stage order.
-- Streaming: each selected stage runs in its own thread. Downstream stages poll
-  for pending work and finish only when their upstream producers are done and
-  they have no remaining work.
-
-The UI `run-stage` endpoint preserves request order by starting one
-`JobPipelineWorkflow` for the selected stage list. The product stage trigger
-normally sends only `discover` or `apply`. Non-apply stages run serially as
-Temporal activities; each activity still enters the Python runner as a
-single-stage `run_pipeline(stages=[stage])` invocation. `apply` remains the
-dedicated `ApplyWorkflow`, executed as a child workflow when it appears in the
-ordered pipeline list.
+There is one execution path for long-running work: entry points start Temporal
+workflows. The UI `run-stage` endpoint, JSON-RPC handlers, CLI commands, and
+local actions all build shared workflow specs and start the workflow on the
+JobHunter task queue. `JobPipelineWorkflow` preserves the requested canonical
+stage order and executes non-apply maintenance stages serially as activities.
+`discover` is delegated to child `DiscoverWorkflow`; `apply` is delegated to
+child `ApplyWorkflow`. The deleted in-process sequential/threaded engine is no
+longer reachable by a flag or fallback.
 
 ## Discover Stage
 
@@ -705,6 +701,7 @@ sequenceDiagram
     autonumber
     participant Api as TS API
     participant Rpc as JSON-RPC current-policy action
+    participant Temporal as Temporal service
     participant Prep as JobPreparationWorkflow
     participant Runner as _run_score
     participant Scorer as run_scoring
@@ -716,8 +713,9 @@ sequenceDiagram
     participant Ops as Operations projections
 
     Api->>Rpc: rescore_job or rescore_jobs_not_on_current_scoring_policy
+    Rpc->>Temporal: start JobPreparationWorkflow or JobPipelineWorkflow
     Prep->>Scorer: score_job_activity during Discover fan-out
-    Rpc->>Runner: run_pipeline(stages=["score"]) for low-level maintenance
+    Temporal->>Runner: execute score_activity for low-level maintenance
     Runner->>Scorer: run_scoring(limit, rescore, workers)
     Scorer->>DB: select enriched jobs needing score
     Scorer->>Retrieval: rank candidate pool
@@ -942,6 +940,7 @@ sequenceDiagram
     autonumber
     participant Api as TS API
     participant Rpc as JSON-RPC run_stage
+    participant Temporal as Temporal service
     participant Runner as _run_cover
     participant Cover as cover_letter_by_url
     participant Profile as Profile repository
@@ -951,7 +950,8 @@ sequenceDiagram
     participant DB as SQLite
 
     Api->>Rpc: run_stage(stage="cover", minScore, limit, validationMode)
-    Rpc->>Runner: run_pipeline(stages=["cover"])
+    Rpc->>Temporal: start JobPipelineWorkflow(stages=["cover"])
+    Temporal->>Runner: execute cover_activity
     Runner->>Cover: cover_letter_by_url(job_url)
     Cover->>DB: select one eligible job/material set
     Cover->>Profile: load profile and writing style

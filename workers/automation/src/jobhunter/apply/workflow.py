@@ -14,7 +14,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from jobhunter.apply.activities import (
@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         emit_workflow_outcome,
         emit_workflow_started,
     )
+    from jobhunter.llm import SpendBudgetInput, check_spend_budget
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,12 @@ class ApplyWorkflow:
         # record here (Temporal cancels newly-scheduled activities during
         # cancellation); the describe-reconciler terminalizes WorkflowCanceled.
         try:
+            await workflow.execute_activity(
+                check_spend_budget,
+                SpendBudgetInput(tenant_id=payload.tenant_id),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
             result = await self._run_apply(payload)
         except Exception as exc:  # noqa: BLE001 — record then re-raise
             await emit_workflow_outcome(
@@ -97,7 +104,7 @@ class ApplyWorkflow:
                 workflow_type="ApplyWorkflow",
                 status="failed",
                 started_at=started_at,
-                error_code="workflow_error",
+                error_code=_exception_error_code(exc) or "workflow_error",
                 error_message=str(exc),
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
@@ -174,6 +181,21 @@ def _apply_input_summary(payload: ApplyWorkflowInput) -> dict[str, Any]:
         "continuous": payload.continuous,
         "limit": payload.limit,
     }
+
+
+def _activity_error_code(exc: ActivityError) -> str | None:
+    cause = exc.cause
+    if isinstance(cause, ApplicationError):
+        return cause.type or None
+    return None
+
+
+def _exception_error_code(exc: Exception) -> str | None:
+    if isinstance(exc, ActivityError):
+        return _activity_error_code(exc)
+    if isinstance(exc, ApplicationError):
+        return exc.type or None
+    return None
 
 
 __all__ = ["ApplyWorkflow", "ApplyWorkflowInput", "ApplyWorkflowResult"]

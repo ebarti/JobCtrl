@@ -16,8 +16,12 @@ import os
 import random
 import re
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
 
 import httpx
+from temporalio import activity
 
 from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 from jobhunter.model_defaults import DEFAULT_GEMINI_MODEL
@@ -26,6 +30,166 @@ log = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_LOCAL_MODEL = "local-model"
+
+
+@dataclass(frozen=True)
+class SpendBudgetInput:
+    tenant_id: str = "local"
+
+
+@dataclass(frozen=True)
+class SpendBudgetStatus:
+    day: str
+    input_tokens: int
+    output_tokens: int
+    estimated_usd: float
+    daily_budget_usd: float
+    exceeded: bool
+
+
+def record_llm_spend(
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    estimated_usd: float | None = None,
+    model: str | None = None,
+    day: str | None = None,
+) -> None:
+    """Accumulate one LLM usage observation into the daily spend ledger."""
+    input_count = _coerce_token_count(input_tokens)
+    output_count = _coerce_token_count(output_tokens)
+    estimated = (
+        max(0.0, float(estimated_usd))
+        if estimated_usd is not None
+        else estimate_llm_cost_usd(
+            input_tokens=input_count,
+            output_tokens=output_count,
+            model=model,
+        )
+    )
+    if input_count == 0 and output_count == 0 and estimated <= 0:
+        return
+
+    from jobhunter.database import get_connection, init_db
+
+    spend_day = day or _utc_spend_day()
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO llm_spend (day, input_tokens, output_tokens, estimated_usd)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(day) DO UPDATE SET
+            input_tokens = input_tokens + excluded.input_tokens,
+            output_tokens = output_tokens + excluded.output_tokens,
+            estimated_usd = estimated_usd + excluded.estimated_usd
+        """,
+        (spend_day, input_count, output_count, estimated),
+    )
+    conn.commit()
+
+
+def read_llm_spend(day: str | None = None) -> dict[str, Any]:
+    """Return the accumulated spend row for *day* (UTC today by default)."""
+    from jobhunter.database import get_connection, init_db
+
+    spend_day = day or _utc_spend_day()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT day, input_tokens, output_tokens, estimated_usd FROM llm_spend WHERE day = ?",
+            (spend_day,),
+        ).fetchone()
+    except Exception:
+        init_db()
+        row = conn.execute(
+            "SELECT day, input_tokens, output_tokens, estimated_usd FROM llm_spend WHERE day = ?",
+            (spend_day,),
+        ).fetchone()
+    if row is None:
+        return {
+            "day": spend_day,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_usd": 0.0,
+        }
+    return {
+        "day": str(row["day"]),
+        "input_tokens": int(row["input_tokens"] or 0),
+        "output_tokens": int(row["output_tokens"] or 0),
+        "estimated_usd": float(row["estimated_usd"] or 0.0),
+    }
+
+
+def read_spend_budget_status(*, daily_budget_usd: float | None = None) -> SpendBudgetStatus:
+    """Read today's spend and compare it with the configured daily budget."""
+    if daily_budget_usd is None:
+        from jobhunter.infrastructure.scoring.criteria_provider import read_daily_budget_usd
+
+        daily_budget_usd = read_daily_budget_usd(default=25.0)
+    row = read_llm_spend()
+    budget = max(0.0, float(daily_budget_usd or 0.0))
+    estimated = float(row["estimated_usd"])
+    return SpendBudgetStatus(
+        day=str(row["day"]),
+        input_tokens=int(row["input_tokens"]),
+        output_tokens=int(row["output_tokens"]),
+        estimated_usd=estimated,
+        daily_budget_usd=budget,
+        exceeded=budget > 0 and estimated >= budget,
+    )
+
+
+@activity.defn(name="check_spend_budget")
+async def check_spend_budget(payload: SpendBudgetInput | None = None) -> SpendBudgetStatus:
+    """Temporal preflight that blocks spendful workflows once the cap is hit."""
+    from jobhunter.domain.errors import BudgetExceededError, to_application_error
+
+    status = read_spend_budget_status()
+    if status.exceeded:
+        raise to_application_error(
+            BudgetExceededError(
+                f"LLM daily spend budget exceeded: ${status.estimated_usd:.4f} "
+                f"spent of ${status.daily_budget_usd:.2f} for {status.day}."
+            )
+        )
+    return status
+
+
+def estimate_llm_cost_usd(
+    *,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    model: str | None = None,
+) -> float:
+    """Best-effort USD estimate when the provider does not return cost."""
+    input_count = _coerce_token_count(input_tokens)
+    output_count = _coerce_token_count(output_tokens)
+    if input_count == 0 and output_count == 0:
+        return 0.0
+    normalized = (model or "").lower()
+    if normalized.startswith("local:") or normalized.startswith("local-") or "local" in normalized:
+        return 0.0
+    if "gpt-4o" in normalized:
+        input_rate, output_rate = 2.50, 10.00
+    elif "gemini" in normalized:
+        input_rate, output_rate = 0.30, 2.50
+    elif "claude" in normalized:
+        input_rate, output_rate = 3.00, 15.00
+    else:
+        input_rate, output_rate = 1.00, 4.00
+    return (input_count * input_rate + output_count * output_rate) / 1_000_000.0
+
+
+def _coerce_token_count(value: int | None) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _utc_spend_day() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 # ---------------------------------------------------------------------------
 # Provider detection
