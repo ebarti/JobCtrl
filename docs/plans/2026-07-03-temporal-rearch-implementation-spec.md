@@ -116,6 +116,20 @@ Note: a trailing gRPC `describe_namespace ... Connection refused` WARNING in
 pytest output comes from a temporalio client test with no local server. It
 is not a failure.
 
+Note on web e2e (P2/P5): the Playwright config
+(`apps/web/e2e/playwright.config.ts`) is self-isolating — it boots its own
+API+web on ports 8767/5174 against a temp `JOBHUNTER_E2E_APP_DIR` with
+dispatch stubbed; it never touches the live stack on 8766/5173 or real user
+data. Before running it, check nothing is squatting 8767/5174 from another
+worktree (`lsof -i :8767 -i :5174`); stop only processes you yourself
+started — if a foreign process holds a port, use
+`JOBHUNTER_E2E_API_PORT`/`JOBHUNTER_E2E_WEB_PORT` to pick free ones.
+KNOWN BASELINE: five e2e failures are pre-existing on `main`
+(`dashboard.spec.ts:3`, `jobs-drawer.spec.ts:297`, `jobs-drawer.spec.ts:371`,
+`route-visual-qa.spec.ts:507`, `token-foundation.spec.ts:349`) — they are
+NOT yours to fix and NOT a stop condition; "all pass" for e2e means no NEW
+failures beyond those five.
+
 ### 0.4 PR / completion report template
 
 Every PR description must contain: **What** (bullet list of changes incl.
