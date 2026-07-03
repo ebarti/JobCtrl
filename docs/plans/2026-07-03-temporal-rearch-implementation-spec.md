@@ -187,42 +187,62 @@ explicitly left out, with the phase/owner it was routed to).
 Verify each of these exists on `main` before starting any phase (grep for
 the symbol). If one is missing, STOP and report.
 
-**From P0:**
+**From P0 (PR #233 — this section reflects what actually shipped):**
 
 - `Workflow*` event family (6 types): `WorkflowStarted`,
   `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`,
   `WorkflowTimedOut`, `WorkflowTerminated` — in both event registries, with
   web handlers + fixtures. Payload carries `workflow_type`, `workflow_id`,
   `temporal_run_id`, an input summary, terminal status, and error
-  code/message/retryable for failures.
+  code/message/retryable for failures; `WorkflowTerminated`/`WorkflowTimedOut`
+  also carry `error_code` (and `WorkflowCanceled` additionally
+  `error_message`) — the reconciler stamps `reconciled_not_found` /
+  `reconciled_terminated` / `reconciled_closed_<status>` provenance codes.
 - `workers/automation/src/jobhunter/infrastructure/temporal/finalize.py`
   exposing activities `record_workflow_started` and
   `record_workflow_outcome`. EVERY workflow you create in P2–P5 must call
-  `record_workflow_started` first and guarantee `record_workflow_outcome`
-  runs on all exits (success, failure, cancellation) — copy the exact
-  wiring pattern from `JobPipelineWorkflow.run`
-  (`workers/automation/src/jobhunter/pipeline/workflow.py`).
+  `record_workflow_started` first and run `record_workflow_outcome` on its
+  success and failure exits — copy the exact wiring pattern from
+  `JobPipelineWorkflow.run`
+  (`workers/automation/src/jobhunter/pipeline/workflow.py`). Known P0
+  limitations you inherit (P1b fixes them — §4 item 10): in-workflow
+  CANCELLATION is currently recorded as `failed` (the workflows catch the
+  cancel-induced ActivityError as a stage failure); genuinely-CANCELED
+  Temporal executions are mapped to `WorkflowCanceled` by the reconciler; a
+  workflow that dies before `record_workflow_started` commits has no
+  projection row at all.
 - `workflow_run_projections` table (Python-sole-writer; PK `workflow_id`)
-  folded by `_rebuild_workflow_runs` in `projection_builder.py`; TS mirror
-  DDL in `apps/api/src/projections.ts`; `listWorkflowRuns` in
-  `apps/api/src/read-model.ts` reads it; `GET /v1/workflow-runs/:runId`
-  detail endpoint exists.
+  folded by the projection builder under the shared watermark, with
+  **first-terminal-wins** semantics (a later terminal event never replaces
+  the first — do not rely on re-emitting terminals to "correct" a row); the
+  fold upserts, so an outcome without a prior start marker still creates a
+  terminal row. TS mirror DDL in `apps/api/src/projections.ts` (TS reads
+  only); `listWorkflowRuns` in `apps/api/src/read-model.ts` reads it;
+  `GET /v1/workflow-runs/:runId` detail endpoint exists.
 - Deterministic workflow IDs + `USE_EXISTING` conflict policy plumbed
   through `WorkflowStartSpec.workflow_id`
   (`workers/automation/src/jobhunter/domain/rpc/messages.py`) and
   `default_workflow_starter`
   (`workers/automation/src/jobhunter/infrastructure/rpc/workflow_starter.py`).
+  Shipped scope: SINGLE-JOB apply uses `apply-{sha256(jobUrl)[:16]}`; apply
+  batch/continuous and all pipeline/`run_stage` starts still use
+  `run-{uuid}` (P2 owns apply batch IDs; P4 owns `discover-{tenant}`).
   Reuse this seam for every new deterministic ID; do not invent a second
   mechanism.
 - Reconciler pass inside the worker heartbeat loop (`cli.py`,
-  `_worker_heartbeat_iteration`): open `workflow_run_projections` rows are
-  described against Temporal and terminalized when CLOSED or NOT_FOUND.
+  `_worker_heartbeat_iteration`, 15s): open `workflow_run_projections` rows
+  are described against Temporal and terminalized when CLOSED or NOT_FOUND,
+  with reason stamping (codes above). It re-checks the row inside its write
+  transaction and NEVER overwrites an already-terminal row. It only heals
+  EXISTING rows. Detection latency for a dead worker's in-flight activity ≈
+  the activity's `heartbeat_timeout` (2 min for discover) + one tick.
 - JSON-RPC per-request timeout (TS adapter), fetch AbortController
   (`packages/api-client/src/client.ts`), concurrent dispatch in the Python
   RPC server (`infrastructure/rpc/server.py`) with stdout-lock response
   serialization.
 - Dead RPC handlers `reset_stage`, `mark_applied`, `mark_skipped`,
-  `cancel_stage`, `analyze_job` are GONE. Do not resurrect them.
+  `cancel_stage` are GONE — do not resurrect them. `analyze_job` was KEPT
+  (live caller in `apps/api/src/local-actions.ts`); leave it alone.
 
 **From P1a (PR #231):**
 
@@ -258,9 +278,15 @@ policies are tuned per stage.
 `workers/automation/src/jobhunter/materials/activities.py`,
 `workers/automation/src/jobhunter/discovery/activities.py`,
 `workers/automation/src/jobhunter/profile/activities.py`,
-`workers/automation/src/jobhunter/pipeline/workflow.py` (retry policies
-only), `workers/automation/src/jobhunter/infrastructure/temporal/run_in_activity.py`,
+`workers/automation/src/jobhunter/pipeline/workflow.py` (retry policies +
+the cancel-path fix of item 10), `workers/automation/src/jobhunter/infrastructure/temporal/run_in_activity.py`,
 `workers/automation/src/jobhunter/infrastructure/temporal/worker.py`,
+`workers/automation/src/jobhunter/infrastructure/temporal/finalize.py`,
+`workers/automation/src/jobhunter/infrastructure/rpc/workflow_starter.py`
+and `workers/automation/src/jobhunter/cli.py` (item 10's seam fixes ONLY —
+dispatch-time row / reconciler sweep; nothing else in cli.py),
+`workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`
+(only if item 10 needs a fold tweak),
 `workers/automation/src/jobhunter/enrichment/detail.py` (retryable-status
 wiring only), source adapters under discovery for cancel-event plumbing,
 plus tests.
@@ -402,6 +428,31 @@ them), anything TS/web.
    match `database.py`'s `pending_score` exactly — read it first). Test:
    a job with 5 failed score attempts is excluded from `_count_pending`.
 
+10. **Close the no-projection-row seams; true `WorkflowCanceled` (routed
+    from the P0 gates, PR #233).** Three related gaps shipped in P0:
+    (a) in-workflow cancellation is recorded as `failed` — the workflows
+    catch the cancel-induced ActivityError as a stage failure. With this
+    phase's cooperative cancellation (items 5–6) in place, the workflow
+    cancel path must record a real `WorkflowCanceled` outcome (finalize
+    from the cancellation handler — a detached/shielded finalize call is
+    acceptable HERE because the executor is now bounded; update the
+    finalize docstring accordingly).
+    (b) if the start-marker activity fails before the workflow body runs,
+    no projection row nor outcome ever exists (flagged by the P0
+    implementer).
+    (c) a workflow reaching a terminal Temporal state before
+    `record_workflow_started` commits is invisible forever — the
+    reconciler only heals EXISTING rows (found live by QA).
+    Fix (b)+(c) with either or both of: write the open row at DISPATCH
+    time in `default_workflow_starter` (the worker-side start marker
+    becomes a harmless duplicate upsert), and/or extend the reconciler
+    with a bounded list-based sweep (Temporal `list_workflows` filtered to
+    the task queue, capped page size) that backfills rows for executions
+    the projection doesn't know. Whichever you choose, the invariant to
+    prove: EVERY dispatched workflow is visible in `/runs` and reaches a
+    terminal projection state, even if it dies or is canceled before its
+    first activity.
+
 ### Deletions
 
 - The swallow branches in `pipeline/runner.py` (item 2) — after this phase
@@ -435,6 +486,11 @@ them), anything TS/web.
    early (one test per adapter with a stub transport).
 6. `_count_pending("score")` excludes a job with 5 failed attempts;
    includes one with 4.
+7. Item 10: canceled workflow → projection row reaches `canceled` (not
+   `failed`) with the cancel recorded by the workflow's own finalize; a
+   workflow killed/canceled BEFORE its start marker still becomes visible
+   and terminal in `workflow_run_projections` (via dispatch-time row or
+   reconciler sweep — whichever you implemented).
 
 ### Definition of Done
 
@@ -449,6 +505,8 @@ them), anything TS/web.
       `workflow_run_projections` (via P0's finalize).
 - [ ] Cancel lands within `cancel_wait` in the cancellation tests; the
       ignore-event case records `abandoned_thread`.
+- [ ] Item 10 proven: user cancel → `canceled` row; pre-start-marker
+      death/cancel → still visible + terminal (the two new tests).
 - [ ] `Stage*` event fixtures unchanged (observability invariant).
 - [ ] Docs updated: `docs/architecture.md` (error taxonomy table + retry
       policy table + bounded executor/cancellation semantics),
