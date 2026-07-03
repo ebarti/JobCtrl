@@ -107,6 +107,18 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
             {"action_id": action_id, "dry_run": request.dry_run},
         )
 
+        if request.stage == "profile_import" and request.dry_run:
+            result = {"planned": _describe_action(request)}
+            return _finish_action(
+                request,
+                action_id,
+                started_at,
+                start,
+                ok=True,
+                status="dry_run",
+                result=result,
+            )
+
         result = _execute_action(request)
         ok = _action_succeeded(result)
         status = "succeeded" if ok else "failed"

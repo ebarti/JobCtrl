@@ -1,5 +1,9 @@
 import { resolveApiConfig } from "./config.js";
-import { e2eStubActionDispatcher, isE2eStubDispatchEnabled } from "./e2e-dispatch.js";
+import {
+  e2eStubActionDispatcher,
+  e2eStubProfileImporter,
+  isE2eStubDispatchEnabled,
+} from "./e2e-dispatch.js";
 import { buildApp } from "./server.js";
 
 const config = resolveApiConfig();
@@ -12,7 +16,11 @@ const app = buildApp({
   ...config,
   logger: true,
   ...(stubDispatch
-    ? { actionDispatcher: e2eStubActionDispatcher, requireHealthyWorkerForActions: true }
+    ? {
+        actionDispatcher: e2eStubActionDispatcher,
+        profileImporter: e2eStubProfileImporter,
+        requireHealthyWorkerForActions: true,
+      }
     : {}),
 });
 

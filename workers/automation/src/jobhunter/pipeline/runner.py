@@ -1,14 +1,4 @@
-"""JobHunter Pipeline Orchestrator.
-
-Runs pipeline stages in sequence or concurrently (streaming mode).
-
-Usage (via CLI):
-    jobhunter run                        # all stages, sequential
-    jobhunter run --stream               # all stages, concurrent
-    jobhunter run discover score         # specific stages
-    jobhunter run score tailor cover     # LLM-only stages
-    jobhunter run --dry-run              # preview without executing
-"""
+"""JobHunter pipeline stage helpers used by Temporal activities."""
 
 from __future__ import annotations
 
@@ -18,7 +8,6 @@ import inspect
 import threading
 import time
 import uuid
-from datetime import datetime
 from typing import Any, Callable
 
 from opentelemetry import trace
@@ -82,17 +71,6 @@ STAGE_META: dict[str, dict] = {
     "tailor":   {"desc": "Resume tailoring (LLM + validation + resume PDF)"},
     "cover":    {"desc": "Cover letter generation + cover PDF"},
 }
-
-# Upstream dependencies: a stage only finishes when all of its producers are
-# done and it has no remaining pending work.
-_UPSTREAMS: dict[str, tuple[str, ...]] = {
-    "discover": (),
-    "enrich":   ("discover",),
-    "score":    ("discover",),
-    "tailor":   ("score",),
-    "cover":    ("tailor",),
-}
-
 
 # ---------------------------------------------------------------------------
 # Observability helpers
@@ -2351,50 +2329,6 @@ def _resolve_stages(stage_names: list[str]) -> list[str]:
     return [s for s in INTERNAL_STAGE_ORDER if s in resolved]
 
 
-# ---------------------------------------------------------------------------
-# Streaming pipeline helpers
-# ---------------------------------------------------------------------------
-
-class _StageTracker:
-    """Thread-safe tracker for which stages have finished producing work."""
-
-    def __init__(self):
-        self._events: dict[str, threading.Event] = {
-            stage: threading.Event() for stage in INTERNAL_STAGE_ORDER
-        }
-        self._results: dict[str, dict] = {}
-        self._lock = threading.Lock()
-
-    def mark_done(self, stage: str, result: dict | None = None) -> None:
-        with self._lock:
-            self._results[stage] = result or {"status": "ok"}
-        self._events[stage].set()
-
-    def status(self, stage: str) -> str:
-        with self._lock:
-            result = self._results.get(stage)
-        if not isinstance(result, dict):
-            return "pending"
-        return str(result.get("status", "ok"))
-
-    def failed_upstream(self, stages: tuple[str, ...]) -> tuple[str, str] | None:
-        for stage in stages:
-            status = self.status(stage)
-            if status not in ("ok", "partial", "skipped"):
-                return stage, status
-        return None
-
-    def is_done(self, stage: str) -> bool:
-        return self._events[stage].is_set()
-
-    def wait(self, stage: str, timeout: float | None = None) -> bool:
-        return self._events[stage].wait(timeout=timeout)
-
-    def get_results(self) -> dict[str, dict]:
-        with self._lock:
-            return dict(self._results)
-
-
 # SQL to count pending work for each stage. Round-1 review B1: every
 # selector that previously read bare ``fit_score`` now goes through the
 # shared ``database._LATEST_SCORE_JOIN`` + ``_EFFECTIVE_FIT_SCORE``
@@ -2462,8 +2396,6 @@ _PENDING_SQL: dict[str, str] = {
     ),
 }
 
-# How long to sleep between polling loops in streaming mode (seconds)
-_STREAM_POLL_INTERVAL = 10
 _DISCOVERY_ENRICH_POLL_INTERVAL = 2
 _DISCOVERY_ENRICH_NO_PROGRESS_LIMIT = 3
 
@@ -2609,282 +2541,6 @@ def _finish_discovery_enrichment_worker(
     discovery_done.set()
     thread.join()
     return result or {"status": "ok", "passes": 0, "pending": 0}
-
-
-def _run_stage_streaming(
-    stage: str,
-    tracker: _StageTracker,
-    stop_event: threading.Event,
-    min_score: int = 7,
-    workers: int = 1,
-    validation_mode: str = "normal",
-    limit: int = 0,
-    rescore: bool = False,
-    retailor: bool = False,
-    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-    tailor_models: tuple[str, ...] = (),
-    tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
-    source_ids: tuple[str, ...] = (),
-) -> None:
-    """Run a single stage in streaming mode: loop until upstream done + no work.
-
-    For discover: runs once, then marks done.
-    For all others: polls DB for pending work, runs the batch processor,
-    and repeats until upstream is done and no pending work remains.
-    """
-    runner = _STAGE_RUNNERS[stage]
-    kwargs = _build_stage_kwargs(
-        stage,
-        min_score=min_score,
-        workers=workers,
-        validation_mode=validation_mode,
-        limit=limit,
-        rescore=rescore,
-        retailor=retailor,
-        llm_model=llm_model,
-        tailor_models=tailor_models,
-        tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
-        source_ids=source_ids,
-        cancel_event=stop_event,
-    )
-    upstreams = _UPSTREAMS[stage]
-
-    if stage == "discover":
-        # Discover runs once (its sub-scrapers already do their full crawl)
-        try:
-            result, _elapsed, _status = _run_stage_observed(
-                stage,
-                runner,
-                kwargs,
-                mode="streaming",
-                pass_number=1,
-            )
-            tracker.mark_done(stage, result)
-        except Exception as e:
-            log.exception("Stage '%s' crashed", stage)
-            tracker.mark_done(stage, {"status": "failed", "error_message": str(e)})
-        return
-
-    # For downstream stages: loop until upstream done + no pending work
-    passes = 0
-    no_progress_passes = 0
-    while not stop_event.is_set():
-        pending = _count_pending(stage, min_score, retailor=retailor)
-        upstream_done = all(tracker.is_done(s) for s in upstreams)
-        failed_upstream = tracker.failed_upstream(upstreams) if upstream_done else None
-
-        if failed_upstream is not None:
-            upstream_stage, upstream_status = failed_upstream
-            tracker.mark_done(
-                stage,
-                {
-                    "status": f"blocked: upstream {upstream_stage} failed",
-                    "blocked_by": upstream_stage,
-                    "upstream_status": upstream_status,
-                    "passes": passes,
-                },
-            )
-            return
-
-        if pending > 0:
-            try:
-                _result, _elapsed, _status = _run_stage_observed(
-                    stage,
-                    runner,
-                    kwargs,
-                    mode="streaming",
-                    pass_number=passes + 1,
-                )
-                passes += 1
-                if upstream_done and _status not in ("ok", "partial", "skipped"):
-                    tracker.mark_done(stage, _result)
-                    return
-                after = _count_pending(stage, min_score, retailor=retailor)
-                if upstream_done and after >= pending:
-                    no_progress_passes += 1
-                    if no_progress_passes >= 3:
-                        tracker.mark_done(
-                            stage,
-                            {"status": f"stuck: {after} pending after {passes} passes", "passes": passes},
-                        )
-                        return
-                else:
-                    no_progress_passes = 0
-            except Exception as e:
-                log.error("Stage '%s' error (pass %d): %s", stage, passes, e)
-                passes += 1
-                if upstream_done:
-                    no_progress_passes += 1
-                    if no_progress_passes >= 3:
-                        tracker.mark_done(
-                            stage,
-                            {
-                                "status": "failed",
-                                "error_message": f"no progress after {passes} passes: {e}",
-                                "passes": passes,
-                            },
-                        )
-                        return
-        else:
-            # No work right now
-            if upstream_done:
-                # No work and upstream is done — this stage is finished
-                break
-            # Upstream still running, wait and retry
-            if stop_event.wait(timeout=_STREAM_POLL_INTERVAL):
-                break  # Stop requested
-
-    tracker.mark_done(stage, {"status": "ok", "passes": passes})
-
-
-# ---------------------------------------------------------------------------
-# Pipeline orchestrators
-# ---------------------------------------------------------------------------
-
-def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
-                    validation_mode: str = "normal", limit: int = 0,
-                    rescore: bool = False, retailor: bool = False,
-                    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-                    tailor_models: tuple[str, ...] = (),
-                    tailor_judge_model: str | None = None,
-                    tailor_judge_min_score: float | None = None,
-                    source_ids: tuple[str, ...] = (),
-                    cancel_event: threading.Event | None = None) -> dict:
-    """Execute stages one at a time (original behavior)."""
-    results: list[dict] = []
-    errors: dict[str, str] = {}
-    pipeline_start = time.time()
-
-    for name in ordered:
-        blocked_by = next((upstream for upstream in _UPSTREAMS[name] if upstream in errors), None)
-        if blocked_by is not None:
-            status = f"blocked: upstream {blocked_by} failed"
-            results.append({"stage": name, "status": status, "elapsed": 0.0})
-            errors[name] = status
-            console.print(f"\n  [yellow]Stage '{name}' skipped:[/yellow] {status}")
-            continue
-
-        meta = STAGE_META[name]
-        console.print(f"\n{'=' * 70}")
-        console.print(f"  [bold]STAGE: {name}[/bold] — {meta['desc']}")
-        console.print(f"  Started: {datetime.now().strftime('%H:%M:%S')}")
-        console.print(f"{'=' * 70}")
-
-        runner = _STAGE_RUNNERS[name]
-
-        try:
-            kwargs = _build_stage_kwargs(
-                name,
-                min_score=min_score,
-                workers=workers,
-                validation_mode=validation_mode,
-                limit=limit,
-                rescore=rescore,
-                retailor=retailor,
-                llm_model=llm_model,
-                tailor_models=tailor_models,
-                tailor_judge_model=tailor_judge_model,
-                tailor_judge_min_score=tailor_judge_min_score,
-                source_ids=source_ids,
-                cancel_event=cancel_event,
-            )
-            result, elapsed, status = _run_stage_observed(
-                name,
-                runner,
-                kwargs,
-                mode="sequential",
-                pass_number=1,
-            )
-
-        except Exception as e:
-            log.exception("Stage '%s' crashed", name)
-            console.print(f"\n  [red]STAGE FAILED:[/red] {e}")
-            raise
-
-        results.append({"stage": name, "status": status, "elapsed": elapsed})
-        if status not in ("ok", "partial"):
-            errors[name] = status
-
-        console.print(f"\n  Stage '{name}' completed in {elapsed:.1f}s — {status}")
-
-    total_elapsed = time.time() - pipeline_start
-    return {"stages": results, "errors": errors, "elapsed": total_elapsed}
-
-
-def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
-                   validation_mode: str = "normal", limit: int = 0,
-                   rescore: bool = False, retailor: bool = False,
-                   llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-                   tailor_models: tuple[str, ...] = (),
-                   tailor_judge_model: str | None = None,
-                   tailor_judge_min_score: float | None = None,
-                   source_ids: tuple[str, ...] = (),
-                   cancel_event: threading.Event | None = None) -> dict:
-    """Execute stages concurrently with DB as conveyor belt."""
-    tracker = _StageTracker()
-    stop_event = cancel_event or threading.Event()
-    pipeline_start = time.time()
-
-    console.print("\n  [bold cyan]STREAMING MODE[/bold cyan] — stages run concurrently")
-    console.print(f"  Poll interval: {_STREAM_POLL_INTERVAL}s\n")
-
-    # Mark stages NOT in `ordered` as done so downstream doesn't wait for them
-    for stage in INTERNAL_STAGE_ORDER:
-        if stage not in ordered:
-            tracker.mark_done(stage, {"status": "skipped"})
-
-    # Launch each stage in its own thread
-    threads: dict[str, threading.Thread] = {}
-    start_times: dict[str, float] = {}
-
-    for name in ordered:
-        start_times[name] = time.time()
-        t = threading.Thread(
-            target=_run_stage_streaming,
-            args=(name, tracker, stop_event, min_score, workers,
-            validation_mode, limit, rescore, retailor,
-            llm_model, tailor_models, tailor_judge_model,
-            tailor_judge_min_score, source_ids),
-            name=f"stage-{name}",
-            daemon=True,
-        )
-        threads[name] = t
-        t.start()
-        console.print(f"  [dim]Started thread:[/dim] {name}")
-
-    # Wait for all threads to finish
-    try:
-        for name in ordered:
-            threads[name].join()
-            elapsed = time.time() - start_times[name]
-            console.print(
-                f"  [green]Completed:[/green] {name} ({elapsed:.1f}s)"
-            )
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted — stopping stages...[/yellow]")
-        stop_event.set()
-        for t in threads.values():
-            t.join(timeout=10)
-
-    total_elapsed = time.time() - pipeline_start
-
-    # Build results from tracker
-    all_results = tracker.get_results()
-    results: list[dict] = []
-    errors: dict[str, str] = {}
-
-    for name in ordered:
-        r = all_results.get(name, {"status": "unknown"})
-        elapsed = time.time() - start_times.get(name, pipeline_start)
-        status = r.get("status", "ok")
-
-        results.append({"stage": name, "status": status, "elapsed": elapsed})
-        if status not in ("ok", "partial", "skipped"):
-            errors[name] = status
-
-    return {"stages": results, "errors": errors, "elapsed": total_elapsed}
 
 
 # ---------------------------------------------------------------------------

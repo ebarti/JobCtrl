@@ -1,12 +1,16 @@
+from io import StringIO
 from pathlib import Path
 
+import pytest
+import typer
+from rich.console import Console
 from typer.testing import CliRunner
 
 from jobhunter import actions, cli
 from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter.cli import app
 from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.workflow_specs import StartedWorkflowResult
+from jobhunter.workflow_specs import StartedWorkflowResult, build_run_stage_workflow_spec
 
 
 def _started(result: dict | None = None) -> StartedWorkflowResult:
@@ -134,7 +138,7 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
-def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
+def test_pipeline_action_dry_run_starts_workflow_with_dry_run_flag(monkeypatch, tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
     specs = []
@@ -165,6 +169,39 @@ def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
         assert payload.dry_run is True
         assert payload.rescore is True
         assert payload.retailor is True
+    finally:
+        close_connection(db_path)
+
+
+def test_profile_import_dry_run_returns_plan_without_starting_workflow(monkeypatch, tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    specs = []
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(
+        actions,
+        "start_workflow_spec_and_wait_sync",
+        lambda spec: specs.append(spec) or _started({"status": "succeeded"}),
+    )
+
+    try:
+        result = run_local_action(
+            LocalActionRequest(
+                stage="profile_import",
+                pdf_path="/tmp/resume.pdf",
+                dry_run=True,
+                import_profile=False,
+                import_style=True,
+            )
+        )
+        assert result.ok is True
+        assert result.status == "dry_run"
+        assert specs == []
+        assert result.result["planned"]["stage"] == "profile_import"
+        assert result.result["planned"]["pdf_path"] == "/tmp/resume.pdf"
+        assert result.result["planned"]["dry_run"] is True
     finally:
         close_connection(db_path)
 
@@ -331,6 +368,33 @@ def test_stage_cli_commands_accept_limits(monkeypatch):
         "DiscoverWorkflow",
     ]
     assert [spec.args[0].limit for spec in specs] == [1, 1, 1]
+
+
+def test_cli_workflow_runtime_failure_exits_with_doctor_hint(monkeypatch):
+    output = StringIO()
+
+    monkeypatch.setattr(
+        cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None, width=120),
+    )
+    monkeypatch.setattr(
+        cli,
+        "start_workflow_spec_and_wait_sync",
+        lambda _spec: (_ for _ in ()).throw(RuntimeError("connection refused")),
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli._run_workflow_spec_from_cli(
+            build_run_stage_workflow_spec({"tenantId": "local", "stages": ["score"]}),
+            label="score",
+        )
+
+    assert exc_info.value.exit_code == 1
+    text = output.getvalue()
+    assert "Temporal workflow runtime is unavailable." in text
+    assert "connection refused" in text
+    assert "jobhunter doctor" in text
 
 
 def test_discover_cli_requires_tier2_guard(monkeypatch):

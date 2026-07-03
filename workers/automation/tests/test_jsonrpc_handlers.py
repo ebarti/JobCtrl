@@ -40,9 +40,18 @@ from jobhunter.scoring.activities import ScoreActivityInput, score_activity
 
 
 class _StubHandle:
-    def __init__(self, workflow_id: str, run_id: str = "first-run") -> None:
+    def __init__(
+        self,
+        workflow_id: str,
+        run_id: str = "first-run",
+        result_payload=None,
+    ) -> None:
         self.id = workflow_id
         self.first_execution_run_id = run_id
+        self._result_payload = result_payload if result_payload is not None else {"status": "succeeded"}
+
+    async def result(self):
+        return self._result_payload
 
 
 async def _stub_starter(spec):
@@ -1391,12 +1400,24 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     assert result["stages"][0]["selected"] == 1
 
 
-def test_profile_import_starts_workflow(tmp_db: Path) -> None:
+def test_profile_import_starts_workflow_and_can_return_draft(tmp_db: Path) -> None:
     started_workflows: list[WorkflowStartSpec] = []
 
     async def starter(spec: WorkflowStartSpec) -> _StubHandle:
         started_workflows.append(spec)
-        return _StubHandle("profile-wf", "profile-run")
+        return _StubHandle(
+            "profile-wf",
+            "profile-run",
+            result_payload={
+                "status": "succeeded",
+                "draft": {
+                    "profile": {"personal": {"full_name": "Imported Candidate"}},
+                    "style": {"font_family": "imported"},
+                    "templateText": "\\documentclass{article}",
+                    "source": {"filename": "resume.pdf"},
+                },
+            },
+        )
 
     server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_stub_canceler)
@@ -1404,7 +1425,7 @@ def test_profile_import_starts_workflow(tmp_db: Path) -> None:
     response = server.dispatch(
         JsonRpcRequest(
             method="profile_import",
-            params={"tenantId": "local", "pdfPath": "/tmp/resume.pdf"},
+            params={"tenantId": "local", "pdfPath": "/tmp/resume.pdf", "awaitResult": True},
             id=1,
         )
     )
@@ -1414,6 +1435,15 @@ def test_profile_import_starts_workflow(tmp_db: Path) -> None:
         "runId": "profile-wf",
         "workflowId": "profile-wf",
         "firstExecutionRunId": "profile-run",
+        "result": {
+            "status": "succeeded",
+            "draft": {
+                "profile": {"personal": {"full_name": "Imported Candidate"}},
+                "style": {"font_family": "imported"},
+                "templateText": "\\documentclass{article}",
+                "source": {"filename": "resume.pdf"},
+            },
+        },
     }
     assert len(started_workflows) == 1
     assert started_workflows[0].workflow is ProfileImportWorkflow

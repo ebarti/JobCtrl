@@ -86,7 +86,11 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
     async def fake_execute(_payload) -> None:
         raise CancelledError("canceled by test")
 
+    async def fake_check_spend(_payload) -> None:
+        return None
+
     monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
+    monkeypatch.setattr("jobhunter.discovery.workflow._check_spend", fake_check_spend)
     monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_started", fake_started)
     monkeypatch.setattr("jobhunter.discovery.workflow.emit_workflow_outcome", fake_outcome)
     monkeypatch.setattr("jobhunter.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")

@@ -198,11 +198,17 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
     pdfPath,
     importProfile: input.importProfile,
     importStyle: input.importStyle,
+    awaitResult: true,
   });
   if (response.error) {
     throw new Error(response.error.message);
   }
   const workflowStart = extractWorkflowStart(response.result);
+  const workflowResult = extractWorkflowResult(response.result);
+  if (workflowResult?.status === "failed") {
+    throw new Error(extractProfileImportError(workflowResult) ?? "Profile import workflow failed.");
+  }
+  const draft = extractProfileImportDraft(workflowResult);
   const runId = workflowStart.runId ?? workflowStart.workflowId ?? actionId;
   const workflowId = workflowStart.workflowId ?? runId;
   const action: ActionRunResponse = {
@@ -219,9 +225,16 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
   if (workflowStart.firstExecutionRunId) {
     action.firstExecutionRunId = workflowStart.firstExecutionRunId;
   }
-  return {
+  const result: ProfileImportResult = {
+    profile: draft.profile,
+    style: draft.style,
+    source: draft.source,
     action,
   };
+  if (draft.templateText !== undefined) {
+    result.templateText = draft.templateText;
+  }
+  return result;
 };
 
 export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
@@ -562,6 +575,37 @@ function extractWorkflowStart(result: unknown): {
   const firstExecutionRunId =
     typeof result.firstExecutionRunId === "string" ? result.firstExecutionRunId : null;
   return { runId, workflowId, firstExecutionRunId };
+}
+
+function extractWorkflowResult(result: unknown): Record<string, unknown> | null {
+  if (!isRecord(result) || !isRecord(result.result)) return null;
+  return result.result;
+}
+
+function extractProfileImportDraft(
+  workflowResult: Record<string, unknown> | null,
+): Omit<ProfileImportResult, "action"> {
+  if (!workflowResult) {
+    throw new Error("Profile import workflow did not return a result.");
+  }
+  if (!isRecord(workflowResult.draft)) {
+    throw new Error("Profile import workflow did not return a draft.");
+  }
+  const draft = workflowResult.draft;
+  const extracted: Omit<ProfileImportResult, "action"> = {
+    profile: draft.profile,
+    style: draft.style,
+    source: draft.source,
+  };
+  if (typeof draft.templateText === "string") {
+    extracted.templateText = draft.templateText;
+  }
+  return extracted;
+}
+
+function extractProfileImportError(workflowResult: Record<string, unknown>): string | null {
+  const error = workflowResult.error ?? workflowResult.errorMessage;
+  return typeof error === "string" && error.trim() ? error : null;
 }
 
 function hasWorkflowStart(workflowStart: ReturnType<typeof extractWorkflowStart>): boolean {
