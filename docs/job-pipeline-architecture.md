@@ -51,15 +51,14 @@ Discovery preparation runs these internal steps:
 4. `JobPreparationWorkflow` tailor, cover, and PDF steps call Materials
    Generation for eligible jobs missing current-policy active artifacts.
 
-`apply` is deliberately separate at workflow execution, not at pipeline action
-dispatch. The Pipelines UI still sends `discover` and `apply` through
-`POST /v1/pipeline/actions/run-stage`; the TS API dispatches JSON-RPC
-`run_stage` and starts `JobPipelineWorkflow`. Non-apply stages enter the
-synchronous `pipeline.runner` stage functions as Temporal activities. When the
-selected stage is `apply`, `JobPipelineWorkflow` delegates to child
-`ApplyWorkflow`, which reports lifecycle progress through apply-specific events
-and projections. The dedicated JSON-RPC `apply` method is reserved for per-job
-apply and retry actions.
+`discover` and `apply` are deliberately separate workflow boundaries. The
+Pipelines UI still sends both through `POST /v1/pipeline/actions/run-stage`; the
+TS API dispatches JSON-RPC `run_stage`. A discover-only request starts
+`DiscoverWorkflow` directly with deterministic id `discover-{tenantId}`. Apply
+requests start `JobPipelineWorkflow`, which delegates to child `ApplyWorkflow`
+and reports lifecycle progress through apply-specific events and projections.
+The dedicated JSON-RPC `apply` method is reserved for per-job apply and retry
+actions.
 
 ## Execution Surfaces
 
@@ -68,12 +67,13 @@ implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow`, whose Discover activity derives and starts per-job `JobPreparationWorkflow` runs; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts `DiscoverWorkflow`, which owns source-family activities, enrichment, and per-job `JobPreparationWorkflow` fan-out; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | The Jobs toolbar can explicitly continue active pending preparation backlogs. The API selects the first eligible pending preparation substage per matching job, groups selected job URLs by `enrich`, `score`, `tailor`, or `cover`, and dispatches bounded `run_stage` workflows without resetting failures or running `apply`. | Internal preparation recovery |
 | Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | The API resets retryable failed stages, and with `runAfter: true` groups reset preparation rows by internal stage before dispatching batch `run_stage` workflows with explicit `jobUrls` and requested workers. The route records the workflow id, job URLs, worker count, and per-job `StageQueued` events with `source: "bulk_retry_failed"`; it never auto-runs `apply`. | Internal preparation recovery |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
-| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation workflow fan-out. | Discover and Apply |
+| Temporal discovery workflow | `DiscoverWorkflow` | Tenant-scoped workflow (`discover-{tenantId}`) with one activity per source family, one enrichment activity, and batched preparation child starts. | Discover |
+| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow for remaining batch orchestration; it delegates `discover` to child `DiscoverWorkflow` and `apply` to child `ApplyWorkflow`. | Discover and Apply |
 | Temporal preparation workflow | `JobPreparationWorkflow` | Deterministic per-job workflow keyed by `prep-{idempotency_key}` that runs score, tailor, cover, and PDF steps in order. | Internal preparation |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
 
@@ -89,8 +89,9 @@ sequenceDiagram
     participant JsonRpc as SubprocessJsonRpcAdapter
     participant Rpc as jobhunter rpc<br/>JsonRpcServer
     participant Temporal as Temporal
-    participant Activity as Stage activity
-    participant Runner as pipeline.runner
+    participant Discover as DiscoverWorkflow
+    participant Source as source-family activities
+    participant Enrich as discovery_enrichment activity
     participant Prep as JobPreparationWorkflow
     participant Scoring as Scoring context
     participant Materials as Materials context
@@ -103,15 +104,17 @@ sequenceDiagram
 
     Dispatcher->>JsonRpc: call("run_stage", ordered stages)
     JsonRpc->>Rpc: JSON-RPC line over stdin/stdout
-    Rpc->>Temporal: start JobPipelineWorkflow(stages)
+    Rpc->>Temporal: start workflow for stage
     Temporal-->>Rpc: workflow handle
     Rpc-->>JsonRpc: {runId, workflowId}
 
     alt discover preparation
-        Temporal->>Activity: execute discover activity
-        Activity->>Runner: run_pipeline(stages=[stage])
-        Runner->>DB: discovery/enrichment writes and events
-        Runner->>Prep: start prep-{idempotency_key} workflows
+        Temporal->>Discover: run discover-{tenantId}
+        Discover->>Source: run source-family activities
+        Source->>DB: discovery writes, progress, source events
+        Discover->>Enrich: drain discovered job details
+        Enrich->>DB: enrichment writes and events
+        Discover->>Prep: start prep-{idempotency_key} workflows
         Prep->>Scoring: score_job with current policy
         Prep->>Materials: tailor, cover, render PDFs
         Scoring-->>DB: scores and score events
@@ -161,14 +164,17 @@ classDiagram
       +execute stage activities
       +delegate apply child workflow
     }
-    class DiscoverActivity {
-      +run_pipeline(stages=["discover"])
-      +heartbeat while blocking
+    class DiscoverWorkflow {
+      +plan source families
+      +run source activities
+      +run enrichment activity
+      +fan out prep children
     }
     class PipelineRunner {
       +run_pipeline()
       +_run_stage_observed()
-      +_run_discover()
+      +run_discovery_source_family()
+      +run_discovery_enrichment_stage()
       +start_discovery_preparation_workflows()
       +_run_enrich()
       +_run_score()
@@ -188,11 +194,12 @@ classDiagram
     FastifyApi --> DefaultActionDispatcher
     DefaultActionDispatcher --> SubprocessJsonRpcAdapter
     SubprocessJsonRpcAdapter --> JsonRpcServer
-    JsonRpcServer --> JobPipelineWorkflow : run_stage
+    JsonRpcServer --> DiscoverWorkflow : run_stage discover
+    JsonRpcServer --> JobPipelineWorkflow : run_stage apply
     JsonRpcServer --> ApplyWorkflow : per-job apply
-    JobPipelineWorkflow --> DiscoverActivity : discover
+    JobPipelineWorkflow --> DiscoverWorkflow : discover child
     JobPipelineWorkflow --> ApplyWorkflow : apply child workflow
-    DiscoverActivity --> PipelineRunner
+    DiscoverWorkflow --> PipelineRunner
     PipelineRunner --> OperationsReadSide : events
     ApplyWorkflow --> OperationsReadSide : events
 ```
@@ -220,12 +227,13 @@ raw rows, accepted new rows, duplicates, filtered rows, and source errors while
 the crawl is still running. The dashboard progress read model renders that
 source-level detail instead of only showing the coarse stage count.
 
-Discover has a no-overlap Temporal policy. The source stage is allowed to run
-longer than the default 30-minute activity window, and the workflow does not
-retry the whole Discover activity after timeout/cancellation. Source adapters
-are responsible for idempotency, source-quality retry, progress, and
-cooperative cancellation. This prevents a still-running external crawl from
-being duplicated by an automatic activity retry.
+Discover has a no-overlap Temporal policy and one source-family activity per
+planned family. Source-family activities are allowed to run longer than the
+default 30-minute activity window and heartbeat `DiscoveryRunProgress` payloads.
+Temporal retries the failed source-family activity, not the whole discovery
+batch, and the workflow preserves the legacy source order so global limit and
+source-budget semantics remain stable. Source adapters are responsible for
+idempotency, source-quality retry, progress, and cooperative cancellation.
 
 When a user stops a running Discover workflow, the API emits a failed progress
 event and terminalizes the matching `discovery_runs` row so the UI, audit log,
@@ -295,9 +303,10 @@ sequenceDiagram
     autonumber
     participant Api as TS API
     participant Rpc as JSON-RPC run_stage
-    participant Workflow as JobPipelineWorkflow
-    participant Activity as discover_activity
-    participant Runner as _run_discover
+    participant Workflow as DiscoverWorkflow
+    participant SourceActivity as source-family activity
+    participant EnrichActivity as discovery_enrichment activity
+    participant Runner as pipeline.runner
     participant QueryPlanner as Target query planner
     participant Scheduler as DiscoveryScheduler
     participant JobSpy
@@ -312,9 +321,9 @@ sequenceDiagram
     participant Ops as Operations projections
 
     Api->>Rpc: run_stage(stage="discover", limit, workers)
-    Rpc->>Workflow: start JobPipelineWorkflow(stages=["discover"])
-    Workflow->>Activity: execute discover_activity(payload)
-    Activity->>Runner: run_pipeline(stages=["discover"])
+    Rpc->>Workflow: start DiscoverWorkflow(discover-{tenantId})
+    Workflow->>SourceActivity: plan and run source-family activities
+    SourceActivity->>Runner: run_discovery_source_family()
     Runner->>DB: init_db
     Runner->>DB: refresh source-control rows idempotently
     Runner->>QueryPlanner: compile profile target roles and locations
@@ -330,14 +339,15 @@ sequenceDiagram
     Workday->>DB: insert/update jobs and observations
     Runner->>Smart: source-first scrape or search-only query fanout
     Smart->>DB: insert jobs, quarantine, manual-capture queue
-    Runner->>Detail: run_enrichment(limit, workers)
+    Workflow->>EnrichActivity: run discovery_enrichment
+    EnrichActivity->>Detail: run_enrichment(limit, workers)
     Detail->>DB: persist full descriptions, apply URLs, attempts/errors
-    Runner->>Prep: derive sorted per-job preparation targets
+    Workflow->>Prep: derive sorted per-job preparation targets
     Prep->>Scoring: start prep-{idempotency_key} score step
     Scoring->>DB: persist JobScore and score events
     Prep->>Materials: start tailor/cover/pdf steps or suppression
 
-    Runner->>DB: DiscoveryRun*, Stage*, and operational attempt metrics
+    Runner->>DB: DiscoveryRun*, Stage*, source progress, and operational attempt metrics
     DB->>Ops: source-quality and dashboard projections refresh
     Ops-->>Api: API reads show new jobs/source health
 ```
@@ -346,10 +356,17 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class RunDiscover {
-      +_run_discover(workers, limit)
-      +source_results
-      +bounded_workers
+    class DiscoverWorkflow {
+      +discover-{tenantId}
+      +plan_discovery_sources()
+      +source-family activities
+      +discovery_enrichment()
+      +start prep children
+    }
+    class DiscoverySourceActivity {
+      +run_discovery_source_family()
+      +heartbeat DiscoveryRunProgress
+      +cooperative cancel_event
     }
     class DiscoveryScheduler {
       +plan(registry, quality, global_limit)
@@ -387,15 +404,16 @@ classDiagram
       +record started/completed/failed
     }
 
-    RunDiscover --> DiscoveryScheduler
-    RunDiscover --> TargetQueryPlanner
+    DiscoverWorkflow --> DiscoveryScheduler
+    DiscoverWorkflow --> DiscoverySourceActivity
+    DiscoverySourceActivity --> TargetQueryPlanner
     DiscoveryScheduler --> DiscoverySchedule
     DiscoverySchedule --> SourceRegistryEntry
-    RunDiscover --> JobSpyAdapter
-    RunDiscover --> AtsApiScheduler
-    RunDiscover --> WorkdayAdapter
-    RunDiscover --> SmartExtractAdapter
-    RunDiscover --> DiscoveryRunRepository
+    DiscoverySourceActivity --> JobSpyAdapter
+    DiscoverySourceActivity --> AtsApiScheduler
+    DiscoverySourceActivity --> WorkdayAdapter
+    DiscoverySourceActivity --> SmartExtractAdapter
+    DiscoverySourceActivity --> DiscoveryRunRepository
 ```
 
 ### Data And Events
@@ -486,22 +504,22 @@ the enrichment runner. It does not score fit or generate materials.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Runner as _run_discover
+    participant Discover as DiscoverWorkflow
     participant Detail as run_enrichment
     participant Fetcher as Detail fetchers
     participant Extractor as JSON-LD/CSS/LLM extraction
     participant DB as SQLite
     participant Ops as Operations projections
 
-    Runner->>DB: discovery sources insert pending JobEnrichment rows
-    Runner->>Detail: run_enrichment(limit, workers)
+    Discover->>DB: discovery sources insert pending JobEnrichment rows
+    Discover->>Detail: run_enrichment(limit, workers)
     Detail->>DB: select pending discovered jobs
     Detail->>Fetcher: fetch posting detail pages
     Fetcher-->>Extractor: raw HTML / page content
     Extractor->>DB: persist full description, apply URL, attempts/errors
     Detail->>Fetcher: for LinkedIn misses, retry with authenticated Chrome
     Fetcher-->>DB: persist external company apply URL when captured
-    Runner->>DB: enrich stage/job events for retry visibility
+    Discover->>DB: enrich stage/job events for retry visibility
     DB->>Ops: job detail/list projections refresh
 ```
 
@@ -509,9 +527,9 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class RunDiscover {
-      +_run_discover(workers, limit)
-      +internal enrichment worker
+    class DiscoverWorkflow {
+      +discovery_enrichment activity
+      +detail drain after source families
     }
     class EnrichmentRunner {
       +run_enrichment(limit, workers)

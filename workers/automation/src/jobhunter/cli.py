@@ -1339,6 +1339,54 @@ def rpc() -> None:
         shutdown_otel()
 
 
+async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
+    """Create/update or delete the disabled-by-default discovery schedule."""
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleOverlapPolicy,
+        SchedulePolicy,
+        ScheduleSpec,
+        ScheduleUpdate,
+    )
+
+    from jobhunter.config import load_discovery_schedule_settings
+    from jobhunter.discovery.workflow import (
+        DiscoverWorkflow,
+        DiscoverWorkflowInput,
+        discover_workflow_id,
+    )
+    from jobhunter.domain.tenant import LOCAL_TENANT
+
+    enabled, cron = load_discovery_schedule_settings()
+    schedule_id = f"jobhunter-discovery-{LOCAL_TENANT}"
+    handle = client.get_schedule_handle(schedule_id)
+    if not enabled:
+        try:
+            await handle.delete()
+        except Exception:
+            log.debug("Discovery schedule %s absent or already deleted", schedule_id, exc_info=True)
+        return
+
+    schedule = Schedule(
+        action=ScheduleActionStartWorkflow(
+            DiscoverWorkflow.run,
+            DiscoverWorkflowInput(tenant_id=str(LOCAL_TENANT)),
+            id=discover_workflow_id(str(LOCAL_TENANT)),
+            task_queue=task_queue,
+        ),
+        spec=ScheduleSpec(cron_expressions=[cron]),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+    try:
+        await client.create_schedule(schedule_id, schedule)
+    except Exception:
+        try:
+            await handle.update(lambda _input: ScheduleUpdate(schedule))
+        except Exception:
+            log.warning("Discovery schedule %s reconcile failed", schedule_id, exc_info=True)
+
+
 @app.command()
 def worker(
     task_queue: Optional[str] = typer.Option(
@@ -1360,13 +1408,11 @@ def worker(
         current_runtime_identity,
         write_worker_heartbeat,
     )
-    from jobhunter.database import get_connection
-    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
-
     queue = task_queue or JOBHUNTER_TASK_QUEUE
 
     async def _run() -> None:
         client = await get_temporal_client()
+        await _reconcile_discovery_schedule(client, queue)
         worker = build_worker(
             client,
             workflows=WORKFLOWS,
@@ -1375,15 +1421,6 @@ def worker(
         )
         worker_started_at = datetime.now(timezone.utc)
         identity = current_runtime_identity()
-        conn = get_connection()
-        recovered = recover_orphaned_running_stages(
-            conn,
-            started_before=worker_started_at,
-        )
-        recovered_discovery_runs = recover_orphaned_discovery_runs(
-            conn,
-            started_before=worker_started_at,
-        )
         heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
         heartbeat_task = asyncio.create_task(
             _worker_heartbeat_loop(
@@ -1393,16 +1430,6 @@ def worker(
                 temporal_client=client,
             )
         )
-        if recovered:
-            console.print(
-                f"[yellow]Recovered {recovered} orphaned pipeline stage run(s) "
-                "from prior worker shutdown.[/yellow]"
-            )
-        if recovered_discovery_runs:
-            console.print(
-                f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
-                "from prior worker shutdown.[/yellow]"
-            )
         console.print(
             f"[bold blue]JobHunter worker[/bold blue] running on task queue "
             f"[bold]{queue}[/bold] with {len(WORKFLOWS)} workflow(s) and "
@@ -1437,7 +1464,7 @@ async def _worker_heartbeat_loop(
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            recovered_stages, recovered_discovery_runs = _worker_heartbeat_iteration(
+            _worker_heartbeat_iteration(
                 task_queue,
                 worker_id,
                 worker_started_at=worker_started_at,
@@ -1445,16 +1472,6 @@ async def _worker_heartbeat_loop(
         except Exception:
             log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
             continue
-        if recovered_stages:
-            console.print(
-                f"[yellow]Recovered {recovered_stages} orphaned pipeline stage run(s) "
-                "from prior worker shutdown.[/yellow]"
-            )
-        if recovered_discovery_runs:
-            console.print(
-                f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
-                "from prior worker shutdown.[/yellow]"
-            )
         # Describe-based reconciler: terminalize workflow-run rows whose
         # Temporal execution has closed (or vanished on a dev-server restart)
         # but never got a finalize outcome — e.g. a killed worker.
@@ -1476,24 +1493,10 @@ def _worker_heartbeat_iteration(
     worker_id: str,
     *,
     worker_started_at: datetime | None = None,
-) -> tuple[int, int]:
-    from jobhunter.database import get_connection
+) -> None:
     from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
-    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
 
     write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
-    if worker_started_at is None:
-        return (0, 0)
-    conn = get_connection()
-    recovered_stages = recover_orphaned_running_stages(
-        conn,
-        started_before=worker_started_at,
-    )
-    recovered_discovery_runs = recover_orphaned_discovery_runs(
-        conn,
-        started_before=worker_started_at,
-    )
-    return (recovered_stages, recovered_discovery_runs)
 
 
 # Temporal execution status -> the terminal workflow-run status the reconciler

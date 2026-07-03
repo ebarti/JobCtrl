@@ -42,6 +42,7 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     seed_source_registry_controls,
 )
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.pipeline import runner
 from jobhunter.state import record_job_event
 
 
@@ -1130,6 +1131,61 @@ def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
         conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
         == 2
     )
+    failed_event = conn.execute(
+        """
+        SELECT payload_json
+        FROM job_events
+        WHERE event_type = 'DiscoveryRunFailed'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert json.loads(failed_event["payload_json"])["source_id"] == "lever:leadershipco"
+
+
+def test_runner_records_partial_ats_source_without_losing_successes(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "get_connection", lambda: conn)
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = tuple(
+        source
+        for source in schedule.for_kinds(SourceKind.ATS_API)
+        if not source.source_id.startswith("workday:")
+    )
+
+    def run_ats(run_id: str | None = None) -> dict[str, Any]:
+        return run_scheduled_ats_sources(
+            conn,
+            ats_sources,
+            search_cfg=_search_cfg(),
+            run_id=run_id or "runner:ats",
+            http=_fake_ats_http_with_lever_failure,
+        )
+
+    status = runner._run_discovery_source(
+        "ats_api",
+        "Canonical ATS APIs",
+        ats_sources,
+        run_ats,
+    )
+
+    assert status == "ok"
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    completed_event = conn.execute(
+        """
+        SELECT payload_json
+        FROM job_events
+        WHERE event_type = 'DiscoveryRunCompleted'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    completed_payload = json.loads(completed_event["payload_json"])
+    assert completed_payload["error_classes"] == ["partial_source_failure"]
+    assert completed_payload["failed_source_ids"] == ["lever:leadershipco"]
     failed_event = conn.execute(
         """
         SELECT payload_json

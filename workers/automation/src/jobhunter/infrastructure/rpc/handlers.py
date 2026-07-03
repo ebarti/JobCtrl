@@ -28,6 +28,11 @@ from typing import Any
 from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobhunter.database import get_connection
+from jobhunter.discovery.workflow import (
+    DiscoverWorkflow,
+    DiscoverWorkflowInput,
+    discover_workflow_id,
+)
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.preparation import PreparationWorkItemKind
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
@@ -110,6 +115,32 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
     raw_judge_min_score = params.get("tailorJudgeMinScore")
+    if stages == ["discover"]:
+        payload = DiscoverWorkflowInput(
+            tenant_id=tenant_id,
+            expected_app_dir=params.get("expectedAppDir"),
+            expected_db_path=params.get("expectedDbPath"),
+            min_score=int(params.get("minScore", 7)),
+            workers=int(params.get("workers", 1)),
+            limit=int(params.get("limit", 0)),
+            validation_mode=str(params.get("validationMode", "normal")),
+            tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+            tailor_judge_model=(
+                str(params["tailorJudgeModel"])
+                if params.get("tailorJudgeModel")
+                else None
+            ),
+            tailor_judge_min_score=(
+                float(raw_judge_min_score) if raw_judge_min_score is not None else None
+            ),
+            source_ids=_source_ids(params),
+            llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        )
+        return WorkflowStartSpec(
+            workflow=DiscoverWorkflow,
+            args=(payload,),
+            workflow_id=discover_workflow_id(tenant_id),
+        )
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),

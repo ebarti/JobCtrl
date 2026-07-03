@@ -26,6 +26,7 @@ from opentelemetry.trace import Status, StatusCode
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from temporalio import activity as temporal_activity
 
 from jobhunter import config
 from jobhunter.config import load_env, ensure_dirs
@@ -543,33 +544,35 @@ def _run_discovery_source(
                 failed_at=failed_at,
             )
             run_repo.save(failed_run)
-            failed_source_id = source_ids[0] if len(source_ids) == 1 else ""
-            _record_discovery_run_event(
-                conn,
-                "DiscoveryRunFailed",
-                {
-                    "run_id": run_id,
-                    "runId": run_id,
-                    "source_id": failed_source_id,
-                    "sourceId": failed_source_id,
-                    "source_ids": list(source_ids),
-                    "sourceIds": list(source_ids),
-                    "error_class": type(exc).__name__,
-                    "errorClass": type(exc).__name__,
-                    "retryable": True,
-                    "failed_at": failed_at,
-                    "failedAt": failed_at,
-                },
-                level="error",
-                message=f"Discovery run {run_id} failed: {exc}",
-                occurred_at=failed_at,
-            )
+            failed_source_ids = _failed_source_ids_from_exception(exc, source_ids)
+            for failed_source_id in failed_source_ids:
+                _record_discovery_run_event(
+                    conn,
+                    "DiscoveryRunFailed",
+                    {
+                        "run_id": run_id,
+                        "runId": run_id,
+                        "source_id": failed_source_id,
+                        "sourceId": failed_source_id,
+                        "source_ids": list(source_ids),
+                        "sourceIds": list(source_ids),
+                        "error_class": type(exc).__name__,
+                        "errorClass": type(exc).__name__,
+                        "retryable": True,
+                        "failed_at": failed_at,
+                        "failedAt": failed_at,
+                    },
+                    level="error",
+                    message=f"Discovery run {run_id} failed: {exc}",
+                    occurred_at=failed_at,
+                )
             _record_discovery_source_attempts(
                 source,
                 scheduled_sources,
                 "failed",
                 run_id=run_id,
                 duration_ms=duration_ms,
+                failed_source_ids=failed_source_ids,
                 error_class=type(exc).__name__,
                 error_message=str(exc),
             )
@@ -744,6 +747,10 @@ def _record_discovery_source_progress(
         existing_jobs=source_progress.existing_jobs if source_progress.existing_jobs is not None else 0,
     )
     try:
+        temporal_activity.heartbeat(source_progress.to_dict())
+    except RuntimeError:
+        pass
+    try:
         conn = get_connection()
         SqliteDiscoveryRunRepository(conn).save_progress(
             tenant_id=LOCAL_TENANT,
@@ -816,6 +823,18 @@ def _failed_source_ids_from_result(result: Any) -> list[str]:
     if not isinstance(raw, (list, tuple)):
         return []
     return [str(source_id) for source_id in raw if str(source_id)]
+
+
+def _failed_source_ids_from_exception(exc: Exception, source_ids: tuple[str, ...]) -> list[str]:
+    for attr in ("failed_source_ids", "failedSourceIds", "failed_sources", "failedSources", "source_id"):
+        raw = getattr(exc, attr, None)
+        if not raw:
+            continue
+        if isinstance(raw, str):
+            return [raw]
+        if isinstance(raw, (list, tuple, set)):
+            return [str(source_id) for source_id in raw if str(source_id)]
+    return list(source_ids)
 
 
 def _record_skipped_discovery_run(
@@ -1293,11 +1312,413 @@ def _row_get(row: Any, key: str, index: int) -> Any:
     return row[index]
 
 
+DISCOVERY_SOURCE_FAMILIES: tuple[str, ...] = (
+    "jobspy",
+    "ats_api",
+    "workday",
+    "smartextract",
+)
+
+
+def plan_discovery_source_families(
+    *,
+    limit: int = 0,
+    source_ids: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Plan the runnable discovery source families in legacy order."""
+    conn = init_db()
+    try:
+        seed_discovery_control_queues(conn, config.load_source_registry())
+    except Exception:
+        log.debug("Failed to seed discovery control queues", exc_info=True)
+    try:
+        run_discovery_hygiene("before")
+    except Exception:
+        log.warning("Discovery hygiene failed", exc_info=True)
+
+    selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
+    source_filter_active = bool(selected_source_ids)
+    schedule = _plan_discovery_schedule(limit, source_ids=selected_source_ids)
+    jobspy_sources = schedule.for_prefix("jobspy")
+    ats_sources = tuple(
+        source
+        for source in schedule.for_kinds(SourceKind.ATS_API)
+        if not source.source_id.startswith("workday:")
+    )
+    workday_sources = schedule.for_prefix("workday")
+    smart_extract_sources = _smart_extract_sources(schedule)
+    families: list[str] = []
+    if not source_filter_active or jobspy_sources:
+        families.append("jobspy")
+    if ats_sources:
+        families.append("ats_api")
+    if not source_filter_active or workday_sources:
+        families.append("workday")
+    if not source_filter_active or smart_extract_sources:
+        families.append("smartextract")
+    return {
+        "families": families,
+        "progress_total": len(families) + 2,
+        "start_count": _pipeline_job_count() if limit > 0 else 0,
+    }
+
+
+def run_discovery_hygiene(label: str) -> int:
+    conn = get_connection()
+    search_cfg = config.load_search_config() or {}
+    hygiene = retire_invalid_source_jobs(
+        conn,
+        search_cfg=search_cfg,
+        run_id=f"discovery:hygiene:{label}",
+    )
+    retired = int(hygiene.get("retired_jobs") or 0)
+    if retired:
+        console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
+    return retired
+
+
+def run_discovery_source_family(
+    family: str,
+    *,
+    workers: int = 1,
+    limit: int = 0,
+    source_ids: tuple[str, ...] = (),
+    start_count: int = 0,
+    progress_completed: int = 0,
+    progress_total: int = 0,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Run one discovery source family and persist its lifecycle events."""
+    selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
+    source_filter_active = bool(selected_source_ids)
+    search_cfg = config.load_search_config() or {}
+    bounded_workers = max(1, workers)
+    provided_cancel_event = cancel_event
+    cancel_event = cancel_event or threading.Event()
+    conn = get_connection()
+    schedule = _plan_discovery_schedule(limit, source_ids=selected_source_ids)
+    jobspy_sources = schedule.for_prefix("jobspy")
+    ats_sources = tuple(
+        source
+        for source in schedule.for_kinds(SourceKind.ATS_API)
+        if not source.source_id.startswith("workday:")
+    )
+    workday_sources = schedule.for_prefix("workday")
+    smart_extract_sources = _smart_extract_sources(schedule)
+    if limit > 0 and family != "jobspy" and _discover_limit_consumed(start_count, limit):
+        sources = _sources_for_discovery_family(
+            family,
+            jobspy_sources=jobspy_sources,
+            ats_sources=ats_sources,
+            workday_sources=workday_sources,
+            smart_extract_sources=smart_extract_sources,
+        )
+        status = _skip_discovery_source(
+            family,
+            _discovery_family_label(family),
+            "limit reached",
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
+
+    if family == "jobspy":
+        if source_filter_active and not jobspy_sources:
+            return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
+
+        def run_jobspy(run_id: str | None = None) -> dict:
+            if search_cfg.get("disable_jobspy", False):
+                console.print("  [dim]JobSpy disabled in discovery settings[/dim]")
+                return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            console.print("  [cyan]JobSpy full crawl...[/cyan]")
+            try:
+                from jobhunter.discovery.jobspy import run_discovery
+            except ImportError:
+                console.print("  [dim]JobSpy not installed — skipping[/dim]")
+                return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
+            if not jobspy_cfg.get("boards"):
+                console.print("  [dim]No runnable JobSpy boards scheduled[/dim]")
+                return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            run_kwargs: dict[str, Any] = {
+                "cfg": jobspy_cfg,
+                "limit": _scheduled_limit(schedule, "jobspy", limit),
+            }
+            _add_supported_discovery_kwargs(
+                run_discovery,
+                run_kwargs,
+                run_id=run_id,
+                cancel_event=cancel_event if provided_cancel_event is not None else None,
+                progress_callback=_jobspy_progress_callback(
+                    run_id=run_id,
+                    source_ids=tuple(item.source_id for item in jobspy_sources if item.should_run),
+                    progress_completed=progress_completed,
+                    progress_total=progress_total,
+                ),
+            )
+            return run_discovery(**run_kwargs)
+
+        status = _run_discovery_source(
+            "jobspy",
+            "JobSpy",
+            jobspy_sources,
+            run_jobspy,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in jobspy_sources]}
+
+    if family == "ats_api":
+        if not ats_sources:
+            return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
+
+        def run_ats(run_id: str | None = None) -> dict:
+            console.print("  [cyan]Canonical ATS APIs...[/cyan]")
+            result = run_scheduled_ats_sources(
+                conn,
+                ats_sources,
+                search_cfg=search_cfg,
+                run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
+                limit=_scheduled_limit_for_sources(
+                    ats_sources,
+                    _discover_remaining_limit(start_count, limit),
+                ),
+                **({"cancel_event": cancel_event} if provided_cancel_event is not None else {}),
+            )
+            return result
+
+        result_holder: dict[str, Any] = {}
+
+        def capture_ats(run_id: str | None = None) -> dict:
+            result_holder.update(run_ats(run_id))
+            return result_holder
+
+        status = _run_discovery_source(
+            "ats_api",
+            "Canonical ATS APIs",
+            ats_sources,
+            capture_ats,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        return {
+            "family": family,
+            "status": status,
+            "result": dict(result_holder),
+            "source_ids": [s.source_id for s in ats_sources],
+        }
+
+    if family == "workday":
+        if source_filter_active and not workday_sources:
+            return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
+
+        def run_workday(run_id: str | None = None) -> dict:
+            console.print("  [cyan]Workday corporate scraper...[/cyan]")
+            from jobhunter.discovery.workday import run_workday_discovery
+
+            workday_kwargs: dict[str, Any] = {
+                "employers": _workday_employers_for_sources(workday_sources),
+                "workers": bounded_workers,
+                "limit": _scheduled_limit(
+                    schedule,
+                    "workday",
+                    _discover_remaining_limit(start_count, limit),
+                ),
+                "run_id": run_id,
+            }
+            if provided_cancel_event is not None:
+                workday_kwargs["cancel_event"] = cancel_event
+            return run_workday_discovery(**workday_kwargs)
+
+        result_holder: dict[str, Any] = {}
+
+        def capture_workday(run_id: str | None = None) -> dict:
+            result_holder.update(run_workday(run_id))
+            return result_holder
+
+        status = _run_discovery_source(
+            "workday",
+            "Workday scraper",
+            workday_sources,
+            capture_workday,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        return {
+            "family": family,
+            "status": status,
+            "result": dict(result_holder),
+            "source_ids": [s.source_id for s in workday_sources],
+        }
+
+    if family == "smartextract":
+        if source_filter_active and not smart_extract_sources:
+            return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
+
+        def run_smart_extract_source() -> dict:
+            console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
+            enqueue_manual_action_for_sources(conn, smart_extract_sources)
+            from jobhunter.discovery.smartextract import run_smart_extract
+
+            smart_kwargs: dict[str, Any] = {
+                "sites": _smart_extract_sites(smart_extract_sources),
+                "workers": bounded_workers,
+                "limit": _scheduled_limit_for_sources(
+                    smart_extract_sources,
+                    _discover_remaining_limit(start_count, limit),
+                ),
+            }
+            if provided_cancel_event is not None:
+                smart_kwargs["cancel_event"] = cancel_event
+            return run_smart_extract(**smart_kwargs)
+
+        result_holder: dict[str, Any] = {}
+
+        def capture_smart_extract() -> dict:
+            result_holder.update(run_smart_extract_source())
+            return result_holder
+
+        status = _run_discovery_source(
+            "smartextract",
+            "Smart extract",
+            smart_extract_sources,
+            capture_smart_extract,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        return {
+            "family": family,
+            "status": status,
+            "result": dict(result_holder),
+            "source_ids": [s.source_id for s in smart_extract_sources],
+        }
+
+    raise ValueError(f"Unknown discovery source family: {family}")
+
+
+def run_discovery_enrichment_stage(
+    *,
+    workers: int = 1,
+    limit: int = 0,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    discovery_done = threading.Event()
+    discovery_done.set()
+    _run_discovery_enrichment_until_idle(
+        discovery_done,
+        result,
+        workers=max(1, workers),
+        limit=limit,
+        cancel_event=cancel_event,
+    )
+    return result or {"status": "ok", "passes": 0, "pending": 0}
+
+
+def _sources_for_discovery_family(
+    family: str,
+    *,
+    jobspy_sources: tuple[ScheduledSource, ...],
+    ats_sources: tuple[ScheduledSource, ...],
+    workday_sources: tuple[ScheduledSource, ...],
+    smart_extract_sources: tuple[ScheduledSource, ...],
+) -> tuple[ScheduledSource, ...]:
+    if family == "jobspy":
+        return jobspy_sources
+    if family == "ats_api":
+        return ats_sources
+    if family == "workday":
+        return workday_sources
+    if family == "smartextract":
+        return smart_extract_sources
+    return ()
+
+
+def _discovery_family_label(family: str) -> str:
+    return {
+        "jobspy": "JobSpy",
+        "ats_api": "Canonical ATS APIs",
+        "workday": "Workday scraper",
+        "smartextract": "Smart extract",
+    }.get(family, family)
+
+
+def _add_supported_discovery_kwargs(
+    fn: Callable[..., Any],
+    kwargs: dict[str, Any],
+    *,
+    run_id: str | None,
+    cancel_event: threading.Event | None,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return
+    params = signature.parameters
+    accepts_kwargs = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in params.values())
+    if run_id and ("run_id" in params or accepts_kwargs):
+        kwargs["run_id"] = run_id
+    if cancel_event is not None and ("cancel_event" in params or accepts_kwargs):
+        kwargs["cancel_event"] = cancel_event
+    if progress_callback is not None and ("progress_callback" in params or accepts_kwargs):
+        kwargs["progress_callback"] = progress_callback
+
+
+def _jobspy_progress_callback(
+    *,
+    run_id: str | None,
+    source_ids: tuple[str, ...],
+    progress_completed: int,
+    progress_total: int,
+) -> Callable[[dict[str, Any]], None] | None:
+    if not run_id:
+        return None
+
+    def record_jobspy_progress(snapshot: dict[str, Any]) -> None:
+        error_count = _first_present(
+            snapshot.get("errors"),
+            snapshot.get("error_count"),
+            snapshot.get("errorCount"),
+        )
+        _record_discovery_source_progress(
+            source="jobspy",
+            label="JobSpy",
+            run_id=run_id,
+            source_ids=source_ids,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+            source_progress=DiscoveryRunProgress(
+                completed=int(snapshot.get("completed") or 0),
+                total=int(snapshot.get("total") or 0),
+                unit=str(snapshot.get("unit") or "searches"),
+                current_query=_optional_text(
+                    _first_present(snapshot.get("current_query"), snapshot.get("currentQuery"))
+                ),
+                current_location=_optional_text(
+                    _first_present(snapshot.get("current_location"), snapshot.get("currentLocation"))
+                ),
+                new_jobs=_optional_int(_first_present(snapshot.get("new_jobs"), snapshot.get("newJobs"))),
+                existing_jobs=_optional_int(
+                    _first_present(snapshot.get("existing_jobs"), snapshot.get("existingJobs"))
+                ),
+                filtered_jobs=_optional_int(
+                    _first_present(snapshot.get("filtered_jobs"), snapshot.get("filteredJobs"))
+                ),
+                error_count=_optional_int(error_count),
+                raw_total=_optional_int(_first_present(snapshot.get("raw_total"), snapshot.get("rawTotal"))),
+            ),
+            message=str(snapshot.get("message") or "JobSpy progress updated"),
+        )
+
+    return record_jobspy_progress
+
+
 # ---------------------------------------------------------------------------
 # Individual stage runners
 # ---------------------------------------------------------------------------
 
-def _run_discover(
+def run_discovery_legacy_once(
     workers: int = 1,
     limit: int = 0,
     min_score: int = 7,
@@ -1857,7 +2278,7 @@ def _run_cover(
 # ``callable`` is the runtime predicate, not a generic type alias).
 _StageRunner = Callable[..., dict[str, Any]]
 _STAGE_RUNNERS: dict[str, _StageRunner] = {
-    "discover": _run_discover,
+    "discover": run_discovery_legacy_once,
     "enrich":   _run_enrich,
     "score":    _run_score,
     "tailor":   _run_tailor,

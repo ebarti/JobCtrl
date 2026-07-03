@@ -1699,8 +1699,6 @@ class ProjectionBuilder:
             events=(event_row_from_sql(row) for row in rows),
             updated_at=_utc_now(),
         )
-        for run in result.runs:
-            self._store.upsert_discovery_run(run)
         self._store.replace_source_quality(str(self._tenant_id), result.stats)
 
     def _has_source_quality_history(self) -> bool:

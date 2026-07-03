@@ -12,7 +12,13 @@ from typing import Any
 
 from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
-from jobhunter.discovery.activities import discover_activity
+from jobhunter.discovery.activities import (
+    discovery_enrichment_activity,
+    discovery_preparation_fanout_activity,
+    discovery_source_family_activity,
+    plan_discovery_sources,
+)
+from jobhunter.discovery.workflow import DiscoverWorkflow
 from jobhunter.enrichment.activities import enrich_activity
 from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
@@ -32,13 +38,17 @@ from jobhunter.profile.activities import profile_import_activity
 from jobhunter.scoring.activities import score_activity, score_job_activity
 
 WORKFLOWS: list[type] = [
+    DiscoverWorkflow,
     JobPipelineWorkflow,
     JobPreparationWorkflow,
     ApplyWorkflow,
 ]
 
 ACTIVITIES: list[Callable[..., Any]] = [
-    discover_activity,
+    plan_discovery_sources,
+    discovery_source_family_activity,
+    discovery_enrichment_activity,
+    discovery_preparation_fanout_activity,
     enrich_activity,
     score_activity,
     score_job_activity,

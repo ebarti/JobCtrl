@@ -2838,6 +2838,8 @@ export const DiscoverySettingsUpdateRequestSchema = z
     boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])).min(1).optional(),
     resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
+    schedulingEnabled: z.boolean().optional(),
+    scheduleCron: z.string().min(1).optional(),
   })
   .strict();
 export type DiscoverySettingsUpdateRequest = z.infer<typeof DiscoverySettingsUpdateRequestSchema>;
@@ -2846,6 +2848,8 @@ export interface DiscoverySettings {
   boards: Array<"indeed" | "linkedin" | "zip_recruiter" | "glassdoor">;
   resultsPerSite: number;
   hoursOld: number;
+  schedulingEnabled: boolean;
+  scheduleCron: string;
   source: "database";
 }
 

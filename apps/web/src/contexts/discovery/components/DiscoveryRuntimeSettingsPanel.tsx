@@ -23,6 +23,8 @@ function toFormValues(settings: DiscoverySettings): DiscoverySettingsUpdateReque
     boards: settings.boards,
     resultsPerSite: settings.resultsPerSite,
     hoursOld: settings.hoursOld,
+    schedulingEnabled: settings.schedulingEnabled,
+    scheduleCron: settings.scheduleCron,
   };
 }
 
@@ -139,6 +141,30 @@ function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySettings 
                 max={8760}
                 value={field.state.value ?? 72}
                 onChange={(event) => field.handleChange(Number(event.target.value))}
+              />
+            </label>
+          )}
+        </form.Field>
+        <form.Field name="schedulingEnabled">
+          {(field) => (
+            <label className="choice target-choice">
+              <input
+                type="checkbox"
+                checked={Boolean(field.state.value)}
+                onChange={(event) => field.handleChange(event.target.checked)}
+              />
+              <span>Enable scheduled discovery</span>
+            </label>
+          )}
+        </form.Field>
+        <form.Field name="scheduleCron">
+          {(field) => (
+            <label className="field">
+              <span>Schedule cron</span>
+              <input
+                type="text"
+                value={field.state.value ?? "0 7 * * *"}
+                onChange={(event) => field.handleChange(event.target.value)}
               />
             </label>
           )}

@@ -1147,6 +1147,8 @@ export const sampleDiscoverySettingsResponse = {
     boards: ["indeed", "linkedin", "zip_recruiter"] as const,
     resultsPerSite: 50,
     hoursOld: 72,
+    schedulingEnabled: false,
+    scheduleCron: "0 7 * * *",
     source: "database" as const,
   },
 };
