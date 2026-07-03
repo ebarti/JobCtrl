@@ -47,6 +47,10 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Dry run marks a job applied | `workers/automation/tests/test_apply_regressions.py` |
 | Apply process hangs while stdout stays open | `workers/automation/tests/test_apply_regressions.py` |
 | Targeted apply skips fresh jobs | `workers/automation/tests/test_apply_regressions.py` |
+| Live apply claims bypass the default approval gate, ignore the latest Apply Review decision, fail to leave the job pending with an awaiting-approval event, or allow direct API/RPC dispatch to submit without a committed `approve_submit` decision | `workers/automation/tests/test_apply_regressions.py`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/profile/forms/settings-form.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx` |
+| A live apply crash after submit intent blindly retries or auto-requeues instead of parking `needs_verification`, or a crash before intent fails to rewind safely to `pending` | `workers/automation/tests/test_apply_regressions.py`; `workers/automation/tests/test_apply_saga.py`; `workers/automation/tests/test_workflow_apply.py`; `apps/api/test/application-feedback.test.ts`; `packages/domain-types/test/pipeline.test.ts` |
+| Browser-layer dry-run enforcement fails to block hostile cross-origin POST/PUT/PATCH or form submission, or live mode stops reaching the local fixture server | `workers/automation/tests/test_apply_chrome_dry_run_guard.py` |
+| Apply result evidence disappears, raw agent output is not persisted, confirmation evidence is not stored, or verification confidence is inflated without structured applied output plus confirmation evidence | `workers/automation/tests/test_claude_code_cli_adapter.py`; `workers/automation/tests/test_apply_regressions.py` |
 | Auto-apply kills the launcher on agent timeout, uploads files outside the worker sandbox, loops on browser Gmail, or cannot report Gmail connector auth readiness | `workers/automation/tests/test_claude_code_cli_adapter.py`; `workers/automation/tests/test_apply_prompt_builder.py`; `workers/automation/tests/test_apply_use_cases.py`; `workers/automation/tests/test_gmail_mcp_config.py`; `workers/automation/tests/test_doctor_gmail_mcp.py` |
 | Stages cannot be retried individually | `workers/automation/tests/test_state_dashboard.py` |
 | Explicit stage state loses to compatibility columns | `workers/automation/tests/test_state_dashboard.py` |
@@ -287,7 +291,7 @@ jobs for this smoke.
 For UI/API changes around application review or outcome tracking, open
 `/apply-review` and verify the queue shows ready and blocked apply-stage jobs,
 derives the visible status tag/counts from `applyAudit`, offers submit approval
-only after a completed dry run, records `approve_submit`, dry-run approval,
+as the primary live-gate action, records `approve_submit`, dry-run approval,
 defer, decline, and reset decisions without starting apply/browser automation,
 and refreshes the queue after each decision. Open a job detail drawer and
 verify its `applyAudit` readiness/blocker facts agree with the selected Apply

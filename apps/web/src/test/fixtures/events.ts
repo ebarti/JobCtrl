@@ -4,6 +4,7 @@ import {
   createApplicationSubmitted,
   createApplyRunEventRecorded,
   createApplyRunStarted,
+  createApplySubmitIntended,
   createCanonicalJobIdentityResolved,
   createCompensationFactsUpdated,
   createContentDuplicateCandidateDetected,
@@ -411,6 +412,13 @@ export const eventByType = {
     model: "haiku",
     dryRun: false,
     startedAt: NOW,
+  }),
+  ApplySubmitIntended: createApplySubmitIntended(LOCAL_TENANT, {
+    tenantId: LOCAL_TENANT,
+    jobKey: JOB_ID,
+    runId: RUN_ID,
+    materialVersion: "3",
+    intendedAt: NOW,
   }),
   ApplyRunEventRecorded: createApplyRunEventRecorded(LOCAL_TENANT, {
     runId: RUN_ID,

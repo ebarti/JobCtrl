@@ -1920,11 +1920,10 @@ class ProjectionBuilder:
         "ApplicationSubmitted": ("succeeded", "applied"),
         "DryRunCompleted": ("dry_run_complete", "dry_run_complete"),
         "ApplyManualSkip": ("manual", "manual"),
-        # ``LockReleased`` is the orphan-rescue terminal: only treat it as
-        # failure when no prior terminal event for the run was observed
-        # (see ``_apply_lock_released_event`` below). The event itself
-        # carries no result; preserving the prior result keeps captcha /
-        # login_issue / expired distinct from generic 'failed'.
+        # ``LockReleased`` is a legacy fallback terminal: only treat it as
+        # failure when no prior terminal event for the run was observed. The
+        # event itself carries no result; preserving the prior result keeps
+        # captcha / login_issue / expired distinct from generic 'failed'.
         "LockReleased": ("failed", "failed"),
     }
 
@@ -1990,13 +1989,10 @@ class ProjectionBuilder:
                 if status == "starting":
                     status = "in_progress"
             elif event_type in self._TERMINAL_EVENT_STATUS:
-                # LockReleased is the orphan-rescue fallback: when an
-                # authoritative terminal event already fired (Submitted /
-                # DryRunCompleted / ApplyManualSkip / ApplicationFailed),
-                # do NOT overwrite its more-specific result. Otherwise
-                # captcha / login_issue / expired runs that get rescued
-                # by ``release_lock`` would surface as plain 'failed' in
-                # ``apply_run_projections.result``.
+                # LockReleased is only a fallback: when an authoritative
+                # terminal event already fired (Submitted / DryRunCompleted /
+                # ApplyManualSkip / ApplicationFailed), do NOT overwrite its
+                # more-specific result.
                 if event_type == "LockReleased" and result is not None:
                     continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]

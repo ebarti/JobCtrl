@@ -19,13 +19,14 @@ const STATE_RANK: Record<StageState, number> = {
   failed: 0,
   exhausted: 1,
   blocked: 2,
-  running: 3,
-  queued: 4,
-  pending: 5,
-  stale: 6,
-  canceled: 7,
-  skipped: 8,
-  succeeded: 9,
+  needs_verification: 3,
+  running: 4,
+  queued: 5,
+  pending: 6,
+  stale: 7,
+  canceled: 8,
+  skipped: 9,
+  succeeded: 10,
 };
 
 type ConcreteJobsListInput = Partial<JobListQuery>;

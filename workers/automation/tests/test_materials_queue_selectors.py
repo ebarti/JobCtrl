@@ -724,7 +724,7 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
         original = launcher_mod.get_connection
         launcher_mod.get_connection = lambda: get_connection(db_path)
         try:
-            job = acquire_job(min_score=7, worker_id=1)
+            job = acquire_job(min_score=7, worker_id=1, approval_required=False)
             assert job is not None
             assert job["url"] == url
             assert job["tailored_resume_path"] == "/tmp/materials-resume.txt"

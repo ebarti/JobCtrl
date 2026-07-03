@@ -30,9 +30,9 @@ Compensation actions per §8.3:
       record ``Failed("TIMEOUT", retryable=True)``; cleanup browser.
     * Agent crash → kill subprocess; record ``Failed(error_msg,
       retryable=True)``; cleanup browser.
-    * Process crash mid-run → at startup, ``mark_orphans_as_failed``
-      transitions any ``in_progress`` runs to ``Failed("ORPHANED",
-      retryable=True)`` so the queue selectors don't block forever.
+    * Process crash mid-run → launcher recovery inspects the durable
+      ``ApplySubmitIntended`` checkpoint before deciding whether the
+      job can be retried or must be manually verified.
 
 The saga itself is **pure orchestration** — the adapters do all the
 I/O. ``ApplySaga`` takes ports as constructor arguments so tests can
@@ -59,7 +59,6 @@ from jobhunter.domain.ports.apply import (
     BrowserPort,
     BrowserSession,
 )
-from jobhunter.domain.tenant import TenantId
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +136,7 @@ class ApplySaga:
         browser_config: BrowserWorkerConfig,
         prompt: ApplyPrompt,
         model: str,
+        material_version: str = "",
     ) -> SagaOutcome:
         """Run the saga end-to-end.
 
@@ -214,6 +214,22 @@ class ApplySaga:
 
             # 3. Drive the agent
             try:
+                if not run.dry_run:
+                    intended_at = _utc_now()
+                    run = run.record_event(
+                        event_type="ApplySubmitIntended",
+                        occurred_at=intended_at,
+                        level="info",
+                        message="apply submission intent recorded",
+                        payload={
+                            "tenant_id": str(run.tenant_id),
+                            "job_key": str(run.job_id),
+                            "run_id": str(run.run_id),
+                            "material_version": str(material_version or ""),
+                            "intended_at": intended_at,
+                        },
+                    )
+                    self._repository.save(run)
                 agent_invoked = True
                 agent_result: AgentResult = self._agent.submit_application(
                     prompt=prompt,
@@ -291,6 +307,7 @@ class ApplySaga:
                 payload={
                     "kind": agent_result.submission_result.kind,
                     "duration_ms": duration_ms,
+                    "raw_output": agent_result.raw_output,
                 },
             )
             run = run.complete(
@@ -346,42 +363,6 @@ class ApplySaga:
             finished_at=_utc_now(),
             duration_ms=duration_ms,
         )
-
-    # ------------------------------------------------------------------
-    # Crash recovery — orphan detection
-    # ------------------------------------------------------------------
-
-    def mark_orphans_as_failed(
-        self,
-        *,
-        tenant_id: TenantId,
-        finished_at: str | None = None,
-    ) -> list[ApplyRun]:
-        """Detect orphaned ``in_progress`` runs and transition them to ``Failed``.
-
-        Per §8.3 compensation: on next startup the saga sweeps any
-        runs left in ``starting`` / ``in_progress`` state (the prior
-        process crashed before reaching a terminal state) and marks
-        them ``Failed("ORPHANED", retryable=True)`` so the queue
-        selectors stop blocking on them.
-        """
-        finished_at = finished_at or _utc_now()
-        orphans = self._repository.list_active(tenant_id)
-        rescued: list[ApplyRun] = []
-        for orphan in orphans:
-            updated = orphan.complete(
-                result=Failed(error="ORPHANED: process crashed mid-run", retryable=True),
-                finished_at=finished_at,
-            )
-            self._repository.save(updated)
-            rescued.append(updated)
-        if rescued:
-            log.info(
-                "ApplySaga.mark_orphans_as_failed: rescued %d orphan run(s)",
-                len(rescued),
-            )
-        return rescued
-
 
 def _describe_result(result: SubmissionResult) -> str:
     """Compact human-readable description of a submission result."""

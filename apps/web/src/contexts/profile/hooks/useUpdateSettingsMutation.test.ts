@@ -16,6 +16,7 @@ const initialSettings = {
     locationFilter: "Remote",
     minFitScore: 7,
     autoApply: false,
+    applyApprovalRequired: true,
     applyConcurrency: 2,
     scoreCriteria: "x",
     targetCriteria: "y",

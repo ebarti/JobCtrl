@@ -26,6 +26,7 @@ export const StateFailed: Story = { args: { state: "failed" } };
 export const StateBlocked: Story = { args: { state: "blocked" } };
 export const StateSkipped: Story = { args: { state: "skipped" } };
 export const StateExhausted: Story = { args: { state: "exhausted" } };
+export const StateNeedsVerification: Story = { args: { state: "needs_verification" } };
 export const StateCanceled: Story = { args: { state: "canceled" } };
 export const StateStale: Story = { args: { state: "stale" } };
 
@@ -49,6 +50,7 @@ const _stateStories: Record<StageState, Story> = {
   blocked: StateBlocked,
   skipped: StateSkipped,
   exhausted: StateExhausted,
+  needs_verification: StateNeedsVerification,
   canceled: StateCanceled,
   stale: StateStale,
 };

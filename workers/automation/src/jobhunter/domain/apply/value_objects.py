@@ -62,6 +62,7 @@ class BrowserWorkerConfig:
     cdp_port: int
     headless: bool = False
     user_data_dir: str | None = None
+    dry_run: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.worker_id, int) or self.worker_id < 0:
@@ -74,6 +75,8 @@ class BrowserWorkerConfig:
             )
         if not isinstance(self.headless, bool):
             raise ValueError("BrowserWorkerConfig.headless must be a bool")
+        if not isinstance(self.dry_run, bool):
+            raise ValueError("BrowserWorkerConfig.dry_run must be a bool")
 
 
 # ---------------------------------------------------------------------------

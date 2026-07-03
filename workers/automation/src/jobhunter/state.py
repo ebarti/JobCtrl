@@ -37,6 +37,7 @@ STATE_VALUES: tuple[str, ...] = (
     "blocked",
     "skipped",
     "exhausted",
+    "needs_verification",
     "stale",
     "canceled",
 )

@@ -35,13 +35,6 @@ const PRIMARY_DECISIONS: readonly ApplyReviewDecisionValue[] = [
   "decline",
 ];
 
-function hasCompletedDryRun(item: ApplyReviewQueueItem): boolean {
-  const run = item.latestApplyRun;
-  if (!run?.dryRun) return false;
-  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
-  return status.includes("succeeded") || status.includes("complete");
-}
-
 export function ApplyReviewDecisionControls({
   approvalDisabledReason = null,
   approvalNotice = null,
@@ -52,9 +45,7 @@ export function ApplyReviewDecisionControls({
   const decision = useApplyReviewDecisionMutation();
   const [preparingDecision, setPreparingDecision] = useState<ApplyReviewDecisionValue | null>(null);
   const pending = decision.isPending || preparingDecision !== null || approvalPreparing;
-  const primaryDecisions = PRIMARY_DECISIONS.filter(
-    (value) => value !== "approve_submit" || hasCompletedDryRun(item),
-  );
+  const primaryDecisions = PRIMARY_DECISIONS;
   const approvalMessage = approvalDisabledReason ?? approvalNotice;
 
   const submitDecision = async (value: ApplyReviewDecisionValue) => {

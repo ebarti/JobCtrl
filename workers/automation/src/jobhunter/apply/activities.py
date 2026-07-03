@@ -8,7 +8,6 @@ through.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +29,7 @@ class ApplyActivityInput:
     headless: bool = False
     dry_run: bool = False
     workers: int = 1
+    approval_required: bool = True
     # Run-forever poll mode — when True, the activity calls ``apply_main``
     # with ``limit=0`` (the launcher's run-forever sentinel) and ignores
     # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
@@ -60,18 +60,22 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     # ``apply.launcher`` installs process signal handlers at import time; import
     # it on the activity event-loop thread before handing work to the executor.
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+    from jobhunter.infrastructure.scoring.criteria_provider import read_apply_approval_required
     from jobhunter.apply.launcher import main as apply_main
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    workflow_id = activity.info().workflow_id
 
     def _run_apply() -> tuple[int, int]:
         # ``continuous=True`` selects the launcher's run-forever poll mode,
         # which it activates via ``limit == 0``.  Otherwise enforce a floor
         # of one to keep ``limit < 1`` calls from no-oping.
         effective_limit = 0 if payload.continuous else max(1, payload.limit)
+        approval_required = read_apply_approval_required(default=payload.approval_required)
         return apply_main(
             limit=effective_limit,
             target_url=payload.job_url,
@@ -80,45 +84,21 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             model=payload.model,
             dry_run=payload.dry_run,
             workers=payload.workers,
+            approval_required=approval_required,
+            workflow_id=workflow_id,
             install_signal_handlers=False,
         )
 
-    activity.heartbeat("apply starting")
-    loop = asyncio.get_running_loop()
-    apply_task = loop.run_in_executor(None, _run_apply)
-
     try:
-        try:
-            while True:
-                try:
-                    applied, failed = await asyncio.wait_for(
-                        asyncio.shield(apply_task), timeout=15.0
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    activity.heartbeat("apply still running")
-        except asyncio.CancelledError:
-            # Signal the launcher's run-forever loop to stop so the
-            # executor thread releases Chrome / DB connections instead of
-            # leaking past activity cancellation. ``asyncio.shield`` keeps
-            # the task running otherwise — Temporal would think the
-            # activity died but the worker_loop polls on, draining tokens.
-            activity.logger.info("apply_activity cancelled — signalling launcher stop")
-            try:
-                from jobhunter.apply.launcher import _stop_event
-
-                _stop_event.set()
-            except Exception:  # noqa: BLE001 — never let cleanup mask the cancel
-                activity.logger.exception(
-                    "apply_activity: failed to set launcher _stop_event during cancel"
-                )
-            raise
-        except LookupError as exc:
-            # Missing job URL or other lookup misses are operator errors;
-            # do not retry — surface them immediately to the workflow.
-            raise ApplicationError(
-                str(exc), type=type(exc).__name__, non_retryable=True
-            ) from exc
+        applied, failed = await run_blocking_with_heartbeat(
+            _run_apply,
+            starting_message="apply starting",
+            progress_message="apply still running",
+            poll_interval=15.0,
+            activity_name="apply",
+            job_context={"job_url": payload.job_url or "", "dry_run": payload.dry_run},
+            on_cancel=_signal_launcher_stop,
+        )
 
         status = "ok" if failed == 0 else "failed"
         return ApplyActivityOutput(
@@ -127,14 +107,24 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             failed=int(failed),
             error=None,
         )
-    finally:
-        # Final heartbeat so a future heartbeat-timeout regression
-        # (post-iteration delay > heartbeat_timeout) doesn't surface as
-        # a phantom dead activity.
-        try:
-            activity.heartbeat("apply done")
-        except Exception:  # noqa: BLE001 — heartbeat outside activity ctx is fine
-            pass
+    except LookupError as exc:
+        # Missing job URL or other lookup misses are operator errors;
+        # do not retry — surface them immediately to the workflow.
+        raise ApplicationError(
+            str(exc), type=type(exc).__name__, non_retryable=True
+        ) from exc
+
+
+def _signal_launcher_stop() -> None:
+    activity.logger.info("apply_activity cancelled — signalling launcher stop")
+    try:
+        from jobhunter.apply.launcher import _stop_event
+
+        _stop_event.set()
+    except Exception:  # noqa: BLE001 — never let cleanup mask the cancel
+        activity.logger.exception(
+            "apply_activity: failed to set launcher _stop_event during cancel"
+        )
 
 
 # Re-exported for the registry; activity decorator metadata is preserved.

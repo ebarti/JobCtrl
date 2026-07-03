@@ -107,7 +107,7 @@ class TestStage:
 
 class TestStageState:
     def test_kind_count(self) -> None:
-        assert len(STAGE_STATE_KINDS) == 10
+        assert len(STAGE_STATE_KINDS) == 11
 
     def test_kind_names(self) -> None:
         assert STAGE_STATE_KINDS == (
@@ -119,6 +119,7 @@ class TestStageState:
             "Blocked",
             "Skipped",
             "Exhausted",
+            "NeedsVerification",
             "Stale",
             "Canceled",
         )

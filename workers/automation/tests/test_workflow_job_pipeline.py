@@ -148,6 +148,7 @@ async def test_pipeline_workflow_rejects_unknown_stage_as_non_retryable():
 async def test_pipeline_workflow_runs_apply_as_child_workflow():
     """Passing ``apply`` delegates to ``ApplyWorkflow`` while preserving order."""
     queue = f"pipeline-apply-{uuid.uuid4()}"
+    workflow_id = f"pipeline-apply-wf-{uuid.uuid4()}"
 
     with patch("jobhunter.apply.launcher.main", return_value=(1, 0)) as apply_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -170,7 +171,7 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
                         limit=2,
                         workers=3,
                     ),
-                    id=f"pipeline-apply-wf-{uuid.uuid4()}",
+                    id=workflow_id,
                     task_queue=queue,
                 )
 
@@ -184,6 +185,8 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
         "model": "sonnet",
         "dry_run": True,
         "workers": 3,
+        "approval_required": True,
+        "workflow_id": f"{workflow_id}-apply",
         "install_signal_handlers": False,
     }
 

@@ -6,6 +6,7 @@ export const STATUS_DOT_STATES = [
   "failed",
   "exhausted",
   "blocked",
+  "needs_verification",
   "running",
   "queued",
   "pending",
@@ -20,4 +21,3 @@ export type SegmentBarTone = (typeof SEGMENT_BAR_TONES)[number];
 
 export const TIMELINE_TONES = ["info", "success", "warning", "danger", "muted"] as const;
 export type TimelineTone = (typeof TIMELINE_TONES)[number];
-

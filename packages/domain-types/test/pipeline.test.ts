@@ -60,8 +60,8 @@ describe("Stage", () => {
 });
 
 describe("StageState", () => {
-  it("has exactly 10 state kinds", () => {
-    expect(STAGE_STATE_KINDS).toHaveLength(10);
+  it("has exactly 11 state kinds", () => {
+    expect(STAGE_STATE_KINDS).toHaveLength(11);
   });
 
   it("contains all canonical state kinds", () => {
@@ -74,6 +74,7 @@ describe("StageState", () => {
       "Blocked",
       "Skipped",
       "Exhausted",
+      "NeedsVerification",
       "Stale",
       "Canceled",
     ]);
@@ -122,6 +123,10 @@ describe("StageState", () => {
       errorCode: "MAX",
       errorMessage: "max attempts",
     };
+    const needsVerification: StageState = {
+      kind: "NeedsVerification",
+      reason: "submit intent observed",
+    };
     const stale: Stale = { kind: "Stale", reason: "upstream re-ran" };
     const canceled: Canceled = {
       kind: "Canceled",
@@ -138,10 +143,11 @@ describe("StageState", () => {
       blocked,
       skipped,
       exhausted,
+      needsVerification,
       stale,
       canceled,
     ];
-    expect(states).toHaveLength(10);
+    expect(states).toHaveLength(11);
   });
 
   it("serializeStageState lowercases the kind", () => {
@@ -151,6 +157,7 @@ describe("StageState", () => {
 
   it("deserializeStageStateKind maps lowercase to PascalCase", () => {
     expect(deserializeStageStateKind("pending")).toBe("Pending");
+    expect(deserializeStageStateKind("needs_verification")).toBe("NeedsVerification");
     expect(deserializeStageStateKind("canceled")).toBe("Canceled");
     expect(deserializeStageStateKind("exhausted")).toBe("Exhausted");
   });

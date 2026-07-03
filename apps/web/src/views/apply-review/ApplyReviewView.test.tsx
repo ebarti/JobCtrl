@@ -2246,7 +2246,7 @@ describe("<ApplyReviewView>", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides submit approval until a dry run has completed", async () => {
+  it("shows submit approval as the primary live gate action before a dry run", async () => {
     const noDryRunQueue = {
       ...sampleApplyReviewQueue,
       items: sampleApplyReviewQueue.items.map((item, index) =>
@@ -2276,7 +2276,7 @@ describe("<ApplyReviewView>", () => {
       screen.queryByRole("button", {
         name: /Approve submit for Principal Platform Engineer/i,
       }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
   });
 
   it("renders the verbatim job post markdown without injecting raw html", async () => {

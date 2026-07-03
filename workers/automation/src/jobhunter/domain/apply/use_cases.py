@@ -224,6 +224,7 @@ class SubmitApplicationUseCase:
             cdp_port=cdp_port,
             headless=headless,
             user_data_dir=worker_dir,
+            dry_run=dry_run,
         )
 
         # 5. Drive the saga — it persists the aggregate at every step
@@ -232,6 +233,7 @@ class SubmitApplicationUseCase:
             browser_config=browser_config,
             prompt=prompt,
             model=model,
+            material_version=str(job.get("materials_generation") or ""),
         )
 
         # 6. Publish per-event records + final result

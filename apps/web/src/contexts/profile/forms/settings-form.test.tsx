@@ -135,7 +135,23 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     fireEvent.click(screen.getByRole("button", { name: /^save automation settings$/i }));
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(updateSettings).toHaveBeenCalledWith({ autoApply: true, minFitScore: 9 });
+    expect(updateSettings).toHaveBeenCalledWith({
+      autoApply: true,
+      applyApprovalRequired: true,
+      minFitScore: 9,
+    });
+  });
+
+  it("warns when live apply approval is disabled", async () => {
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Require approval before live submit/i }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Approval gate is off: the agent may submit applications to employers immediately after claiming a job, without human review.",
+    );
   });
 
   it("undos automation checkbox changes with the keyboard shortcut", async () => {

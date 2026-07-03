@@ -12,6 +12,8 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from jobhunter import config
 
@@ -187,7 +189,7 @@ def _suppress_restore_nag(profile_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def launch_chrome(worker_id: int, port: int | None = None,
-                  headless: bool = False) -> subprocess.Popen:
+                  headless: bool = False, dry_run: bool = False) -> subprocess.Popen:
     """Launch a Chrome instance with remote debugging for a worker.
 
     Args:
@@ -245,9 +247,157 @@ def launch_chrome(worker_id: int, port: int | None = None,
 
     # Give Chrome time to start and open the debug port
     time.sleep(3)
+    if dry_run:
+        install_dry_run_cdp_guard(port)
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc
+
+
+_FORM_SUBMIT_GUARD_SOURCE = """
+(() => {
+  window.__jobhunter_dryrun_installed = true;
+  const block = (event) => {
+    window.__jobhunter_dryrun_blocked = true;
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    throw new Error("JobHunter dry-run blocked browser form submission");
+  };
+  const originalSubmit = HTMLFormElement.prototype.submit;
+  const originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+  HTMLFormElement.prototype.submit = function submit() { return block(); };
+  HTMLFormElement.prototype.requestSubmit = function requestSubmit() { return block(); };
+  Object.defineProperty(HTMLFormElement.prototype.submit, "name", { value: originalSubmit.name });
+  Object.defineProperty(HTMLFormElement.prototype.requestSubmit, "name", { value: originalRequestSubmit.name });
+  document.addEventListener("submit", block, true);
+})();
+"""
+
+
+def install_dry_run_cdp_guard(port: int) -> None:
+    """Install a CDP dry-run guard on Chrome pages for this worker."""
+    guard = _DryRunCdpGuard(port)
+    guard.start()
+
+
+class _DryRunCdpGuard:
+    def __init__(self, port: int) -> None:
+        self._port = int(port)
+        self._seen: set[str] = set()
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        self._attach_existing_targets()
+        watcher = threading.Thread(
+            target=self._watch_targets,
+            name=f"apply-cdp-dry-run-{self._port}",
+            daemon=True,
+        )
+        watcher.start()
+
+    def _watch_targets(self) -> None:
+        while True:
+            self._attach_existing_targets()
+            time.sleep(1.0)
+
+    def _attach_existing_targets(self) -> None:
+        for target in _cdp_json(self._port, "/json/list"):
+            if not isinstance(target, dict) or target.get("type") != "page":
+                continue
+            target_id = str(target.get("id") or "")
+            ws_url = str(target.get("webSocketDebuggerUrl") or "")
+            if not target_id or not ws_url:
+                continue
+            with self._lock:
+                if target_id in self._seen:
+                    continue
+                self._seen.add(target_id)
+            thread = threading.Thread(
+                target=_run_dry_run_page_session,
+                args=(ws_url,),
+                name=f"apply-cdp-page-{target_id[:8]}",
+                daemon=True,
+            )
+            thread.start()
+
+
+def _cdp_json(port: int, path: str) -> object:
+    try:
+        with urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        logger.debug("CDP request failed for port %d path %s", port, path, exc_info=True)
+        return []
+
+
+def _run_dry_run_page_session(ws_url: str) -> None:
+    try:
+        import websocket
+    except Exception:
+        logger.exception("websocket-client is required for apply dry-run CDP enforcement")
+        return
+    try:
+        ws = websocket.create_connection(ws_url, timeout=2, suppress_origin=True)
+    except Exception:
+        logger.debug("CDP websocket connect failed for %s", ws_url, exc_info=True)
+        return
+    counter = 0
+
+    def send(method: str, params: dict | None = None) -> None:
+        nonlocal counter
+        counter += 1
+        ws.send(json.dumps({"id": counter, "method": method, "params": params or {}}))
+
+    try:
+        send("Page.enable")
+        send("Runtime.enable")
+        send("Page.addScriptToEvaluateOnNewDocument", {"source": _FORM_SUBMIT_GUARD_SOURCE})
+        send(
+            "Fetch.enable",
+            {
+                "patterns": [
+                    {
+                        "urlPattern": "*",
+                        "requestStage": "Request",
+                    }
+                ]
+            },
+        )
+        send("Runtime.evaluate", {"expression": _FORM_SUBMIT_GUARD_SOURCE})
+        while True:
+            try:
+                raw_message = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                continue
+            message = json.loads(raw_message)
+            if message.get("method") != "Fetch.requestPaused":
+                continue
+            params = message.get("params") or {}
+            request = params.get("request") or {}
+            request_id = params.get("requestId")
+            method = str(request.get("method") or "GET").upper()
+            url = str(request.get("url") or "")
+            if request_id and method in {"POST", "PUT", "PATCH"} and not _is_local_url(url):
+                send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+            elif request_id:
+                send("Fetch.continueRequest", {"requestId": request_id})
+    except Exception:
+        logger.debug("CDP dry-run page session ended", exc_info=True)
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def _is_local_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".localhost")
 
 
 def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:

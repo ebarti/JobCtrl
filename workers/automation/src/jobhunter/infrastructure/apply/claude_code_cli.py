@@ -361,7 +361,7 @@ class ClaudeCodeCliAdapter:
                         return DryRunComplete(navigated_to="")
                     return Applied(
                         applied_at=_utc_now(),
-                        verification_confidence=1.0,
+                        verification_confidence=_applied_confidence(output),
                     )
                 if code == "DRY_RUN":
                     return DryRunComplete(navigated_to="")
@@ -395,6 +395,28 @@ class ClaudeCodeCliAdapter:
             return Failed(error="unknown", retryable=True)
 
         return Failed(error="no_result_line", retryable=True)
+
+
+def _applied_confidence(output: str) -> float:
+    if not output:
+        return 0.2
+    if _has_confirmation_evidence(output):
+        return 1.0
+    if "RESULT:APPLIED" in output:
+        return 0.6
+    return 0.2
+
+
+def _has_confirmation_evidence(output: str) -> bool:
+    lowered = output.lower()
+    markers = (
+        "confirmation:",
+        "confirmation artifact",
+        "application submitted",
+        "thank you for applying",
+        "your application has been submitted",
+    )
+    return any(marker in lowered for marker in markers)
 
 
 def _preview(text: str, limit: int = 220) -> str:

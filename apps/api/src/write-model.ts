@@ -647,6 +647,9 @@ export function writeSettingsConfig(paths: { settingsPath: string }, request: Se
   if (request.autoApply !== undefined) {
     assign("auto_apply", request.autoApply);
   }
+  if (request.applyApprovalRequired !== undefined) {
+    assign("apply_approval_required", request.applyApprovalRequired);
+  }
   if (request.applyConcurrency !== undefined) {
     assign("apply_concurrency", request.applyConcurrency);
   }
@@ -1681,6 +1684,7 @@ function isStageState(value: unknown): value is StageState {
     value === "blocked" ||
     value === "skipped" ||
     value === "exhausted" ||
+    value === "needs_verification" ||
     value === "canceled" ||
     value === "stale"
   );

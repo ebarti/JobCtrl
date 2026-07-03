@@ -27,6 +27,12 @@ because it can drive browser automation and submit applications.
 
 Auto-apply is powerful and must be treated as an explicit submission tool. Use
 dry-run paths and narrow targets before allowing it to submit anything.
+Live browser submission requires an Apply Review approval by default
+(`applyApprovalRequired: true`). If you turn that gate off in Preferences, the
+settings form shows a persistent warning because the agent may submit
+applications immediately after claiming a job. Dry-run still keeps the prompt
+instruction, and it also installs a browser-layer CDP guard that blocks
+cross-origin POST/PUT/PATCH requests and form submits.
 
 ## Current System
 
@@ -144,7 +150,9 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
 5. Generate or inspect materials for promising jobs.
 6. Use Apply Review to edit/approve the resume and review comments.
-7. Run apply dry-runs before approving any real browser submission.
+7. Run apply dry-runs before approving any real browser submission; the default
+   live path requires an `approve_submit` decision in Apply Review before the
+   backend claim can proceed.
 8. Track progress in Dashboard, Jobs, Runs, Artifacts, Apply Review, and Debug.
 
 See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and

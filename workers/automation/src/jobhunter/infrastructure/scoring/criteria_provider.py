@@ -45,6 +45,26 @@ class LocalScoringCriteriaProvider:
         return parsed if isinstance(parsed, dict) else {}
 
 
+def read_apply_approval_required(
+    path: Path | str = DEFAULT_SETTINGS_PATH,
+    *,
+    default: bool = True,
+) -> bool:
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    value = settings.get("apply_approval_required")
+    if value is None:
+        value = settings.get("applyApprovalRequired")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return bool(default)
+
+
 def _int(value: Any, default: int) -> int:
     try:
         return int(value)

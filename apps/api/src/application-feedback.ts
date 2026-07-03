@@ -322,7 +322,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       ${hiddenWhere}
       ${closedWhere}
       AND COALESCE(jlp.apply_status, '') != 'applied'
-      AND apply_stage.state IN ('pending', 'blocked', 'failed', 'stale')
+      AND apply_stage.state IN ('pending', 'blocked', 'failed', 'stale', 'needs_verification')
       AND (
         jlp.has_resume = 1
         OR jlp.application_url IS NOT NULL

@@ -51,6 +51,19 @@ def create_apply_run_started(tenant_id: TenantId, payload: ApplyRunStartedPayloa
 
 
 @dataclass(frozen=True)
+class ApplySubmitIntendedPayload:
+    tenant_id: str
+    job_key: str
+    run_id: str
+    material_version: str
+    intended_at: str
+
+
+def create_apply_submit_intended(tenant_id: TenantId, payload: ApplySubmitIntendedPayload) -> DomainEvent:
+    return create_domain_event("ApplySubmitIntended", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
 class ApplyRunEventRecordedPayload:
     run_id: str
     event: dict[str, Any] = field(default_factory=dict)

@@ -4683,7 +4683,8 @@ textarea:focus-visible {
   border-color: var(--destructive);
 }
 
-.status-dot.blocked {
+.status-dot.blocked,
+.status-dot.needs_verification {
   border-color: var(--warning);
 }
 
