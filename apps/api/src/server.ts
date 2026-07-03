@@ -137,6 +137,7 @@ import {
   listJobs,
   matchingJobKeys,
   listWorkflowRuns,
+  getWorkflowRunDetail,
   readSettingsConfig,
 } from "./read-model.js";
 import { refreshProjections } from "./projections.js";
@@ -1543,6 +1544,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) =>
       listWorkflowRuns(db, WorkflowRunsListQuerySchema.parse(request.query)),
     ),
+  );
+
+  app.get<{ Params: { runId: string } }>("/v1/workflow-runs/:runId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId));
+      if (!detail) {
+        void reply.code(404);
+        return { ok: false, error: "workflow_run_not_found" };
+      }
+      return detail;
+    }),
   );
 
   app.post<{ Params: { runId: string } }>("/v1/workflow-runs/:runId/actions/cancel", async (request, reply) => {

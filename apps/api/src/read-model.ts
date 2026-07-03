@@ -48,8 +48,10 @@ import type {
   StageState,
   StageSummary,
   VoicePassAudit,
+  WorkflowRunDetail,
   WorkflowRunStatus,
   WorkflowRunSummary,
+  WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "./contracts.js";
 import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
@@ -230,6 +232,30 @@ interface ApplyRunProjectionRow extends Record<string, unknown> {
   finished_at: string | null;
   duration_ms: number | null;
   events_json: string;
+}
+
+interface WorkflowRunProjectionRow extends Record<string, unknown> {
+  workflow_id: string;
+  tenant_id: string;
+  workflow_type: string;
+  status: string;
+  input_summary_json: string;
+  error_code: string | null;
+  error_message: string | null;
+  retryable: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  temporal_run_id: string | null;
+  events_json: string;
+  // Apply enrichment (LEFT JOIN apply_run_projections) — present only for
+  // apply-type runs.
+  apply_job_id?: string | null;
+  job_title?: string | null;
+  job_employer?: string | null;
+  apply_dry_run?: number | null;
+  apply_model?: string | null;
+  apply_result?: string | null;
 }
 
 interface SourceQualityProjectionRow extends Record<string, unknown> {
@@ -4806,45 +4832,59 @@ function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
 }
 
 /**
- * PR 5 of the Temporal stack — Workflow Runs view source.
+ * Workflow Runs view source (Temporal loop closure — P0).
  *
- * Reads `apply_run_projections` (now sourced from Temporal workflow
- * histories per PR 4) and projects each row to a `WorkflowRunSummary`.
- * The `runId` IS the Temporal `workflow_id` (see `ApplyWorkflow.run`),
- * so the deep-link to the Temporal Web UI uses it verbatim. The
- * `workflowId` field is kept distinct in the wire shape so future
- * non-apply workflows can supply a different value without a breaking
- * read-model change.
+ * Reads the unified `workflow_run_projections` table (Python-sole-writer,
+ * folded from the `Workflow*` lifecycle events) so every workflow type —
+ * pipeline orchestrator, apply, and future workflows — appears in one list.
+ * Apply rows are enriched with job context via a LEFT JOIN to
+ * `apply_run_projections` (the apply-specific detail projection); non-apply
+ * rows show their workflow type instead of a job title. The `runId` equals
+ * the Temporal `workflow_id`, so the Temporal Web UI deep-link uses it
+ * verbatim.
  */
 export function listWorkflowRuns(
   db: SqliteDatabase,
   query: WorkflowRunsListQuery,
 ): PaginatedResponse<WorkflowRunSummary> {
   refreshProjections(db, DEFAULT_TENANT);
-  if (!tableExists(db, "apply_run_projections")) {
+  if (!tableExists(db, "workflow_run_projections")) {
     return paginate([], query.page, query.pageSize, query.sort, query.dir, {
       status: query.status,
     });
   }
-  const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+  const hasApply = tableExists(db, "apply_run_projections");
+  const applyJoin = hasApply
+    ? ` LEFT JOIN apply_run_projections arp ON arp.run_id = wrp.workflow_id`
     : "";
-  const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
-    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+  const applySelect = hasApply
+    ? `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
+       arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
+       arp.model AS apply_model, arp.result AS apply_result`
     : "";
-  const where: string[] = ["arp.tenant_id = ?"];
+  // Deleted / hidden filters apply to the enriched apply job only; non-apply
+  // rows have a NULL apply_job_id and pass through untouched.
+  const deletedJoin =
+    hasApply && tableExists(db, "jobhunter_deleted_jobs")
+      ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+      : "";
+  const hiddenJoin =
+    hasApply && tableExists(db, "jobhunter_hidden_jobs")
+      ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+      : "";
+  const where: string[] = ["wrp.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
-  if (tableExists(db, "jobhunter_deleted_jobs")) {
+  if (deletedJoin) {
     where.push("d.job_url IS NULL");
   }
-  if (tableExists(db, "jobhunter_hidden_jobs")) {
+  if (hiddenJoin) {
     where.push("h.job_url IS NULL");
   }
   const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
-  const rows = allRows<ApplyRunProjectionRow>(
+  const rows = allRows<WorkflowRunProjectionRow>(
     db,
-    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${hiddenJoin}${whereSql}
-     ORDER BY arp.started_at DESC, arp.run_id DESC`,
+    `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}${deletedJoin}${hiddenJoin}${whereSql}
+     ORDER BY wrp.started_at DESC, wrp.workflow_id DESC`,
     params,
   );
   const all = rows
@@ -4854,6 +4894,92 @@ export function listWorkflowRuns(
   return paginate(all, query.page, query.pageSize, query.sort, query.dir, {
     status: query.status,
   });
+}
+
+/**
+ * Workflow run detail (Temporal loop closure — P0). Reads one
+ * `workflow_run_projections` row (enriched with apply job context when the
+ * run is an apply workflow) and returns the full `WorkflowRunDetail` shape,
+ * including the folded lifecycle timeline. Returns `null` when the run id is
+ * unknown.
+ */
+export function getWorkflowRunDetail(
+  db: SqliteDatabase,
+  runId: string,
+): WorkflowRunDetail | null {
+  refreshProjections(db, DEFAULT_TENANT);
+  if (!tableExists(db, "workflow_run_projections")) {
+    return null;
+  }
+  const hasApply = tableExists(db, "apply_run_projections");
+  const applyJoin = hasApply
+    ? ` LEFT JOIN apply_run_projections arp ON arp.run_id = wrp.workflow_id`
+    : "";
+  const applySelect = hasApply
+    ? `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
+       arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
+       arp.model AS apply_model, arp.result AS apply_result`
+    : "";
+  const row = getRow<WorkflowRunProjectionRow>(
+    db,
+    `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}
+     WHERE wrp.tenant_id = ? AND wrp.workflow_id = ?`,
+    [DEFAULT_TENANT, runId],
+  );
+  if (!row) {
+    return null;
+  }
+  const summary = rowToWorkflowRunSummary(row);
+  return {
+    workflowId: summary.workflowId,
+    runId: summary.runId,
+    workflowType: summary.workflowType,
+    status: summary.status,
+    jobKey: summary.jobKey,
+    title: summary.title,
+    company: summary.company,
+    dryRun: summary.dryRun,
+    model: summary.model,
+    result: summary.result,
+    errorCode: nullableString(row.error_code),
+    errorMessage: nullableString(row.error_message),
+    retryable: Boolean(row.retryable),
+    inputSummary: parseInputSummary(row.input_summary_json),
+    temporalRunId: nullableString(row.temporal_run_id),
+    startedAt: summary.startedAt,
+    finishedAt: summary.finishedAt,
+    durationMs: summary.durationMs,
+    events: parseWorkflowRunTimeline(row.events_json),
+  };
+}
+
+function parseInputSummary(value: unknown): Record<string, unknown> {
+  const raw = nullableString(value);
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
+  const raw = nullableString(value);
+  if (!raw) return [];
+  let parsed: unknown = [];
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isRecord).map((event) => ({
+    eventType: stringField(event.eventType ?? event.event_type) || "event",
+    occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
+    status: nullableString(event.status),
+    message: nullableString(event.message),
+  }));
 }
 
 function compareWorkflowRuns(
@@ -4877,22 +5003,38 @@ function compareWorkflowRuns(
   return compareValues(leftValue, rightValue) * multiplier;
 }
 
-function rowToWorkflowRunSummary(row: ApplyRunProjectionRow): WorkflowRunSummary {
-  const runId = stringField(row.run_id);
+function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSummary {
+  const workflowId = stringField(row.workflow_id);
+  const workflowType = stringField(row.workflow_type);
+  // Apply rows carry job context via the LEFT JOIN; non-apply rows have a
+  // NULL apply_job_id and surface their workflow type instead of a job title.
+  const hasApplyJob = Boolean(stringField(row.apply_job_id));
+  const dryRun = hasApplyJob
+    ? Boolean(row.apply_dry_run)
+    : inputSummaryDryRun(row.input_summary_json);
   return {
-    workflowId: runId,
-    runId,
-    jobKey: stringField(row.job_id),
-    title: stringField(row.job_title) || "Untitled",
-    company: stringField(row.job_employer) || "Unknown company",
+    workflowId,
+    runId: workflowId,
+    workflowType,
+    jobKey: stringField(row.apply_job_id),
+    title:
+      stringField(row.job_title) ||
+      (hasApplyJob ? "Untitled" : workflowType || "Workflow run"),
+    company:
+      stringField(row.job_employer) || (hasApplyJob ? "Unknown company" : ""),
     status: normalizeWorkflowRunStatus(row.status),
-    result: nullableString(row.result),
-    dryRun: Boolean(row.dry_run),
-    model: nullableString(row.model),
+    result: nullableString(row.apply_result),
+    dryRun,
+    model: nullableString(row.apply_model),
     startedAt: nullableString(row.started_at),
     finishedAt: nullableString(row.finished_at),
     durationMs: nullableNumber(row.duration_ms),
   };
+}
+
+function inputSummaryDryRun(value: unknown): boolean {
+  const summary = parseInputSummary(value);
+  return summary.dryRun === true || summary.dry_run === true;
 }
 
 const WORKFLOW_RUN_STATUS_SET = new Set<string>(WORKFLOW_RUN_STATUSES);

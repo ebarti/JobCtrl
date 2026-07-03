@@ -55,6 +55,7 @@ from jobhunter.domain.operations.projections import (
     JobDetailProjection,
     JobListProjection,
     StageProjection,
+    WorkflowRunProjection,
 )
 from jobhunter.domain.ports.events import EventPublisher, Subscription
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
@@ -100,6 +101,25 @@ PROJECTION_NAME = "operations_projections"
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
 COMPENSATION_PROJECTION_VERSION = 1
+
+# Workflow lifecycle events fold into ``workflow_run_projections`` keyed by
+# ``workflowId``. The ``WorkflowStarted`` marker opens a row; each terminal
+# event maps to a terminal status in the 12-state ``WORKFLOW_RUN_STATUSES``.
+WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
+    "WorkflowStarted",
+    "WorkflowCompleted",
+    "WorkflowFailed",
+    "WorkflowCanceled",
+    "WorkflowTimedOut",
+    "WorkflowTerminated",
+)
+_WORKFLOW_TERMINAL_STATUS: dict[str, str] = {
+    "WorkflowCompleted": "succeeded",
+    "WorkflowFailed": "failed",
+    "WorkflowCanceled": "canceled",
+    "WorkflowTimedOut": "timed_out",
+    "WorkflowTerminated": "terminated",
+}
 POSTED_COMPENSATION_WARNING_MESSAGES = {
     "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
     "bonus_component": "The source text mentions bonus compensation.",
@@ -428,6 +448,7 @@ class ProjectionBuilder:
 
         dirty_jobs: set[str] = set()
         source_quality_dirty = False
+        workflow_runs_dirty = False
         max_event_id = watermark
         for row in rows:
             event_id = int(row["event_id"]) if not isinstance(row, tuple) else int(row[0])
@@ -439,6 +460,8 @@ class ProjectionBuilder:
             event_type = row["event_type"] if not isinstance(row, tuple) else row[2]
             if str(event_type) in SOURCE_QUALITY_EVENT_TYPES:
                 source_quality_dirty = True
+            if str(event_type) in WORKFLOW_EVENT_TYPES:
+                workflow_runs_dirty = True
 
         # First-run backfill: if projections are empty, mark every
         # existing job as dirty so pre-event-history rows still get
@@ -508,10 +531,12 @@ class ProjectionBuilder:
 
         if not dirty_jobs:
             # Watermark advanced past events with no job_url (e.g.
-            # system events) OR first-run: bump the watermark + ensure
-            # the dashboard row exists.
+            # system events, workflow lifecycle events) OR first-run: bump
+            # the watermark + ensure the dashboard row exists.
             if source_quality_dirty or (not source_quality_exists and source_quality_history):
                 self._rebuild_source_quality()
+            if workflow_runs_dirty:
+                self._rebuild_workflow_runs()
             if max_event_id > watermark:
                 self._watermarks.set(
                     PROJECTION_NAME, max_event_id, commit=not defer_commit
@@ -528,6 +553,8 @@ class ProjectionBuilder:
         # first so ``_rebuild_job`` can read the freshly derived apply
         # lifecycle status when it materialises ``job_list_projections``.
         self._rebuild_apply_runs()
+        if workflow_runs_dirty:
+            self._rebuild_workflow_runs()
         if source_quality_dirty or (not source_quality_exists and source_quality_history):
             self._rebuild_source_quality()
         for job_url in dirty_jobs:
@@ -1685,6 +1712,138 @@ class ProjectionBuilder:
         return bool(row and int(row[0]) > 0)
 
     # ----------------------------------------------------------- apply runs
+
+    def _rebuild_workflow_runs(self) -> None:
+        """Materialise ``workflow_run_projections`` from ``Workflow*`` events.
+
+        Each Temporal workflow run is a ``WorkflowStarted`` marker plus one
+        terminal event, keyed by ``workflowId`` in the event payload. This is
+        the unified list source across all workflow types; the apply-specific
+        detail stays in ``apply_run_projections``.
+        """
+        events_by_workflow = self._collect_workflow_events()
+        if not events_by_workflow:
+            return
+        for workflow_id, events in events_by_workflow.items():
+            projection = self._project_workflow_run(workflow_id, events)
+            if projection is None:
+                continue
+            self._store.upsert_workflow_run(projection)
+
+    def _collect_workflow_events(self) -> dict[str, list[dict]]:
+        placeholders = ",".join("?" for _ in WORKFLOW_EVENT_TYPES)
+        try:
+            rows = self._conn.execute(
+                f"""
+                SELECT event_type, occurred_at, payload_json
+                FROM job_events
+                WHERE event_type IN ({placeholders})
+                ORDER BY event_id ASC
+                """,
+                WORKFLOW_EVENT_TYPES,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        out: dict[str, list[dict]] = {}
+        for row in rows:
+            payload = _json_loads(_row_nullable_str(row, "payload_json"), {})
+            if not isinstance(payload, dict):
+                continue
+            workflow_id = payload.get("workflowId") or payload.get("workflow_id")
+            if not workflow_id:
+                continue
+            out.setdefault(str(workflow_id), []).append(
+                {
+                    "event_type": _row_str(row, "event_type"),
+                    "occurred_at": _row_nullable_str(row, "occurred_at"),
+                    "payload": payload,
+                }
+            )
+        return out
+
+    def _project_workflow_run(
+        self, workflow_id: str, events: list[dict]
+    ) -> WorkflowRunProjection | None:
+        if not events:
+            return None
+        workflow_type = ""
+        status = "in_progress"
+        input_summary: dict[str, Any] = {}
+        error_code: str | None = None
+        error_message: str | None = None
+        retryable = False
+        started_at: str | None = None
+        finished_at: str | None = None
+        duration_ms: int | None = None
+        temporal_run_id: str | None = None
+        timeline: list[dict[str, Any]] = []
+
+        for event in events:
+            payload = event["payload"]
+            event_type = event["event_type"]
+            workflow_type = str(
+                payload.get("workflowType")
+                or payload.get("workflow_type")
+                or workflow_type
+            )
+            trid = payload.get("temporalRunId") or payload.get("temporal_run_id")
+            if trid:
+                temporal_run_id = str(trid)
+            timeline.append(
+                {
+                    "eventType": event_type,
+                    "occurredAt": event.get("occurred_at"),
+                    "status": payload.get("status"),
+                    "message": payload.get("errorMessage") or payload.get("message"),
+                }
+            )
+
+            if event_type == "WorkflowStarted":
+                started_at = (
+                    payload.get("startedAt")
+                    or event.get("occurred_at")
+                    or started_at
+                )
+                summary = payload.get("inputSummary")
+                if isinstance(summary, dict):
+                    input_summary = summary
+                # Only regress to in_progress if a terminal event has not
+                # already been folded (events are ordered, so this is a
+                # defensive guard against duplicate start markers).
+                if status not in _WORKFLOW_TERMINAL_STATUS.values():
+                    status = "in_progress"
+            elif event_type in _WORKFLOW_TERMINAL_STATUS:
+                status = _WORKFLOW_TERMINAL_STATUS[event_type]
+                finished_at = (
+                    payload.get("finishedAt")
+                    or event.get("occurred_at")
+                    or finished_at
+                )
+                duration = payload.get("durationMs")
+                if isinstance(duration, (int, float)):
+                    duration_ms = int(duration)
+                code = payload.get("errorCode")
+                error_code = str(code) if code else error_code
+                message = payload.get("errorMessage")
+                error_message = str(message) if message else error_message
+                if "retryable" in payload:
+                    retryable = bool(payload.get("retryable"))
+
+        return WorkflowRunProjection(
+            workflow_id=workflow_id,
+            tenant_id=self._tenant_id,
+            workflow_type=workflow_type,
+            status=status,
+            input_summary=input_summary,
+            error_code=error_code,
+            error_message=error_message,
+            retryable=retryable,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            temporal_run_id=temporal_run_id,
+            events=tuple(timeline),
+        )
 
     def _rebuild_apply_runs(self) -> None:
         """Materialise ``apply_run_projections`` from ``job_events``.

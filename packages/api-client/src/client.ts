@@ -104,6 +104,7 @@ import type {
   SourceRegistryMutationResponse,
   SourceStatePatch,
   SourceUpsertRequest,
+  WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
@@ -498,6 +499,10 @@ export class JobHunterApiClient {
     query: Partial<WorkflowRunsListQuery> = {},
   ): Promise<PaginatedResponse<WorkflowRunSummary>> {
     return this.get("/v1/workflow-runs", query);
+  }
+
+  workflowRun(runId: string): Promise<WorkflowRunDetail> {
+    return this.get(`/v1/workflow-runs/${encodeURIComponent(runId)}`);
   }
 
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse> {

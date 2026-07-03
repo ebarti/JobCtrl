@@ -241,6 +241,31 @@ class DiscoveryRunProjection:
 
 
 @dataclass(frozen=True)
+class WorkflowRunProjection:
+    """Unified read-side row for one Temporal workflow run (any type).
+
+    Folded from the ``Workflow*`` lifecycle event family keyed by
+    ``workflow_id``. This is the list source for the Workflow Runs view
+    across all workflow types; ``apply_run_projections`` remains the
+    apply-specific detail projection (job context + apply timeline).
+    """
+
+    workflow_id: str
+    tenant_id: TenantId
+    workflow_type: str = ""
+    status: str = "in_progress"
+    input_summary: dict[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+    retryable: bool = False
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_ms: int | None = None
+    temporal_run_id: str | None = None
+    events: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class SourceQualityStats:
     """Operations projection for source health and scheduling feedback."""
 

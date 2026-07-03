@@ -4041,11 +4041,12 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("returns the workflow runs list from apply_run_projections", async () => {
-    // PR 5 of the Temporal stack: `/v1/workflow-runs` is the read-side
-    // surface for the new Workflow Runs view. The seed inserts a single
-    // `apply_run_projections` row (`run-1`, status `finished` ⇒
-    // normalized to `succeeded`), so the happy path returns one entry.
+  it("returns the workflow runs list from workflow_run_projections (apply run enriched with job context)", async () => {
+    // Temporal loop closure (P0): `/v1/workflow-runs` reads the unified
+    // `workflow_run_projections` table for all workflow types. The seed
+    // inserts one apply-type workflow row (`run-1`, status `succeeded`) plus
+    // the matching `apply_run_projections` row, so the LEFT JOIN enriches it
+    // with job title/company/dry-run.
     const app = buildApp(options);
     try {
       const response = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
@@ -4105,6 +4106,67 @@ describe("local TypeScript API", () => {
       });
       expect(failed.statusCode, failed.body).toBe(200);
       expect(failed.json().items).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("renders non-apply workflow runs with their workflow type and detail", async () => {
+    // Temporal loop closure (P0): a pipeline orchestrator run has no apply
+    // job context — the unified list surfaces its workflow type, and the
+    // detail endpoint returns the folded lifecycle timeline + failure cause.
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, input_summary_json, error_code, error_message, retryable, started_at, finished_at, duration_ms, temporal_run_id, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "run-pipeline-1",
+      "JobPipelineWorkflow",
+      "failed",
+      JSON.stringify({ stages: ["discover"] }),
+      "activity_error",
+      "discover activity failed",
+      1,
+      "2026-04-29T11:00:00+00:00",
+      "2026-04-29T11:01:00+00:00",
+      60000,
+      "temporal-run-2",
+      JSON.stringify([
+        { eventType: "WorkflowStarted", occurredAt: "2026-04-29T11:00:00+00:00", status: "in_progress", message: null },
+        { eventType: "WorkflowFailed", occurredAt: "2026-04-29T11:01:00+00:00", status: "failed", message: "discover activity failed" },
+      ]),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const list = await app.inject({ method: "GET", url: "/v1/workflow-runs?status=failed" });
+      expect(list.statusCode, list.body).toBe(200);
+      const failedRun = list
+        .json()
+        .items.find((r: { workflowId: string }) => r.workflowId === "run-pipeline-1");
+      expect(failedRun).toMatchObject({
+        workflowId: "run-pipeline-1",
+        workflowType: "JobPipelineWorkflow",
+        status: "failed",
+        jobKey: "",
+      });
+
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/run-pipeline-1" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "run-pipeline-1",
+        workflowType: "JobPipelineWorkflow",
+        status: "failed",
+        errorCode: "activity_error",
+        errorMessage: "discover activity failed",
+        retryable: true,
+        inputSummary: { stages: ["discover"] },
+      });
+      expect(detail.json().events).toHaveLength(2);
+
+      const missing = await app.inject({ method: "GET", url: "/v1/workflow-runs/does-not-exist" });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json()).toMatchObject({ ok: false, error: "workflow_run_not_found" });
     } finally {
       await app.close();
     }
@@ -6924,6 +6986,21 @@ function seedDatabase(dbPath: string): void {
       duration_ms INTEGER,
       events_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE workflow_run_projections (
+      workflow_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      workflow_type TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'in_progress',
+      input_summary_json TEXT NOT NULL DEFAULT '{}',
+      error_code TEXT,
+      error_message TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      temporal_run_id TEXT,
+      events_json TEXT NOT NULL DEFAULT '[]'
+    );
   `);
 
   insertJob(db, {
@@ -7002,6 +7079,20 @@ function seedDatabase(dbPath: string): void {
         payload: { run_id: "run-1" },
       },
     ]),
+  );
+  // The unified Workflow Runs list reads `workflow_run_projections` (all
+  // workflow types); apply runs are enriched with job context via the LEFT
+  // JOIN to `apply_run_projections`. Seed the matching workflow row so the
+  // apply run surfaces in the list with its job title/company/dry-run.
+  db.prepare(
+    "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
+    "run-1",
+    "ApplyWorkflow",
+    "succeeded",
+    "2026-04-29T10:15:00+00:00",
+    "2026-04-29T10:20:00+00:00",
+    "temporal-run-1",
   );
   db.close();
 }

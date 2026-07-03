@@ -100,6 +100,7 @@ import type {
   SourceRegistryMutationResponse,
   SourceStatePatch,
   SourceUpsertRequest,
+  WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
@@ -255,6 +256,7 @@ export interface ApiClientPort {
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
+  workflowRun(runId: string): Promise<WorkflowRunDetail>;
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse>;
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
