@@ -37,24 +37,58 @@
 6. **Owner decision checkpoints** (§0.5) are places where you must STOP,
    present options, and wait for the owner's choice before proceeding.
 
-### 0.1 Workstream order and parallelism
+### 0.1 Ordering: per-item gates against the PR #232 program
+
+The temporal program (single stacked run P1b → P3 → P2 → P4 → P5, per the
+PR #232 spec) is in flight with unknown per-phase delivery dates. Do NOT
+branch from its unmerged stack. Every item below carries a **Gate** — what
+must have MERGED TO `main` before you cut the item's branch. Gate `none`
+means: start now, from `main`, in parallel with the temporal run.
+
+| Item | Gate | Collision with #232 (type) |
+| --- | --- | --- |
+| W0.1–W0.6 | none | Only W0.2's fixture-data swaps touch files P2/P3/P4 also edit — data-only, trivial rebase. |
+| W1.1, W1.2, W1.3→W1.5→W1.6, W1.7 | temporal **P2** | Same files AND same semantics: they extend P2's gate/guard/intent/`needs_verification` substrate. |
+| W1.4 | temporal **P2** (soft — see note) | Semantically independent of P2; only file contention (`packages/contracts`, adapter result parse, apply-review UI). |
+| W1.8 | temporal **P5** | `cli.py` and `pipeline/actions.py` are P5-owned; P5 itself rewrites/deletes the legacy path W1.8 targets. |
+| W2.1, W2.2 (docs), W2.5 | none | Disjoint. (P5 also edits `README.md`/`docs/**` — different sections, trivial.) |
+| W2.3 | PR **#233** (P0) | Same `server.ts`; P2 later touches other regions of it (trivial contention). |
+| W2.4 | temporal **P5** | P5 SHIPS the base spend system (`llm_spend`, `dailyBudgetUsd`, `check_spend_budget` preflight, dual-client recording). W2.4 is a delta on it — see the rewritten §W2.4. |
+| W2.6 + doctor parts of W2.2 | temporal **P5** | `cli.py` is P5-owned; P4 rewrites `discovery/**` including the board-fallback seams the doctor warning must reflect. |
+
+W1.4 note: if P2 is badly delayed, W1.4's core (prompt attestation
+removal + profile contract) MAY be pulled forward from `main` at the cost
+of one temporal-stack rebase — an owner call, not the default.
+
+Sequencing summary:
 
 ```
-W0 (privacy & hygiene)          — from main, FIRST, W0.1 → W0.2 → W0.3 → W0.4 → W0.5 → W0.6
-temporal stack P1b→P3→P2→P4→P5  — per PR #232 spec (separate run; rebase it once after W0 merges)
-W1 (apply & runtime safety)     — stacked AFTER temporal P5, W1.1 → W1.2 → … → W1.8
-W2 (public surface & governance)— from main, parallel to W1, except:
-                                    W2.3 requires PR #233 (P0) merged
-                                    W2.6 and the doctor parts of W2.2 require temporal P5 merged
-Release flip                    — §5 checklist, last
+now         ──► W0.1→W0.2→W0.3→W0.4→W0.5→W0.6   (first: privacy CI gates every later PR)
+            ──► W2.1, W2.2(docs), W2.5            (fully parallel)
+#233 merged ──► W2.3
+P2 merged   ──► W1.1→W1.2→W1.3→W1.4→W1.5→W1.6→W1.7  (stacked; do NOT wait for P4/P5)
+P5 merged   ──► W1.8, W2.4, W2.6, W2.2(doctor)
+all merged  ──► §5 release flip
 ```
 
-- W0 lands first because every later PR must pass the W0.4 privacy CI
-  gate, and because W0.2 touches test files that temporal P2 also touches
-  (one rebase of the temporal stack after W0 merges is expected and cheap).
-- W1 items are a stacked series continuing the temporal stack: cut
-  `W1.1`'s branch from the P5 branch tip (or from `main` once P5 has
-  merged); each subsequent W1 branch cuts from its predecessor.
+- W0 lands first; the temporal stack rebases once after W0 merges.
+- **W1.1–W1.7 unblock at P2, not P5.** P4/P5 touch almost none of their
+  files; the residual contention (P5 adds `dailyBudgetUsd` to
+  `packages/contracts` and the settings form) is a trivial rebase for the
+  temporal stack as W1 items land on `main`.
+- The critical path to the release flip runs through P5 only via the
+  `cli.py`-owned items (W1.8, W2.6, doctor warnings) and W2.4. If P5
+  stalls, the owner may approve pulling W1.8's CLI default flip forward
+  at the cost of a P5 rebase — owner call (§0.5), not a default.
+- **If the entire PR #232 program is already delivered**, every gate is
+  satisfied and nothing else changes: W0 first (the privacy CI gate is
+  still wanted under every later PR), then W1.1→W1.8 as one stacked
+  series with W2 fully parallel, then §5. Optional intra-W1 parallelism
+  in that world: lane {W1.1→W1.2→W1.7} (claim/review/recovery) alongside
+  lane {W1.3→W1.4→W1.5→W1.6} (adapter/prompt/owned tools), converging on
+  W1.8 — but both lanes touch `launcher.py`/`claude_code_cli.py` in
+  different functions, so prefer the single stacked series unless two
+  implementers actively coordinate.
 - W2.1 (naming) can start any time; its publish re-enable step is last.
 
 ### 0.2 Non-negotiable ground rules
@@ -346,12 +380,12 @@ line stating dispositions are complete.
 
 ---
 
-## 3. Workstream W1 — Apply and runtime safety (stacked after temporal P5)
+## 3. Workstream W1 — Apply and runtime safety (gated on temporal P2; W1.8 alone on P5)
 
 ### W1.0 Substrate check (run before W1.1; STOP if any is missing)
 
-Temporal P2 (see PR #232 spec §5) must already provide, on the branch you
-build from:
+Temporal P2 (see PR #232 spec §5) must already be MERGED TO `main` and
+provide:
 - `applyApprovalRequired` setting plumbed end-to-end (default `true`),
   enforced by an `approve_submit` SELECT inside `acquire_job`'s
   `BEGIN IMMEDIATE` transaction.
@@ -836,6 +870,10 @@ Work items:
    `dry_run=False` (`workers/automation/src/jobhunter/actions.py` ~:196)
    after grep-verifying all callers route through RPC/Temporal. If a
    caller still uses it, STOP and report instead of keeping both paths.
+   Note: temporal P5 rewrites `run_local_action` to start workflows and
+   deletes the in-process execution branches — P5 may already have
+   removed this path. In that case this item reduces to the grep check;
+   verify rather than re-delete.
 4. Flip all remaining W0.3 `--strict-prompt` tripwires to strict in the
    privacy CI workflow (W1.4/W1.5/W1.6 are merged by now).
 5. `README.md` + `docs/local-reliability-qa.md`: document the new CLI
@@ -898,8 +936,10 @@ Work items:
    `workers/automation/src/jobhunter/discovery/jobspy.py` (~:998, ~:1071)
    so the warning reflects the boards actually used, not just
    `DEFAULT_JOBSPY_BOARDS` (`config.py` ~:53). *(The `doctor`/`cli.py`
-   edits require temporal P5 merged; split into a follow-up PR if docs
-   are ready first.)*
+   edits require temporal P5 merged — and P4 rewrites `discovery/**`, so
+   re-locate the board-default seams by symbol after P4 rather than
+   trusting these line hints. Split into a follow-up PR if the docs are
+   ready first.)*
 
 **Definition of Done**
 - [ ] Both docs updated; no capability left undisclosed.
@@ -928,35 +968,51 @@ headerless curl-style → allowed; existing Origin/Referer cases unchanged.
 - [ ] Test matrix green; `SECURITY.md` updated.
 - [ ] Full sweep (§0.3) passes.
 
-### W2.4 — AI spend ledger and ceilings (owner checkpoint for defaults)
+### W2.4 — Per-lane spend attribution and token ceilings *(requires temporal P5; delta on P5's spend system; owner checkpoint for defaults)*
 
-**Objective:** all AI spend is recorded; lanes have enforceable daily
-ceilings. Tokens are the universal metric (USD is not observable on
-subscription-auth lanes); USD is recorded where available.
+**Objective:** extend — do not duplicate — the spend system temporal P5
+ships. P5 delivers the base: the `llm_spend` day-aggregate table
+(init_db ensure-block), usage recording hooked at the existing capture
+points in BOTH the legacy `llm.py` client and the agent-SDK client seam,
+a `dailyBudgetUsd` setting (default 25, 0 = unlimited) plumbed through
+all layers, a `check_spend_budget` preflight activity at the top of
+every spending workflow raising non-retryable `BudgetExceededError`, and
+settings + health-surface UI. W2.4 adds what P5 lacks: per-lane
+attribution, token-denominated ceilings (USD estimates are unreliable on
+subscription-auth lanes), apply-lane capture, and doctor visibility.
+**If you find yourself creating a second spend table or a second
+preflight, STOP — extend P5's.**
 
 Work items:
-1. New table `ai_spend` (ts, lane, model, input_tokens, output_tokens,
-   usd_estimate NULLABLE, run_ref), DDL in `init_db`'s ensure-block.
-   Write at the chokepoints: the ensemble runner
-   (`workers/automation/src/jobhunter/infrastructure/analysis/ensemble.py`
-   and the agent-SDK adapters), the legacy `llm.py` client, and the apply
-   adapter's result-stats parse (`claude_code_cli.py` reads usage from
-   the result message).
-2. Config: per-lane daily ceilings in tokens (USD optional where
-   observable), read from settings/env. At each lane entry point, a
-   pre-run check refuses new work over the ceiling with a typed error and
-   a recorded event; surfaced in logs and (where a surface exists)
-   operations UI. Mid-run kill is explicitly OUT of scope for non-apply
-   lanes (the apply lane already has `--max-budget-usd` from W1.3).
-3. Propose default ceiling values per lane; STOP for owner confirmation
+1. **Lane attribution.** Extend P5's recording seam so every recorded
+   usage entry carries a lane (`apply`, `scoring`, `tailoring`,
+   `employer_analysis`, `enrichment`, `profile`, …): either lane
+   columns/rows on `llm_spend` or a companion per-lane table folded at
+   the same write points — ONE mechanism, no double-counting (P5's own
+   tests already forbid double-counting; keep them green).
+2. **Apply-lane capture.** P5 hooks `llm.py` and the agent-SDK client;
+   the apply lane spends through the `claude` CLI subprocess instead.
+   Record its usage from the result-message stats parse in
+   `claude_code_cli.py` into the same ledger, lane = `apply`. (W1.3's
+   per-run `--max-budget-usd` and P5's daily USD ceiling both remain —
+   this adds attribution, not another cap.)
+3. **Per-lane token ceilings.** Per-lane daily token ceilings
+   (settings/env), enforced INSIDE P5's existing `check_spend_budget`
+   preflight (extend its input with the calling workflow's lane),
+   raising the same `BudgetExceededError` taxonomy. The global
+   `dailyBudgetUsd` behavior is unchanged.
+4. Propose default per-lane token ceilings; STOP for owner confirmation
    (§0.5.2).
-4. `doctor` prints today's spend by lane *(post-P5, may be a follow-up
-   PR)*. Document in README + `docs/user/data-and-safety.md`.
+5. **Visibility.** `doctor` prints today's spend by lane; extend the
+   health surface P5 added with the per-lane breakdown. Document in
+   README + `docs/user/data-and-safety.md`.
 
 **Definition of Done**
-- [ ] Ledger rows written from every chokepoint (tests with fakes).
-- [ ] Ceiling refusal test green; over-ceiling refusal visible in the log
-      channel.
+- [ ] Every recorded usage entry is lane-attributed; apply-lane entries
+      appear from the adapter parse (tests with fakes).
+- [ ] Per-lane token ceiling blocks via P5's preflight (test); global
+      USD ceiling behavior unchanged (P5's tests still green).
+- [ ] No second spend table or preflight exists (grep-provable).
 - [ ] Owner-confirmed defaults in place.
 - [ ] Full sweep (§0.3) passes.
 
