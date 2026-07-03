@@ -30,10 +30,17 @@ from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobhunter.database import get_connection
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.domain.preparation import PreparationWorkItemKind
+from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobhunter.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobhunter.pipeline.preparation import (
+    build_preparation_workflow_spec,
+    current_scoring_policy_version,
+    current_tailoring_policy_version,
+    latest_source_event_id,
+)
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 
 logger = logging.getLogger(__name__)
@@ -137,13 +144,20 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
 
 
 def rescore_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
-    return _pipeline_workflow_spec(
-        params,
-        stages=["score"],
-        limit=1,
-        rescore=True,
+    conn = get_connection()
+    return build_preparation_workflow_spec(
+        tenant_id=tenant_id,
         job_url=job_url,
+        steps=["score"],
+        kind=PreparationWorkItemKind.SCORE_JOB,
+        target_version=current_scoring_policy_version(conn, tenant_id),
+        source_event_id=latest_source_event_id(conn, job_url),
+        rescore=True,
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
     )
 
 
@@ -159,30 +173,70 @@ def rescore_jobs_not_on_current_scoring_policy(params: dict[str, Any]) -> Workfl
 
 
 def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
-    return _pipeline_workflow_spec(
-        params,
-        stages=["tailor", "cover"],
-        limit=1,
-        retailor=True,
+    conn = get_connection()
+    raw_judge_min_score = params.get("tailorJudgeMinScore")
+    return build_preparation_workflow_spec(
+        tenant_id=tenant_id,
         job_url=job_url,
+        steps=["tailor", "cover", "pdf"],
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        target_version=current_tailoring_policy_version(conn, tenant_id),
+        source_event_id=latest_source_event_id(conn, job_url),
+        min_score=int(params.get("minScore", 7)),
+        workers=int(params.get("workers", 1)),
+        validation_mode=str(params.get("validationMode", "normal")),
+        retailor=True,
         suppress_existing_artifacts=_bool_param(
             params, "suppressExistingArtifacts", default=False
         ),
+        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+        tailor_judge_model=(
+            str(params["tailorJudgeModel"])
+            if params.get("tailorJudgeModel")
+            else None
+        ),
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
     )
 
 
 def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
-    return _pipeline_workflow_spec(
-        params,
-        stages=["tailor", "cover"],
-        limit=1,
-        retailor=False,
+    conn = get_connection()
+    raw_judge_min_score = params.get("tailorJudgeMinScore")
+    return build_preparation_workflow_spec(
+        tenant_id=tenant_id,
         job_url=job_url,
+        steps=["tailor", "cover", "pdf"],
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        target_version=current_tailoring_policy_version(conn, tenant_id),
+        source_event_id=latest_source_event_id(conn, job_url),
+        min_score=int(params.get("minScore", 7)),
+        workers=int(params.get("workers", 1)),
+        validation_mode=str(params.get("validationMode", "normal")),
+        retailor=False,
         allow_low_fit_override=_bool_param(
             params, "allowLowFitOverride", default=True
         ),
+        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+        tailor_judge_model=(
+            str(params["tailorJudgeModel"])
+            if params.get("tailorJudgeModel")
+            else None
+        ),
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
     )
 
 

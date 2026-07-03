@@ -50,6 +50,30 @@ class TailorActivityOutput:
     stages: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class TailorJobActivityInput:
+    tenant_id: str
+    job_url: str
+    min_score: int = 7
+    workers: int = 1
+    validation_mode: str = "normal"
+    retailor: bool = False
+    suppress_existing_artifacts: bool = False
+    allow_low_fit_override: bool = False
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float | None = None
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+
+@dataclass(frozen=True)
+class TailorJobActivityOutput:
+    status: str
+    materials_generation: int | None = None
+    reason: str = ""
+    error: str = ""
+
+
 @activity.defn(name="tailor")
 async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
     """Run the tailor stage via ``run_pipeline``."""
@@ -251,6 +275,55 @@ def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
     return unique
 
 
+@activity.defn(name="tailor_job")
+async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActivityOutput:
+    """Tailor one job by URL for ``JobPreparationWorkflow``."""
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    try:
+        result = await run_blocking_with_heartbeat(
+            lambda: _tailor_one_job(payload),
+            starting_message="tailor-job starting",
+            progress_message="tailor-job still running",
+            activity_name="tailor_job",
+        )
+        status = str(result.get("status") or "error")
+        if status not in {"approved", "skipped", "not_eligible", "already_done"}:
+            raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
+        materials = result.get("materials")
+        generation = getattr(materials, "generation", None)
+        return TailorJobActivityOutput(
+            status=status,
+            materials_generation=generation,
+            reason=str(result.get("reason") or ""),
+            error=str(result.get("error") or ""),
+        )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
+
+
+def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.tailor import tailor_job_by_url
+
+    return tailor_job_by_url(
+        payload.job_url,
+        min_score=payload.min_score,
+        validation_mode=payload.validation_mode,
+        workers=payload.workers,
+        retailor=payload.retailor,
+        tenant_id=TenantId(payload.tenant_id),
+        llm_model=payload.llm_model,
+        suppress_existing_artifacts=payload.suppress_existing_artifacts,
+        allow_low_fit_override=payload.allow_low_fit_override,
+        tailor_models=payload.tailor_models,
+        tailor_judge_model=payload.tailor_judge_model,
+        tailor_judge_min_score=payload.tailor_judge_min_score,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cover letter
 # ---------------------------------------------------------------------------
@@ -278,6 +351,36 @@ class CoverActivityOutput:
     elapsed: float
     errors: dict[str, str] = field(default_factory=dict)
     stages: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CoverLetterActivityInput:
+    tenant_id: str
+    job_url: str
+    min_score: int = 7
+    validation_mode: str = "normal"
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+
+@dataclass(frozen=True)
+class CoverLetterActivityOutput:
+    status: str
+    materials_generation: int | None = None
+    reason: str = ""
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class RenderPdfActivityInput:
+    tenant_id: str
+    job_url: str
+
+
+@dataclass(frozen=True)
+class RenderPdfActivityOutput:
+    status: str
+    rendered: tuple[str, ...] = ()
+    error: str = ""
 
 
 @activity.defn(name="cover")
@@ -358,7 +461,8 @@ def _run_selected_cover(
     *,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    from jobhunter.scoring.cover_letter import run_cover_letters
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.cover_letter import cover_letter_by_url
 
     urls = _limited_job_urls(payload.job_urls, payload.limit)
     if payload.dry_run:
@@ -378,18 +482,31 @@ def _run_selected_cover(
     }
 
     t0 = time.time()
-    if cancel_event is not None and cancel_event.is_set():
-        raise LlmTransientError("cover activity canceled")
-    result = run_cover_letters(
-        min_score=payload.min_score,
-        limit=payload.limit,
-        validation_mode=payload.validation_mode,
-        llm_model=payload.llm_model,
-        job_urls=urls,
-    )
-    elapsed = float(result.get("elapsed") or (time.time() - t0))
-    error_count = int(result.get("errors") or 0)
-    errors = {"cover": f"{error_count} cover letter error(s)"} if error_count > 0 else {}
+    generated = 0
+    skipped = 0
+    failed = 0
+    errors: dict[str, str] = {}
+    results: list[dict[str, Any]] = []
+    for url in urls:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError("cover activity canceled")
+        result = cover_letter_by_url(
+            url,
+            min_score=payload.min_score,
+            validation_mode=payload.validation_mode,
+            llm_model=payload.llm_model,
+            tenant_id=TenantId(payload.tenant_id),
+        )
+        results.append(result)
+        result_status = str(result.get("status") or "error")
+        if result_status in {"ok", "already_done"}:
+            generated += int(result.get("generated") or 0)
+        elif result_status in {"skipped", "not_eligible"}:
+            skipped += 1
+        else:
+            failed += 1
+            errors[url] = str(result.get("error") or f"Cover ended with status {result_status}")
+    elapsed = time.time() - t0
     status = "failed" if errors else "ok"
     return {
         "status": status,
@@ -401,7 +518,10 @@ def _run_selected_cover(
                 "status": status,
                 "elapsed": elapsed,
                 "selected": len(urls),
-                **result,
+                "generated": generated,
+                "skipped": skipped,
+                "failed": failed,
+                "results": results,
             }
         ],
     }
@@ -416,3 +536,97 @@ def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHu
     if errors or status not in _SUCCESS_STATUSES:
         detail = errors or result.get("error") or result.get("status") or "stage failed"
         raise error_type(f"{stage} failed: {detail}")
+
+
+@activity.defn(name="cover_letter")
+async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLetterActivityOutput:
+    """Generate one cover letter by URL for ``JobPreparationWorkflow``."""
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    try:
+        result = await run_blocking_with_heartbeat(
+            lambda: _cover_one_job(payload),
+            starting_message="cover-letter starting",
+            progress_message="cover-letter still running",
+            activity_name="cover_letter",
+        )
+        status = str(result.get("status") or "error")
+        if status not in {"ok", "skipped", "already_done"}:
+            raise LlmTransientError(str(result.get("error") or f"Cover ended with status {status}"))
+        return CoverLetterActivityOutput(
+            status=status,
+            materials_generation=result.get("materialsGeneration"),
+            reason=str(result.get("reason") or ""),
+            error=str(result.get("error") or ""),
+        )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
+
+
+def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.cover_letter import cover_letter_by_url
+
+    return cover_letter_by_url(
+        payload.job_url,
+        min_score=payload.min_score,
+        validation_mode=payload.validation_mode,
+        llm_model=payload.llm_model,
+        tenant_id=TenantId(payload.tenant_id),
+    )
+
+
+@activity.defn(name="render_pdf")
+async def render_pdf_activity(payload: RenderPdfActivityInput) -> RenderPdfActivityOutput:
+    """Render missing PDFs for one job's current approved materials."""
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    try:
+        result = await run_blocking_with_heartbeat(
+            lambda: _render_pdf_for_job(payload),
+            starting_message="render-pdf starting",
+            progress_message="render-pdf still running",
+            activity_name="render_pdf",
+        )
+        return RenderPdfActivityOutput(
+            status=str(result.get("status") or "ok"),
+            rendered=tuple(str(item) for item in result.get("rendered", ())),
+            error=str(result.get("error") or ""),
+        )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
+
+
+def _render_pdf_for_job(payload: RenderPdfActivityInput) -> dict[str, Any]:
+    from jobhunter.database import get_connection
+    from jobhunter.domain.identifiers import JobId
+    from jobhunter.domain.materials.use_cases import RenderPdfUseCase
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.infrastructure.materials import (
+        HtmlResumePdfAdapter,
+        PlaywrightHtmlPdfAdapter,
+        SqliteMaterialsRepository,
+    )
+    from jobhunter.infrastructure.profile import get_profile_repository
+
+    tenant_id = TenantId(payload.tenant_id)
+    repository = SqliteMaterialsRepository(get_connection())
+    profile = get_profile_repository().load_snapshot(tenant_id)
+    outcome = RenderPdfUseCase(
+        repository=repository,
+        resume_renderer=HtmlResumePdfAdapter(),
+        cover_letter_renderer=PlaywrightHtmlPdfAdapter(),
+    ).execute(
+        job_id=JobId(payload.job_url),
+        profile_dict=profile.as_dict(),
+        tenant_id=tenant_id,
+    )
+    return {
+        "status": outcome.status,
+        "rendered": tuple(item.value for item in outcome.rendered),
+        "error": outcome.error,
+    }

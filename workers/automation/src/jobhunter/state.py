@@ -51,7 +51,7 @@ MAX_ATTEMPTS: dict[str, int | None] = {
 }
 
 ORPHANED_RUNNING_STAGE_GRACE_SECONDS = 150
-ORPHAN_RECOVERY_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_ORDER if stage != "apply")
+ORPHAN_RECOVERY_STAGES: tuple[str, ...] = ("discover", "enrich")
 ORPHANED_DISCOVERY_RUN_ERROR_CODE = "ORPHANED_DISCOVERY_RUN"
 DISCOVERY_SOURCE_PROGRESS: tuple[tuple[str, str], ...] = (
     ("jobspy", "JobSpy"),

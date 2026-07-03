@@ -39,6 +39,21 @@ class ScoreActivityOutput:
     stages: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ScoreJobActivityInput:
+    tenant_id: str
+    job_url: str
+    rescore: bool = False
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+
+@dataclass(frozen=True)
+class ScoreJobActivityOutput:
+    status: str
+    score_version: int | None = None
+    error: str = ""
+
+
 @activity.defn(name="score")
 async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
     """Run the scoring stage via ``run_pipeline``."""
@@ -234,3 +249,51 @@ def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHu
     if errors or status not in _SUCCESS_STATUSES:
         detail = errors or result.get("error") or result.get("status") or "stage failed"
         raise error_type(f"{stage} failed: {detail}")
+
+
+@activity.defn(name="score_job")
+async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivityOutput:
+    """Score one job by URL for ``JobPreparationWorkflow``."""
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    try:
+        result = await run_blocking_with_heartbeat(
+            lambda: _score_one_job(payload),
+            starting_message="score-job starting",
+            progress_message="score-job still running",
+            activity_name="score_job",
+        )
+        status = str(result.get("status") or "ok")
+        if status != "ok":
+            raise LlmTransientError(str(result.get("error") or "scoring failed"))
+        return ScoreJobActivityOutput(
+            status=status,
+            score_version=result.get("score_version"),
+            error=str(result.get("error") or ""),
+        )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
+
+
+def _score_one_job(payload: ScoreJobActivityInput) -> dict[str, Any]:
+    from jobhunter.domain.errors import MissingInputError
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.scorer import score_job_by_url
+
+    outcome = score_job_by_url(
+        payload.job_url,
+        tenant_id=TenantId(payload.tenant_id),
+        rescore=payload.rescore,
+        llm_model=payload.llm_model,
+    )
+    if outcome.ok:
+        return {
+            "status": "ok",
+            "score_version": outcome.score.version if outcome.score is not None else None,
+        }
+    error = outcome.error or "scoring failed"
+    if "not found" in error.lower() or "not enriched" in error.lower():
+        raise MissingInputError(error)
+    return {"status": "failed", "error": error}

@@ -19,15 +19,21 @@ from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_started,
 )
 from jobhunter.materials.activities import (
+    cover_letter_activity,
     cover_activity,
+    render_pdf_activity,
     tailor_activity,
+    tailor_job_activity,
 )
 from jobhunter.pipeline.workflow import JobPipelineWorkflow
+from jobhunter.pipeline.preparation import derive_preparation_targets
+from jobhunter.preparation.workflow import JobPreparationWorkflow
 from jobhunter.profile.activities import profile_import_activity
-from jobhunter.scoring.activities import score_activity
+from jobhunter.scoring.activities import score_activity, score_job_activity
 
 WORKFLOWS: list[type] = [
     JobPipelineWorkflow,
+    JobPreparationWorkflow,
     ApplyWorkflow,
 ]
 
@@ -35,8 +41,13 @@ ACTIVITIES: list[Callable[..., Any]] = [
     discover_activity,
     enrich_activity,
     score_activity,
+    score_job_activity,
     tailor_activity,
+    tailor_job_activity,
     cover_activity,
+    cover_letter_activity,
+    render_pdf_activity,
+    derive_preparation_targets,
     apply_activity,
     profile_import_activity,
     record_workflow_started,

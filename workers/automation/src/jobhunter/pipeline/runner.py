@@ -1413,9 +1413,9 @@ def _run_discover(
             ),
         )
         try:
-            from jobhunter.pipeline.preparation import drain_discovery_preparation
+            from jobhunter.pipeline.preparation import start_discovery_preparation_workflows
 
-            preparation_stats = drain_discovery_preparation(
+            preparation_stats = start_discovery_preparation_workflows(
                 min_score=min_score,
                 limit=limit,
                 workers=bounded_workers,
@@ -1809,19 +1809,42 @@ def _run_cover(
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("cover letter generation canceled before start")
-    from jobhunter.scoring.cover_letter import run_cover_letters
-    result = run_cover_letters(
+    from jobhunter.database import get_jobs_by_stage
+    from jobhunter.scoring.cover_letter import cover_letter_by_url
+
+    jobs = get_jobs_by_stage(
+        conn=get_connection(),
+        stage="pending_cover",
         min_score=min_score,
         limit=limit,
-        validation_mode=validation_mode,
-        llm_model=llm_model,
     )
-    if cancel_event is not None and cancel_event.is_set():
-        raise LlmTransientError("cover letter generation canceled")
-    errors = int(result.get("errors") or 0) if isinstance(result, dict) else 0
+    generated = 0
+    skipped = 0
+    errors = 0
+    for job in jobs:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError("cover letter generation canceled")
+        result = cover_letter_by_url(
+            str(job["url"]),
+            min_score=min_score,
+            validation_mode=validation_mode,
+            llm_model=llm_model,
+        )
+        status = str(result.get("status") or "error")
+        if status in {"ok", "already_done"}:
+            generated += int(result.get("generated") or 0)
+        elif status in {"skipped", "not_eligible"}:
+            skipped += 1
+        else:
+            errors += 1
     if errors:
         raise LlmTransientError(f"{errors} cover letter error(s)")
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "generated": generated,
+        "skipped": skipped,
+        "selected": len(jobs),
+    }
 
 
 # Map stage names to their runner functions. ``Callable`` (lowercase
