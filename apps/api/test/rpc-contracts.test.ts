@@ -11,16 +11,11 @@ import {
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
-  RescoreJobResultSchema,
   RescoreJobsNotOnCurrentScoringPolicyParamsSchema,
-  RescoreJobsNotOnCurrentScoringPolicyResultSchema,
   RetailorCurrentPolicyParamsSchema,
-  RetailorCurrentPolicyResultSchema,
   RetailorJobParamsSchema,
-  RetailorJobResultSchema,
   RpcMethods,
   TailorJobParamsSchema,
-  TailorJobResultSchema,
 } from "../src/contracts.js";
 
 describe("cancel_run RPC contract", () => {
@@ -162,30 +157,6 @@ describe("preparation RPC contracts", () => {
     expect(() => RescoreJobParamsSchema.parse({ jobUrl: "" })).toThrow();
   });
 
-  it("parses and rejects rescore_job result payloads", () => {
-    expect(
-      RescoreJobResultSchema.parse({
-        ok: true,
-        status: "queued",
-        jobUrl: "https://example.test/job/1",
-        currentPolicyVersion: 3,
-      }),
-    ).toEqual({
-      ok: true,
-      status: "queued",
-      jobUrl: "https://example.test/job/1",
-      currentPolicyVersion: 3,
-    });
-    expect(() =>
-      RescoreJobResultSchema.parse({
-        ok: false,
-        status: "queued",
-        jobUrl: "https://example.test/job/1",
-        currentPolicyVersion: 3,
-      }),
-    ).toThrow();
-  });
-
   it("parses and defaults bulk rescore request payloads", () => {
     const parsed = RescoreJobsNotOnCurrentScoringPolicyParamsSchema.parse({});
 
@@ -203,33 +174,6 @@ describe("preparation RPC contracts", () => {
     ).toThrow();
     expect(() =>
       RescoreJobsNotOnCurrentScoringPolicyParamsSchema.parse({ jobUrls: [""] }),
-    ).toThrow();
-  });
-
-  it("parses and rejects bulk rescore result payloads", () => {
-    expect(
-      RescoreJobsNotOnCurrentScoringPolicyResultSchema.parse({
-        ok: true,
-        status: "queued",
-        count: 1,
-        jobUrls: ["https://example.test/job/1"],
-        currentPolicyVersion: 3,
-      }),
-    ).toEqual({
-      ok: true,
-      status: "queued",
-      count: 1,
-      jobUrls: ["https://example.test/job/1"],
-      currentPolicyVersion: 3,
-    });
-    expect(() =>
-      RescoreJobsNotOnCurrentScoringPolicyResultSchema.parse({
-        ok: true,
-        status: "queued",
-        count: -1,
-        jobUrls: [],
-        currentPolicyVersion: 3,
-      }),
     ).toThrow();
   });
 
@@ -271,58 +215,12 @@ describe("preparation RPC contracts", () => {
     ).toThrow();
   });
 
-  it("parses and rejects tailor_job result payloads", () => {
-    expect(
-      TailorJobResultSchema.parse({
-        ok: true,
-        status: "queued",
-        jobUrl: "https://example.test/job/1",
-        currentPolicyVersion: 4,
-      }),
-    ).toEqual({
-      ok: true,
-      status: "queued",
-      jobUrl: "https://example.test/job/1",
-      currentPolicyVersion: 4,
-    });
-    expect(() =>
-      TailorJobResultSchema.parse({
-        ok: true,
-        status: "queued",
-        currentPolicyVersion: 4,
-      }),
-    ).toThrow();
-  });
-
   it("rejects invalid retailor_job request payloads", () => {
     expect(() => RetailorJobParamsSchema.parse({})).toThrow();
     expect(() =>
       RetailorJobParamsSchema.parse({
         jobUrl: "https://example.test/job/1",
         tailorJudgeMinScore: 1.1,
-      }),
-    ).toThrow();
-  });
-
-  it("parses and rejects retailor_job result payloads", () => {
-    expect(
-      RetailorJobResultSchema.parse({
-        ok: true,
-        status: "queued",
-        jobUrl: "https://example.test/job/1",
-        currentPolicyVersion: 4,
-      }),
-    ).toEqual({
-      ok: true,
-      status: "queued",
-      jobUrl: "https://example.test/job/1",
-      currentPolicyVersion: 4,
-    });
-    expect(() =>
-      RetailorJobResultSchema.parse({
-        ok: true,
-        status: "queued",
-        currentPolicyVersion: 4,
       }),
     ).toThrow();
   });
@@ -345,33 +243,6 @@ describe("preparation RPC contracts", () => {
     expect(() =>
       RetailorCurrentPolicyParamsSchema.parse({
         tailorModels: ["a", "b", "c", "d", "e", "f"],
-      }),
-    ).toThrow();
-  });
-
-  it("parses and rejects bulk retailor result payloads", () => {
-    expect(
-      RetailorCurrentPolicyResultSchema.parse({
-        ok: true,
-        status: "queued",
-        count: 1,
-        jobUrls: ["https://example.test/job/1"],
-        currentPolicyVersion: 4,
-      }),
-    ).toEqual({
-      ok: true,
-      status: "queued",
-      count: 1,
-      jobUrls: ["https://example.test/job/1"],
-      currentPolicyVersion: 4,
-    });
-    expect(() =>
-      RetailorCurrentPolicyResultSchema.parse({
-        ok: true,
-        status: "queued",
-        count: -1,
-        jobUrls: [],
-        currentPolicyVersion: 4,
       }),
     ).toThrow();
   });

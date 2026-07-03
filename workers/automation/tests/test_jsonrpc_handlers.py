@@ -77,10 +77,6 @@ def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
 def test_default_handlers_are_registered() -> None:
     server = _server()
     methods = {
-        "reset_stage",
-        "mark_applied",
-        "mark_skipped",
-        "cancel_stage",
         "cancel_run",
         "run_stage",
         "rescore_job",
@@ -596,119 +592,12 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     assert source_ids == {"levels_fyi", "glassdoor", "euro_top_tech"}
 
 
-# ---------------------------------------------------------------------------
-# Simple state-transition handlers
-# ---------------------------------------------------------------------------
-
-
-def test_reset_stage_resets_to_pending(tmp_db: Path) -> None:
-    _seed_job(tmp_db)
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="reset_stage",
-            params={
-                "tenantId": "local",
-                "jobUrl": "https://example.com/job/1",
-                "stage": "tailor",
-            },
-            id=1,
-        )
-    )
-    assert response is not None
-    body = response.to_dict()
-    assert "error" not in body
-    assert body["result"]["state"] == "pending"
-    assert body["result"]["stage"] == "tailor"
-
-    conn = get_connection(tmp_db)
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url=? AND stage=?",
-        ("https://example.com/job/1", "tailor"),
-    ).fetchone()
-    assert row["state"] == "pending"
-
-
-def test_mark_applied_writes_succeeded_state(tmp_db: Path) -> None:
-    _seed_job(tmp_db)
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="mark_applied",
-            params={"tenantId": "local", "jobUrl": "https://example.com/job/1"},
-            id=1,
-        )
-    )
-    assert response is not None
-    body = response.to_dict()
-    assert body["result"]["state"] == "succeeded"
-
-    conn = get_connection(tmp_db)
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url=? AND stage='apply'",
-        ("https://example.com/job/1",),
-    ).fetchone()
-    assert row["state"] == "succeeded"
-
-    events = conn.execute(
-        "SELECT event_type FROM job_events WHERE job_url=?",
-        ("https://example.com/job/1",),
-    ).fetchall()
-    assert any(row["event_type"] == "ApplicationManuallyMarked" for row in events)
-
-
-def test_mark_skipped_records_skip_event(tmp_db: Path) -> None:
-    _seed_job(tmp_db)
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="mark_skipped",
-            params={
-                "tenantId": "local",
-                "jobUrl": "https://example.com/job/1",
-                "stage": "score",
-                "reason": "out_of_scope",
-            },
-            id=1,
-        )
-    )
-    assert response is not None
-    body = response.to_dict()
-    assert body["result"]["state"] == "skipped"
-
-    conn = get_connection(tmp_db)
-    events = conn.execute(
-        "SELECT event_type, message FROM job_events WHERE job_url=?",
-        ("https://example.com/job/1",),
-    ).fetchall()
-    assert any(row["event_type"] == "StageSkipped" and row["message"] == "out_of_scope" for row in events)
-
-
-def test_cancel_stage_writes_canceled_state(tmp_db: Path) -> None:
-    _seed_job(tmp_db)
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="cancel_stage",
-            params={
-                "tenantId": "local",
-                "jobUrl": "https://example.com/job/1",
-                "stage": "enrich",
-            },
-            id=1,
-        )
-    )
-    assert response is not None
-    body = response.to_dict()
-    assert body["result"]["state"] == "canceled"
-
-
 def test_missing_required_param_returns_invalid_params(tmp_db: Path) -> None:
     server = _server()
     response = server.dispatch(
         JsonRpcRequest(
-            method="reset_stage",
-            params={"tenantId": "local"},  # missing jobUrl + stage
+            method="profile_import",
+            params={"tenantId": "local"},  # missing pdfPath
             id=1,
         )
     )
@@ -721,15 +610,10 @@ def test_missing_tenant_id_falls_back_to_local(tmp_db: Path, caplog) -> None:
     _seed_job(tmp_db)
     server = _server()
     with caplog.at_level("WARNING", logger="jobhunter.infrastructure.rpc.handlers"):
+        # refresh_compensation calls _tenant_id first (logging the fallback
+        # warning) before its cheap param validation raises INVALID_PARAMS.
         response = server.dispatch(
-            JsonRpcRequest(
-                method="reset_stage",
-                params={
-                    "jobUrl": "https://example.com/job/1",
-                    "stage": "score",
-                },
-                id=1,
-            )
+            JsonRpcRequest(method="refresh_compensation", params={}, id=1)
         )
     assert response is not None
     assert "tenantId" in caplog.text.lower() or "local_tenant" in caplog.text.lower()
