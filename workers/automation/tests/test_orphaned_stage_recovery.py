@@ -66,23 +66,26 @@ def _artifact(artifact_type: ArtifactType, path: str, render_format: RenderForma
     )
 
 
-def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(tmp_path: Path) -> None:
+def test_recover_orphaned_running_stages_marks_only_stale_discovery_side_runs_failed(tmp_path: Path) -> None:
     db_path = tmp_path / "jobhunter.db"
     conn = init_db(db_path)
+    old_enrich_url = "https://example.com/jobs/orphaned-enrich"
+    fresh_enrich_url = "https://example.com/jobs/fresh-enrich"
+    current_worker_enrich_url = "https://example.com/jobs/current-worker-enrich"
     old_score_url = "https://example.com/jobs/orphaned-score"
-    fresh_score_url = "https://example.com/jobs/fresh-score"
-    current_worker_score_url = "https://example.com/jobs/current-worker-score"
     apply_url = "https://example.com/jobs/apply-run"
     missing_job_url = "https://example.com/jobs/missing-parent"
 
     try:
+        _insert_job(conn, old_enrich_url)
+        _insert_job(conn, fresh_enrich_url)
+        _insert_job(conn, current_worker_enrich_url)
         _insert_job(conn, old_score_url)
-        _insert_job(conn, fresh_score_url)
-        _insert_job(conn, current_worker_score_url)
         _insert_job(conn, apply_url)
+        _mark_running_at(conn, old_enrich_url, "enrich", "2026-05-21T20:00:00+00:00")
+        _mark_running_at(conn, fresh_enrich_url, "enrich", "2026-05-21T20:09:00+00:00")
+        _mark_running_at(conn, current_worker_enrich_url, "enrich", "2026-05-21T20:03:00+00:00")
         _mark_running_at(conn, old_score_url, "score", "2026-05-21T20:00:00+00:00")
-        _mark_running_at(conn, fresh_score_url, "score", "2026-05-21T20:09:00+00:00")
-        _mark_running_at(conn, current_worker_score_url, "score", "2026-05-21T20:03:00+00:00")
         _mark_running_at(conn, apply_url, "apply", "2026-05-21T20:00:00+00:00")
         conn.execute(
             """
@@ -105,28 +108,34 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
             """
             SELECT state, attempt_count, error_code, error_message, retryable, next_action
             FROM job_stage_states
-            WHERE job_url = ? AND stage = 'score'
+            WHERE job_url = ? AND stage = 'enrich'
             """,
-            (old_score_url,),
+            (old_enrich_url,),
         ).fetchone()
         assert recovered_row["state"] == "failed"
         assert recovered_row["attempt_count"] == 1
         assert recovered_row["error_code"] == "ORPHANED_STAGE_RUN"
         assert recovered_row["retryable"] == 1
-        assert old_score_url in recovered_row["next_action"]
+        assert old_enrich_url in recovered_row["next_action"]
         assert "left running by a prior worker" in recovered_row["error_message"]
 
         fresh_row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-            (fresh_score_url,),
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+            (fresh_enrich_url,),
         ).fetchone()
         assert fresh_row["state"] == "running"
 
         current_worker_row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-            (current_worker_score_url,),
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+            (current_worker_enrich_url,),
         ).fetchone()
         assert current_worker_row["state"] == "running"
+
+        score_row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+            (old_score_url,),
+        ).fetchone()
+        assert score_row["state"] == "running"
 
         apply_row = conn.execute(
             "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
@@ -144,10 +153,10 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
             """
             SELECT event_type, level, message, payload_json
             FROM job_events
-            WHERE job_url = ? AND stage = 'score'
+            WHERE job_url = ? AND stage = 'enrich'
             ORDER BY event_id DESC LIMIT 1
             """,
-            (old_score_url,),
+            (old_enrich_url,),
         ).fetchone()
         assert event["event_type"] == "StageFailed"
         assert event["level"] == "error"
@@ -160,10 +169,10 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
                    is_operational_failure, is_scrape_failure, is_retryable,
                    job_url, error_class
             FROM operational_attempt_metrics
-            WHERE job_url = ? AND stage = 'score'
+            WHERE job_url = ? AND stage = 'enrich'
             ORDER BY metric_id DESC LIMIT 1
             """,
-            (old_score_url,),
+            (old_enrich_url,),
         ).fetchone()
         assert metric["attempt_kind"] == "orphan_recovery"
         assert metric["outcome"] == "failed"
@@ -176,7 +185,7 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
         close_connection(db_path)
 
 
-def test_recover_orphaned_tailor_with_approved_artifacts_marks_succeeded(
+def test_recover_orphaned_tailor_with_approved_artifacts_is_left_to_temporal(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "jobhunter.db"
@@ -209,7 +218,7 @@ def test_recover_orphaned_tailor_with_approved_artifacts_marks_succeeded(
             started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
         )
 
-        assert recovered == 1
+        assert recovered == 0
         recovered_row = conn.execute(
             """
             SELECT state, error_code, error_message, retryable, next_action, metadata_json
@@ -218,47 +227,26 @@ def test_recover_orphaned_tailor_with_approved_artifacts_marks_succeeded(
             """,
             (url,),
         ).fetchone()
-        assert recovered_row["state"] == "succeeded"
+        assert recovered_row["state"] == "running"
         assert recovered_row["error_code"] is None
         assert recovered_row["error_message"] is None
-        assert recovered_row["retryable"] == 0
+        assert recovered_row["retryable"] == 1
         assert recovered_row["next_action"] is None
-        assert '"materials_generation": 1' in recovered_row["metadata_json"]
 
-        event = conn.execute(
+        metric_count = conn.execute(
             """
-            SELECT event_type, level, message, payload_json
-            FROM job_events
-            WHERE job_url = ? AND stage = 'tailor'
-            ORDER BY event_id DESC LIMIT 1
-            """,
-            (url,),
-        ).fetchone()
-        assert event["event_type"] == "StageCompleted"
-        assert event["level"] == "info"
-        assert "approved artifacts were found" in event["message"]
-        assert "approved_material_artifacts" in event["payload_json"]
-
-        metric = conn.execute(
-            """
-            SELECT attempt_kind, outcome, failure_category,
-                   is_operational_failure, is_retryable
+            SELECT COUNT(*) AS count
             FROM operational_attempt_metrics
-            WHERE job_url = ? AND stage = 'tailor'
-            ORDER BY metric_id DESC LIMIT 1
+            WHERE job_url = ?
             """,
             (url,),
         ).fetchone()
-        assert metric["attempt_kind"] == "orphan_recovery"
-        assert metric["outcome"] == "succeeded"
-        assert metric["failure_category"] is None
-        assert metric["is_operational_failure"] == 0
-        assert metric["is_retryable"] == 0
+        assert metric_count["count"] == 0
     finally:
         close_connection(db_path)
 
 
-def test_recover_failed_orphaned_tailor_with_approved_artifacts_marks_succeeded(
+def test_recover_failed_orphaned_tailor_with_approved_artifacts_is_left_failed(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "jobhunter.db"
@@ -302,7 +290,7 @@ def test_recover_failed_orphaned_tailor_with_approved_artifacts_marks_succeeded(
             started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
         )
 
-        assert recovered == 1
+        assert recovered == 0
         recovered_row = conn.execute(
             """
             SELECT state, error_code, error_message, retryable
@@ -311,10 +299,10 @@ def test_recover_failed_orphaned_tailor_with_approved_artifacts_marks_succeeded(
             """,
             (url,),
         ).fetchone()
-        assert recovered_row["state"] == "succeeded"
-        assert recovered_row["error_code"] is None
-        assert recovered_row["error_message"] is None
-        assert recovered_row["retryable"] == 0
+        assert recovered_row["state"] == "failed"
+        assert recovered_row["error_code"] == "ORPHANED_STAGE_RUN"
+        assert recovered_row["error_message"] == "tailor stage was left running by a prior worker."
+        assert recovered_row["retryable"] == 1
     finally:
         close_connection(db_path)
 

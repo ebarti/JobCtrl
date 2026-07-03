@@ -115,7 +115,7 @@ def no_discovery_detail_enrichment(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "jobhunter.pipeline.preparation.drain_discovery_preparation",
+        "jobhunter.pipeline.preparation.start_discovery_preparation_workflows",
         lambda **_kwargs: {"status": "ok", "has_work": False},
     )
 

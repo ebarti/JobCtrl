@@ -342,19 +342,19 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
     queue = f"pipeline-tailor-cover-{uuid.uuid4()}"
     job_url = "https://example.com/job/manual-tailor"
     tailored_urls: list[str] = []
-    cover_url_batches: list[tuple[str, ...]] = []
+    cover_urls: list[str] = []
 
     def fake_tailor_job_by_url(url: str, **_kwargs):
         tailored_urls.append(url)
         return {"status": "approved"}
 
-    def fake_run_cover_letters(*, job_urls: tuple[str, ...] = (), **_kwargs):
-        cover_url_batches.append(job_urls)
-        return {"generated": len(job_urls), "errors": 0, "elapsed": 0.01}
+    def fake_cover_letter_by_url(url: str, **_kwargs):
+        cover_urls.append(url)
+        return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
         patch("jobhunter.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobhunter.scoring.cover_letter.run_cover_letters", side_effect=fake_run_cover_letters),
+        patch("jobhunter.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -379,7 +379,7 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
     assert result.stages_completed == ["tailor", "cover"]
     assert result.stages_failed == []
     assert tailored_urls == [job_url]
-    assert cover_url_batches == [(job_url,)]
+    assert cover_urls == [job_url]
 
 
 @pytest.mark.asyncio
@@ -388,7 +388,7 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
     selected_url = "https://example.com/job/current-policy-selected"
     unrelated_pending_cover_url = "https://example.com/job/unrelated-pending-cover"
     tailored_urls: list[str] = []
-    cover_url_batches: list[tuple[str, ...]] = []
+    cover_urls: list[str] = []
 
     def fake_current_policy_urls(_conn, **kwargs):
         assert kwargs["limit"] == 1
@@ -398,11 +398,10 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         tailored_urls.append(url)
         return {"status": "approved"}
 
-    def fake_run_cover_letters(*, job_urls: tuple[str, ...] = (), **_kwargs):
-        cover_url_batches.append(job_urls)
-        if not job_urls:
-            return {"generated": 1, "errors": 0, "elapsed": 0.01, "global": unrelated_pending_cover_url}
-        return {"generated": len(job_urls), "errors": 0, "elapsed": 0.01}
+    def fake_cover_letter_by_url(url: str, **_kwargs):
+        cover_urls.append(url)
+        assert url != unrelated_pending_cover_url
+        return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
         patch("jobhunter.database.get_connection", return_value=object()),
@@ -412,7 +411,7 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         patch("jobhunter.infrastructure.temporal.finalize._emit"),
         patch("jobhunter.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
         patch("jobhunter.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobhunter.scoring.cover_letter.run_cover_letters", side_effect=fake_run_cover_letters),
+        patch("jobhunter.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -438,7 +437,7 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
     assert result.stages_completed == ["tailor", "cover"]
     assert result.stages_failed == []
     assert tailored_urls == [selected_url]
-    assert cover_url_batches == [(selected_url,)]
+    assert cover_urls == [selected_url]
 
 
 @pytest.mark.asyncio

@@ -1,80 +1,26 @@
-"""Discovery preparation work-item orchestration tests."""
+"""Discovery preparation workflow fan-out tests."""
 
 from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from jobhunter.database import init_db
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import (
-    Artifact,
-    ArtifactType,
-    JudgeVerdict,
-    MaterialsSet,
-    MaterialsSetFactory,
-    RenderFormat,
-    ValidationResult,
-)
-from jobhunter.domain.preparation import PreparationWorkItem, PreparationWorkItemKind
-from jobhunter.domain.scoring import FitScore, JobScore, MatchedKeywords, ScoreBreakdown
+from jobhunter.domain.discovery.scheduler import ScheduledSource
+from jobhunter.domain.preparation import PreparationWorkItemKind
 from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.materials import SqliteMaterialsRepository
-from jobhunter.infrastructure.preparation import SqlitePreparationWorkItemRepository
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
 from jobhunter.pipeline import preparation, runner
+from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobhunter import state
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(tmp_path / "jobhunter.db")
-
-
-def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
-    conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, "Platform Engineer", "Acme", "Build Python platforms.", "2026-05-26T00:00:00+00:00"),
-    )
-    conn.commit()
-
-
-def _save_score(conn: sqlite3.Connection, url: str, fit: int) -> None:
-    SqliteScoreRepository(conn).save(
-        JobScore.initial(
-            tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
-            fit_score=FitScore.create(fit),
-            breakdown=ScoreBreakdown(reasoning="eligible"),
-            matched_keywords=MatchedKeywords.from_iterable(["python"]),
-            scored_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
-
-
-def _approved_materials(url: str) -> MaterialsSet:
-    artifact = Artifact.create(
-        type=ArtifactType.TAILORED_RESUME,
-        path=f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
-        created_at="2026-05-26T00:01:00+00:00",
-        render_format=RenderFormat.TEXT,
-        size_bytes=128,
-    )
-    return MaterialsSet.initial(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
-        created_at="2026-05-26T00:01:00+00:00",
-    ).with_resume_attempt(
-        artifact,
-        validation=ValidationResult.success(),
-        verdict=JudgeVerdict.passed(),
-        updated_at="2026-05-26T00:02:00+00:00",
-    )
 
 
 def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explicit() -> None:
@@ -85,23 +31,30 @@ def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explic
     assert runner._resolve_stages(["score", "tailor", "cover"]) == ["score", "tailor", "cover"]
 
 
+def test_orphan_recovery_keeps_only_discovery_side_stages() -> None:
+    assert state.ORPHAN_RECOVERY_STAGES == ("discover", "enrich")
+
+
 def test_run_pipeline_default_uses_primary_stage_order(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(runner, "load_env", lambda: None)
     monkeypatch.setattr(runner, "ensure_dirs", lambda: None)
     monkeypatch.setattr(runner, "init_db", lambda: None)
-    empty_stats = {
-        "total": 0,
-        "pending_detail": 0,
-        "with_description": 0,
-        "scored": 0,
-        "tailored": 0,
-        "with_cover_letter": 0,
-        "ready_to_apply": 0,
-        "applied": 0,
-    }
-    monkeypatch.setattr(runner, "get_stats", lambda: empty_stats)
+    monkeypatch.setattr(
+        runner,
+        "get_stats",
+        lambda: {
+            "total": 0,
+            "pending_detail": 0,
+            "with_description": 0,
+            "scored": 0,
+            "tailored": 0,
+            "with_cover_letter": 0,
+            "ready_to_apply": 0,
+            "applied": 0,
+        },
+    )
 
     def fake_run_sequential(ordered, min_score, **_kwargs):
         captured["ordered"] = ordered
@@ -120,390 +73,89 @@ def test_run_pipeline_default_uses_primary_stage_order(monkeypatch: pytest.Monke
     assert [stage["stage"] for stage in result["stages"]] == ["discover"]
 
 
-def test_discovery_preparation_drains_score_then_tailor_work_items(
+def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    url = "https://example.com/job/prep-ready"
-    _seed_enriched_job(conn, url)
-    calls: list[tuple[str, str]] = []
-
-    def fake_score(item, **_kwargs):
-        calls.append((item.kind.value, str(item.job_id)))
-        _save_score(conn, str(item.job_id), 8)
-        return {"scoreVersion": 1}
-
-    def fake_tailor(item, **_kwargs):
-        calls.append((item.kind.value, str(item.job_id)))
-        return {"status": "approved", "materialsGeneration": 1}
+    def fake_jobs(*, stage: str, **_kwargs):
+        if stage == "pending_score":
+            return [{"url": "https://example.com/job/b"}, {"url": "https://example.com/job/a"}]
+        if stage == "pending_tailor":
+            return [{"url": "https://example.com/job/a"}, {"url": "https://example.com/job/c"}]
+        return []
 
     monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "_score_item", fake_score)
-    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
+    monkeypatch.setattr(preparation, "get_jobs_by_stage", fake_jobs)
+    monkeypatch.setattr(preparation, "_suppress_ineligible_artifacts", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_args, **_kwargs: 11)
+    monkeypatch.setattr(preparation, "current_tailoring_policy_version", lambda *_args, **_kwargs: 7)
+    monkeypatch.setattr(preparation, "_latest_source_event_id", lambda _conn, url: f"event:{url.rsplit('/', 1)[-1]}")
 
-    stats = preparation.drain_discovery_preparation(min_score=7)
+    targets = preparation.derive_preparation_targets(
+        preparation.DerivePreparationTargetsInput(tenant_id=str(LOCAL_TENANT), min_score=7)
+    )
 
-    assert stats["status"] == "ok"
-    assert calls == [
-        (PreparationWorkItemKind.SCORE_JOB.value, url),
-        (PreparationWorkItemKind.TAILOR_RESUME.value, url),
+    assert [target.job_url for target in targets] == [
+        "https://example.com/job/a",
+        "https://example.com/job/b",
+        "https://example.com/job/c",
     ]
-    rows = conn.execute(
-        "SELECT kind, state FROM preparation_work_items ORDER BY created_at, kind"
-    ).fetchall()
-    assert {(row["kind"], row["state"]) for row in rows} == {
-        ("score_job", "completed"),
-        ("tailor_resume", "completed"),
-    }
+    assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
+    assert targets[0].target_version == "11"
+    assert targets[2].steps == ["tailor", "cover", "pdf"]
+    assert targets[2].target_version == "7"
 
 
-def test_discovery_preparation_auto_retries_failed_work_item_in_same_drain(
-    conn: sqlite3.Connection,
+def test_preparation_fan_out_starts_batches_of_at_most_25(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    url = "https://example.com/job/transient-score-failure"
-    _seed_enriched_job(conn, url)
-    score_calls = 0
-    tailor_calls = 0
-
-    def fail_once_score(item, **_kwargs):
-        nonlocal score_calls
-        score_calls += 1
-        if score_calls == 1:
-            raise RuntimeError("temporary scoring outage")
-        _save_score(conn, str(item.job_id), 8)
-        return {"scoreVersion": 1}
-
-    def fake_tailor(item, **_kwargs):
-        nonlocal tailor_calls
-        tailor_calls += 1
-        return {"status": "approved", "materialsGeneration": 1}
-
-    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "_score_item", fail_once_score)
-    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
-
-    first_stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert first_stats["status"] == "ok"
-    assert first_stats["retried"]["score_job"] == 1
-    assert first_stats["completed"]["score_job"] == 1
-    assert first_stats["completed"]["tailor_resume"] == 1
-    assert score_calls == 2
-    assert tailor_calls == 1
-    rows = conn.execute(
-        "SELECT kind, state, attempts, last_error FROM preparation_work_items ORDER BY kind"
-    ).fetchall()
-    assert [(row["kind"], row["state"], row["attempts"], row["last_error"]) for row in rows] == [
-        ("score_job", "completed", 2, ""),
-        ("tailor_resume", "completed", 1, ""),
-    ]
-
-
-def test_tailor_work_item_runs_cover_for_approved_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    url = "https://example.com/job/tailored-for-cover"
-    item = PreparationWorkItem.queued(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
-        kind=PreparationWorkItemKind.TAILOR_RESUME,
-        target_version=1,
-        source_event_id="source-1",
-        created_at="2026-06-05T00:00:00+00:00",
-    )
-    tailor_calls: list[tuple[str, dict[str, object]]] = []
-    cover_calls: list[dict[str, object]] = []
-
-    def fake_tailor_job_by_url(job_url: str, **kwargs: object) -> dict[str, object]:
-        tailor_calls.append((job_url, kwargs))
-        return {"status": "approved", "materials": SimpleNamespace(generation=3)}
-
-    def fake_run_cover_letters(**kwargs: object) -> dict[str, object]:
-        cover_calls.append(kwargs)
-        return {"generated": 1, "errors": 0, "elapsed": 0.1}
-
-    monkeypatch.setattr("jobhunter.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
-    monkeypatch.setattr("jobhunter.scoring.cover_letter.run_cover_letters", fake_run_cover_letters)
-
-    result = preparation._tailor_item(
-        item,
-        min_score=7,
-        validation_mode="normal",
-        workers=2,
-        llm_model="local:model",
-        tailor_models=("local:tailor",),
-        tailor_judge_model="local:judge",
-        tailor_judge_min_score=0.9,
-        tenant_id=LOCAL_TENANT,
-    )
-
-    assert result == {
-        "cover": {"generated": 1, "errors": 0, "elapsed": 0.1},
-        "materialsGeneration": 3,
-        "status": "approved",
-    }
-    assert tailor_calls == [
-        (
-            url,
-            {
-                "min_score": 7,
-                "validation_mode": "normal",
-                "workers": 2,
-                "llm_model": "local:model",
-                "tailor_models": ("local:tailor",),
-                "tailor_judge_model": "local:judge",
-                "tailor_judge_min_score": 0.9,
-                "tenant_id": LOCAL_TENANT,
-            },
+    targets = [
+        preparation.PreparationTarget(
+            job_url=f"https://example.com/job/{index:02d}",
+            idempotency_key=f"preparation:key-{index:02d}",
+            target_version="1",
+            steps=["score"],
         )
+        for index in range(26)
     ]
-    assert cover_calls == [
-        {
-            "min_score": 7,
-            "limit": 1,
-            "validation_mode": "normal",
-            "llm_model": "local:model",
-            "job_urls": (url,),
-            "tenant_id": LOCAL_TENANT,
-        }
-    ]
+    batch_sizes: list[int] = []
+
+    monkeypatch.setattr(preparation, "derive_preparation_targets", lambda _payload: targets)
+    monkeypatch.setattr(
+        preparation,
+        "_run_start_batch",
+        lambda batch, _starter: batch_sizes.append(len(batch)),
+    )
+
+    stats = preparation.start_discovery_preparation_workflows()
+
+    assert batch_sizes == [25, 1]
+    assert stats["queued"] == {"job_preparation": 26}
+    assert stats["started"] == {"job_preparation": 26}
 
 
-def test_discovery_preparation_retries_limited_failed_work_item_on_later_drain(
+def test_build_preparation_workflow_spec_uses_deterministic_id(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    url = "https://example.com/job/limited-score-failure"
-    _seed_enriched_job(conn, url)
-    score_calls = 0
-    tailor_calls = 0
-
-    def fail_once_score(item, **_kwargs):
-        nonlocal score_calls
-        score_calls += 1
-        if score_calls == 1:
-            raise RuntimeError("temporary scoring outage")
-        _save_score(conn, str(item.job_id), 8)
-        return {"scoreVersion": 1}
-
-    def fake_tailor(item, **_kwargs):
-        nonlocal tailor_calls
-        tailor_calls += 1
-        return {"status": "approved", "materialsGeneration": 1}
-
     monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "_score_item", fail_once_score)
-    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
-
-    first_stats = preparation.drain_discovery_preparation(min_score=7, limit=1)
-
-    assert first_stats["status"] == "ok"
-    assert first_stats["retried"]["score_job"] == 1
-    assert score_calls == 1
-    assert tailor_calls == 0
-
-    second_stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert second_stats["status"] == "ok"
-    assert second_stats["completed"]["score_job"] == 1
-    assert second_stats["completed"]["tailor_resume"] == 1
-    assert score_calls == 2
-    assert tailor_calls == 1
-    rows = conn.execute(
-        "SELECT kind, state, attempts, last_error FROM preparation_work_items ORDER BY kind"
-    ).fetchall()
-    assert [(row["kind"], row["state"], row["attempts"], row["last_error"]) for row in rows] == [
-        ("score_job", "completed", 2, ""),
-        ("tailor_resume", "completed", 1, ""),
-    ]
-
-
-def test_discovery_preparation_recovers_stale_running_work_item(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url = "https://example.com/job/stale-running-tailor"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, 8)
-    repo = SqlitePreparationWorkItemRepository(conn)
-    queued = repo.enqueue(
+    spec = preparation.build_preparation_workflow_spec(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_url="https://example.com/job/one",
+        steps=["tailor", "cover", "pdf"],
         kind=PreparationWorkItemKind.TAILOR_RESUME,
-        target_version=1,
-        source_event_id="",
-        now="2026-05-26T00:00:00+00:00",
-    )
-    claimed = repo.claim_next(
-        tenant_id=LOCAL_TENANT,
-        kind=PreparationWorkItemKind.TAILOR_RESUME,
-        now="2026-05-26T00:01:00+00:00",
-    )
-    assert claimed is not None
-    conn.execute(
-        "UPDATE preparation_work_items SET updated_at = ? WHERE item_id = ?",
-        ("2026-05-26T00:01:00+00:00", queued.item_id),
-    )
-    conn.commit()
-
-    def fake_tailor(item, **_kwargs):
-        return {"status": "approved", "materialsGeneration": 1}
-
-    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
-
-    stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert stats["status"] == "ok"
-    assert stats["recovered"]["tailor_resume"] == 1
-    assert stats["completed"]["tailor_resume"] == 1
-    row = conn.execute(
-        "SELECT state, attempts, last_error FROM preparation_work_items WHERE item_id = ?",
-        (queued.item_id,),
-    ).fetchone()
-    assert row["state"] == "completed"
-    assert row["attempts"] == 2
-    assert row["last_error"] == ""
-
-
-def test_discovery_preparation_exhausts_retry_budget(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url = "https://example.com/job/permanent-score-failure"
-    _seed_enriched_job(conn, url)
-    score_calls = 0
-
-    def fail_score(item, **_kwargs):
-        nonlocal score_calls
-        score_calls += 1
-        raise RuntimeError("permanent scoring outage")
-
-    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "_score_item", fail_score)
-
-    stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert stats["status"] == "partial"
-    assert stats["retried"]["score_job"] == 2
-    assert stats["failed"]["score_job"] == 1
-    assert score_calls == 3
-    row = conn.execute(
-        "SELECT state, attempts, last_error FROM preparation_work_items WHERE kind = 'score_job'"
-    ).fetchone()
-    assert row["state"] == "failed"
-    assert row["attempts"] == 3
-    assert row["last_error"] == "permanent scoring outage"
-
-
-def test_threshold_recompute_suppresses_now_ineligible_artifacts(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url = "https://example.com/job/too-low"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, 6)
-    materials_repo = SqliteMaterialsRepository(conn)
-    materials_repo.save(_approved_materials(url))
-
-    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert stats["queued"]["suppress_tailored_artifacts"] == 1
-    assert stats["completed"]["suppress_tailored_artifacts"] == 1
-    suppressed = materials_repo.load(LOCAL_TENANT, JobId(url))
-    assert suppressed is not None
-    assert suppressed.tailored_resume is not None
-    assert suppressed.tailored_resume.status.value == "suppressed"
-
-
-def test_threshold_recompute_requeues_same_threshold_after_new_active_generation(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url = "https://example.com/job/repeated-threshold"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, 6)
-    materials_repo = SqliteMaterialsRepository(conn)
-    materials_repo.save(_approved_materials(url))
-
-    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    first_stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert first_stats["completed"]["suppress_tailored_artifacts"] == 1
-    first_suppressed = materials_repo.load(LOCAL_TENANT, JobId(url))
-    assert first_suppressed is not None
-    assert first_suppressed.tailored_resume is not None
-    assert first_suppressed.tailored_resume.status.value == "suppressed"
-
-    superseded, fresh = MaterialsSetFactory.next_generation(
-        first_suppressed,
-        created_at="2026-05-26T00:03:00+00:00",
-    )
-    second_artifact = Artifact.create(
-        type=ArtifactType.TAILORED_RESUME,
-        path="/tmp/repeated-threshold-g2.txt",
-        created_at="2026-05-26T00:04:00+00:00",
-        render_format=RenderFormat.TEXT,
-        size_bytes=256,
-    )
-    materials_repo.save(superseded)
-    materials_repo.save(
-        fresh.with_resume_attempt(
-            second_artifact,
-            validation=ValidationResult.success(),
-            verdict=JudgeVerdict.passed(),
-            updated_at="2026-05-26T00:05:00+00:00",
-        )
+        target_version=7,
+        source_event_id="event-1",
     )
 
-    second_stats = preparation.drain_discovery_preparation(min_score=7)
-
-    assert second_stats["queued"]["suppress_tailored_artifacts"] == 1
-    assert second_stats["completed"]["suppress_tailored_artifacts"] == 1
-    second_suppressed = materials_repo.load(LOCAL_TENANT, JobId(url))
-    assert second_suppressed is not None
-    assert second_suppressed.generation == 2
-    assert second_suppressed.tailored_resume is not None
-    assert second_suppressed.tailored_resume.status.value == "suppressed"
-    rows = conn.execute(
-        "SELECT source_event_id, state FROM preparation_work_items "
-        "WHERE kind = 'suppress_tailored_artifacts' ORDER BY created_at, source_event_id"
-    ).fetchall()
-    assert [row["state"] for row in rows] == ["completed", "completed"]
-    assert len({row["source_event_id"] for row in rows}) == 2
-
-
-def test_preparation_work_item_key_includes_source_event_id(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url = "https://example.com/job/source-event-key"
-    _seed_enriched_job(conn, url)
-    repo = SqlitePreparationWorkItemRepository(conn)
-    repo.enqueue(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
-        kind=PreparationWorkItemKind.SCORE_JOB,
-        target_version=1,
-        source_event_id="old-source",
-    )
-    stats = preparation._new_stats()
-
-    monkeypatch.setattr(preparation, "_latest_source_event_id", lambda *_args: "new-source")
-
-    preparation._enqueue_pending_scores(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=LOCAL_TENANT,
-        target_version=1,
-    )
-
-    rows = conn.execute(
-        "SELECT source_event_id FROM preparation_work_items ORDER BY source_event_id"
-    ).fetchall()
-    assert [row["source_event_id"] for row in rows] == ["new-source", "old-source"]
-    assert stats["queued"]["score_job"] == 1
+    assert spec.workflow is JobPreparationWorkflow
+    assert spec.workflow_id is not None
+    assert spec.workflow_id.startswith("prep-preparation:")
+    (payload,) = spec.args
+    assert isinstance(payload, JobPreparationInput)
+    assert payload.steps == ["tailor", "cover", "pdf"]
+    assert payload.job_url == "https://example.com/job/one"
+    assert spec.workflow_id == f"prep-{payload.idempotency_key}"
 
 
 def test_discover_stage_kwargs_include_preparation_controls() -> None:
@@ -519,45 +171,42 @@ def test_discover_stage_kwargs_include_preparation_controls() -> None:
         tailor_judge_min_score=0.9,
     )
 
-    assert kwargs == {
-        "workers": 3,
-        "limit": 5,
-        "min_score": 8,
-        "validation_mode": "strict",
-        "llm_model": "local:score",
-        "tailor_models": ("local:draft",),
-        "tailor_judge_model": "local:judge",
-        "tailor_judge_min_score": 0.9,
-    }
+    assert kwargs["min_score"] == 8
+    assert kwargs["workers"] == 3
+    assert kwargs["validation_mode"] == "strict"
+    assert kwargs["limit"] == 5
+    assert kwargs["llm_model"] == "local:score"
+    assert kwargs["tailor_models"] == ("local:draft",)
+    assert kwargs["tailor_judge_model"] == "local:judge"
+    assert kwargs["tailor_judge_min_score"] == 0.9
 
 
-def test_discovery_source_failure_records_failed_progress(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_discovery_source_failure_records_failed_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[str, str, str, dict]] = []
-    scheduled = runner.ScheduledSource(
-        source_id="jobspy:linkedin",
-        display_name="LinkedIn",
-        source_kind=runner.SourceKind.BROAD_BOARD,
-        priority=runner.SourcePriority.STANDARD,
-        configured_state=runner.SourceState.ACTIVE,
-        crawl_budget=1,
-        decision="run",
-        reason="scheduled",
-        recommended_state="normal",
-    )
-
-    monkeypatch.setattr(runner, "get_connection", lambda: conn)
-    monkeypatch.setattr(runner, "_record_source_state_changes", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runner, "_record_discovery_run_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
     monkeypatch.setattr(
         runner,
         "_record_pipeline_event",
         lambda stage, event_type, _level, message, payload=None: events.append(
             (stage, event_type, message, payload or {})
         ),
+    )
+    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
+
+    scheduled = ScheduledSource(
+        source_id="jobspy:linkedin",
+        display_name="LinkedIn",
+        source_kind=runner.SourceKind.BROAD_BOARD,
+        priority=runner.SourcePriority.STANDARD,
+        configured_state=runner.SourceState.ACTIVE,
+        crawl_budget=25,
+        decision="run",
+        reason="test",
+        recommended_state="active",
+        adapter_config={
+            "sites": ["linkedin"],
+            "search_terms": ["python"],
+            "locations": ["Remote"],
+        },
     )
 
     def fail_source() -> None:
@@ -617,11 +266,11 @@ def test_discover_runs_internal_preparation_after_enrichment(
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
-    def fake_drain(**kwargs):
+    def fake_fan_out(**kwargs):
         captured.update(kwargs)
-        return {"status": "ok", "has_work": True, "queued": {}, "completed": {}, "failed": {}}
+        return {"status": "ok", "has_work": True, "queued": {}, "started": {}}
 
-    monkeypatch.setattr(preparation, "drain_discovery_preparation", fake_drain)
+    monkeypatch.setattr(preparation, "start_discovery_preparation_workflows", fake_fan_out)
 
     result = runner._run_discover(
         workers=3,

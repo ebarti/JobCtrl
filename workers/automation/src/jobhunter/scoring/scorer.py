@@ -573,11 +573,11 @@ def score_job_by_url(
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by URL.
 
-    Internal Discovery preparation uses durable work items keyed to one job,
-    so it cannot safely call the batch selector-based ``run_scoring`` helper.
-    This entrypoint preserves the same Scoring use case and stage-state writes
-    while targeting the claimed work item only. ``rescore=True`` forces a new
-    score version even when the job already has a current score.
+    Internal Discovery preparation uses per-job workflows keyed to one job, so
+    it cannot safely call the batch selector-based ``run_scoring`` helper. This
+    entrypoint preserves the same Scoring use case and stage-state writes while
+    targeting one workflow step only. ``rescore=True`` forces a new score
+    version even when the job already has a current score.
     """
     conn = get_connection()
     job = load_job_with_enrichment(conn, job_url)

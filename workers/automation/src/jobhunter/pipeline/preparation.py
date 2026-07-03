@@ -1,43 +1,77 @@
-"""Internal Discovery preparation orchestration.
+"""Temporal-native preparation fan-out.
 
-Discovery remains the user-facing preparation stage. This module owns the
-durable internal queue glue that turns enriched jobs into scoring, tailoring,
-or suppression work without merging the Scoring and Materials contexts.
+Discovery remains the user-facing preparation stage. This module now derives
+deterministic per-job preparation targets and starts ``JobPreparationWorkflow``
+executions instead of claiming a local work-item queue.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any, Coroutine
 
-from jobhunter import config, database as db_module
+from temporalio import activity
+from temporalio.client import WorkflowHandle
+from temporalio.common import WorkflowIDConflictPolicy
+
+from jobhunter import database as db_module
 from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.use_cases import SuppressTailoredArtifactsUseCase
-from jobhunter.domain.preparation import PreparationWorkItem, PreparationWorkItemKind
+from jobhunter.domain.preparation import PreparationWorkItemKind, make_preparation_idempotency_key
+from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.materials import SqliteMaterialsRepository, SqliteTailoringPolicyRepository
-from jobhunter.infrastructure.preparation import SqlitePreparationWorkItemRepository
+from jobhunter.infrastructure.rpc.workflow_starter import (
+    WorkflowStarter,
+    default_workflow_starter,
+)
 from jobhunter.infrastructure.scoring import SqliteScoringPolicyRepository
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
-from jobhunter.state import record_job_event, utc_now
+from jobhunter.preparation.workflow import (
+    JobPreparationInput,
+    JobPreparationWorkflow,
+    preparation_workflow_id,
+)
+from jobhunter.state import utc_now
 
 log = logging.getLogger(__name__)
 
-WorkItemProcessor = Callable[[PreparationWorkItem], dict[str, Any]]
-
-PREPARATION_STALE_RUNNING_SECONDS = 150
-PREPARATION_MAX_ATTEMPTS: dict[PreparationWorkItemKind, int] = {
-    PreparationWorkItemKind.SCORE_JOB: 3,
-    PreparationWorkItemKind.TAILOR_RESUME: int(config.DEFAULTS["max_tailor_attempts"]),
-    PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS: 3,
-}
+PREPARATION_CHILD_BATCH_SIZE = 25
 
 
-def drain_discovery_preparation(
+@dataclass(frozen=True)
+class PreparationTarget:
+    job_url: str
+    idempotency_key: str
+    target_version: str
+    steps: list[str]
+
+
+@dataclass(frozen=True)
+class DerivePreparationTargetsInput:
+    tenant_id: str = LOCAL_TENANT
+    min_score: int = 7
+    limit: int = 0
+
+
+@activity.defn(name="derive_preparation_targets")
+def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[PreparationTarget]:
+    """Return deterministic per-job preparation workflow targets."""
+    conn = get_connection()
+    tenant_id = TenantId(payload.tenant_id)
+    min_score = db_module.effective_tailoring_min_score(payload.min_score)
+    _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
+    targets = _derive_targets(conn, tenant_id=tenant_id, min_score=min_score)
+    if payload.limit > 0:
+        targets = targets[: payload.limit]
+    return targets
+
+
+def start_discovery_preparation_workflows(
     *,
     min_score: int = 7,
     limit: int = 0,
@@ -48,573 +82,229 @@ def drain_discovery_preparation(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
+    workflow_starter: WorkflowStarter | None = None,
 ) -> dict[str, Any]:
-    """Enqueue and drain internal Discovery preparation work.
-
-    The orchestration is intentionally bounded: each run enqueues work from
-    current read-model selectors, then claims durable items until the queue is
-    empty or the caller's limit is reached.
-    """
-    conn = get_connection()
-    repo = SqlitePreparationWorkItemRepository(conn)
-    stats = _new_stats()
-    _recover_stale_running_items(conn=conn, repo=repo, stats=stats, tenant_id=tenant_id)
-    tailoring_min_score = db_module.effective_tailoring_min_score(min_score)
-
-    score_target_version = _current_scoring_policy_version(conn, tenant_id)
-    _enqueue_pending_scores(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=tenant_id,
-        target_version=score_target_version,
+    """Derive targets and start per-job preparation workflows in batches."""
+    targets = derive_preparation_targets(
+        DerivePreparationTargetsInput(
+            tenant_id=str(tenant_id),
+            min_score=min_score,
+            limit=limit,
+        )
     )
-    _drain_kind(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=tenant_id,
-        kind=PreparationWorkItemKind.SCORE_JOB,
-        limit=limit,
-        processor=lambda item: _score_item(
-            item,
-            llm_model=llm_model,
+    specs = [
+        _workflow_spec_for_target(
+            target,
             tenant_id=tenant_id,
-        ),
-    )
-
-    tailoring_target_version = _current_tailoring_policy_version(conn, tenant_id)
-    _recompute_tailoring_eligibility(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=tenant_id,
-        min_score=tailoring_min_score,
-        target_version=tailoring_target_version,
-    )
-    _drain_kind(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=tenant_id,
-        kind=PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS,
-        limit=limit,
-        processor=lambda item: _suppress_item(item, conn=conn, tenant_id=tenant_id),
-    )
-    _drain_kind(
-        conn=conn,
-        repo=repo,
-        stats=stats,
-        tenant_id=tenant_id,
-        kind=PreparationWorkItemKind.TAILOR_RESUME,
-        limit=limit,
-        processor=lambda item: _tailor_item(
-            item,
-            min_score=tailoring_min_score,
-            validation_mode=validation_mode,
+            min_score=min_score,
             workers=workers,
+            validation_mode=validation_mode,
             llm_model=llm_model,
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
-            tenant_id=tenant_id,
-        ),
-    )
-
-    return _finalize_stats(stats)
-
-
-def _new_stats() -> dict[str, Any]:
+        )
+        for target in targets
+    ]
+    starter = workflow_starter or default_workflow_starter
+    started = 0
+    for batch in _batches(specs, PREPARATION_CHILD_BATCH_SIZE):
+        _run_start_batch(batch, starter)
+        started += len(batch)
     return {
-        "queued": defaultdict(int),
-        "started": defaultdict(int),
-        "completed": defaultdict(int),
-        "failed": defaultdict(int),
-        "retried": defaultdict(int),
-        "recovered": defaultdict(int),
-        "skipped": defaultdict(int),
-        "errors": {},
+        "status": "ok",
+        "has_work": bool(specs),
+        "targets": len(targets),
+        "started": {"job_preparation": started},
+        "queued": {"job_preparation": len(specs)},
+        "batch_size": PREPARATION_CHILD_BATCH_SIZE,
     }
 
 
-def _finalize_stats(stats: dict[str, Any]) -> dict[str, Any]:
-    materialized = {
-        key: dict(value) if isinstance(value, defaultdict) else value
-        for key, value in stats.items()
-    }
-    failed = sum(materialized["failed"].values())
-    total = sum(
-        sum(materialized[key].values())
-        for key in ("queued", "started", "completed", "failed", "retried", "recovered", "skipped")
-    )
-    materialized["status"] = "partial" if failed else "ok"
-    materialized["has_work"] = total > 0
-    return materialized
-
-
-def _enqueue_pending_scores(
+def build_preparation_workflow_spec(
     *,
-    conn: sqlite3.Connection,
-    repo: SqlitePreparationWorkItemRepository,
-    stats: dict[str, Any],
     tenant_id: TenantId,
-    target_version: int,
-) -> None:
-    for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
-        job_id = JobId(str(job["url"]))
-        source_event_id = _latest_source_event_id(conn, str(job_id))
-        if _retry_failed_item(
-            conn,
-            repo,
-            stats,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.SCORE_JOB,
-            target_version,
-            source_event_id,
-        ):
-            continue
-        if _has_incomplete_item(
-            conn,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.SCORE_JOB,
-            target_version,
-            source_event_id,
-        ):
-            continue
-        item = repo.enqueue(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            kind=PreparationWorkItemKind.SCORE_JOB,
-            target_version=target_version,
-            source_event_id=source_event_id,
-        )
-        stats["queued"][item.kind.value] += 1
-        _record_work_item_event(conn, item, "PreparationWorkItemQueued", "Score work item queued")
-
-
-def _recompute_tailoring_eligibility(
-    *,
-    conn: sqlite3.Connection,
-    repo: SqlitePreparationWorkItemRepository,
-    stats: dict[str, Any],
-    tenant_id: TenantId,
-    min_score: int,
-    target_version: int,
-) -> None:
-    for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
-        job_id = JobId(str(job["url"]))
-        source_event_id = _latest_source_event_id(conn, str(job_id))
-        if _retry_failed_item(
-            conn,
-            repo,
-            stats,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.TAILOR_RESUME,
-            target_version,
-            source_event_id,
-        ):
-            continue
-        if _has_incomplete_item(
-            conn,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.TAILOR_RESUME,
-            target_version,
-            source_event_id,
-        ):
-            continue
-        item = repo.enqueue(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            kind=PreparationWorkItemKind.TAILOR_RESUME,
-            target_version=target_version,
-            source_event_id=source_event_id,
-        )
-        stats["queued"][item.kind.value] += 1
-        _record_work_item_event(conn, item, "PreparationWorkItemQueued", "Tailor work item queued")
-
-    for job_id, source_event_id in _jobs_needing_artifact_suppression(
-        conn,
-        min_score=min_score,
-    ):
-        if _retry_failed_item(
-            conn,
-            repo,
-            stats,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS,
-            min_score,
-            source_event_id,
-        ):
-            continue
-        if _has_incomplete_item(
-            conn,
-            tenant_id,
-            job_id,
-            PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS,
-            min_score,
-            source_event_id,
-        ):
-            continue
-        item = repo.enqueue(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            kind=PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS,
-            target_version=min_score,
-            source_event_id=source_event_id,
-        )
-        stats["queued"][item.kind.value] += 1
-        _record_work_item_event(
-            conn,
-            item,
-            "PreparationWorkItemQueued",
-            "Artifact suppression work item queued",
-            payload={"reason": "threshold_or_hard_blocker_ineligible"},
-        )
-
-
-def _drain_kind(
-    *,
-    conn: sqlite3.Connection,
-    repo: SqlitePreparationWorkItemRepository,
-    stats: dict[str, Any],
-    tenant_id: TenantId,
+    job_url: str,
+    steps: list[str],
     kind: PreparationWorkItemKind,
-    limit: int,
-    processor: WorkItemProcessor,
-) -> None:
-    processed = 0
-    while limit <= 0 or processed < limit:
-        item = repo.claim_next(tenant_id=tenant_id, kind=kind)
-        if item is None:
-            return
-        processed += 1
-        stats["started"][kind.value] += 1
-        _record_work_item_event(conn, item, "PreparationWorkItemStarted", f"{kind.value} work item started")
-        try:
-            result = processor(item)
-        except Exception as exc:  # noqa: BLE001 - failed work item must stay durable
-            log.exception("Preparation work item %s failed", item.item_id)
-            retryable = item.attempts < _max_attempts(kind)
-            repo.fail(tenant_id=tenant_id, item_id=item.item_id, error=str(exc), retry_at=utc_now())
-            if retryable:
-                retried = repo.retry(tenant_id=tenant_id, item_id=item.item_id)
-                if retried is not None:
-                    stats["retried"][kind.value] += 1
-                    stats["queued"][kind.value] += 1
-                    _record_work_item_event(
-                        conn,
-                        retried,
-                        "PreparationWorkItemQueued",
-                        f"{kind.value} work item auto-requeued",
-                        payload={"retry": True, "attempt": item.attempts, "maxAttempts": _max_attempts(kind)},
-                    )
-                    continue
-
-            stats["failed"][kind.value] += 1
-            stats["errors"][item.item_id] = str(exc)
-            _record_work_item_event(
-                conn,
-                item,
-                "PreparationWorkItemFailed",
-                f"{kind.value} work item failed",
-                level="error",
-                payload={"error": str(exc), "retryExhausted": True, "maxAttempts": _max_attempts(kind)},
-            )
-            continue
-
-        repo.complete(tenant_id=tenant_id, item_id=item.item_id)
-        if result.get("skipped"):
-            stats["skipped"][kind.value] += 1
-        else:
-            stats["completed"][kind.value] += 1
-        _record_work_item_event(
-            conn,
-            item,
-            "PreparationWorkItemCompleted",
-            f"{kind.value} work item completed",
-            payload=result,
-        )
-
-
-def _score_item(
-    item: PreparationWorkItem,
-    *,
-    llm_model: str | None,
-    tenant_id: TenantId,
-) -> dict[str, Any]:
-    from jobhunter.scoring.scorer import score_job_by_url
-
-    outcome = score_job_by_url(str(item.job_id), llm_model=llm_model, tenant_id=tenant_id)
-    if not outcome.ok:
-        raise RuntimeError(outcome.error or "Scoring failed")
-    return {"scoreVersion": outcome.score.version if outcome.score else None}
-
-
-def _tailor_item(
-    item: PreparationWorkItem,
-    *,
-    min_score: int,
-    validation_mode: str,
-    workers: int,
-    llm_model: str | None,
-    tailor_models: tuple[str, ...],
-    tailor_judge_model: str | None,
-    tailor_judge_min_score: float | None,
-    tenant_id: TenantId,
-) -> dict[str, Any]:
-    from jobhunter.scoring.tailor import tailor_job_by_url
-
-    result = tailor_job_by_url(
-        str(item.job_id),
+    target_version: int,
+    min_score: int = 7,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    rescore: bool = False,
+    retailor: bool = False,
+    suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    source_event_id: str | None = None,
+    expected_app_dir: str | None = None,
+    expected_db_path: str | None = None,
+) -> WorkflowStartSpec:
+    source_event = source_event_id if source_event_id is not None else _latest_source_event_id(get_connection(), job_url)
+    idempotency_key = make_preparation_idempotency_key(
+        tenant_id=tenant_id,
+        job_id=JobId(job_url),
+        kind=kind,
+        target_version=target_version,
+        source_event_id=source_event,
+    )
+    payload = JobPreparationInput(
+        tenant_id=str(tenant_id),
+        job_url=job_url,
+        steps=list(steps),
+        target_version=str(target_version),
+        idempotency_key=idempotency_key,
         min_score=min_score,
-        validation_mode=validation_mode,
         workers=workers,
-        llm_model=llm_model,
+        validation_mode=validation_mode,
+        rescore=rescore,
+        retailor=retailor,
+        suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
-        tenant_id=tenant_id,
+        llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+        expected_app_dir=expected_app_dir,
+        expected_db_path=expected_db_path,
     )
-    if result.get("status") in {"skipped", "not_eligible"}:
-        return {"skipped": True, "reason": result.get("reason", "not_eligible")}
-    if result.get("status") != "approved":
-        raise RuntimeError(str(result.get("error") or f"Tailoring ended with status {result.get('status')}"))
-    from jobhunter.scoring.cover_letter import run_cover_letters
-
-    cover_result = run_cover_letters(
-        min_score=min_score,
-        limit=1,
-        validation_mode=validation_mode,
-        llm_model=llm_model,
-        job_urls=(str(item.job_id),),
-        tenant_id=tenant_id,
+    return WorkflowStartSpec(
+        workflow=JobPreparationWorkflow,
+        args=(payload,),
+        workflow_id=preparation_workflow_id(idempotency_key),
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
-    return {
-        "cover": cover_result,
-        "materialsGeneration": getattr(result.get("materials"), "generation", None),
-        "status": result.get("status"),
-    }
 
 
-def _suppress_item(
-    item: PreparationWorkItem,
-    *,
-    conn: sqlite3.Connection,
-    tenant_id: TenantId,
-) -> dict[str, Any]:
-    use_case = SuppressTailoredArtifactsUseCase(repository=SqliteMaterialsRepository(conn))
-    outcome = use_case.execute(
-        tenant_id=tenant_id,
-        job_id=item.job_id,
-        reason="threshold_or_hard_blocker_ineligible",
-        suppressed_at=utc_now(),
-    )
-    return {
-        "suppressed": outcome.suppressed,
-        "skipped": not outcome.suppressed,
-        "reason": "no_active_artifacts" if not outcome.suppressed else "threshold_or_hard_blocker_ineligible",
-    }
-
-
-def _current_scoring_policy_version(conn: sqlite3.Connection, tenant_id: TenantId) -> int:
+def current_scoring_policy_version(conn: sqlite3.Connection, tenant_id: TenantId) -> int:
     return SqliteScoringPolicyRepository(conn).get_current(tenant_id).version
 
 
-def _current_tailoring_policy_version(conn: sqlite3.Connection, tenant_id: TenantId) -> int:
+def current_tailoring_policy_version(conn: sqlite3.Connection, tenant_id: TenantId) -> int:
     policy = SqliteTailoringPolicyRepository(conn).get_current(tenant_id)
     return policy.version if policy is not None else 1
 
 
-def _has_incomplete_item(
+def latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
+    return _latest_source_event_id(conn, job_url)
+
+
+def _derive_targets(
     conn: sqlite3.Connection,
-    tenant_id: TenantId,
-    job_id: JobId,
-    kind: PreparationWorkItemKind,
-    target_version: int,
-    source_event_id: str,
-) -> bool:
-    row = conn.execute(
-        """
-        SELECT 1
-        FROM preparation_work_items
-        WHERE tenant_id = ?
-          AND job_id = ?
-          AND kind = ?
-          AND target_version = ?
-          AND source_event_id = ?
-          AND state IN ('queued', 'running', 'failed')
-        LIMIT 1
-        """,
-        (str(tenant_id), str(job_id), kind.value, int(target_version), str(source_event_id or "")),
-    ).fetchone()
-    return row is not None
-
-
-def _recover_stale_running_items(
     *,
-    conn: sqlite3.Connection,
-    repo: SqlitePreparationWorkItemRepository,
-    stats: dict[str, Any],
     tenant_id: TenantId,
-) -> None:
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(seconds=PREPARATION_STALE_RUNNING_SECONDS)
-    rows = conn.execute(
-        """
-        SELECT item_id, tenant_id, job_id, kind, target_version, source_event_id,
-               state, idempotency_key, attempts, last_error, created_at,
-               updated_at, available_at
-        FROM preparation_work_items
-        WHERE tenant_id = ?
-          AND state = 'running'
-        """,
-        (str(tenant_id),),
-    ).fetchall()
-    for row in rows:
-        item = _row_to_preparation_item(row)
-        updated_at = _parse_iso_datetime(item.updated_at) or _parse_iso_datetime(item.available_at)
-        if updated_at is not None and updated_at > cutoff:
-            continue
-        message = "Preparation work was left running by a prior worker."
-        if item.attempts >= _max_attempts(item.kind):
-            repo.fail(
-                tenant_id=tenant_id,
-                item_id=item.item_id,
-                error=f"{message} Retry budget exhausted.",
-                failed_at=now.isoformat(),
-                retry_at=now.isoformat(),
-            )
-            stats["failed"][item.kind.value] += 1
-            stats["errors"][item.item_id] = message
-            _record_work_item_event(
-                conn,
-                item,
-                "PreparationWorkItemFailed",
-                f"{item.kind.value} work item failed after stale recovery",
-                level="error",
-                payload={"error": message, "recovered": True, "retryExhausted": True},
-            )
-            continue
+    min_score: int,
+) -> list[PreparationTarget]:
+    score_target_version = current_scoring_policy_version(conn, tenant_id)
+    tailoring_target_version = current_tailoring_policy_version(conn, tenant_id)
+    targets: dict[str, PreparationTarget] = {}
 
-        recovered = repo.recover_running(
+    for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
+        job_url = str(job["url"])
+        targets[job_url] = _target(
             tenant_id=tenant_id,
-            item_id=item.item_id,
-            available_at=now.isoformat(),
-            recovered_at=now.isoformat(),
-            reason=message,
+            job_url=job_url,
+            kind=PreparationWorkItemKind.SCORE_JOB,
+            target_version=score_target_version,
+            source_event_id=_latest_source_event_id(conn, job_url),
+            steps=["score", "tailor", "cover", "pdf"],
         )
-        if recovered is None:
+
+    for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
+        job_url = str(job["url"])
+        if job_url in targets:
             continue
-        stats["recovered"][recovered.kind.value] += 1
-        stats["queued"][recovered.kind.value] += 1
-        _record_work_item_event(
-            conn,
-            recovered,
-            "PreparationWorkItemQueued",
-            f"{recovered.kind.value} work item recovered and requeued",
-            payload={"recovered": True, "previousUpdatedAt": item.updated_at},
+        targets[job_url] = _target(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            kind=PreparationWorkItemKind.TAILOR_RESUME,
+            target_version=tailoring_target_version,
+            source_event_id=_latest_source_event_id(conn, job_url),
+            steps=["tailor", "cover", "pdf"],
         )
 
+    return [targets[job_url] for job_url in sorted(targets)]
 
-def _retry_failed_item(
-    conn: sqlite3.Connection,
-    repo: SqlitePreparationWorkItemRepository,
-    stats: dict[str, Any],
+
+def _target(
+    *,
     tenant_id: TenantId,
-    job_id: JobId,
+    job_url: str,
     kind: PreparationWorkItemKind,
     target_version: int,
     source_event_id: str,
-) -> bool:
-    now = utc_now()
-    row = conn.execute(
-        """
-        SELECT item_id, attempts
-        FROM preparation_work_items
-        WHERE tenant_id = ?
-          AND job_id = ?
-          AND kind = ?
-          AND target_version = ?
-          AND source_event_id = ?
-          AND state = 'failed'
-          AND available_at <= ?
-        LIMIT 1
-        """,
-        (str(tenant_id), str(job_id), kind.value, int(target_version), str(source_event_id or ""), now),
-    ).fetchone()
-    if row is None:
-        return False
-    item_id = str(row["item_id"] if isinstance(row, sqlite3.Row) else row[0])
-    attempts = int(row["attempts"] if isinstance(row, sqlite3.Row) else row[1])
-    if attempts >= _max_attempts(kind):
-        stats["failed"][kind.value] += 1
-        stats["errors"][item_id] = "Retry budget exhausted"
-        return True
-    item = repo.retry(tenant_id=tenant_id, item_id=item_id, available_at=now, retried_at=now)
-    if item is None:
-        return False
-    stats["queued"][item.kind.value] += 1
-    _record_work_item_event(
-        conn,
-        item,
-        "PreparationWorkItemQueued",
-        f"{kind.value} work item requeued",
-        payload={"retry": True},
+    steps: list[str],
+) -> PreparationTarget:
+    idempotency_key = make_preparation_idempotency_key(
+        tenant_id=tenant_id,
+        job_id=JobId(job_url),
+        kind=kind,
+        target_version=target_version,
+        source_event_id=source_event_id,
     )
-    return True
+    return PreparationTarget(
+        job_url=job_url,
+        idempotency_key=idempotency_key,
+        target_version=str(target_version),
+        steps=list(steps),
+    )
 
 
-def _max_attempts(kind: PreparationWorkItemKind) -> int:
-    return max(1, int(PREPARATION_MAX_ATTEMPTS[PreparationWorkItemKind(kind)]))
+def _workflow_spec_for_target(
+    target: PreparationTarget,
+    *,
+    tenant_id: TenantId,
+    min_score: int,
+    workers: int,
+    validation_mode: str,
+    llm_model: str | None,
+    tailor_models: tuple[str, ...],
+    tailor_judge_model: str | None,
+    tailor_judge_min_score: float | None,
+) -> WorkflowStartSpec:
+    payload = JobPreparationInput(
+        tenant_id=str(tenant_id),
+        job_url=target.job_url,
+        steps=list(target.steps),
+        target_version=target.target_version,
+        idempotency_key=target.idempotency_key,
+        min_score=min_score,
+        workers=workers,
+        validation_mode=validation_mode,
+        llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+    )
+    return WorkflowStartSpec(
+        workflow=JobPreparationWorkflow,
+        args=(payload,),
+        workflow_id=preparation_workflow_id(target.idempotency_key),
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
 
 
-def _parse_iso_datetime(value: str) -> datetime | None:
+def _run_start_batch(specs: list[WorkflowStartSpec], starter: WorkflowStarter) -> list[WorkflowHandle]:
+    return _run_coroutine(_start_batch(specs, starter))
+
+
+async def _start_batch(specs: list[WorkflowStartSpec], starter: WorkflowStarter) -> list[WorkflowHandle]:
+    return list(await asyncio.gather(*(starter(spec) for spec in specs)))
+
+
+def _run_coroutine(coro: Coroutine[Any, Any, list[WorkflowHandle]]) -> list[WorkflowHandle]:
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError("preparation workflow fan-out cannot run inside an active event loop")
 
 
-def _row_to_preparation_item(row: sqlite3.Row | tuple[Any, ...]) -> PreparationWorkItem:
-    if isinstance(row, sqlite3.Row):
-        return PreparationWorkItem(
-            item_id=str(row["item_id"]),
-            tenant_id=TenantId(str(row["tenant_id"])),
-            job_id=JobId(str(row["job_id"])),
-            kind=PreparationWorkItemKind(str(row["kind"])),
-            target_version=int(row["target_version"]),
-            source_event_id=str(row["source_event_id"] or ""),
-            state=str(row["state"]),
-            idempotency_key=str(row["idempotency_key"]),
-            attempts=int(row["attempts"] or 0),
-            last_error=str(row["last_error"] or ""),
-            created_at=str(row["created_at"]),
-            updated_at=str(row["updated_at"]),
-            available_at=str(row["available_at"]),
-        )
-    return PreparationWorkItem(
-        item_id=str(row[0]),
-        tenant_id=TenantId(str(row[1])),
-        job_id=JobId(str(row[2])),
-        kind=PreparationWorkItemKind(str(row[3])),
-        target_version=int(row[4]),
-        source_event_id=str(row[5] or ""),
-        state=str(row[6]),
-        idempotency_key=str(row[7]),
-        attempts=int(row[8] or 0),
-        last_error=str(row[9] or ""),
-        created_at=str(row[10]),
-        updated_at=str(row[11]),
-        available_at=str(row[12]),
-    )
+def _batches(items: list[WorkflowStartSpec], size: int) -> list[list[WorkflowStartSpec]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
 
 
 def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
@@ -640,21 +330,33 @@ def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
     return str(row["event_id"] if isinstance(row, sqlite3.Row) else row[0])
 
 
+def _suppress_ineligible_artifacts(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    min_score: int,
+) -> int:
+    use_case = SuppressTailoredArtifactsUseCase(repository=SqliteMaterialsRepository(conn))
+    suppressed = 0
+    for job_id in _jobs_needing_artifact_suppression(conn, min_score=min_score):
+        outcome = use_case.execute(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            reason="threshold_or_hard_blocker_ineligible",
+            suppressed_at=utc_now(),
+        )
+        suppressed += int(outcome.suppressed)
+    return suppressed
+
+
 def _jobs_needing_artifact_suppression(
     conn: sqlite3.Connection,
     *,
     min_score: int,
-) -> list[tuple[JobId, str]]:
+) -> list[JobId]:
     rows = conn.execute(
         f"""
-        SELECT jobs.url,
-               jm.jm_generation AS materials_generation,
-               jm.jm_tailored_path AS materials_tailored_path,
-               jm.jm_cover_path AS materials_cover_path,
-               jm.jm_resume_pdf_path AS materials_resume_pdf_path,
-               jm.jm_cover_pdf_path AS materials_cover_pdf_path,
-               jobs.tailored_resume_path AS legacy_tailored_path,
-               jobs.cover_letter_path AS legacy_cover_path
+        SELECT jobs.url
         FROM jobs
         {db_module._LATEST_SCORE_JOIN}
         {db_module._LATEST_MATERIALS_JOIN}
@@ -668,74 +370,16 @@ def _jobs_needing_artifact_suppression(
         """,
         (int(min_score),),
     ).fetchall()
-    result: list[tuple[JobId, str]] = []
-    for row in rows:
-        record = dict(row) if isinstance(row, sqlite3.Row) else {
-            "url": row[0],
-            "materials_generation": row[1],
-            "materials_tailored_path": row[2],
-            "materials_cover_path": row[3],
-            "materials_resume_pdf_path": row[4],
-            "materials_cover_pdf_path": row[5],
-            "legacy_tailored_path": row[6],
-            "legacy_cover_path": row[7],
-        }
-        job_id = JobId(str(record["url"]))
-        result.append((job_id, _artifact_suppression_source_event_id(record, min_score=min_score)))
-    return result
+    return [JobId(str(row["url"] if isinstance(row, sqlite3.Row) else row[0])) for row in rows]
 
 
-def _artifact_suppression_source_event_id(record: dict[str, Any], *, min_score: int) -> str:
-    generation = record.get("materials_generation")
-    if generation is not None:
-        paths = (
-            record.get("materials_tailored_path") or "",
-            record.get("materials_cover_path") or "",
-            record.get("materials_resume_pdf_path") or "",
-            record.get("materials_cover_pdf_path") or "",
-        )
-        return f"threshold:{min_score}:materials:g{generation}:{':'.join(paths)}"
-    return (
-        f"threshold:{min_score}:legacy:"
-        f"{record.get('legacy_tailored_path') or ''}:"
-        f"{record.get('legacy_cover_path') or ''}"
-    )
-
-
-def _record_work_item_event(
-    conn: sqlite3.Connection,
-    item: PreparationWorkItem,
-    event_type: str,
-    message: str,
-    *,
-    level: str = "info",
-    payload: dict[str, Any] | None = None,
-) -> None:
-    event_payload = {
-        "tenantId": str(item.tenant_id),
-        "jobId": str(item.job_id),
-        "itemId": item.item_id,
-        "kind": item.kind.value,
-        "targetVersion": item.target_version,
-        "sourceEventId": item.source_event_id,
-        **(payload or {}),
-    }
-    record_job_event(
-        conn,
-        str(item.job_id),
-        _stage_for_kind(item.kind),
-        event_type,
-        level=level,
-        message=message,
-        payload=event_payload,
-    )
-    conn.commit()
-
-
-def _stage_for_kind(kind: PreparationWorkItemKind) -> str:
-    if kind is PreparationWorkItemKind.SCORE_JOB:
-        return "score"
-    return "tailor"
-
-
-__all__ = ["drain_discovery_preparation"]
+__all__ = [
+    "DerivePreparationTargetsInput",
+    "PreparationTarget",
+    "build_preparation_workflow_spec",
+    "current_scoring_policy_version",
+    "current_tailoring_policy_version",
+    "derive_preparation_targets",
+    "latest_source_event_id",
+    "start_discovery_preparation_workflows",
+]

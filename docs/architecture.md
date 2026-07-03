@@ -92,14 +92,17 @@ Cross-context integration uses the **`InProcessEventBus`** for domain events and
 the **`SubprocessJsonRpcAdapter`** for the TS↔Python integration protocol
 (§6.5 of `docs/ddd-target.md`).
 
-Discovery preparation is a cross-context workflow, not a merged aggregate.
-Discovery owns source and enrichment facts, then durable
-`preparation_work_items` dispatch `score_job`, `tailor_resume`, and
-`suppress_tailored_artifacts` to the Scoring and Materials contexts. The user
-sees one preparation stage (`Discover`), while policy versions, score rows,
-materials rows, and suppression state stay owned by their bounded contexts.
-Operations list projections keep that product contract by exposing only
-`discover` or `apply`; internal stage rows remain available in detail and
+Discovery preparation is a cross-context workflow family, not a merged
+aggregate. Discovery owns source and enrichment facts, then derives
+deterministic per-job targets and starts `JobPreparationWorkflow` executions
+for `score`, `tailor`, `cover`, `pdf`, or suppression work in the Scoring and
+Materials contexts. The workflow ID is `prep-{idempotency_key}`, using the same
+key material that previously backed durable queue de-duplication, so duplicate
+triggers attach to the existing run instead of creating duplicate artifacts.
+The user sees one preparation stage (`Discover`), while policy versions, score
+rows, materials rows, and suppression state stay owned by their bounded
+contexts. Operations list projections keep that product contract by exposing
+only `discover` or `apply`; internal stage rows remain available in detail and
 diagnostic surfaces.
 
 The **enrichment quality gate** keeps low-confidence descriptions out of the
@@ -747,7 +750,7 @@ Python owns automation execution:
 
 - discovery
 - job detail enrichment
-- Discovery preparation work-item drain
+- Discovery preparation workflow fan-out
 - scoring
 - resume tailoring
 - cover letters
@@ -793,10 +796,42 @@ Each internal pipeline stage (`discover`, `enrich`, `score`, `tailor`,
 `cover`, `apply`, `profile_import`) ships as a Temporal **Activity** under the
 owning bounded context's package — e.g. `jobhunter/scoring/activities.py`,
 `jobhunter/materials/activities.py`. Activities are thin adapters: they defer
-heavy imports inside the activity body and forward to the existing stage runner
-(`run_pipeline` / `apply_main` / `run_local_action`). The product-facing stage
-order is narrower: `discover -> apply`; `discover` drains enrichment plus
-internal preparation work before the user chooses to apply.
+heavy imports inside the activity body and forward to the relevant domain
+runner (`run_pipeline` for remaining batch stages, per-job scoring/materials
+functions for preparation, `apply_main`, or `run_local_action`). The
+product-facing stage order is narrower: `discover -> apply`; `discover` drains
+enrichment and starts per-job preparation workflows before the user chooses to
+apply.
+
+Pipeline activities translate Python exceptions into typed Temporal
+`ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
+as the durable error code:
+
+| Error type | Code | Retryable |
+| --- | --- | --- |
+| `ConfigurationError` | `configuration` | no |
+| `AuthenticationError` | `authentication` | no |
+| `MissingInputError` | `missing_input` | no |
+| `TransientNetworkError` | `transient_network` | yes |
+| `BrowserTransientError` | `browser_transient` | yes |
+| `LlmTransientError` | `llm_transient` | yes |
+| `SourceUnavailableError` | `source_unavailable` | yes |
+
+`JobPipelineWorkflow` applies stage-specific retry policies:
+
+| Stage | Attempts | Initial interval | Maximum interval | Non-retryable codes |
+| --- | --- | --- | --- | --- |
+| `discover` | 1 | default | default | `configuration`, `authentication`, `missing_input` |
+| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+
+The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
+operational metrics, and OTel spans through `_run_stage_observed`; the change
+is that whole-stage failures propagate into Temporal instead of being converted
+to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
+remain per-item facts when the owning context already records them that way.
 
 Pipeline activities translate Python exceptions into typed Temporal
 `ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
@@ -841,6 +876,11 @@ Two production workflows live alongside the activities:
   parameter shape. `apply_activity` re-raises transient failures so the
   retry policy fires; `LookupError` is wrapped in a non-retryable
   `ApplicationError` so operator errors fail fast.
+- `JobPreparationWorkflow` (`jobhunter/preparation/workflow.py`) — durable
+  **per-job** workflow that runs the requested subset of `score`, `tailor`,
+  `cover`, and `pdf` in canonical order. Each step is an idempotent activity;
+  already-complete steps return `already_done`, and Temporal resumes at the
+  failed step after a worker interruption.
 
 The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 (the existing batch orchestrator that the activities call) and
@@ -1052,9 +1092,10 @@ event.
 1. Discovery creates or updates jobs (via `JobRepository`).
 2. Pipeline Orchestration creates `JobPipelineState` rows for the canonical
    stages.
-3. Discovery preparation creates durable work items for scoring, tailoring, and
-   artifact suppression when enriched jobs or live eligibility settings require
-   internal preparation subwork.
+3. Discovery preparation derives deterministic targets and starts per-job
+   `JobPreparationWorkflow` runs for scoring, tailoring, cover-letter, PDF, and
+   artifact suppression work when enriched jobs or live eligibility settings
+   require internal preparation subwork.
 4. Each domain operation publishes events through `InProcessEventBus`.
 5. Workers record events in `job_events` and update per-aggregate tables
    (`job_scores`, `job_materials`, `job_enrichments`). The apply lifecycle is

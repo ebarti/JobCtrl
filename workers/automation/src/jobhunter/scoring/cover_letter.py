@@ -149,28 +149,23 @@ def generate_cover_letter(
     return ""
 
 
-# ---------------------------------------------------------------------------
-# Batch entry point
-# ---------------------------------------------------------------------------
-
-
-def run_cover_letters(
+def cover_letter_by_url(
+    job_url: str,
+    *,
     min_score: int = 7,
-    limit: int = 0,
     validation_mode: str = "normal",
     snapshot: ProfileSnapshot | None = None,
-    *,
     repository: MaterialsRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     publisher: EventPublisher | None = None,
     pdf_renderer: PdfRendererPort | None = None,
-    job_urls: tuple[str, ...] = (),
     tenant_id: TenantId = LOCAL_TENANT,
 ) -> dict:
-    """Generate cover letters for jobs whose tailored resume is approved."""
+    """Generate one cover letter by URL and commit its state immediately."""
     if snapshot is None:
         from jobhunter.infrastructure.profile import get_profile_repository
+
         snapshot = get_profile_repository().load_snapshot(tenant_id)
 
     conn = get_connection()
@@ -178,32 +173,28 @@ def run_cover_letters(
         repository = SqliteMaterialsRepository(conn)
     min_score = effective_tailoring_min_score(min_score)
 
-    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
     jobs = get_jobs_by_stage(
         conn=conn,
         stage="pending_cover",
         min_score=min_score,
-        limit=0 if selected_urls else limit,
+        limit=0,
     )
-    if selected_urls:
-        selected_set = set(selected_urls)
-        jobs = [job for job in jobs if str(job.get("url") or "") in selected_set]
-        if limit > 0:
-            jobs = jobs[:limit]
-
-    if not jobs:
-        log.info("No jobs needing cover letters (score >= %d).", min_score)
-        return {"generated": 0, "errors": 0, "elapsed": 0.0}
+    job = next((item for item in jobs if str(item.get("url") or "") == str(job_url)), None)
+    already_done = _cover_stage_succeeded(conn, job_url)
+    if job is None:
+        log.info("No cover letter work is currently eligible for %s.", job_url)
+        return {
+            "url": job_url,
+            "status": "already_done" if already_done else "skipped",
+            "reason": "already_done" if already_done else "not_eligible",
+            "generated": 0,
+            "errors": 0,
+            "elapsed": 0.0,
+        }
 
     COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
-    log.info(
-        "Generating cover letters for %d jobs (score >= %d)...",
-        len(jobs), min_score,
-    )
+    log.info("Generating cover letter for %s (score >= %d)...", job_url, min_score)
     t0 = time.time()
-    completed = 0
-    error_count = 0
-    saved = 0
     use_case = _build_use_case(
         repository=repository,
         llm_port=llm_port,
@@ -213,123 +204,131 @@ def run_cover_letters(
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
-    for job in jobs:
-        completed += 1
-        url = job["url"]
-        ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
-        started_at = utc_now()
-        # Runner owns the restart policy: failed-cover jobs are re-selected
-        # for retry, so allow Failed -> Running. Canonical state machine
-        # table only permits Failed -> Pending (via Reset).
+    url = str(job["url"])
+    ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
+    started_at = utc_now()
+    # Runner owns the restart policy: failed-cover jobs are re-selected for
+    # retry, so allow Failed -> Running. Canonical state machine table only
+    # permits Failed -> Pending via explicit reset.
+    set_stage_state(
+        conn,
+        url,
+        "cover",
+        "running",
+        started_at=started_at,
+        validate_transition=False,
+    )
+    record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
+    conn.commit()
+
+    try:
+        outcome = use_case.execute(
+            job=job,
+            profile_snapshot=snapshot,
+            cover_letter_dir=COVER_LETTER_DIR,
+            validation_mode=validation_mode,
+            tenant_id=tenant_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        outcome = CoverLetterOutcome(
+            materials=None,
+            status="error",
+            error=str(exc),
+        )
+        log.error("[ERROR] %s -- %s", str(job.get("title", ""))[:40], exc)
+
+    finished_at = utc_now()
+    elapsed = time.time() - t0
+    if outcome.status == "ok":
+        # Best-effort PDF render. Failure is non-fatal: the cover letter text
+        # is the canonical artifact and the PDF is an optional sibling.
+        if outcome.text_path and outcome.materials is not None:
+            try:
+                text_path = Path(outcome.text_path)
+                pdf_path = text_path.with_suffix(".pdf")
+                pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
+                    cover_letter_text=text_path.read_text(encoding="utf-8"),
+                    output_path=str(pdf_path),
+                    created_at=utc_now(),
+                )
+                materials = outcome.materials.with_cover_letter_pdf(
+                    pdf_artifact, updated_at=utc_now()
+                )
+                repository.save(materials)
+            except Exception:
+                log.debug("PDF generation failed for cover letter", exc_info=True)
+
         set_stage_state(
             conn,
             url,
             "cover",
-            "running",
+            "succeeded",
+            attempt_count=1,
             started_at=started_at,
-            validate_transition=False,
+            finished_at=finished_at,
         )
-        record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
+        record_job_event(
+            conn,
+            url,
+            "cover",
+            "StageCompleted",
+            message="Cover letter generated",
+        )
+        conn.commit()
+        log.info("Cover letter done in %.1fs: generated for %s", elapsed, url)
+        return {
+            "url": url,
+            "status": "ok",
+            "generated": 1,
+            "errors": 0,
+            "elapsed": elapsed,
+            "materialsGeneration": getattr(outcome.materials, "generation", None),
+        }
 
-        try:
-            outcome = use_case.execute(
-                job=job,
-                profile_snapshot=snapshot,
-                cover_letter_dir=COVER_LETTER_DIR,
-                validation_mode=validation_mode,
-                tenant_id=tenant_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            error_count += 1
-            outcome = CoverLetterOutcome(
-                materials=None,
-                status="error",
-                error=str(exc),
-            )
-            log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), str(job.get("title", ""))[:40], exc)
-
-        finished_at = utc_now()
-        if outcome.status == "ok":
-            # Best-effort PDF render. Failure is non-fatal — the cover
-            # letter text is the canonical artifact; the PDF is a sibling.
-            if outcome.text_path and outcome.materials is not None:
-                try:
-                    text_path = Path(outcome.text_path)
-                    pdf_path = text_path.with_suffix(".pdf")
-                    pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
-                        cover_letter_text=text_path.read_text(encoding="utf-8"),
-                        output_path=str(pdf_path),
-                        created_at=utc_now(),
-                    )
-                    materials = outcome.materials.with_cover_letter_pdf(
-                        pdf_artifact, updated_at=utc_now()
-                    )
-                    repository.save(materials)
-                except Exception:
-                    log.debug("PDF generation failed for cover letter", exc_info=True)
-
-            set_stage_state(
-                conn,
-                url,
-                "cover",
-                "succeeded",
-                attempt_count=1,
-                started_at=started_at,
-                finished_at=finished_at,
-            )
-            record_job_event(
-                conn,
-                url,
-                "cover",
-                "StageCompleted",
-                message="Cover letter generated",
-            )
-            saved += 1
-            elapsed = time.time() - t0
-            rate = completed / elapsed if elapsed > 0 else 0
-            log.info(
-                "%d/%d [OK] | %.1f jobs/min | %s",
-                completed, len(jobs), rate * 60, str(job.get("title", ""))[:40],
-            )
-        else:
-            error_count += 1 if outcome.status == "error" else 0
-            set_stage_state(
-                conn,
-                url,
-                "cover",
-                "failed",
-                attempt_count=1,
-                started_at=started_at,
-                finished_at=finished_at,
-                error_code="COVER_FAILED",
-                error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-                retryable=True,
-                next_action=f"jobhunter retry cover {url}",
-            )
-            record_job_event(
-                conn,
-                url,
-                "cover",
-                "StageFailed",
-                level="error",
-                message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-            )
-
-    conn.commit()
-    elapsed = time.time() - t0
-    log.info(
-        "Cover letters done in %.1fs: %d generated, %d errors", elapsed, saved, error_count
+    set_stage_state(
+        conn,
+        url,
+        "cover",
+        "failed",
+        attempt_count=1,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_code="COVER_FAILED",
+        error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+        retryable=True,
+        next_action=f"jobhunter retry cover {url}",
     )
-
+    record_job_event(
+        conn,
+        url,
+        "cover",
+        "StageFailed",
+        level="error",
+        message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+    )
+    conn.commit()
     return {
-        "generated": saved,
-        "errors": error_count,
+        "url": url,
+        "status": outcome.status,
+        "generated": 0,
+        "errors": 1 if outcome.status == "error" else 0,
         "elapsed": elapsed,
+        "error": outcome.error,
     }
+
+
+def _cover_stage_succeeded(conn, job_url: str) -> bool:
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'cover'",
+        (job_url,),
+    ).fetchone()
+    if row is None:
+        return False
+    return str(row["state"] if hasattr(row, "keys") else row[0]) == "succeeded"
 
 
 __all__ = [
     "_get_resume_text_for_job",
+    "cover_letter_by_url",
     "generate_cover_letter",
-    "run_cover_letters",
 ]

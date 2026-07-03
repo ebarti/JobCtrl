@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from temporalio.common import WorkflowIDConflictPolicy
 
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
@@ -27,6 +28,7 @@ from jobhunter.materials.activities import CoverActivityInput, TailorActivityInp
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline import workflow as workflow_mod
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
+from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobhunter.scoring import activities as scoring_activities_mod
 from jobhunter.scoring.activities import ScoreActivityInput, score_activity
 
@@ -781,12 +783,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "dryRun": True,
             },
             {
-                "stages": ["score"],
-                "limit": 1,
+                "steps": ["score"],
                 "rescore": True,
-                "retailor": False,
                 "job_url": "https://example.com/job/score",
-                "dry_run": True,
             },
         ),
         (
@@ -830,12 +829,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeMinScore": 0.9,
             },
             {
-                "stages": ["tailor", "cover"],
-                "limit": 1,
-                "rescore": False,
+                "steps": ["tailor", "cover", "pdf"],
                 "retailor": False,
                 "job_url": "https://example.com/job/tailor",
-                "dry_run": True,
                 "allow_low_fit_override": True,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
@@ -856,12 +852,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeMinScore": 0.9,
             },
             {
-                "stages": ["tailor", "cover"],
-                "limit": 1,
-                "rescore": False,
+                "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
                 "job_url": "https://example.com/job/tailor",
-                "dry_run": True,
                 "suppress_existing_artifacts": False,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
@@ -877,12 +870,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "jobUrl": "https://example.com/job/tailor",
             },
             {
-                "stages": ["tailor", "cover"],
-                "limit": 1,
-                "rescore": False,
+                "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
                 "job_url": "https://example.com/job/tailor",
-                "dry_run": False,
                 "suppress_existing_artifacts": False,
             },
         ),
@@ -963,14 +953,70 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
         "firstExecutionRunId": "maintenance-run",
     }
     assert len(seen) == 1
-    assert seen[0].workflow is JobPipelineWorkflow
     (payload,) = seen[0].args
-    assert isinstance(payload, JobPipelineWorkflowInput)
+    if method in {"rescore_job", "tailor_job", "retailor_job"}:
+        assert seen[0].workflow is JobPreparationWorkflow
+        assert isinstance(payload, JobPreparationInput)
+        assert seen[0].workflow_id == f"prep-{payload.idempotency_key}"
+    else:
+        assert seen[0].workflow is JobPipelineWorkflow
+        assert isinstance(payload, JobPipelineWorkflowInput)
+        assert payload.expected_app_dir == "/tmp/jobhunter"
+        assert payload.expected_db_path == "/tmp/jobhunter/jobhunter.db"
     for name, value in expected_payload.items():
         assert getattr(payload, name) == value
     assert payload.tenant_id == "local"
-    assert payload.expected_app_dir == "/tmp/jobhunter"
-    assert payload.expected_db_path == "/tmp/jobhunter/jobhunter.db"
+
+
+def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicate_artifacts(
+    tmp_db: Path,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/job/retailor-idempotent"
+    _seed_job(tmp_db, job_url)
+    _seed_tailoring_policy(conn, version=3)
+    _seed_tailored_artifact(conn, job_url, policy_version=3)
+    before = conn.execute(
+        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
+        (job_url,),
+    ).fetchone()
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle(spec.workflow_id or "prep-missing", "prep-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    request = JsonRpcRequest(
+        method="retailor_job",
+        params={
+            "tenantId": "local",
+            "expectedAppDir": "/tmp/jobhunter",
+            "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+            "jobUrl": job_url,
+            "dryRun": False,
+        },
+        id=1,
+    )
+
+    first = server.dispatch(request)
+    second = server.dispatch(request)
+
+    assert first is not None
+    assert second is not None
+    assert len(seen) == 2
+    assert seen[0].workflow is JobPreparationWorkflow
+    assert seen[1].workflow is JobPreparationWorkflow
+    assert seen[0].workflow_id == seen[1].workflow_id
+    assert seen[0].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
+    assert seen[1].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
+    after = conn.execute(
+        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
+        (job_url,),
+    ).fetchone()
+    assert tuple(before) == (1, 1)
+    assert tuple(after) == tuple(before)
 
 
 @pytest.mark.asyncio
