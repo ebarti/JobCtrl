@@ -120,6 +120,10 @@ _WORKFLOW_TERMINAL_STATUS: dict[str, str] = {
     "WorkflowTimedOut": "timed_out",
     "WorkflowTerminated": "terminated",
 }
+# The terminal statuses those events fold to. The fold is first-terminal-wins:
+# once a run is terminal, a later terminal ``Workflow*`` event for the same
+# ``workflowId`` cannot replace it (see ``_project_workflow_run``).
+_WORKFLOW_TERMINAL_STATUSES: frozenset[str] = frozenset(_WORKFLOW_TERMINAL_STATUS.values())
 POSTED_COMPENSATION_WARNING_MESSAGES = {
     "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
     "bonus_component": "The source text mentions bonus compensation.",
@@ -1810,9 +1814,17 @@ class ProjectionBuilder:
                 # Only regress to in_progress if a terminal event has not
                 # already been folded (events are ordered, so this is a
                 # defensive guard against duplicate start markers).
-                if status not in _WORKFLOW_TERMINAL_STATUS.values():
+                if status not in _WORKFLOW_TERMINAL_STATUSES:
                     status = "in_progress"
             elif event_type in _WORKFLOW_TERMINAL_STATUS:
+                # First-terminal-wins: once a terminal event has been folded, a
+                # later terminal event for the same workflow_id is still recorded
+                # in the timeline (above) but must NOT replace the first terminal
+                # outcome. This is the fold-side backstop for a reconciler
+                # describe (COMPLETED) racing a finalize WorkflowFailed, which
+                # would otherwise flip failed -> succeeded (M-1 review).
+                if status in _WORKFLOW_TERMINAL_STATUSES:
+                    continue
                 status = _WORKFLOW_TERMINAL_STATUS[event_type]
                 finished_at = (
                     payload.get("finishedAt")

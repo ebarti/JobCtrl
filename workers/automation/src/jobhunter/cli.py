@@ -1315,9 +1315,9 @@ def rpc() -> None:
 
     Each line on stdin must be a single JSON-RPC request envelope; each
     response is written as a single line on stdout.  Used by the TS API to
-    drive complex commands (Phase 9 onward) — Phase 3 ships a small handler
-    set: ``reset_stage``, ``mark_applied``, ``mark_skipped``, ``cancel_stage``,
-    ``run_stage``, ``apply``, ``profile_import``.
+    drive workflow-backed commands (``run_stage``, ``apply``, tailor / rescore)
+    and local actions (``profile_import``); ``register_default_handlers`` owns
+    the authoritative method set.
     """
     _bootstrap()
     from jobhunter.infrastructure.observability import shutdown_otel
@@ -1588,25 +1588,60 @@ def _record_reconciled_outcome(
     from jobhunter.database import get_connection
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+    from jobhunter.infrastructure.projections.sqlite_projection_store import (
+        SqliteProjectionStore,
+    )
     from jobhunter.infrastructure.temporal.finalize import (
         WorkflowOutcomeInput,
         build_workflow_outcome_event,
     )
     from jobhunter.state import record_job_event, utc_now
 
-    event = build_workflow_outcome_event(
-        WorkflowOutcomeInput(
-            tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
-            workflow_id=str(run.get("workflow_id") or ""),
-            workflow_type=str(run.get("workflow_type") or ""),
-            status=status,
-            error_message=error_message,
-            finished_at=utc_now(),
-            temporal_run_id=temporal_run_id,
+    workflow_id = str(run.get("workflow_id") or "")
+    if not workflow_id:
+        return
+
+    # The reconciler is a backstop for runs stuck open, never an overwriter of
+    # terminal truth. Both workflows encode stage/apply failure in their return
+    # value, so a failing run closes COMPLETED on the Temporal side even though
+    # finalize already recorded WorkflowFailed. Take the write lock first, then
+    # re-read the row: if a finalize landed the real terminal outcome between the
+    # open-runs snapshot and now, leave it rather than describe over it (M-1
+    # review). Layer 2 (the first-terminal-wins fold) backstops any event that
+    # slips past this check.
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute(
+            "SELECT status FROM workflow_run_projections WHERE workflow_id = ?",
+            (workflow_id,),
+        ).fetchone()
+        if (
+            existing is not None
+            and str(existing["status"]) in SqliteProjectionStore.WORKFLOW_TERMINAL_STATUSES
+        ):
+            if own_txn:
+                conn.rollback()
+            return
+        event = build_workflow_outcome_event(
+            WorkflowOutcomeInput(
+                tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
+                workflow_id=workflow_id,
+                workflow_type=str(run.get("workflow_type") or ""),
+                status=status,
+                error_message=error_message,
+                finished_at=utc_now(),
+                temporal_run_id=temporal_run_id,
+            )
         )
-    )
-    record_job_event(conn, None, "workflow", event.event_type, payload=dict(event.payload))
-    conn.commit()
+        record_job_event(conn, None, "workflow", event.event_type, payload=dict(event.payload))
+        if own_txn:
+            conn.commit()
+    except Exception:
+        if own_txn:
+            conn.rollback()
+        raise
     ProjectionBuilder(conn_factory=get_connection).refresh()
 
 

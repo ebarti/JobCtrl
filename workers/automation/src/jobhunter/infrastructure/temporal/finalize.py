@@ -1,13 +1,18 @@
 """Finalize activities + workflow-side helpers for Temporal loop closure (P0).
 
-Every workflow emits a ``WorkflowStarted`` marker at the top and exactly one
-terminal event (``WorkflowCompleted`` / ``WorkflowFailed`` /
-``WorkflowCanceled``) through a finalize activity that always runs — including
-the cancellation path, via ``asyncio.shield`` so the record survives the
-cancel. The activity reuses ``record_job_event`` and refreshes the projection,
-so the run terminalizes in the read-model without a trigger-coupled reaper.
-Timeouts / terminations / worker crashes (where no finalize can run) are
-backstopped by the describe-based reconciler in the worker heartbeat loop.
+Every workflow emits a ``WorkflowStarted`` marker at the top and, on its
+normal-completion and failure exit paths, exactly one terminal event
+(``WorkflowCompleted`` / ``WorkflowFailed``) through a finalize activity. The
+activity reuses ``record_job_event`` and refreshes the projection, so the run
+terminalizes in the read-model without a trigger-coupled reaper.
+
+Cancellation is deliberately NOT recorded here: Temporal cancels
+newly-scheduled activities while a workflow is cancelling, so a finalize
+activity cannot reliably run on the cancel path (there is no ``asyncio.shield``
+that would let it). Cancellation — with timeouts, terminations, and worker
+crashes where no finalize can run — is backstopped by the describe-based
+reconciler in the worker heartbeat loop, which maps the closed/absent Temporal
+execution to the matching terminal ``Workflow*`` event.
 
 Workflow bodies stay deterministic: all SQLite/clock/uuid IO happens inside the
 activities; the helpers only read ``workflow.info()`` / ``workflow.now()``.

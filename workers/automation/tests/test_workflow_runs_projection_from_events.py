@@ -196,6 +196,95 @@ def test_canceled_event_terminates_row(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "status") == "canceled"
 
 
+def test_fold_is_first_terminal_wins(conn: sqlite3.Connection) -> None:
+    """A later terminal event must not overwrite the first terminal (M-1 review).
+
+    Root cause: ``JobPipelineWorkflow`` / ``ApplyWorkflow`` encode stage/apply
+    failure in their return value, so the Temporal execution closes COMPLETED
+    while finalize already recorded ``WorkflowFailed``. A reconciler describe
+    (COMPLETED) racing that finalize once appended ``WorkflowCompleted`` and the
+    last-terminal-wins fold flipped ``failed`` -> ``succeeded``. The fold is now
+    first-terminal-wins: the first terminal event owns the run's status.
+    """
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(workflow_id="run-race", workflow_type="ApplyWorkflow"),
+        ),
+    )
+    _record(
+        conn,
+        create_workflow_failed(
+            LOCAL_TENANT,
+            WorkflowFailedPayload(
+                workflow_id="run-race",
+                workflow_type="ApplyWorkflow",
+                error_code="apply_failed",
+                error_message="boom",
+                finished_at="2026-05-04T13:02:00+00:00",
+            ),
+        ),
+    )
+    # A stray later terminal for the same id (mis-emitted / reconciler race).
+    _record(
+        conn,
+        create_workflow_completed(
+            LOCAL_TENANT,
+            WorkflowCompletedPayload(
+                workflow_id="run-race",
+                workflow_type="ApplyWorkflow",
+                finished_at="2026-05-04T13:03:00+00:00",
+            ),
+        ),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT status, error_message FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-race",),
+    ).fetchone()
+    # First terminal (WorkflowFailed) wins; the later WorkflowCompleted does not
+    # flip it, and the first terminal's error detail is preserved.
+    assert _row_value(row, "status") == "failed"
+    assert _row_value(row, "error_message") == "boom"
+
+
+def test_outcome_without_start_marker_still_terminalizes(conn: sqlite3.Connection) -> None:
+    """A terminal outcome with no preceding ``WorkflowStarted`` still lands a row.
+
+    Regression (L-2 review): the fold is create-if-missing from the outcome
+    event, so a run whose start marker never recorded still terminalizes in the
+    read-model (giving the reconciler / UI a row) rather than vanishing.
+    """
+    _record(
+        conn,
+        create_workflow_failed(
+            LOCAL_TENANT,
+            WorkflowFailedPayload(
+                workflow_id="run-no-start",
+                workflow_type="ApplyWorkflow",
+                error_code="workflow_error",
+                error_message="died before the start marker recorded",
+                finished_at="2026-05-04T13:09:00+00:00",
+            ),
+        ),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT status, workflow_type FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-no-start",),
+    ).fetchone()
+    assert row is not None
+    assert _row_value(row, "status") == "failed"
+    assert _row_value(row, "workflow_type") == "ApplyWorkflow"
+
+
 def test_timeline_collected_and_rebuild_deterministic(conn: sqlite3.Connection) -> None:
     _record(
         conn,

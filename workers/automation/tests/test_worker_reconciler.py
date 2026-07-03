@@ -15,7 +15,7 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
-from jobhunter.cli import _reconcile_workflow_runs
+from jobhunter.cli import _reconcile_workflow_runs, _record_reconciled_outcome
 from jobhunter.database import get_connection
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import record_job_event
@@ -114,6 +114,58 @@ async def test_reconciler_terminalizes_closed_and_notfound_leaves_running() -> N
     assert "WorkflowTerminated" in _events(conn, notfound_id)
     # Still RUNNING → untouched.
     assert _status(conn, running_id) == "in_progress"
+
+
+def _record_terminal(conn, workflow_id: str, event_type: str, status: str) -> None:
+    record_job_event(
+        conn,
+        None,
+        "workflow",
+        event_type,
+        payload={
+            "tenantId": "local",
+            "workflowId": workflow_id,
+            "workflowType": "ApplyWorkflow",
+            "status": status,
+            "errorCode": "apply_failed",
+            "errorMessage": "boom",
+            "finishedAt": "2026-05-04T13:02:00+00:00",
+        },
+    )
+    conn.commit()
+    ProjectionBuilder(conn_factory=get_connection).refresh()
+
+
+def test_reconciler_does_not_overwrite_already_terminal_row() -> None:
+    """The reconciler is a backstop for open rows, never an overwriter of
+    terminal truth (M-1 review).
+
+    A workflow whose finalize recorded ``WorkflowFailed`` closes COMPLETED on
+    the Temporal side (stage/apply failure is encoded in the return value). If
+    the reconciler acts on a stale open-runs snapshot and tries to record
+    ``succeeded``, Layer 1 re-reads the row under the write lock and skips —
+    no ``WorkflowCompleted`` is emitted and the row stays ``failed``.
+    """
+    conn = get_connection()
+    failed_id = f"run-{uuid.uuid4().hex}"
+    _seed_open_run(conn, failed_id, workflow_type="ApplyWorkflow")
+    # finalize landed the real terminal outcome after the reconciler snapshotted
+    # the run as still-open.
+    _record_terminal(conn, failed_id, "WorkflowFailed", "failed")
+    assert _status(conn, failed_id) == "failed"
+
+    # Reconciler acts on its stale snapshot (run looked in_progress) and tries to
+    # record succeeded, e.g. because describe returned COMPLETED.
+    stale_run = {
+        "workflow_id": failed_id,
+        "tenant_id": "local",
+        "workflow_type": "ApplyWorkflow",
+    }
+    _record_reconciled_outcome(conn, stale_run, status="succeeded")
+
+    assert _status(conn, failed_id) == "failed"
+    # Layer 1 skipped before writing, so no succeeded event even reaches the log.
+    assert "WorkflowCompleted" not in _events(conn, failed_id)
 
 
 @pytest.mark.asyncio

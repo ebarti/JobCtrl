@@ -441,8 +441,9 @@ def make_cancel_run(canceler: WorkflowCanceler):
     """Build a ``cancel_run`` handler bound to *canceler*.
 
     Cooperative cancellation path — signals the workflow runtime to cancel
-    the in-flight run.  See :func:`cancel_stage` for the post-hoc state-flip
-    path that does not touch the workflow runtime.
+    the in-flight run. (The post-hoc state-flip cancel that marks a stage
+    ``canceled`` without touching the runtime lives in the TS write-model's
+    ``cancelJobAction``, not on this JSON-RPC surface.)
     """
 
     def cancel_run(params: dict[str, Any]) -> dict[str, Any]:
