@@ -123,7 +123,12 @@ describe("local TypeScript API", () => {
 
     await createJobHunterApiClient().health();
 
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8766/v1/health", { method: "GET" });
+    // The client attaches an AbortSignal (per-request timeout) to every fetch;
+    // assert the URL + method and ignore the signal implementation detail.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/health",
+      expect.objectContaining({ method: "GET" }),
+    );
     fetchMock.mockRestore();
   });
 

@@ -150,11 +150,15 @@ export interface HealthResponse {
   };
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
 export class JobHunterApiClient {
   readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
 
-  constructor(baseUrl = defaultBaseUrl()) {
+  constructor(baseUrl = defaultBaseUrl(), requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   health(): Promise<HealthResponse> {
@@ -654,7 +658,21 @@ export class JobHunterApiClient {
       init.body = JSON.stringify(options.body);
       init.headers = { "content-type": "application/json" };
     }
-    const response = await fetch(href, init);
+    // Bound every request with an AbortController so a stuck API call (e.g. the
+    // API waiting on a hung worker) fails cleanly instead of freezing the tab.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(href, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`JobHunter API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       throw new JobHunterApiError(response.status, response.statusText);
     }

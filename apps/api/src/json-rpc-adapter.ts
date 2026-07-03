@@ -38,7 +38,16 @@ export interface JsonRpcCallOptions {
   uvBinary?: string;
   /** Override the worker project directory. Useful for tests. */
   projectDir?: string;
+  /**
+   * Per-request timeout in ms. A dead or hung worker handler would otherwise
+   * leave the request pending forever; on timeout the pending entry is
+   * dropped and the promise rejects so the HTTP request can fail cleanly
+   * instead of hanging. Generous by default so legitimate long syncs finish.
+   */
+  requestTimeoutMs?: number;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 export interface JsonRpcDispatcher {
   call(method: RpcMethod, params: Record<string, unknown>): Promise<JsonRpcResponse>;
@@ -48,6 +57,7 @@ export interface JsonRpcDispatcher {
 interface PendingRequest {
   resolve: (response: JsonRpcResponse) => void;
   reject: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
@@ -63,6 +73,7 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
       appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
       uvBinary: options.uvBinary ?? "uv",
       projectDir: options.projectDir ?? AUTOMATION_PROJECT_DIR,
+      requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     };
   }
 
@@ -72,11 +83,22 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
     const id = this.nextRequestId++;
     const request = buildJsonRpcRequest(method, params, id);
     return new Promise<JsonRpcResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) {
+          reject(new Error(`JSON-RPC request '${method}' timed out after ${this.options.requestTimeoutMs}ms`));
+        }
+      }, this.options.requestTimeoutMs);
+      // Don't let a pending timeout keep the process alive on its own.
+      timer.unref?.();
+      this.pending.set(id, { resolve, reject, timer });
       const line = `${JSON.stringify(request)}\n`;
       child.stdin.write(line, (writeError) => {
         if (writeError) {
-          this.pending.delete(id);
+          const entry = this.pending.get(id);
+          if (entry) {
+            clearTimeout(entry.timer);
+            this.pending.delete(id);
+          }
           reject(writeError);
         }
       });
@@ -96,6 +118,7 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
       child.kill();
     }
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
       pending.reject(new Error("Adapter closed before response."));
     }
     this.pending.clear();
@@ -161,12 +184,14 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
     if (id === null || id === undefined) return; // notification
     const pending = this.pending.get(id);
     if (!pending) return;
+    clearTimeout(pending.timer);
     this.pending.delete(id);
     pending.resolve(response);
   }
 
   private failAllPending(error: Error): void {
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
