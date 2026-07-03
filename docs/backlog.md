@@ -23,6 +23,26 @@ frontend a11y deferrals, and tooling / CI enforcement gaps. Hosted product,
 hosted data, hosted automation, packaging, and cloud-mode frontend adapters
 remain deferred until the local product is solid.
 
+## Release Hardening Follow-Ups
+
+- Add a shared schema-contract check for database tables initialized by both
+  the TypeScript API and Python worker so cross-runtime table ownership cannot
+  drift silently.
+- Harden local file and artifact handling with canonical artifact roots,
+  storage provenance, containment checks, and explicit retention/cleanup
+  controls for generated prompts, email-derived evidence, logs, telemetry
+  payloads, and other sensitive local artifacts.
+- Expand platform and dependency health checks for local-only integrations:
+  credential storage support by OS, browser/PDF/Temporal readiness, external
+  board dependencies, and bounded live-smoke diagnostics.
+- Add local scalability instrumentation and budgets for projection refresh,
+  SSE polling, in-memory list/search paths, apply-review preview reads,
+  cross-process RPC calls, long-running workflow units, and LLM latency/cost.
+- Clarify quick versus full local verification by adding a root QA command or
+  equivalent documented alias that runs the full local quality bar, including
+  web unit tests, type-level tests, E2E where applicable, lint, and package
+  build checks.
+
 ## Local Product Validation
 
 ### Frontend/API Parity
