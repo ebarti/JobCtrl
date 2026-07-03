@@ -1,9 +1,8 @@
+# W2.1 restores tag publishing after the PyPI distribution rename.
 name: Publish to PyPI
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   publish:
