@@ -837,7 +837,11 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   NOT_FOUND executions (dev-server history loss → `WorkflowTerminated`), leaving
   RUNNING rows alone. This is what makes a `kill -9`'d, timed-out, or cancelled
   worker's runs terminalize on their own — replacing the trigger-coupled
-  reapers. (Cancellation of the pipeline/apply workflows currently surfaces as a
+  reapers. A backstop-closed run carries no app-level error detail, so the
+  reconciler stamps its own reason — a `reconciled_*` `errorCode`
+  (`reconciled_terminated` / `reconciled_not_found` / `reconciled_closed_<status>`)
+  plus a human-readable message quoting the Temporal execution status — so the
+  `/runs` UI never shows a reconciler-terminalized run with no explanation. (Cancellation of the pipeline/apply workflows currently surfaces as a
   visible failed terminal because those workflows catch the cancellation
   `ActivityError` as a stage failure; true `WorkflowCanceled` status is P1/CC6
   cancellation work, and the reconciler already maps genuinely-CANCELED

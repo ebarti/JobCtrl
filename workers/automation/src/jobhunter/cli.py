@@ -1511,6 +1511,24 @@ def _reconcile_status_map() -> dict:
     }
 
 
+def _reconciled_reason(status: str, describe_status: Any) -> tuple[str | None, str | None]:
+    """Reason fields for a row the reconciler terminalizes.
+
+    A backstop-closed run carries no app-level error detail (finalize never ran
+    on it), so without this the ``/runs`` UI shows a terminated run with no
+    explanation. The reconciler stamps its own provenance instead: an
+    ``errorCode`` naming why it closed the row and a human-readable message
+    quoting the Temporal execution status. A reconciled success needs no reason
+    and keeps both fields null. The NOT_FOUND code (``reconciled_not_found``) is
+    set at its call site in ``_reconcile_one_workflow_run``.
+    """
+    if status == "succeeded":
+        return None, None
+    name = getattr(describe_status, "name", str(describe_status))
+    code = "reconciled_terminated" if status == "terminated" else f"reconciled_closed_{status}"
+    return code, f"The reconciler closed this run: the Temporal execution reported {name}."
+
+
 async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | None = None) -> int:
     """Terminalize open ``workflow_run_projections`` rows by describing them.
 
@@ -1554,9 +1572,10 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
                 conn,
                 run,
                 status="terminated",
+                error_code="reconciled_not_found",
                 error_message=(
-                    "Workflow execution not found on the Temporal server "
-                    "(dev-server history loss)."
+                    "The reconciler closed this run: its Temporal execution no "
+                    "longer exists on the server (dev-server history loss)."
                 ),
                 temporal_run_id=run.get("temporal_run_id"),
             )
@@ -1568,10 +1587,13 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
     if status is None:
         # RUNNING / CONTINUED_AS_NEW — still live, leave it.
         return False
+    error_code, error_message = _reconciled_reason(status, description.status)
     _record_reconciled_outcome(
         conn,
         run,
         status=status,
+        error_code=error_code,
+        error_message=error_message,
         temporal_run_id=description.run_id or run.get("temporal_run_id"),
     )
     return True
@@ -1583,6 +1605,7 @@ def _record_reconciled_outcome(
     *,
     status: str,
     temporal_run_id: str | None = None,
+    error_code: str | None = None,
     error_message: str | None = None,
 ) -> None:
     from jobhunter.database import get_connection
@@ -1630,6 +1653,7 @@ def _record_reconciled_outcome(
                 workflow_id=workflow_id,
                 workflow_type=str(run.get("workflow_type") or ""),
                 status=status,
+                error_code=error_code,
                 error_message=error_message,
                 finished_at=utc_now(),
                 temporal_run_id=temporal_run_id,

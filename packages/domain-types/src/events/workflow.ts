@@ -95,6 +95,10 @@ export interface WorkflowCanceledPayload {
   readonly workflowId: string;
   readonly workflowType: string;
   readonly status: WorkflowLifecycleStatus;
+  // Empty on the normal cancel path; the describe-based reconciler fills these
+  // with its own provenance when it terminalizes a CANCELED execution.
+  readonly errorCode: string;
+  readonly errorMessage: string;
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
   readonly temporalRunId: string | null;
@@ -115,6 +119,7 @@ export interface WorkflowTimedOutPayload {
   readonly workflowId: string;
   readonly workflowType: string;
   readonly status: WorkflowLifecycleStatus;
+  readonly errorCode: string;
   readonly errorMessage: string;
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
@@ -136,6 +141,7 @@ export interface WorkflowTerminatedPayload {
   readonly workflowId: string;
   readonly workflowType: string;
   readonly status: WorkflowLifecycleStatus;
+  readonly errorCode: string;
   readonly errorMessage: string;
   readonly finishedAt: string | null;
   readonly durationMs: number | null;

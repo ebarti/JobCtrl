@@ -85,6 +85,16 @@ def _events(conn, workflow_id: str) -> list[str]:
     return [event.get("eventType") for event in json.loads(row["events_json"] or "[]")]
 
 
+def _reason(conn, workflow_id: str) -> tuple[str | None, str | None]:
+    row = conn.execute(
+        "SELECT error_code, error_message FROM workflow_run_projections WHERE workflow_id = ?",
+        (workflow_id,),
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row["error_code"], row["error_message"]
+
+
 @pytest.mark.asyncio
 async def test_reconciler_terminalizes_closed_and_notfound_leaves_running() -> None:
     conn = get_connection()
@@ -109,9 +119,17 @@ async def test_reconciler_terminalizes_closed_and_notfound_leaves_running() -> N
     # CLOSED (FAILED) execution → failed + WorkflowFailed emitted.
     assert _status(conn, closed_id) == "failed"
     assert "WorkflowFailed" in _events(conn, closed_id)
+    # A reconciler-closed row carries a reason so the UI never shows a terminal
+    # run with no explanation (observability review).
+    closed_code, closed_message = _reason(conn, closed_id)
+    assert closed_code == "reconciled_closed_failed"
+    assert closed_message and "FAILED" in closed_message
     # NOT_FOUND (dev-server data loss) → terminated + WorkflowTerminated.
     assert _status(conn, notfound_id) == "terminated"
     assert "WorkflowTerminated" in _events(conn, notfound_id)
+    notfound_code, notfound_message = _reason(conn, notfound_id)
+    assert notfound_code == "reconciled_not_found"
+    assert notfound_message and "no longer exists" in notfound_message
     # Still RUNNING → untouched.
     assert _status(conn, running_id) == "in_progress"
 
@@ -179,3 +197,8 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
 
     assert _status(conn, canceled_id) == "canceled"
     assert "WorkflowCanceled" in _events(conn, canceled_id)
+    # WorkflowCanceled carries no app-level error, so the reconciler stamps its
+    # own reason (observability review).
+    canceled_code, canceled_message = _reason(conn, canceled_id)
+    assert canceled_code == "reconciled_closed_canceled"
+    assert canceled_message and "CANCELED" in canceled_message

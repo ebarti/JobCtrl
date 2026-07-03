@@ -123,6 +123,11 @@ def create_workflow_failed(tenant_id: TenantId, payload: WorkflowFailedPayload) 
 class WorkflowCanceledPayload:
     workflow_id: str
     workflow_type: str
+    # Cancellation carries no app-level failure, so these are empty on the normal
+    # path; the describe-based reconciler fills them in with its own provenance
+    # (why it closed the row) when it terminalizes a CANCELED execution.
+    error_code: str = ""
+    error_message: str = ""
     finished_at: str | None = None
     duration_ms: int | None = None
     temporal_run_id: str | None = None
@@ -137,6 +142,8 @@ def create_workflow_canceled(tenant_id: TenantId, payload: WorkflowCanceledPaylo
             "workflowId": payload.workflow_id,
             "workflowType": payload.workflow_type,
             "status": WORKFLOW_STATUS_CANCELED,
+            "errorCode": payload.error_code,
+            "errorMessage": payload.error_message,
             "finishedAt": payload.finished_at,
             "durationMs": payload.duration_ms,
             "temporalRunId": payload.temporal_run_id,
@@ -148,6 +155,7 @@ def create_workflow_canceled(tenant_id: TenantId, payload: WorkflowCanceledPaylo
 class WorkflowTimedOutPayload:
     workflow_id: str
     workflow_type: str
+    error_code: str = ""
     error_message: str = ""
     finished_at: str | None = None
     duration_ms: int | None = None
@@ -163,6 +171,7 @@ def create_workflow_timed_out(tenant_id: TenantId, payload: WorkflowTimedOutPayl
             "workflowId": payload.workflow_id,
             "workflowType": payload.workflow_type,
             "status": WORKFLOW_STATUS_TIMED_OUT,
+            "errorCode": payload.error_code,
             "errorMessage": payload.error_message,
             "finishedAt": payload.finished_at,
             "durationMs": payload.duration_ms,
@@ -175,6 +184,7 @@ def create_workflow_timed_out(tenant_id: TenantId, payload: WorkflowTimedOutPayl
 class WorkflowTerminatedPayload:
     workflow_id: str
     workflow_type: str
+    error_code: str = ""
     error_message: str = ""
     finished_at: str | None = None
     duration_ms: int | None = None
@@ -190,6 +200,7 @@ def create_workflow_terminated(tenant_id: TenantId, payload: WorkflowTerminatedP
             "workflowId": payload.workflow_id,
             "workflowType": payload.workflow_type,
             "status": WORKFLOW_STATUS_TERMINATED,
+            "errorCode": payload.error_code,
             "errorMessage": payload.error_message,
             "finishedAt": payload.finished_at,
             "durationMs": payload.duration_ms,

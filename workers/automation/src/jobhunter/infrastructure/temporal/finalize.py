@@ -129,6 +129,8 @@ def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
             WorkflowCanceledPayload(
                 workflow_id=payload.workflow_id,
                 workflow_type=payload.workflow_type,
+                error_code=payload.error_code or "",
+                error_message=payload.error_message or "",
                 finished_at=payload.finished_at,
                 duration_ms=payload.duration_ms,
                 temporal_run_id=payload.temporal_run_id,
@@ -140,6 +142,7 @@ def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
             WorkflowTimedOutPayload(
                 workflow_id=payload.workflow_id,
                 workflow_type=payload.workflow_type,
+                error_code=payload.error_code or "",
                 error_message=payload.error_message or "",
                 finished_at=payload.finished_at,
                 duration_ms=payload.duration_ms,
@@ -152,6 +155,7 @@ def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
             WorkflowTerminatedPayload(
                 workflow_id=payload.workflow_id,
                 workflow_type=payload.workflow_type,
+                error_code=payload.error_code or "",
                 error_message=payload.error_message or "",
                 finished_at=payload.finished_at,
                 duration_ms=payload.duration_ms,
