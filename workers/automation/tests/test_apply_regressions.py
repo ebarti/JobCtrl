@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections import Counter
 from pathlib import Path
 
 from jobhunter.apply import launcher as launcher_module
@@ -863,6 +864,30 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         ).fetchone()
         assert row["state"] == "needs_verification"
         assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
+
+        _insert_review_decision(conn, job_key=job["url"], decision="approve_submit")
+        assert (
+            acquire_job(
+                target_url=job["url"],
+                worker_id=6,
+                run_ctx={"workflow_id": "apply-targeted-reclaim"},
+                approval_required=True,
+            )
+            is None
+        )
+        assert (
+            acquire_job(
+                worker_id=7,
+                run_ctx={"workflow_id": "apply-batch-reclaim"},
+                approval_required=True,
+            )
+            is None
+        )
+        parked = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            (job["url"],),
+        ).fetchone()
+        assert parked["state"] == "needs_verification"
     finally:
         close_connection(db_path)
 
@@ -1123,12 +1148,12 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
     """Reviewer-reported regression (PR 37 High #3): saga events
     (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
     ``AgentResult`` / per-``AgentEvent``) used to be lost because
-    saga checkpoints were not written until run end. The launcher now persists the saga's intermediate
-    timeline into ``job_events`` after the use case returns, so
+    saga checkpoints were not written until run end. The repository now persists
+    the saga's intermediate timeline into ``job_events`` as checkpoints occur, so
     ``apply_run_projections.events_json`` reflects the complete
     timeline.
     """
-    from jobhunter.apply.launcher import _persist_saga_event_timeline
+    from jobhunter.apply.launcher import SqliteApplyRunRepository
     from jobhunter.domain.apply.aggregate import ApplyRun
     from jobhunter.domain.apply.value_objects import (
         Applied,
@@ -1200,9 +1225,8 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             duration_ms=60000,
         )
 
-        # The launcher's helper persists saga events to job_events
-        # keyed by run_id.
-        _persist_saga_event_timeline(run, run_id=run_id)
+        # The repository persists saga events once as the saga checkpoints progress.
+        SqliteApplyRunRepository().save(run)
 
         # Mark the terminal applied result via the launcher.
         mark_result(
@@ -1218,6 +1242,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "WHERE job_url = ? AND stage = 'apply' ORDER BY event_id ASC",
             (job["url"],),
         ).fetchall()
+        counts = Counter(evt["event_type"] for evt in events)
         recorded: dict[str, dict] = {}
         for evt in events:
             payload = json.loads(evt["payload_json"]) if evt["payload_json"] else {}
@@ -1244,6 +1269,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "ToolUse",
         ):
             assert recorded[evt_type].get("run_id") == run_id, (evt_type, recorded[evt_type])
+            assert counts[evt_type] == 1, (evt_type, counts)
 
         # apply_run_projections.events_json carries the full timeline.
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
@@ -1265,6 +1291,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             "ToolUse",
         ):
             assert required in event_types, (required, event_types)
+            assert event_types.count(required) == 1, (required, event_types)
         # The ToolUse payload survives the round-trip into events_json.
         tool_use_entry = next(
             (e for e in events_json if e.get("event_type") == "ToolUse"),

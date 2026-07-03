@@ -7,7 +7,7 @@ different retry policy and parameter shape than the generic pipeline.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -141,8 +141,9 @@ async def test_dry_run_apply_workflow_recovers_when_first_attempt_fails():
 async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(monkeypatch):
     captured = {}
 
-    async def fake_execute_activity(_activity, payload, **_kwargs):
+    async def fake_execute_activity(_activity, payload, **kwargs):
         captured["payload"] = payload
+        captured["timeout"] = kwargs["start_to_close_timeout"]
         return SimpleNamespace(status="ok", error=None, applied=0, failed=0)
 
     monkeypatch.setattr(
@@ -161,6 +162,7 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
     assert result.ok is True
     assert captured["payload"].limit == 25
     assert captured["payload"].continuous is False
+    assert captured["timeout"] == timedelta(hours=1)
 
     class ContinueAsNewRaised(RuntimeError):
         pass
@@ -170,6 +172,9 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
 
     async def fake_outcome(**_kwargs):
         return None
+
+    async def fake_sleep(delay):
+        captured["sleep"] = delay
 
     def fake_continue_as_new(payload):
         captured["continued_payload"] = payload
@@ -190,9 +195,11 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
         "jobhunter.apply.workflow.workflow.continue_as_new",
         fake_continue_as_new,
     )
+    monkeypatch.setattr("jobhunter.apply.workflow.workflow.sleep", fake_sleep)
 
     with pytest.raises(ContinueAsNewRaised):
         await workflow.run(ApplyWorkflowInput(tenant_id="local", continuous=True))
+    assert captured["sleep"] == timedelta(seconds=30)
     assert captured["continued_payload"].continuous is True
 
 

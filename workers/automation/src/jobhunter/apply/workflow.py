@@ -67,6 +67,8 @@ _APPLY_DRY_RUN_RETRY = RetryPolicy(
     maximum_attempts=2,
 )
 _APPLY_TIMEOUT = timedelta(hours=2)
+_APPLY_CONTINUOUS_BATCH_TIMEOUT = timedelta(hours=1)
+_APPLY_CONTINUOUS_EMPTY_POLL_DELAY = timedelta(seconds=30)
 
 
 @workflow.defn(name="ApplyWorkflow")
@@ -113,6 +115,8 @@ class ApplyWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         if payload.continuous:
+            if result.applied + result.failed == 0:
+                await workflow.sleep(_APPLY_CONTINUOUS_EMPTY_POLL_DELAY)
             workflow.continue_as_new(payload)
         return result
 
@@ -136,7 +140,11 @@ class ApplyWorkflow:
                     approval_required=payload.approval_required,
                     continuous=False,
                 ),
-                start_to_close_timeout=_APPLY_TIMEOUT,
+                start_to_close_timeout=(
+                    _APPLY_CONTINUOUS_BATCH_TIMEOUT
+                    if payload.continuous
+                    else _APPLY_TIMEOUT
+                ),
                 retry_policy=_APPLY_DRY_RUN_RETRY if payload.dry_run else _APPLY_LIVE_RETRY,
                 heartbeat_timeout=timedelta(seconds=60),
             )

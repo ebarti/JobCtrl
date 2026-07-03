@@ -154,6 +154,16 @@ def _has_succeeded_apply(conn, url: str) -> bool:
     return row is not None
 
 
+def _has_needs_verification_apply(conn, url: str) -> bool:
+    """True when a live apply is parked for manual verification."""
+    row = conn.execute(
+        "SELECT 1 FROM job_stage_states "
+        "WHERE job_url = ? AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
+        (url,),
+    ).fetchone()
+    return row is not None
+
+
 def _attempt_count_for(conn, url: str) -> int:
     """Return the canonical attempt count from ``job_stage_states.apply``."""
     row = conn.execute(
@@ -281,7 +291,7 @@ def acquire_job(
                       SELECT 1 FROM job_stage_states jss_active
                       WHERE jss_active.job_url = jobs.url
                         AND jss_active.stage = 'apply'
-                        AND jss_active.state IN ('running', 'succeeded')
+                        AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
                   )
                   AND COALESCE(
                       (SELECT jss_a.attempt_count FROM job_stage_states jss_a
@@ -354,6 +364,9 @@ def acquire_job(
         if _has_succeeded_apply(conn, url):
             conn.rollback()
             return None
+        if _has_needs_verification_apply(conn, url):
+            conn.rollback()
+            return None
         attempts = _attempt_count_for(conn, url)
         if attempts >= int(config.DEFAULTS["max_apply_attempts"]):
             conn.rollback()
@@ -383,15 +396,20 @@ def acquire_job(
             (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
         )
         ensure_job_stage_rows(conn, url)
-        # Reset prior terminal state (failed / exhausted / canceled /
-        # skipped) back to pending so the §8.5 state machine accepts
+        # Reset prior retryable terminal state (failed / exhausted /
+        # canceled / skipped) back to pending so the §8.5 state machine accepts
         # the pending → running transition.
         prior_row = conn.execute(
             "SELECT state FROM job_stage_states "
             "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
             (url,),
         ).fetchone()
-        if prior_row is not None and prior_row[0] not in {"pending", "running"}:
+        if prior_row is not None and prior_row[0] not in {
+            "pending",
+            "running",
+            "succeeded",
+            "needs_verification",
+        }:
             set_stage_state(
                 conn,
                 url,
@@ -905,13 +923,10 @@ def _build_use_case():
     Imported lazily — the use case pulls the `Applied`/`Failed` value
     objects, which only the run-job path needs.
 
-    The process-wide ``InProcessEventBus`` is wired in as the publisher
-    so the use case's ``ApplyRunStarted`` / ``ApplyRunEventRecorded`` /
-    ``ApplicationSubmitted`` / ``ApplicationFailed`` events fan out to
-    the bus, which drives the projection builder's wildcard
-    subscriber.  Saga events are also persisted to ``job_events`` from
-    ``run_job`` after the use case returns, so the projection's
-    ``_collect_apply_events_by_run`` sees the full timeline.
+    The process-wide ``InProcessEventBus`` is wired in as the publisher.
+    Saga events are persisted directly by ``SqliteApplyRunRepository`` as
+    the saga checkpoints progress, so ``run_job`` must not replay the
+    aggregate timeline at the end of the run.
     """
     from jobhunter.domain.apply.process_manager import ApplySaga
     from jobhunter.domain.apply.services import ApplyEligibilityChecker
@@ -1069,83 +1084,6 @@ def _persist_agent_artifacts(
     )
 
 
-# Inverted from a safelist (round-2 review): the saga buffer carries
-# both its own wrappers (``SagaStarted`` / ``BrowserLaunched`` /
-# ``AgentStarted`` / ``AgentResult`` / ...) AND the agent stream events
-# the Claude CLI adapter emits (``ClaudeLaunched`` / ``AssistantText`` /
-# ``ToolUse`` / ...).  We want every observed event in
-# ``apply_run_projections.events_json`` so the operator-facing timeline
-# is complete; we only filter the small set of lifecycle events the
-# launcher already wrote directly to ``job_events`` (would otherwise
-# duplicate).
-_LAUNCHER_OWNED_EVENT_TYPES: frozenset[str] = frozenset(
-    {
-        "ApplyRunStarted",        # acquire_job
-        "ApplySubmitIntended",    # SqliteApplyRunRepository
-        "ApplicationSubmitted",   # mark_result(applied)
-        "ApplicationFailed",      # mark_result(failed) + release_lock(orphan)
-        "DryRunCompleted",        # mark_result(dry_run)
-        "ApplyManualSkip",        # acquire_job (manual ATS)
-        "LockReleased",           # release_lock
-    }
-)
-
-
-def _persist_saga_event_timeline(apply_run, *, run_id: str) -> None:
-    """Persist the saga's intermediate timeline into ``job_events``.
-
-    The saga records events on the in-memory ``ApplyRun`` aggregate
-    (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
-    ``AgentTimedOut`` / ``AgentCrashed`` / ``AgentResult`` plus the raw
-    agent-stream events forwarded by the Claude CLI adapter —
-    ``ClaudeLaunched`` / ``AssistantText`` / ``ToolUse``).  The launcher
-    mirrors **every** such event into ``job_events`` keyed by
-    ``run_id`` so the projection's ``_collect_apply_events_by_run``
-    materialises a complete ``apply_run_projections.events_json``
-    timeline.
-
-    Lifecycle events the launcher already wrote directly
-    (``_LAUNCHER_OWNED_EVENT_TYPES``) are filtered out to avoid
-    duplicate rows in ``job_events``.
-    """
-    if apply_run is None:
-        return
-    events = list(getattr(apply_run, "events", []) or [])
-    if not events:
-        return
-    job_url = str(apply_run.job_id)
-    if not job_url:
-        return
-
-    conn = get_connection()
-    try:
-        for event in events:
-            event_type = str(getattr(event, "event_type", "") or "")
-            if not event_type or event_type in _LAUNCHER_OWNED_EVENT_TYPES:
-                continue
-            payload = dict(getattr(event, "payload", {}) or {})
-            payload["run_id"] = str(run_id)
-            record_job_event(
-                conn,
-                job_url,
-                "apply",
-                event_type,
-                level=str(getattr(event, "level", "info") or "info"),
-                message=getattr(event, "message", None),
-                payload=payload,
-                occurred_at=str(getattr(event, "occurred_at", "") or "") or None,
-            )
-        conn.commit()
-    except Exception:  # noqa: BLE001 — timeline persistence must never break the run
-        logger.exception(
-            "Failed to persist saga event timeline for run %s", run_id
-        )
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-
-
 def _result_to_status_string(result) -> str:
     """Map a ``SubmissionResult`` variant back to the legacy status string."""
     from jobhunter.domain.apply.value_objects import (
@@ -1239,12 +1177,6 @@ def run_job(
         run_id=ApplyRunId(run_id),
         worker_dir=worker_dir,
     )
-    # Persist the saga's intermediate event timeline (SagaStarted /
-    # BrowserLaunched / AgentStarted / AgentResult / per-AgentEvent) into
-    # ``job_events`` so the projection's ``_collect_apply_events_by_run``
-    # sees them.  The use case publishes these to the bus too, but the
-    # projection re-reads from ``job_events`` to derive ``apply_run_projections``.
-    _persist_saga_event_timeline(outcome.apply_run, run_id=run_id)
     duration_ms = int((time.time() - start) * 1000)
     if outcome.skipped:
         return "skipped", duration_ms

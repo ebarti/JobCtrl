@@ -18,8 +18,8 @@ const DEFAULT_JOB_LIST_DIR = "desc" as const;
 const STATE_RANK: Record<StageState, number> = {
   failed: 0,
   exhausted: 1,
-  blocked: 2,
-  needs_verification: 3,
+  needs_verification: 2,
+  blocked: 3,
   running: 4,
   queued: 5,
   pending: 6,
