@@ -10,7 +10,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import typer
@@ -1390,6 +1390,7 @@ def worker(
                 queue,
                 heartbeat_worker_id,
                 worker_started_at=worker_started_at,
+                temporal_client=client,
             )
         )
         if recovered:
@@ -1431,6 +1432,7 @@ async def _worker_heartbeat_loop(
     *,
     worker_started_at: datetime | None = None,
     interval_seconds: float = 15.0,
+    temporal_client: Any = None,
 ) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
@@ -1453,6 +1455,20 @@ async def _worker_heartbeat_loop(
                 f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
                 "from prior worker shutdown.[/yellow]"
             )
+        # Describe-based reconciler: terminalize workflow-run rows whose
+        # Temporal execution has closed (or vanished on a dev-server restart)
+        # but never got a finalize outcome — e.g. a killed worker.
+        if temporal_client is not None:
+            try:
+                terminalized = await _reconcile_workflow_runs(temporal_client)
+            except Exception:
+                log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
+            else:
+                if terminalized:
+                    console.print(
+                        f"[yellow]Reconciler terminalized {terminalized} orphaned "
+                        "workflow run(s).[/yellow]"
+                    )
 
 
 def _worker_heartbeat_iteration(
@@ -1478,6 +1494,120 @@ def _worker_heartbeat_iteration(
         started_before=worker_started_at,
     )
     return (recovered_stages, recovered_discovery_runs)
+
+
+# Temporal execution status -> the terminal workflow-run status the reconciler
+# records. RUNNING / CONTINUED_AS_NEW are intentionally absent: those rows are
+# still live and are left untouched.
+def _reconcile_status_map() -> dict:
+    from temporalio.client import WorkflowExecutionStatus
+
+    return {
+        WorkflowExecutionStatus.COMPLETED: "succeeded",
+        WorkflowExecutionStatus.FAILED: "failed",
+        WorkflowExecutionStatus.CANCELED: "canceled",
+        WorkflowExecutionStatus.TERMINATED: "terminated",
+        WorkflowExecutionStatus.TIMED_OUT: "timed_out",
+    }
+
+
+async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | None = None) -> int:
+    """Terminalize open ``workflow_run_projections`` rows by describing them.
+
+    For each non-terminal row: a CLOSED Temporal execution records the matching
+    terminal ``Workflow*`` event; a NOT_FOUND execution (dev-server data loss)
+    records ``WorkflowTerminated``; a still-RUNNING execution is left alone.
+    """
+    from jobhunter.database import get_connection
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.projections.sqlite_projection_store import (
+        SqliteProjectionStore,
+    )
+
+    tenant = tenant_id or LOCAL_TENANT
+    conn = get_connection()
+    try:
+        open_runs = SqliteProjectionStore(conn).open_workflow_runs(str(tenant))
+    except sqlite3.OperationalError:
+        return 0
+
+    terminalized = 0
+    for run in open_runs:
+        if await _reconcile_one_workflow_run(temporal_client, conn, run):
+            terminalized += 1
+    return terminalized
+
+
+async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> bool:
+    from temporalio.service import RPCError, RPCStatusCode
+
+    workflow_id = str(run.get("workflow_id") or "")
+    if not workflow_id:
+        return False
+    try:
+        description = await temporal_client.get_workflow_handle(workflow_id).describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            # The dev server lost its history across a restart; treat the run as
+            # terminated so it stops showing as forever-running.
+            _record_reconciled_outcome(
+                conn,
+                run,
+                status="terminated",
+                error_message=(
+                    "Workflow execution not found on the Temporal server "
+                    "(dev-server history loss)."
+                ),
+                temporal_run_id=run.get("temporal_run_id"),
+            )
+            return True
+        log.warning("describe_workflow failed for %s; will retry", workflow_id, exc_info=True)
+        return False
+
+    status = _reconcile_status_map().get(description.status)
+    if status is None:
+        # RUNNING / CONTINUED_AS_NEW — still live, leave it.
+        return False
+    _record_reconciled_outcome(
+        conn,
+        run,
+        status=status,
+        temporal_run_id=description.run_id or run.get("temporal_run_id"),
+    )
+    return True
+
+
+def _record_reconciled_outcome(
+    conn,
+    run: dict,
+    *,
+    status: str,
+    temporal_run_id: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    from jobhunter.database import get_connection
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+    from jobhunter.infrastructure.temporal.finalize import (
+        WorkflowOutcomeInput,
+        build_workflow_outcome_event,
+    )
+    from jobhunter.state import record_job_event, utc_now
+
+    event = build_workflow_outcome_event(
+        WorkflowOutcomeInput(
+            tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
+            workflow_id=str(run.get("workflow_id") or ""),
+            workflow_type=str(run.get("workflow_type") or ""),
+            status=status,
+            error_message=error_message,
+            finished_at=utc_now(),
+            temporal_run_id=temporal_run_id,
+        )
+    )
+    record_job_event(conn, None, "workflow", event.event_type, payload=dict(event.payload))
+    conn.commit()
+    ProjectionBuilder(conn_factory=get_connection).refresh()
 
 
 @app.command()
