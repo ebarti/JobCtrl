@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import threading
 import time
 from typing import Any
 
 from temporalio import activity
+
+from jobhunter.domain.errors import JobHunterError, TransientNetworkError, to_application_error
 
 
 @dataclass(frozen=True)
@@ -45,45 +48,68 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
-    if payload.job_urls:
+    cancel_event = threading.Event()
+    try:
+        if payload.job_urls:
+            result = await run_blocking_with_heartbeat(
+                lambda: _run_selected_enrichment(payload, cancel_event=cancel_event),
+                starting_message="selected enrich starting",
+                progress_message="selected enrich still running",
+                on_cancel=cancel_event.set,
+                activity_name="enrich",
+            )
+            _raise_on_failure("enrich", result, TransientNetworkError)
+            return EnrichActivityOutput(
+                status=str(result["status"]),
+                elapsed=float(result["elapsed"]),
+                errors=dict(result["errors"]),
+                stages=list(result["stages"]),
+            )
+
+        def _do() -> dict[str, Any]:
+            return run_pipeline(
+                stages=["enrich"],
+                workers=payload.workers,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+                workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
+            )
+
         result = await run_blocking_with_heartbeat(
-            lambda: _run_selected_enrichment(payload),
-            starting_message="selected enrich starting",
-            progress_message="selected enrich still running",
+            _do,
+            starting_message="enrich starting",
+            progress_message="enrich still running",
+            on_cancel=cancel_event.set,
+            activity_name="enrich",
         )
+        stages = list(result.get("stages") or [])
+        errors = dict(result.get("errors") or {})
+        status = stages[0]["status"] if stages else ("failed" if errors else "ok")
+        activity_result = {
+            "status": status,
+            "elapsed": float(result.get("elapsed") or 0.0),
+            "errors": errors,
+            "stages": stages,
+        }
+        _raise_on_failure("enrich", activity_result, TransientNetworkError)
         return EnrichActivityOutput(
-            status=str(result["status"]),
-            elapsed=float(result["elapsed"]),
-            errors=dict(result["errors"]),
-            stages=list(result["stages"]),
+            status=status,
+            elapsed=float(result.get("elapsed") or 0.0),
+            errors=errors,
+            stages=stages,
         )
-
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["enrich"],
-            workers=payload.workers,
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-            workflow_id=payload.workflow_id,
-        )
-
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="enrich starting",
-        progress_message="enrich still running",
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return EnrichActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
+    except JobHunterError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
 
 
-def _run_selected_enrichment(payload: EnrichActivityInput) -> dict[str, Any]:
+def _run_selected_enrichment(
+    payload: EnrichActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobhunter.database import get_connection
     from jobhunter.enrichment.detail import _run_detail_scraper
 
@@ -105,19 +131,21 @@ def _run_selected_enrichment(payload: EnrichActivityInput) -> dict[str, Any]:
         }
 
     t0 = time.time()
-    stats = _run_detail_scraper(
-        get_connection(),
-        max_per_site=payload.limit or None,
-        workers=payload.workers,
-        job_urls=urls,
-    )
+    scraper_kwargs: dict[str, Any] = {
+        "max_per_site": payload.limit or None,
+        "workers": payload.workers,
+        "job_urls": urls,
+    }
+    if cancel_event is not None:
+        scraper_kwargs["cancel_event"] = cancel_event
+    stats = _run_detail_scraper(get_connection(), **scraper_kwargs)
     elapsed = time.time() - t0
     errors = (
         {"enrich": f"{stats.get('error', 0)} enrichment error(s)"}
         if int(stats.get("error") or 0) > 0
         else {}
     )
-    status = "failed" if errors else "ok"
+    status = "partial" if errors else "ok"
     return {
         "status": status,
         "elapsed": elapsed,
@@ -139,3 +167,13 @@ def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
     if limit > 0:
         return unique[:limit]
     return unique
+
+
+_SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
+
+
+def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHunterError]) -> None:
+    status = str(result.get("status") or "ok").lower()
+    if status not in _SUCCESS_STATUSES:
+        detail = result.get("errors") or result.get("error") or result.get("status") or "stage failed"
+        raise error_type(f"{stage} failed: {detail}")

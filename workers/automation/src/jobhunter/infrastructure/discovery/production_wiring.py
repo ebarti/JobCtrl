@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -47,6 +48,7 @@ from jobhunter.domain.discovery.value_objects import (
     SearchStrategy,
     Source,
 )
+from jobhunter.domain.errors import TransientNetworkError
 from jobhunter.domain.enrichment import DetailPage, ExtractionTier, FullDescription, JobEnrichment
 from jobhunter.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
 from jobhunter.domain.enrichment.snapshot_services import (
@@ -471,6 +473,7 @@ def run_scheduled_ats_sources(
     run_id: str,
     http: HttpFetcher | None = None,
     limit: int = 0,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Run Greenhouse, Lever, and Ashby through the Discovery use case."""
     ensure_worker_discovery_tables(conn)
@@ -498,12 +501,16 @@ def run_scheduled_ats_sources(
     query_specs = tuple(_ats_query_specs(search_cfg))
     locations = tuple(_location_values(search_cfg))
     for adapter in adapters:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("ATS discovery canceled")
         if remaining_new is not None and remaining_new <= 0:
             break
         source_processed = False
         seen_postings: set[tuple[str, str, str]] = set()
         try:
             for location in locations:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TransientNetworkError("ATS discovery canceled")
                 if remaining_new is not None and remaining_new <= 0:
                     break
                 for posting in adapter.scrape(
@@ -511,6 +518,8 @@ def run_scheduled_ats_sources(
                     query="",
                     location=location,
                 ):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TransientNetworkError("ATS discovery canceled")
                     if remaining_new is not None and remaining_new <= 0:
                         break
                     if not title_matches_any_query(posting.metadata.title, query_specs):

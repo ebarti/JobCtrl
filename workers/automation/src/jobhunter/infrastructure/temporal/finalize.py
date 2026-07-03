@@ -6,13 +6,12 @@ normal-completion and failure exit paths, exactly one terminal event
 activity reuses ``record_job_event`` and refreshes the projection, so the run
 terminalizes in the read-model without a trigger-coupled reaper.
 
-Cancellation is deliberately NOT recorded here: Temporal cancels
-newly-scheduled activities while a workflow is cancelling, so a finalize
-activity cannot reliably run on the cancel path (there is no ``asyncio.shield``
-that would let it). Cancellation — with timeouts, terminations, and worker
-crashes where no finalize can run — is backstopped by the describe-based
-reconciler in the worker heartbeat loop, which maps the closed/absent Temporal
-execution to the matching terminal ``Workflow*`` event.
+Cancellation is recorded from cooperative workflow cancel handlers with an
+abandon-on-cancel finalize activity so the tiny SQLite write can finish even
+while the workflow is unwinding. Timeouts, terminations, and worker crashes
+where no finalize can run are still backstopped by the describe-based reconciler
+in the worker heartbeat loop, which maps the closed/absent Temporal execution
+to the matching terminal ``Workflow*`` event.
 
 Workflow bodies stay deterministic: all SQLite/clock/uuid IO happens inside the
 activities; the helpers only read ``workflow.info()`` / ``workflow.now()``.
@@ -269,6 +268,7 @@ async def emit_workflow_outcome(
         ),
         start_to_close_timeout=_FINALIZE_TIMEOUT,
         retry_policy=_FINALIZE_RETRY,
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
     )
 
 

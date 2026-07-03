@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +24,7 @@ from jobhunter.database import get_connection, init_db
 from jobhunter.domain.discovery.identity import AtsKind
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobhunter.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobhunter.domain.errors import TransientNetworkError
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -200,6 +202,7 @@ def search_employer(
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> list[dict]:
     """Search an employer, paginate through all results, optionally filter by location."""
     log.info('%s: searching "%s"...', employer["name"], search_text)
@@ -211,6 +214,8 @@ def search_employer(
     total = None
 
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Workday discovery canceled")
         try:
             data = workday_search(employer, search_text, limit=page_size, offset=offset)
         except Exception as e:
@@ -226,6 +231,8 @@ def search_employer(
             break
 
         for j in postings:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
             title = j.get("title", "")
             if query_specs is not None:
                 if not title_matches_any_query(title, query_specs):
@@ -287,7 +294,11 @@ def _fetch_one_detail(employer: dict, job: dict) -> dict:
     return job
 
 
-def fetch_details(employer: dict, jobs: list[dict]) -> list[dict]:
+def fetch_details(
+    employer: dict,
+    jobs: list[dict],
+    cancel_event: threading.Event | None = None,
+) -> list[dict]:
     """Fetch full description + apply URL for each job sequentially."""
     log.info("%s: fetching details for %d jobs...", employer["name"], len(jobs))
 
@@ -296,6 +307,8 @@ def fetch_details(employer: dict, jobs: list[dict]) -> list[dict]:
     t0 = time.time()
 
     for job in jobs:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Workday discovery canceled")
         _fetch_one_detail(employer, job)
         completed += 1
         if "detail_error" in job:
@@ -485,6 +498,7 @@ def _process_one(
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     result = _search_and_fetch_one(
@@ -497,6 +511,7 @@ def _process_one(
         limit=limit,
         max_pages_per_employer=max_pages_per_employer,
         query_specs=query_specs,
+        cancel_event=cancel_event,
     )
     jobs = result.pop("jobs", [])
     if not jobs:
@@ -519,6 +534,7 @@ def _search_and_fetch_one(
     limit: int = 0,
     max_pages_per_employer: int = 25,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
@@ -534,7 +550,10 @@ def _search_and_fetch_one(
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             query_specs=query_specs,
+            cancel_event=cancel_event,
         )
+    except TransientNetworkError:
+        raise
     except Exception as e:
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
         return {"employer": emp["name"], "query": search_text, "found": 0, "new": 0, "existing": 0, "error": str(e)}
@@ -543,7 +562,9 @@ def _search_and_fetch_one(
         return {"employer": emp["name"], "query": search_text, "found": 0, "new": 0, "existing": 0}
 
     try:
-        jobs = fetch_details(emp, jobs)
+        jobs = fetch_details(emp, jobs, cancel_event=cancel_event)
+    except TransientNetworkError:
+        raise
     except Exception as e:
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
@@ -566,6 +587,7 @@ def scrape_employers(
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -596,6 +618,7 @@ def scrape_employers(
         # Parallel mode
         completed = 0
         with ThreadPoolExecutor(max_workers=min(workers, len(valid_keys))) as pool:
+            cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
             if limit > 0:
                 futures = {
                     pool.submit(
@@ -608,6 +631,7 @@ def scrape_employers(
                         reject_locs,
                         limit,
                         max_pages_per_employer,
+                        **cancel_kwargs,
                         **query_kwargs,
                     ): key
                     for key in valid_keys
@@ -625,11 +649,16 @@ def scrape_employers(
                         0,
                         max_pages_per_employer,
                         run_id,
+                        **cancel_kwargs,
                         **query_kwargs,
                     ): key
                     for key in valid_keys
                 }
             for future in as_completed(futures):
+                if cancel_event is not None and cancel_event.is_set():
+                    for pending in futures:
+                        pending.cancel()
+                    raise TransientNetworkError("Workday discovery canceled")
                 result = future.result()
                 completed += 1
                 jobs = result.pop("jobs", [])
@@ -671,9 +700,12 @@ def scrape_employers(
         # Sequential mode (default)
         completed = 0
         for key in valid_keys:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
             remaining = max(limit - total_new, 0) if limit > 0 else 0
             if limit > 0 and remaining <= 0:
                 break
+            cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
             result = _process_one(
                 key,
                 employers,
@@ -684,6 +716,7 @@ def scrape_employers(
                 remaining if limit > 0 else 0,
                 max_pages_per_employer,
                 run_id,
+                **cancel_kwargs,
                 **query_kwargs,
             )
             completed += 1
@@ -722,6 +755,7 @@ def run_workday_discovery(
     workers: int = 1,
     limit: int = 0,
     run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
@@ -788,6 +822,7 @@ def run_workday_discovery(
         max_pages_per_employer=max_pages_per_employer,
         run_id=run_id,
         query_specs=query_specs,
+        cancel_event=cancel_event,
     )
     grand_new += result["new"]
     grand_existing += result["existing"]

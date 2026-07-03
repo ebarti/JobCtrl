@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence
+import os
 from typing import Any
 
 from temporalio import workflow
@@ -15,6 +17,7 @@ from temporalio.worker.workflow_sandbox import (
 )
 
 from jobhunter.infrastructure.temporal.task_queues import JOBHUNTER_TASK_QUEUE
+from jobhunter.infrastructure.temporal.run_in_activity import set_activity_executor
 
 
 @workflow.defn(name="JobHunterBootstrapNoOp")
@@ -58,13 +61,28 @@ def build_worker(
     activity_list: list[Any] = list(activities)
     if not workflow_list and not activity_list:
         workflow_list.append(_BootstrapNoOpWorkflow)
+    max_concurrent_activities = _max_concurrent_activities()
+    activity_executor = ThreadPoolExecutor(max_workers=max_concurrent_activities + 2)
+    set_activity_executor(activity_executor)
     return Worker(
         client,
         task_queue=task_queue,
         workflows=workflow_list,
         activities=activity_list,
+        activity_executor=activity_executor,
+        max_concurrent_activities=max_concurrent_activities,
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=_PASSTHROUGH_RESTRICTIONS,
         ),
         interceptors=[TracingInterceptor()],
     )
+
+
+def _max_concurrent_activities() -> int:
+    raw = os.getenv("JOBHUNTER_MAX_CONCURRENT_ACTIVITIES")
+    if raw is None or raw.strip() == "":
+        return 4
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 4

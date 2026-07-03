@@ -32,10 +32,13 @@ from jobhunter.materials.activities import (
     tailor_activity,
 )
 from jobhunter.pipeline.workflow import (
-    _DEFAULT_RETRY,
     _DEFAULT_TIMEOUT,
+    _COVER_RETRY,
     _DISCOVER_RETRY,
     _DISCOVER_TIMEOUT,
+    _ENRICH_RETRY,
+    _SCORE_RETRY,
+    _TAILOR_RETRY,
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
 )
@@ -49,10 +52,19 @@ _OK_RESULT = {
 }
 
 
-def test_discover_uses_no_overlap_activity_policy():
+def test_stage_retry_policies_are_stage_specific():
     assert _DISCOVER_TIMEOUT > _DEFAULT_TIMEOUT
     assert _DISCOVER_RETRY.maximum_attempts == 1
-    assert _DEFAULT_RETRY.maximum_attempts > _DISCOVER_RETRY.maximum_attempts
+    assert _ENRICH_RETRY.maximum_attempts == 3
+    assert _SCORE_RETRY.maximum_attempts == 3
+    assert _TAILOR_RETRY.maximum_attempts == 3
+    assert _COVER_RETRY.maximum_attempts == 3
+    assert _ENRICH_RETRY.initial_interval == timedelta(seconds=5)
+    assert _SCORE_RETRY.initial_interval == timedelta(seconds=5)
+    assert _TAILOR_RETRY.initial_interval == timedelta(seconds=10)
+    assert _COVER_RETRY.initial_interval == timedelta(seconds=10)
+    assert _TAILOR_RETRY.maximum_interval == timedelta(seconds=120)
+    assert _COVER_RETRY.maximum_interval == timedelta(seconds=120)
 
 
 def _all_activities():
@@ -250,9 +262,11 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
 
     assert result.stages_completed == ["score"]
     assert result.stages_failed == ["tailor"]
-    assert result.failure == "tailor: judge rejected all candidates"
+    assert result.failure is not None
+    assert result.failure.startswith("tailor: llm_transient")
+    assert "judge rejected all candidates" in result.failure
     invoked_stages = [call.kwargs["stages"][0] for call in runner_mock.call_args_list]
-    assert invoked_stages == ["score", "tailor"]
+    assert invoked_stages == ["score", "tailor", "tailor", "tailor"]
 
 
 @pytest.mark.asyncio

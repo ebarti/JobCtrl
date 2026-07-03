@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -63,6 +64,7 @@ from jobhunter.domain.enrichment.value_objects import (
     FullDescription,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.errors import TransientNetworkError
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobhunter.infrastructure.enrichment.sqlite_repository import (
@@ -396,6 +398,12 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     Extraction failures stay retryable: extractor rules, page markup, and
     timing can all change independently of the posting's active state.
     """
+    status = cascade_result.get("http_status")
+    if isinstance(status, int):
+        if status in _RETRYABLE_STATUSES:
+            return True
+        if 400 <= status < 500:
+            return False
     active_state = ActiveState.from_optional(cascade_result.get("active_state"))
     verification_method = str(cascade_result.get("verification_method") or "")
     if (
@@ -561,6 +569,7 @@ def scrape_site_batch(
     jobs: list[tuple],
     delay: float = 2.0,
     max_jobs: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -627,6 +636,8 @@ def scrape_site_batch(
                 page = context.new_page()
 
             for i, (url, title) in enumerate(jobs):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TransientNetworkError("enrichment canceled")
                 log.info(
                     "[%d/%d] %s",
                     i + 1,
@@ -931,6 +942,8 @@ def scrape_site_batch(
                 conn.commit()
 
                 if i < len(jobs) - 1:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TransientNetworkError("enrichment canceled")
                     time.sleep(delay)
 
             if browser is not None:
@@ -1488,6 +1501,7 @@ def _run_detail_scraper(
     max_per_site: int | None = None,
     workers: int = 1,
     job_urls: tuple[str, ...] = (),
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -1567,10 +1581,22 @@ def _run_detail_scraper(
 
     if workers > 1 and len(order) > 1:
         def _scrape_site(site: str) -> dict:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
-            stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site)
+            if cancel_event is None:
+                stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site)
+            else:
+                stats = scrape_site_batch(
+                    None,
+                    site,
+                    jobs,
+                    delay=delay,
+                    max_jobs=max_per_site,
+                    cancel_event=cancel_event,
+                )
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
                 site,
@@ -1586,13 +1612,27 @@ def _run_detail_scraper(
         with ThreadPoolExecutor(max_workers=min(workers, len(order))) as pool:
             futures = {pool.submit(_scrape_site, site): site for site in order}
             for future in as_completed(futures):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TransientNetworkError("enrichment canceled")
                 _merge_stats(future.result())
     else:
         for site in order:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
-            stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
+            if cancel_event is None:
+                stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
+            else:
+                stats = scrape_site_batch(
+                    conn,
+                    site,
+                    jobs,
+                    delay=delay,
+                    max_jobs=max_per_site,
+                    cancel_event=cancel_event,
+                )
             _merge_stats(stats)
             log.info(
                 "Site summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
@@ -1718,7 +1758,11 @@ def stream_detail(
 # ---------------------------------------------------------------------------
 
 
-def run_enrichment(limit: int = 100, workers: int = 1) -> dict:
+def run_enrichment(
+    limit: int = 100,
+    workers: int = 1,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     """Main entry point for detail page enrichment.
 
     Fetches pending jobs from the new ``job_enrichments`` view (rows
@@ -1755,7 +1799,7 @@ def run_enrichment(limit: int = 100, workers: int = 1) -> dict:
             updated = resolve_wttj_urls(conn)
             log.info("WTTJ: %d URLs updated", updated)
 
-    return _run_detail_scraper(conn, max_per_site=limit, workers=workers)
+    return _run_detail_scraper(conn, max_per_site=limit, workers=workers, cancel_event=cancel_event)
 
 
 # Keep helper imports referenced for type-checkers' "unused" warnings —

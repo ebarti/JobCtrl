@@ -17,6 +17,7 @@ import logging
 import re
 import sqlite3
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -36,6 +37,7 @@ from jobhunter.domain.discovery.use_cases import (
     CONTENT_MATCH_CONFIDENCE,
     CONTENT_SHINGLE_MATCH_CONFIDENCE,
 )
+from jobhunter.domain.errors import TransientNetworkError
 from jobhunter.domain.events import (
     DuplicateJobLinkedPayload,
     create_duplicate_job_linked,
@@ -1089,15 +1091,22 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
 # -- Main per-site extraction ------------------------------------------------
 
 
-def _run_one_site(name: str, url: str) -> dict:
+def _raise_if_canceled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("smart-extract discovery canceled")
+
+
+def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = None) -> dict:
     """Run full smart extraction pipeline on one site URL."""
     log.info("=" * 60)
     log.info("%s: %s", name, url)
 
     # Step 1: Collect intelligence
+    _raise_if_canceled(cancel_event)
     log.info("[1] Collecting page intelligence...")
     t0 = time.time()
     intel = collect_page_intelligence(url)
+    _raise_if_canceled(cancel_event)
     collect_time = time.time() - t0
     log.info(
         "Done in %.1fs | JSON-LD: %d | API: %d | testids: %d | cards: %d",
@@ -1123,7 +1132,9 @@ def _run_one_site(name: str, url: str) -> dict:
     _is_captcha = any(s in full_html.lower() for s in _captcha_signals) if full_html else False
     if len(cleaned_check) < 5000 and full_html and not _is_captcha:
         log.info("Cleaned HTML only %s chars -- retrying headful...", f"{len(cleaned_check):,}")
+        _raise_if_canceled(cancel_event)
         intel = collect_page_intelligence(url, headless=False)
+        _raise_if_canceled(cancel_event)
         collect_time = time.time() - t0
         log.info(
             "Headful done in %.1fs | JSON-LD: %d | API: %d",
@@ -1137,10 +1148,13 @@ def _run_one_site(name: str, url: str) -> dict:
     # Step 1.5: Judge filters API responses
     if intel["api_responses"]:
         log.info("[1.5] Judge filtering API responses...")
+        _raise_if_canceled(cancel_event)
         intel["api_responses"] = judge_api_responses(intel["api_responses"])
+        _raise_if_canceled(cancel_event)
         log.info("Kept %d relevant responses", len(intel["api_responses"]))
 
     # Step 2: Strategy selection
+    _raise_if_canceled(cancel_event)
     briefing = format_strategy_briefing(intel)
     log.info("[2] Phase 1: Strategy selection (%s chars briefing)", f"{len(briefing):,}")
 
@@ -1152,6 +1166,7 @@ def _run_one_site(name: str, url: str) -> dict:
         return {"name": name, "status": "LLM_ERROR", "error": str(e)}
 
     log.info("LLM: %d chars, %.1fs", meta["response_chars"], elapsed)
+    _raise_if_canceled(cancel_event)
 
     try:
         plan = extract_json(raw)
@@ -1166,6 +1181,7 @@ def _run_one_site(name: str, url: str) -> dict:
     # Step 3: Execute
     log.info("[3] Executing %s...", strategy)
     try:
+        _raise_if_canceled(cancel_event)
         if strategy == "json_ld":
             log.info("Extraction plan: %s", json.dumps(plan.get("extraction", {}))[:300])
             jobs = execute_json_ld(intel, plan)
@@ -1179,11 +1195,15 @@ def _run_one_site(name: str, url: str) -> dict:
         else:
             log.warning("Unknown strategy: %s", strategy)
             jobs = []
+        _raise_if_canceled(cancel_event)
+    except TransientNetworkError:
+        raise
     except Exception as e:
         log.error("EXECUTION_ERROR: %s", e)
         return {"name": name, "status": "EXEC_ERROR", "error": str(e), "plan": plan}
 
     # Step 4: Report
+    _raise_if_canceled(cancel_event)
     titles = sum(1 for j in jobs if j.get("title"))
     total = len(jobs)
     urls = sum(1 for j in jobs if j.get("url"))
@@ -1328,6 +1348,7 @@ def _run_all(
     reject_locs: list[str],
     workers: int = 1,
     limit: int = 0,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1381,11 +1402,24 @@ def _run_all(
     if workers > 1 and len(targets) > 1:
         # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
-            future_to_target = {pool.submit(_run_one_site, target["name"], target["url"]): target for target in targets}
+            future_to_target = {
+                (
+                    pool.submit(_run_one_site, target["name"], target["url"], cancel_event)
+                    if cancel_event is not None
+                    else pool.submit(_run_one_site, target["name"], target["url"])
+                ): target
+                for target in targets
+            }
             for future in as_completed(future_to_target):
+                if cancel_event is not None and cancel_event.is_set():
+                    for pending in future_to_target:
+                        pending.cancel()
+                    raise TransientNetworkError("smart-extract discovery canceled")
                 target = future_to_target[future]
                 try:
                     r = future.result()
+                except TransientNetworkError:
+                    raise
                 except Exception as exc:
                     r = _site_error_result(target, exc)
                 results.append(r)
@@ -1393,6 +1427,8 @@ def _run_all(
     else:
         # Sequential mode (default)
         for i, target in enumerate(targets):
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("smart-extract discovery canceled")
             if limit > 0 and total_new >= limit:
                 break
             label = target["name"]
@@ -1401,7 +1437,12 @@ def _run_all(
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
             try:
-                r = _run_one_site(target["name"], target["url"])
+                if cancel_event is None:
+                    r = _run_one_site(target["name"], target["url"])
+                else:
+                    r = _run_one_site(target["name"], target["url"], cancel_event)
+            except TransientNetworkError:
+                raise
             except Exception as exc:
                 r = _site_error_result(target, exc)
             results.append(r)
@@ -1436,6 +1477,7 @@ def run_smart_extract(
     sites: list[dict] | None = None,
     workers: int = 1,
     limit: int = 0,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1468,4 +1510,11 @@ def run_smart_extract(
         workers,
     )
 
-    return _run_all(targets, accept_locs, reject_locs, workers=workers, limit=limit)
+    return _run_all(
+        targets,
+        accept_locs,
+        reject_locs,
+        workers=workers,
+        limit=limit,
+        cancel_event=cancel_event,
+    )

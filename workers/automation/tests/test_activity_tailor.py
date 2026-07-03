@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 from temporalio import workflow
+from temporalio.client import WorkflowFailureError
+from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -26,6 +28,7 @@ class _TailorHarness:
             tailor_activity,
             payload,
             start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
 
@@ -80,7 +83,7 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
 
 
 @pytest.mark.asyncio
-async def test_tailor_activity_preserves_pipeline_failure_status():
+async def test_tailor_activity_raises_pipeline_failure_status():
     fake_pipeline_result = {
         "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.4}],
         "errors": {"tailor": "failed"},
@@ -100,12 +103,10 @@ async def test_tailor_activity_preserves_pipeline_failure_status():
                 activities=[tailor_activity],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
-                output: TailorActivityOutput = await env.client.execute_workflow(
-                    _TailorHarness.run,
-                    TailorActivityInput(tenant_id="local"),
-                    id=f"tailor-wf-{uuid.uuid4()}",
-                    task_queue=queue,
-                )
-
-    assert output.status == "failed"
-    assert output.errors == {"tailor": "failed"}
+                with pytest.raises(WorkflowFailureError):
+                    await env.client.execute_workflow(
+                        _TailorHarness.run,
+                        TailorActivityInput(tenant_id="local"),
+                        id=f"tailor-wf-{uuid.uuid4()}",
+                        task_queue=queue,
+                    )

@@ -152,11 +152,8 @@ def test_tailor_stage_fails_pipeline_when_quality_gate_fails(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 2, "errors": 0, "elapsed": 0.1},
     )
 
-    result = runner._run_tailor()
-
-    assert result["status"] == "failed"
-    assert result["failed"] == 2
-    assert result["error_class"] == "TailorQualityGateFailed"
+    with pytest.raises(runner.LlmTransientError, match="2 tailored resume"):
+        runner._run_tailor()
 
 
 def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
@@ -165,11 +162,8 @@ def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 1, "elapsed": 0.1},
     )
 
-    result = runner._run_tailor()
-
-    assert result["status"] == "error: tailor errors"
-    assert result["errors"] == 1
-    assert result["error_class"] == "TailorStageErrors"
+    with pytest.raises(runner.LlmTransientError, match="1 tailoring error"):
+        runner._run_tailor()
 
 
 def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
@@ -178,10 +172,8 @@ def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
     )
 
-    result = runner._run_sequential(["tailor"], min_score=7)
-
-    assert result["stages"][0]["status"] == "failed"
-    assert result["errors"] == {"tailor": "failed"}
+    with pytest.raises(runner.LlmTransientError, match="failed validation"):
+        runner._run_sequential(["tailor"], min_score=7)
 
 
 def test_tailor_quality_gate_failure_propagates_through_streaming_pipeline(monkeypatch):
@@ -242,6 +234,126 @@ def test_discover_emits_source_events(monkeypatch):
     ]
 
 
+def test_discover_tolerates_failed_source_and_yields_healthy_sources(monkeypatch):
+    """A raised per-source failure is isolated so healthy sources still commit."""
+    events: list[tuple[str, str, str, dict]] = []
+
+    def run_jobspy(cfg=None, limit=0, run_id=None, progress_callback=None, cancel_event=None):
+        raise RuntimeError("jobspy outage")
+
+    monkeypatch.setattr(
+        runner.config,
+        "load_search_config",
+        lambda: {
+            "queries": [{"query": "Head of Platform"}],
+            "locations": [{"label": "spain", "location": "Spain (remote)", "remote": True}],
+            "defaults": {"results_per_site": 100},
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_scheduled_ats_sources",
+        lambda *_args, **_kwargs: {
+            "total": 2,
+            "new_jobs": 2,
+            "existing_jobs": 0,
+            "observed_jobs": 2,
+            "duplicate_jobs": 0,
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_record_pipeline_event",
+        lambda stage, event_type, level, message, payload=None: events.append(
+            (stage, event_type, level, {**(payload or {}), "message": message})
+        ),
+        raising=False,
+    )
+    monkeypatch.setitem(sys.modules, "jobhunter.discovery.jobspy", SimpleNamespace(run_discovery=run_jobspy))
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
+    )
+
+    result = runner._run_discover(workers=2)
+
+    # JobSpy failed, but the stage still completed with the healthy sources.
+    assert result["jobspy"] == "failed"
+    assert "jobspy outage" in result["jobspy_error"]
+    assert result["ats_api"] == "ok"
+    assert result["workday"] == "ok"
+    assert result["smartextract"] == "ok"
+    assert result["status"] == "partial"
+
+    # JobSpy's per-source failure is durably recorded at stage level; the
+    # healthy sources emit their completion, proving they were not skipped.
+    source_events = [
+        (event_type, payload.get("source"))
+        for _stage, event_type, _level, payload in events
+        if payload.get("source")
+    ]
+    assert ("StageFailed", "jobspy") in source_events
+    assert ("StageCompleted", "ats_api") in source_events
+    assert ("StageCompleted", "workday") in source_events
+    assert ("StageCompleted", "smartextract") in source_events
+
+
+def test_discover_raises_when_all_sources_fail(monkeypatch):
+    """When every source fails, the stage raises an aggregated SourceUnavailableError."""
+
+    def run_jobspy(cfg=None, limit=0, run_id=None, progress_callback=None, cancel_event=None):
+        raise RuntimeError("jobspy outage")
+
+    def raise_ats(*_args, **_kwargs):
+        raise RuntimeError("ats outage")
+
+    def raise_workday(employers=None, workers=1, limit=0, run_id=None):
+        raise RuntimeError("workday outage")
+
+    def raise_smartextract(sites=None, workers=1, limit=0):
+        raise RuntimeError("smartextract outage")
+
+    monkeypatch.setattr(
+        runner.config,
+        "load_search_config",
+        lambda: {
+            "queries": [{"query": "Head of Platform"}],
+            "locations": [{"label": "spain", "location": "Spain (remote)", "remote": True}],
+            "defaults": {"results_per_site": 100},
+        },
+    )
+    monkeypatch.setattr(runner, "run_scheduled_ats_sources", raise_ats)
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(sys.modules, "jobhunter.discovery.jobspy", SimpleNamespace(run_discovery=run_jobspy))
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(run_workday_discovery=raise_workday),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=raise_smartextract),
+    )
+
+    with pytest.raises(runner.SourceUnavailableError) as exc_info:
+        runner._run_discover(workers=2)
+
+    message = str(exc_info.value)
+    assert "All discovery sources failed" in message
+    # The aggregated message names each source's cause.
+    assert "JobSpy" in message
+    assert "Canonical ATS APIs" in message
+    assert "Workday scraper" in message
+    assert "Smart extract" in message
+
+
 def test_discover_persists_jobspy_source_progress(monkeypatch):
     events: list[tuple[str, str, str, dict]] = []
 
@@ -254,7 +366,6 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
     ):
         assert run_id is not None
         assert progress_callback is not None
-        assert cancel_event is not None
         progress_callback(
             {
                 "completed": 35,

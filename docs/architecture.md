@@ -775,7 +775,15 @@ split lives under `workers/automation/src/jobhunter/infrastructure/temporal/`:
   uses a `SandboxedWorkflowRunner` with `with_passthrough_modules("jobhunter")`
   so workflow code can construct activity-input dataclasses at the workflow
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
-  frozen dataclasses imported through `imports_passed_through()`).
+  frozen dataclasses imported through `imports_passed_through()`). Activity
+  execution is bounded by `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` (default `4`)
+  and a worker-owned `ThreadPoolExecutor(max_workers = concurrency + 2)`, so
+  blocking stage work no longer spills into the process default executor.
+- `run_in_activity.py` — shared helper for running synchronous domain work from
+  async Temporal activities while heartbeating. Cancellation sets a cooperative
+  `threading.Event`, waits up to the activity's cancel deadline for the worker
+  thread to exit, and records an `abandoned_thread` operational metric if the
+  thread ignores cancellation.
 - `task_queues.py` — single `JOBHUNTER_TASK_QUEUE = "jobhunter-default"`.
 - `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
   The CLI imports both lists and passes them to `build_worker`; new
@@ -789,6 +797,36 @@ heavy imports inside the activity body and forward to the existing stage runner
 (`run_pipeline` / `apply_main` / `run_local_action`). The product-facing stage
 order is narrower: `discover -> apply`; `discover` drains enrichment plus
 internal preparation work before the user chooses to apply.
+
+Pipeline activities translate Python exceptions into typed Temporal
+`ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
+as the durable error code:
+
+| Error type | Code | Retryable |
+| --- | --- | --- |
+| `ConfigurationError` | `configuration` | no |
+| `AuthenticationError` | `authentication` | no |
+| `MissingInputError` | `missing_input` | no |
+| `TransientNetworkError` | `transient_network` | yes |
+| `BrowserTransientError` | `browser_transient` | yes |
+| `LlmTransientError` | `llm_transient` | yes |
+| `SourceUnavailableError` | `source_unavailable` | yes |
+
+`JobPipelineWorkflow` applies stage-specific retry policies:
+
+| Stage | Attempts | Initial interval | Maximum interval | Non-retryable codes |
+| --- | --- | --- | --- | --- |
+| `discover` | 1 | default | default | `configuration`, `authentication`, `missing_input` |
+| `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+| `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
+
+The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
+operational metrics, and OTel spans through `_run_stage_observed`; the change
+is that whole-stage failures propagate into Temporal instead of being converted
+to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
+remain per-item facts when the owning context already records them that way.
 
 Two production workflows live alongside the activities:
 
@@ -828,7 +866,8 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   `JobPipelineWorkflow` and `ApplyWorkflow` emit a `WorkflowStarted` marker at
   the top of `run` and record exactly one terminal event on exit
   (`WorkflowCompleted` on success, `WorkflowFailed` on a stage/exception
-  failure) via `record_workflow_started` / `record_workflow_outcome`. Those
+  failure, `WorkflowCanceled` on cooperative cancellation) via
+  `record_workflow_started` / `record_workflow_outcome`. Those
   activities reuse `record_job_event` + a projection refresh; workflow bodies
   stay deterministic (all SQLite/clock IO is inside the activities).
 - **Describe-based reconciler** — `_reconcile_workflow_runs` runs in the worker
@@ -841,11 +880,12 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   reconciler stamps its own reason — a `reconciled_*` `errorCode`
   (`reconciled_terminated` / `reconciled_not_found` / `reconciled_closed_<status>`)
   plus a human-readable message quoting the Temporal execution status — so the
-  `/runs` UI never shows a reconciler-terminalized run with no explanation. (Cancellation of the pipeline/apply workflows currently surfaces as a
-  visible failed terminal because those workflows catch the cancellation
-  `ActivityError` as a stage failure; true `WorkflowCanceled` status is P1/CC6
-  cancellation work, and the reconciler already maps genuinely-CANCELED
-  executions to `WorkflowCanceled`.)
+  `/runs` UI never shows a reconciler-terminalized run with no explanation.
+- **Dispatch-time open row** — the default starter writes a `WorkflowStarted`
+  event immediately after a workflow start returns from Temporal. The in-workflow
+  start marker remains as a duplicate-safe upsert, but a workflow killed or
+  canceled before its first activity is now visible in `/runs` and can be
+  terminalized by the reconciler.
 - **Deterministic workflow IDs** — `WorkflowStartSpec` carries
   `id_conflict_policy` / `id_reuse_policy`; the default starter passes
   `USE_EXISTING` + `ALLOW_DUPLICATE`, so a double-start of a deterministic id

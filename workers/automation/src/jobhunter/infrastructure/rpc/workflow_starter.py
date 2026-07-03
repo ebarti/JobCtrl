@@ -23,6 +23,7 @@ side of correctness.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
@@ -32,6 +33,8 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.infrastructure.temporal.client import get_temporal_client
 from jobhunter.infrastructure.temporal.task_queues import JOBHUNTER_TASK_QUEUE
+
+log = logging.getLogger(__name__)
 
 # ``Coroutine[Any, Any, T]`` rather than ``Awaitable[T]`` so ``asyncio.run``
 # accepts the return value without a static-type complaint. Only async-def
@@ -53,7 +56,7 @@ async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
     # trigger, so they are safe as global defaults.
     id_conflict_policy = spec.id_conflict_policy or WorkflowIDConflictPolicy.USE_EXISTING
     id_reuse_policy = spec.id_reuse_policy or WorkflowIDReusePolicy.ALLOW_DUPLICATE
-    return await client.start_workflow(
+    handle = await client.start_workflow(
         spec.workflow,
         *spec.args,
         id=workflow_id,
@@ -62,11 +65,73 @@ async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
         id_conflict_policy=id_conflict_policy,
         id_reuse_policy=id_reuse_policy,
     )
+    _record_dispatch_started(spec, workflow_id, handle)
+    return handle
 
 
 async def default_workflow_canceler(run_id: str) -> None:
     client = await get_temporal_client()
     await client.get_workflow_handle(run_id).cancel()
+
+
+def _record_dispatch_started(
+    spec: WorkflowStartSpec,
+    workflow_id: str,
+    handle: WorkflowHandle,
+) -> None:
+    """Create an open run row at dispatch time so pre-start-marker deaths show in /runs."""
+    try:
+        from jobhunter.database import get_connection
+        from jobhunter.domain.events.workflow import (
+            WorkflowStartedPayload,
+            create_workflow_started,
+        )
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+        from jobhunter.state import record_job_event, utc_now
+
+        payload = spec.args[0] if spec.args else None
+        tenant_id = str(getattr(payload, "tenant_id", LOCAL_TENANT) or LOCAL_TENANT)
+        event = create_workflow_started(
+            tenant_id,
+            WorkflowStartedPayload(
+                workflow_id=workflow_id,
+                workflow_type=getattr(spec.workflow, "__name__", str(spec.workflow)),
+                input_summary=_dispatch_input_summary(payload),
+                started_at=utc_now(),
+                temporal_run_id=(
+                    getattr(handle, "first_execution_run_id", None)
+                    or getattr(handle, "result_run_id", None)
+                    or getattr(handle, "run_id", None)
+                ),
+            ),
+        )
+        conn = get_connection()
+        record_job_event(conn, None, "workflow", event.event_type, payload=dict(event.payload))
+        conn.commit()
+        ProjectionBuilder(conn_factory=get_connection).refresh()
+    except Exception:
+        log.warning("Failed to write dispatch-time workflow start row", exc_info=True)
+
+
+def _dispatch_input_summary(payload: object | None) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    summary: dict[str, Any] = {}
+    for attr, key in (
+        ("stages", "stages"),
+        ("dry_run", "dryRun"),
+        ("limit", "limit"),
+        ("job_url", "jobUrl"),
+        ("continuous", "continuous"),
+    ):
+        if not hasattr(payload, attr):
+            continue
+        value = getattr(payload, attr)
+        if isinstance(value, tuple):
+            value = list(value)
+        summary[key] = value
+    return summary
 
 
 __all__ = [
