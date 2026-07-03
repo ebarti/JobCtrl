@@ -21,7 +21,12 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
-from jobhunter.discovery.activities import discover_activity
+from jobhunter.discovery.activities import (
+    DiscoveryEnrichmentActivityOutput,
+    PlanDiscoverySourcesOutput,
+    discover_activity,
+)
+from jobhunter.discovery.workflow import DiscoverWorkflow
 from jobhunter.enrichment.activities import enrich_activity
 from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
@@ -70,6 +75,9 @@ def test_stage_retry_policies_are_stage_specific():
 def _all_activities():
     return [
         discover_activity,
+        _plan_discovery_sources,
+        _discovery_enrichment,
+        _derive_preparation_targets,
         enrich_activity,
         score_activity,
         tailor_activity,
@@ -78,6 +86,21 @@ def _all_activities():
         record_workflow_started,
         record_workflow_outcome,
     ]
+
+
+@activity.defn(name="plan_discovery_sources")
+async def _plan_discovery_sources(_payload) -> PlanDiscoverySourcesOutput:
+    return PlanDiscoverySourcesOutput(families=[], progress_total=2, start_count=0)
+
+
+@activity.defn(name="discovery_enrichment")
+async def _discovery_enrichment(_payload) -> DiscoveryEnrichmentActivityOutput:
+    return DiscoveryEnrichmentActivityOutput(status="ok")
+
+
+@activity.defn(name="derive_preparation_targets")
+async def _derive_preparation_targets(_payload) -> list:
+    return []
 
 
 @pytest.mark.asyncio
@@ -92,7 +115,7 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -111,7 +134,7 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
     assert result.failure is None
 
     invoked_stages = [call.kwargs["stages"][0] for call in runner_mock.call_args_list]
-    assert invoked_stages == ["discover", "enrich", "score"]
+    assert invoked_stages == ["enrich", "score"]
 
 
 @pytest.mark.asyncio
@@ -123,7 +146,7 @@ async def test_pipeline_workflow_rejects_unknown_stage_as_non_retryable():
         async with Worker(
             env.client,
             task_queue=queue,
-            workflows=[JobPipelineWorkflow],
+            workflows=[JobPipelineWorkflow, DiscoverWorkflow],
             activities=_all_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -155,7 +178,7 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow, ApplyWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow, ApplyWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -205,7 +228,7 @@ async def test_pipeline_workflow_records_failed_stage_and_stops():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -249,7 +272,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -284,7 +307,7 @@ async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow, ApplyWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow, ApplyWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -318,7 +341,7 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -363,7 +386,7 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -420,7 +443,7 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -455,7 +478,7 @@ async def test_pipeline_workflow_preserves_stage_options():
             async with Worker(
                 env.client,
                 task_queue=queue,
-                workflows=[JobPipelineWorkflow],
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
                 activities=_all_activities(),
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ):
@@ -481,14 +504,9 @@ async def test_pipeline_workflow_preserves_stage_options():
         call.kwargs["stages"][0]: call.kwargs
         for call in runner_mock.call_args_list
     }
+    assert "discover" not in by_stage
     assert by_stage["score"]["dry_run"] is True
     assert by_stage["score"]["rescore"] is True
-    assert by_stage["discover"]["dry_run"] is True
-    assert by_stage["discover"]["min_score"] == 8
-    assert by_stage["discover"]["validation_mode"] == "strict"
-    assert by_stage["discover"]["tailor_models"] == ("local:fast", "openai:accurate")
-    assert by_stage["discover"]["tailor_judge_model"] == "gemini:judge"
-    assert by_stage["discover"]["tailor_judge_min_score"] == pytest.approx(0.9)
     assert by_stage["tailor"]["dry_run"] is True
     assert by_stage["tailor"]["min_score"] == 8
     assert by_stage["tailor"]["retailor"] is True

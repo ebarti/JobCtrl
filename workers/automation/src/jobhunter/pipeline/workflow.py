@@ -12,13 +12,10 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 
 with workflow.unsafe.imports_passed_through():
     from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+    from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
     from jobhunter.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
-    )
-    from jobhunter.discovery.activities import (
-        DiscoverActivityInput,
-        discover_activity,
     )
     from jobhunter.enrichment.activities import (
         EnrichActivityInput,
@@ -255,15 +252,14 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
     """Dispatch one stage to its Temporal activity."""
     workflow_id = workflow.info().workflow_id
     if stage == "discover":
-        return await workflow.execute_activity(
-            discover_activity,
-            DiscoverActivityInput(
+        return await workflow.execute_child_workflow(
+            DiscoverWorkflow.run,
+            DiscoverWorkflowInput(
                 tenant_id=payload.tenant_id,
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
                 workers=payload.workers,
                 limit=payload.limit,
-                dry_run=payload.dry_run,
                 min_score=payload.min_score,
                 validation_mode=payload.validation_mode,
                 tailor_models=payload.tailor_models,
@@ -271,11 +267,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 source_ids=payload.source_ids,
                 llm_model=payload.llm_model,
-                workflow_id=workflow_id,
             ),
-            start_to_close_timeout=_DISCOVER_TIMEOUT,
-            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_DISCOVER_RETRY,
+            id=f"{workflow_id}-discover",
         )
     if stage == "enrich":
         return await workflow.execute_activity(

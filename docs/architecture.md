@@ -500,7 +500,6 @@ tables that back every read-model endpoint:
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
-| `discovery_run_projections`  | Scheduled discovery-run status, source ids, counts, and retry metadata. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
@@ -802,16 +801,15 @@ split lives under `workers/automation/src/jobhunter/infrastructure/temporal/`:
   The CLI imports both lists and passes them to `build_worker`; new
   workflows / activities are added by appending here.
 
-Each internal pipeline stage (`discover`, `enrich`, `score`, `tailor`,
-`cover`, `apply`, `profile_import`) ships as a Temporal **Activity** under the
+The user-facing `discover` stage starts `DiscoverWorkflow` directly. That
+workflow plans source families, runs one source-family activity per planned
+family, drains detail enrichment in one activity, then fans out per-job
+`JobPreparationWorkflow` children. Other internal preparation stages (`enrich`,
+`score`, `tailor`, `cover`) still ship as Temporal **Activities** under the
 owning bounded context's package — e.g. `jobhunter/scoring/activities.py`,
 `jobhunter/materials/activities.py`. Activities are thin adapters: they defer
 heavy imports inside the activity body and forward to the relevant domain
-runner (`run_pipeline` for remaining batch stages, per-job scoring/materials
-functions for preparation, `apply_main`, or `run_local_action`). The
-product-facing stage order is narrower: `discover -> apply`; `discover` drains
-enrichment and starts per-job preparation workflows before the user chooses to
-apply.
+function. The product-facing stage order is narrower: `discover -> apply`.
 
 Pipeline activities translate Python exceptions into typed Temporal
 `ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
@@ -827,11 +825,12 @@ as the durable error code:
 | `LlmTransientError` | `llm_transient` | yes |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 
-`JobPipelineWorkflow` applies stage-specific retry policies:
+Workflow and activity retry policies are stage-specific:
 
-| Stage | Attempts | Initial interval | Maximum interval | Non-retryable codes |
+| Unit | Attempts | Initial interval | Maximum interval | Non-retryable codes |
 | --- | --- | --- | --- | --- |
-| `discover` | 1 | default | default | `configuration`, `authentication`, `missing_input` |
+| `DiscoverWorkflow` source-family activities | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
+| `DiscoverWorkflow` enrichment activity | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
 | `enrich` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
 | `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input` |
 | `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input` |
@@ -843,14 +842,22 @@ is that whole-stage failures propagate into Temporal instead of being converted
 to normal `{"status": "error: ..."}` results. Per-item failures inside a batch
 remain per-item facts when the owning context already records them that way.
 
-Two production workflows live alongside the activities:
+Production workflows live alongside the activities:
 
 - `JobPipelineWorkflow` (`jobhunter/pipeline/workflow.py`) — drives the
   configured stage list serially in **batch mode** against eligible jobs in
   the local DB. Stage eligibility is owned by the underlying runner via
-  `state.set_stage_state`, not by the workflow. Passing `"apply"` keeps the
-  request on the same pipeline workflow path; the workflow delegates that stage
-  to `ApplyWorkflow` as a child workflow.
+  `state.set_stage_state`, not by the workflow. Passing `"discover"` delegates
+  to child `DiscoverWorkflow`; passing `"apply"` delegates to child
+  `ApplyWorkflow`.
+- `DiscoverWorkflow` (`jobhunter/discovery/workflow.py`) — deterministic
+  tenant workflow with id `discover-{tenantId}`. It plans JobSpy, canonical ATS,
+  Workday, and Smart Extract source-family activities, preserves the legacy
+  source ordering for limit/budget semantics, emits real activity heartbeats
+  from `DiscoveryRunProgress`, then runs discovery enrichment and starts
+  preparation children in batches of 25. Source-family failures are attributed
+  to concrete source ids for source-quality quarantine and fail the workflow
+  after the remaining planned source families complete.
 - `ApplyWorkflow` (`jobhunter/apply/workflow.py`) — single-activity,
   **per-job** workflow with live retry capped at one attempt and dry-run retry
   capped at two attempts. `apply_activity` re-raises transient failures so the
@@ -869,7 +876,12 @@ The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 `workflow.py` (the Temporal workflow). `__init__.py` re-exports
 `run_pipeline` so existing imports keep working.
 
-`jobhunter worker` is the long-lived process that runs the worker loop.
+`jobhunter worker` is the long-lived process that runs the worker loop. At
+startup it reconciles the local discovery Temporal Schedule:
+`scheduling_enabled=false` deletes any existing `jobhunter-discovery-local`
+schedule, while `scheduling_enabled=true` creates or updates a cron schedule
+with `ScheduleOverlapPolicy.SKIP` that starts `DiscoverWorkflow`. The default is
+off, so fresh installs do not run background discovery.
 Live workflow state — running workflows, history, signals, retries — is
 visible at `http://127.0.0.1:8233` in the Temporal Web UI.
 
@@ -885,8 +897,8 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   `workflowId`, `workflowType`, an input summary, and a terminal status within
   the 12-state `WORKFLOW_RUN_STATUSES` contract.
 - **Finalize activities** (`infrastructure/temporal/finalize.py`) —
-  `JobPipelineWorkflow` and `ApplyWorkflow` emit a `WorkflowStarted` marker at
-  the top of `run` and record exactly one terminal event on exit
+  each workflow emits a `WorkflowStarted` marker at the top of `run` and records
+  exactly one terminal event on exit
   (`WorkflowCompleted` on success, `WorkflowFailed` on a stage/exception
   failure, `WorkflowCanceled` on cooperative cancellation) via
   `record_workflow_started` / `record_workflow_outcome`. Those
@@ -911,8 +923,9 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
 - **Deterministic workflow IDs** — `WorkflowStartSpec` carries
   `id_conflict_policy` / `id_reuse_policy`; the default starter passes
   `USE_EXISTING` + `ALLOW_DUPLICATE`, so a double-start of a deterministic id
-  returns the running handle instead of duplicating execution. `apply` derives a
-  stable `apply-{tenantId}-{jobKey}` id for single-job applies; the pipeline
+  returns the running handle instead of duplicating execution. `discover`
+  derives `discover-{tenantId}`, `apply` derives a stable
+  `apply-{tenantId}-{jobKey}` id for single-job applies, and the pipeline
   orchestrator keeps `run-{uuid}`.
 
 The read side is `workflow_run_projections` (Python-sole-writer, folded from the

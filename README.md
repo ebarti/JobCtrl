@@ -15,6 +15,8 @@ because it can drive browser automation and submit applications.
 ## What It Does
 
 - Discover jobs from configured searches and supported source registries.
+- Optionally reconcile a local Temporal Schedule for discovery; it is disabled
+  by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
 - Score jobs as an applicant-side triage aid with auditable evidence.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
@@ -181,6 +183,12 @@ Common variables:
   renderer. The default is HTML/CSS printed by Playwright.
 - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`: optional
   OpenTelemetry/Langfuse export. Set `LANGFUSE_DISABLE=1` to opt out.
+
+Discovery scheduling is controlled by the discovery runtime settings stored in
+SQLite. `scheduling_enabled` defaults to `false`; `schedule_cron` defaults to
+`0 7 * * *` and is interpreted by the local Temporal dev server. When disabled,
+worker startup deletes any existing local discovery schedule instead of running
+background discovery.
 
 ## Development
 

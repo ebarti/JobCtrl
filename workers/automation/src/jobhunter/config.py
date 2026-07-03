@@ -64,6 +64,8 @@ DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
     "locations": [{"label": "remote", "location": "Remote", "remote": True}],
     "location_accept": ["Remote"],
     "location": {"accept_patterns": ["Remote"], "reject_patterns": []},
+    "scheduling_enabled": False,
+    "schedule_cron": "0 7 * * *",
 }
 
 _EUROPE_TARGET_MARKERS = (
@@ -245,8 +247,26 @@ def load_search_config() -> dict:
     return _apply_profile_target_search(search_cfg)
 
 
+def load_discovery_schedule_settings() -> tuple[bool, str]:
+    """Return discovery schedule settings from the persisted search config."""
+    search_cfg = _load_discovery_search_config_from_db()
+    if search_cfg is None:
+        search_cfg = _default_discovery_search_config()
+    enabled = _bool_config(search_cfg.get("scheduling_enabled"), False)
+    cron = str(search_cfg.get("schedule_cron") or "0 7 * * *").strip() or "0 7 * * *"
+    return enabled, cron
+
+
 def _default_discovery_search_config() -> dict:
     return json.loads(json.dumps(DEFAULT_DISCOVERY_SEARCH_CONFIG))
+
+
+def _bool_config(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return default
 
 
 def _ensure_discovery_settings_table(conn: sqlite3.Connection) -> None:

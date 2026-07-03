@@ -13,9 +13,10 @@ from jobhunter.database import init_db
 from jobhunter.domain.discovery.scheduler import ScheduledSource
 from jobhunter.domain.preparation import PreparationWorkItemKind
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.discovery.workflow import DiscoverWorkflow
+from jobhunter.infrastructure.temporal.registry import WORKFLOWS
 from jobhunter.pipeline import preparation, runner
 from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
-from jobhunter import state
 
 
 @pytest.fixture()
@@ -31,8 +32,8 @@ def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explic
     assert runner._resolve_stages(["score", "tailor", "cover"]) == ["score", "tailor", "cover"]
 
 
-def test_orphan_recovery_keeps_only_discovery_side_stages() -> None:
-    assert state.ORPHAN_RECOVERY_STAGES == ("discover", "enrich")
+def test_discover_workflow_is_registered() -> None:
+    assert DiscoverWorkflow in WORKFLOWS
 
 
 def test_run_pipeline_default_uses_primary_stage_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,7 +273,7 @@ def test_discover_runs_internal_preparation_after_enrichment(
 
     monkeypatch.setattr(preparation, "start_discovery_preparation_workflows", fake_fan_out)
 
-    result = runner._run_discover(
+    result = runner.run_discovery_legacy_once(
         workers=3,
         limit=5,
         min_score=8,

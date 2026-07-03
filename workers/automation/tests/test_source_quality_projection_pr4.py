@@ -130,6 +130,49 @@ def test_source_quality_marks_sources_quarantined_after_repeated_failures() -> N
     assert stats.recommended_state == "quarantined"
 
 
+def test_source_quality_quarantines_only_failed_workday_source() -> None:
+    events = [
+        EventRow(
+            event_type="DiscoveryRunStarted",
+            occurred_at=f"2026-05-13T00:0{i}:00Z",
+            payload={
+                "run_id": f"workday-run-{i}",
+                "source_ids": [
+                    "workday:acme-wd1-myworkdayjobs-com",
+                    "workday:globex-wd1-myworkdayjobs-com",
+                ],
+                "started_at": f"2026-05-13T00:0{i}:00Z",
+            },
+        )
+        for i in range(3)
+    ]
+    events.extend(
+        EventRow(
+            event_type="DiscoveryRunFailed",
+            occurred_at=f"2026-05-13T00:0{i}:10Z",
+            payload={
+                "run_id": f"workday-run-{i}",
+                "source_id": "workday:acme-wd1-myworkdayjobs-com",
+                "error_class": "SourceUnavailableError",
+                "retryable": True,
+            },
+        )
+        for i in range(3)
+    )
+
+    result = project_source_quality(
+        tenant_id=LOCAL_TENANT,
+        events=events,
+        updated_at="2026-05-13T00:05:00Z",
+    )
+
+    stats = {item.source_id: item for item in result.stats}
+    assert stats["workday:acme-wd1-myworkdayjobs-com"].consecutive_failures == 3
+    assert stats["workday:acme-wd1-myworkdayjobs-com"].recommended_state == "quarantined"
+    assert stats["workday:globex-wd1-myworkdayjobs-com"].consecutive_failures == 0
+    assert stats["workday:globex-wd1-myworkdayjobs-com"].recommended_state == "normal"
+
+
 def test_source_quality_does_not_reset_failed_sources_on_partial_completion() -> None:
     events = [
         *[

@@ -677,3 +677,36 @@ Consequences:
   `feedback_no_strangler.md`); the dashboard's recent-apply panel is unchanged.
 
 Cites: `docs/plans/2026-07-03-temporal-native-rearchitecture.md` (P0).
+
+## 2026-07-03: DiscoverWorkflow And Default-Off Temporal Schedules
+
+Status: accepted
+
+Decision: discovery is a tenant-scoped `DiscoverWorkflow` with deterministic id
+`discover-{tenantId}`. The workflow plans source families, executes one
+source-family activity per planned family with real `DiscoveryRunProgress`
+heartbeats, drains enrichment in a separate activity, and then starts
+`JobPreparationWorkflow` children. The legacy discover/enrich reaper is deleted;
+worker death is recovered by Temporal retry/resumption and workflow finalization.
+Local Temporal Schedules are supported but disabled by default. Worker startup
+reconciles `jobhunter-discovery-local`: disabled settings delete the schedule;
+enabled settings create or update a cron schedule with
+`ScheduleOverlapPolicy.SKIP`.
+
+Rationale:
+
+- source-family activities give Temporal a real heartbeat and retry boundary
+  without retrying the entire discovery batch
+- disabled-by-default schedules avoid surprising background crawling on fresh
+  installs
+- concrete failed source ids are required for source-quality quarantine and
+  circuit-breaker attribution
+
+Consequences:
+
+- `run_stage discover` returns the existing `discover-{tenantId}` workflow
+  handle when a discovery run is already live
+- source failures are attributed to their concrete `source_id`; repeated
+  failures quarantine only the failing source
+- the removed `discovery_run_projections` write-only table no longer owns any
+  read-model behavior; source health is projected through `source_quality_stats`

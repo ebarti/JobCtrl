@@ -212,7 +212,7 @@ def test_discover_emits_source_events(monkeypatch):
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
-    result = runner._run_discover(workers=2)
+    result = runner.run_discovery_legacy_once(workers=2)
 
     assert result["workday"] == "ok"
     assert result["smartextract"] == "ok"
@@ -292,7 +292,7 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
-    result = runner._run_discover(workers=2, limit=1000)
+    result = runner.run_discovery_legacy_once(workers=2, limit=1000)
 
     assert result["jobspy"] == "ok"
     progress_events = [
@@ -359,7 +359,7 @@ def test_discover_runs_hygiene_before_and_after_sources(monkeypatch):
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
-    runner._run_discover(workers=2)
+    runner.run_discovery_legacy_once(workers=2)
 
     assert calls == ["discovery:hygiene:before", "discovery:hygiene:after"]
 
@@ -394,7 +394,7 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    result = runner._run_discover(workers=4, limit=1)
+    result = runner.run_discovery_legacy_once(workers=4, limit=1)
 
     assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}
     assert calls == [
@@ -435,7 +435,7 @@ def test_discover_passes_remaining_limit_to_downstream_sources(monkeypatch):
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    result = runner._run_discover(workers=4, limit=10)
+    result = runner.run_discovery_legacy_once(workers=4, limit=10)
 
     assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}
     assert calls == [("jobspy", 10), ("workday", 4), ("smartextract", 2)]
@@ -524,7 +524,7 @@ def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    runner._run_discover(workers=4, limit=0)
+    runner.run_discovery_legacy_once(workers=4, limit=0)
 
     assert calls == {"boards": ["linkedin"], "employers": ["acme"]}
 
@@ -559,7 +559,7 @@ def test_discover_source_ids_run_only_selected_source_group(monkeypatch):
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    result = runner._run_discover(workers=4, limit=10, source_ids=("workday:acme",))
+    result = runner.run_discovery_legacy_once(workers=4, limit=10, source_ids=("workday:acme",))
 
     assert calls == [("workday", ["acme"], 4)]
     assert result["jobspy"] is None
@@ -640,7 +640,7 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    result = runner._run_discover(workers=4, limit=1)
+    result = runner.run_discovery_legacy_once(workers=4, limit=1)
 
     assert calls == ["jobspy"]
     assert result == {
@@ -678,7 +678,7 @@ def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
-    result = runner._run_discover(workers=4, limit=1)
+    result = runner.run_discovery_legacy_once(workers=4, limit=1)
 
     assert calls == ["jobspy", "workday", "smartextract"]
     assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}

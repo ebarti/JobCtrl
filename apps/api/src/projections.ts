@@ -548,20 +548,6 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       temporal_run_id        TEXT,
       events_json            TEXT NOT NULL DEFAULT '[]'
     );
-    CREATE TABLE IF NOT EXISTS discovery_run_projections (
-      run_id                 TEXT PRIMARY KEY,
-      tenant_id              TEXT NOT NULL DEFAULT 'local',
-      source_ids_json        TEXT NOT NULL DEFAULT '[]',
-      profile_snapshot_id    TEXT,
-      status                 TEXT NOT NULL DEFAULT 'running',
-      counts_json            TEXT NOT NULL DEFAULT '{}',
-      error_classes_json     TEXT NOT NULL DEFAULT '[]',
-      started_at             TEXT,
-      completed_at           TEXT,
-      failed_at              TEXT,
-      failed_source_id       TEXT,
-      retryable              INTEGER NOT NULL DEFAULT 1
-    );
     CREATE TABLE IF NOT EXISTS source_quality_stats (
       tenant_id                         TEXT NOT NULL DEFAULT 'local',
       source_id                         TEXT NOT NULL,
@@ -2949,41 +2935,6 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         }
       }
     }
-  }
-
-  for (const run of runs.values()) {
-    db.prepare(
-      `INSERT INTO discovery_run_projections (
-         run_id, tenant_id, source_ids_json, profile_snapshot_id, status,
-         counts_json, error_classes_json, started_at, completed_at,
-         failed_at, failed_source_id, retryable
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(run_id) DO UPDATE SET
-         tenant_id = excluded.tenant_id,
-         source_ids_json = excluded.source_ids_json,
-         profile_snapshot_id = excluded.profile_snapshot_id,
-         status = excluded.status,
-         counts_json = excluded.counts_json,
-         error_classes_json = excluded.error_classes_json,
-         started_at = excluded.started_at,
-         completed_at = excluded.completed_at,
-         failed_at = excluded.failed_at,
-         failed_source_id = excluded.failed_source_id,
-         retryable = excluded.retryable`,
-    ).run(
-      run.runId,
-      tenantId,
-      JSON.stringify(run.sourceIds),
-      run.profileSnapshotId,
-      run.status,
-      JSON.stringify(run.counts),
-      JSON.stringify(run.errorClasses),
-      run.startedAt,
-      run.completedAt,
-      run.failedAt,
-      run.failedSourceId,
-      run.retryable ? 1 : 0,
-    );
   }
 
   db.prepare("DELETE FROM source_quality_stats WHERE tenant_id = ?").run(tenantId);

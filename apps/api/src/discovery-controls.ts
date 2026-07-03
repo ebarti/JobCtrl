@@ -49,6 +49,8 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   boards: ["indeed", "linkedin", "zip_recruiter"],
   resultsPerSite: 50,
   hoursOld: 72,
+  schedulingEnabled: false,
+  scheduleCron: "0 7 * * *",
   source: "database",
 };
 
@@ -317,6 +319,8 @@ export function writeDiscoverySettings(
     boards: request.boards ?? current.boards,
     resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
     hoursOld: request.hoursOld ?? current.hoursOld,
+    schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
+    scheduleCron: request.scheduleCron ?? current.scheduleCron,
   };
   const now = new Date().toISOString();
   db.prepare(`
@@ -355,6 +359,8 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
     boards: boardList(config.boards),
     resultsPerSite: positiveInt(defaults.results_per_site, DEFAULT_DISCOVERY_SETTINGS.resultsPerSite),
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
+    schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
+    scheduleCron: nonEmptyString(config.schedule_cron, DEFAULT_DISCOVERY_SETTINGS.scheduleCron),
     source: "database",
   };
 }
@@ -367,6 +373,8 @@ function configFromDiscoverySettings(
   return {
     ...base,
     boards: settings.boards,
+    scheduling_enabled: settings.schedulingEnabled,
+    schedule_cron: settings.scheduleCron,
     defaults: {
       ...defaults,
       hours_old: settings.hoursOld,
@@ -388,6 +396,24 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function boolValue(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return !["", "0", "false", "no", "off"].includes(value.trim().toLowerCase());
+  }
+  return fallback;
+}
+
+function nonEmptyString(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  return trimmed || fallback;
 }
 
 function boardList(value: unknown): DiscoverySettings["boards"] {

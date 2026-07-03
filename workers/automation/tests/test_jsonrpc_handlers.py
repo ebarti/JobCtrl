@@ -11,7 +11,7 @@ from temporalio.common import WorkflowIDConflictPolicy
 
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.discovery.activities import DiscoverActivityInput, discover_activity
+from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobhunter.domain.compensation import ReportedCompensationObservation
 from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobhunter.domain.rpc.messages import (
@@ -725,13 +725,13 @@ def test_run_stage_preserves_selected_discovery_source_ids(tmp_db: Path) -> None
 
     assert response is not None
     assert len(seen) == 1
-    assert seen[0].workflow is JobPipelineWorkflow
+    assert seen[0].workflow is DiscoverWorkflow
+    assert seen[0].workflow_id == "discover-local"
     (payload,) = seen[0].args
-    assert payload == JobPipelineWorkflowInput(
+    assert payload == DiscoverWorkflowInput(
         tenant_id="local",
         expected_app_dir="/tmp/jobhunter",
         expected_db_path="/tmp/jobhunter/jobhunter.db",
-        stages=["discover"],
         limit=25,
         source_ids=("jobspy:linkedin",),
         llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -1022,6 +1022,7 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
 @pytest.mark.asyncio
 async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(monkeypatch) -> None:
     captured: list[tuple[object, object]] = []
+    child_workflows: list[tuple[object, object, dict[str, object]]] = []
 
     async def fake_execute_activity(activity_fn, payload, **_kwargs):
         captured.append((activity_fn, payload))
@@ -1032,7 +1033,12 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
             "stages": [{"stage": "_", "status": "ok", "elapsed": 0.0}],
         }
 
+    async def fake_execute_child_workflow(workflow_fn, payload, **kwargs):
+        child_workflows.append((workflow_fn, payload, kwargs))
+        return {"status": "ok"}
+
     monkeypatch.setattr(workflow_mod.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(workflow_mod.workflow, "execute_child_workflow", fake_execute_child_workflow)
     monkeypatch.setattr(workflow_mod.workflow, "info", lambda: SimpleNamespace(workflow_id="unit-test-workflow"))
 
     await workflow_mod._execute_stage(
@@ -1096,33 +1102,35 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         ),
     )
 
-    assert len(captured) == 6
-    assert captured[0][0] is discover_activity
-    assert isinstance(captured[0][1], DiscoverActivityInput)
-    assert captured[0][1].source_ids == ("jobspy:linkedin",)
+    assert len(child_workflows) == 1
+    assert child_workflows[0][0] is DiscoverWorkflow.run
+    assert isinstance(child_workflows[0][1], DiscoverWorkflowInput)
+    assert child_workflows[0][1].source_ids == ("jobspy:linkedin",)
+    assert child_workflows[0][2]["id"] == "unit-test-workflow-discover"
+    assert len(captured) == 5
+    assert captured[0][0] is score_activity
+    assert isinstance(captured[0][1], ScoreActivityInput)
+    assert captured[0][1].job_urls == ("https://example.com/job/score-one",)
     assert captured[1][0] is score_activity
     assert isinstance(captured[1][1], ScoreActivityInput)
-    assert captured[1][1].job_urls == ("https://example.com/job/score-one",)
-    assert captured[2][0] is score_activity
-    assert isinstance(captured[2][1], ScoreActivityInput)
-    assert captured[2][1].job_urls == (
+    assert captured[1][1].job_urls == (
         "https://example.com/job/score-a",
         "https://example.com/job/score-b",
     )
+    assert captured[2][0] is tailor_activity
+    assert isinstance(captured[2][1], TailorActivityInput)
+    assert captured[2][1].job_urls == ("https://example.com/job/tailor-one",)
+    assert captured[2][1].suppress_existing_artifacts is False
     assert captured[3][0] is tailor_activity
     assert isinstance(captured[3][1], TailorActivityInput)
-    assert captured[3][1].job_urls == ("https://example.com/job/tailor-one",)
-    assert captured[3][1].suppress_existing_artifacts is False
-    assert captured[4][0] is tailor_activity
-    assert isinstance(captured[4][1], TailorActivityInput)
-    assert captured[4][1].job_urls == (
+    assert captured[3][1].job_urls == (
         "https://example.com/job/tailor-a",
         "https://example.com/job/tailor-b",
     )
-    assert captured[4][1].suppress_existing_artifacts is True
-    assert captured[5][0] is cover_activity
-    assert isinstance(captured[5][1], CoverActivityInput)
-    assert captured[5][1].job_urls == ("https://example.com/job/cover-one",)
+    assert captured[3][1].suppress_existing_artifacts is True
+    assert captured[4][0] is cover_activity
+    assert isinstance(captured[4][1], CoverActivityInput)
+    assert captured[4][1].job_urls == ("https://example.com/job/cover-one",)
 
 
 def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
