@@ -29,17 +29,21 @@ function routeForRewrittenPage(docPath: string): string | null {
   return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
 }
 
+// Sidebar entries follow reader-journey order (see "Documentation Standards"
+// in docs/developer/README.md): install → see it → use it daily → tune it →
+// understand the data → protect it. URLs are frozen; only labels and order
+// may change here.
 const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
   {
     text: "User Guide",
     items: [
       { text: "Getting Started", link: "/user/getting-started" },
-      { text: "Configuration", link: "/user/configuration" },
+      { text: "Product Tour", link: "/user/screenshots" },
       { text: "Normal Flows", link: "/user/normal-flows" },
+      { text: "Configuration", link: "/user/configuration" },
       { text: "Data & Safety", link: "/user/data-and-safety" },
       { text: "Security", link: "/user/security" },
-      { text: "Screenshots", link: "/user/screenshots" },
     ],
   },
 ];
@@ -48,36 +52,42 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "Start Here",
     items: [
-      { text: "Contributing", link: "/developer/" },
+      { text: "Developer Guide", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
       { text: "Reliability & QA", link: "/local-reliability-qa" },
       { text: "Security", link: "/developer/security" },
     ],
   },
+  // Reader-journey order: what the system is (Overview, Runtime) → what it
+  // does (Job Pipeline, then per-stage deep-dives in pipeline order: Scoring →
+  // Materials → Tailoring → Apply feedback) → where data lives (Storage) →
+  // how to watch it (Observability) → how it is designed (backend Domain
+  // Model, Frontend). prev/next footers follow this order, so it is also the
+  // linear reading path.
   {
     text: "System Architecture",
     items: [
       { text: "Overview", link: "/architecture/" },
       { text: "Runtime Boundaries", link: "/architecture/runtime" },
-      { text: "Observability", link: "/architecture/observability" },
-      { text: "Storage", link: "/architecture/storage" },
-      { text: "Scoring", link: "/architecture/scoring" },
-      { text: "Materials & Tailoring Audit", link: "/architecture/materials" },
-      { text: "Apply Feedback & Projections", link: "/architecture/read-model" },
-      { text: "Tailoring Contract", link: "/architecture/tailoring" },
       {
         text: "Job Pipeline",
         collapsed: true,
         items: [
           { text: "Overview", link: "/architecture/pipeline/" },
+          { text: "Stage Walkthrough", link: "/architecture/pipeline/stages" },
           { text: "Envelope & Activities", link: "/architecture/pipeline/envelope" },
           { text: "Concurrency & Fan-out", link: "/architecture/pipeline/concurrency" },
-          { text: "Stage Walkthrough", link: "/architecture/pipeline/stages" },
           { text: "Operations & Events", link: "/architecture/pipeline/operations" },
         ],
       },
+      { text: "Scoring", link: "/architecture/scoring" },
+      { text: "Materials & Tailoring Audit", link: "/architecture/materials" },
+      { text: "Tailoring Contract", link: "/architecture/tailoring" },
+      { text: "Apply Feedback & Projections", link: "/architecture/read-model" },
+      { text: "Storage", link: "/architecture/storage" },
+      { text: "Observability", link: "/architecture/observability" },
       {
-        text: "Domain Model (DDD)",
+        text: "Backend Domain Model (DDD)",
         collapsed: true,
         items: [
           { text: "Overview", link: "/architecture/domain-model/" },
@@ -96,12 +106,12 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Overview", link: "/architecture/frontend/" },
           { text: "Bounded Contexts", link: "/architecture/frontend/contexts" },
+          { text: "Folder Structure", link: "/architecture/frontend/structure" },
           { text: "Context Patterns", link: "/architecture/frontend/patterns" },
           { text: "State & Ports", link: "/architecture/frontend/state-and-ports" },
           { text: "Realtime (SSE)", link: "/architecture/frontend/realtime" },
           { text: "Integration & Evolution", link: "/architecture/frontend/integration" },
           { text: "Testing", link: "/architecture/frontend/testing" },
-          { text: "Folder Structure", link: "/architecture/frontend/structure" },
           { text: "Risks & Glossary", link: "/architecture/frontend/reference" },
         ],
       },
