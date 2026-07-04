@@ -30,6 +30,7 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 | `JOBHUNTER_WEB_PORT` | `5173` | Requested Vite development port. |
 | `VITE_JOBHUNTER_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
 | `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal dev-server SQLite history store. |
+| `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local JobHunter worker runs at once. Set in the worker environment and restart the worker to apply changes. |
 
 ## LLM Providers
 

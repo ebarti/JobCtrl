@@ -237,6 +237,61 @@ describe("local TypeScript API", () => {
           appDir: tempDir,
           dbPath: options.dbPath,
           taskQueue: "jobhunter-default",
+          maxConcurrentActivities: 8,
+          activityExecutorMaxWorkers: 10,
+        },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports legacy worker heartbeat rows without Temporal concurrency metadata", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS worker_runtime_heartbeats (
+        worker_id TEXT PRIMARY KEY,
+        component TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        hostname TEXT NOT NULL,
+        app_dir TEXT NOT NULL,
+        db_path TEXT NOT NULL,
+        task_queue TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO worker_runtime_heartbeats
+        (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "worker-legacy",
+      "temporal-worker",
+      1234,
+      "localhost",
+      tempDir,
+      options.dbPath,
+      "jobhunter-default",
+      "2026-05-20T10:00:00.000Z",
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      worker: {
+        status: "healthy",
+        heartbeat: {
+          workerId: "worker-legacy",
+          maxConcurrentActivities: null,
+          activityExecutorMaxWorkers: null,
         },
       },
     });
@@ -7253,6 +7308,8 @@ function insertWorkerHeartbeat(
     appDir: string;
     dbPath: string;
     lastSeenAt: string;
+    maxConcurrentActivities?: number | null;
+    activityExecutorMaxWorkers?: number | null;
   },
 ): void {
   const db = new Database(dbPath);
@@ -7266,13 +7323,16 @@ function insertWorkerHeartbeat(
       db_path TEXT NOT NULL,
       task_queue TEXT NOT NULL,
       started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      last_seen_at TEXT NOT NULL,
+      max_concurrent_activities INTEGER,
+      activity_executor_max_workers INTEGER
     );
   `);
   db.prepare(
     `INSERT INTO worker_runtime_heartbeats
-      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
+       max_concurrent_activities, activity_executor_max_workers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     heartbeat.workerId,
     "temporal-worker",
@@ -7283,6 +7343,8 @@ function insertWorkerHeartbeat(
     "jobhunter-default",
     "2026-05-20T10:00:00.000Z",
     heartbeat.lastSeenAt,
+    heartbeat.maxConcurrentActivities ?? 8,
+    heartbeat.activityExecutorMaxWorkers ?? 10,
   );
   db.close();
 }

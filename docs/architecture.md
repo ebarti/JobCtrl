@@ -795,7 +795,9 @@ split lives under `workers/automation/src/jobhunter/infrastructure/temporal/`:
   frozen dataclasses imported through `imports_passed_through()`). Activity
   execution is bounded by `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` (default `4`)
   and a worker-owned `ThreadPoolExecutor(max_workers = concurrency + 2)`, so
-  blocking stage work no longer spills into the process default executor.
+  blocking stage work no longer spills into the process default executor. The
+  worker heartbeat records both values for `GET /v1/health` and Settings-page
+  runtime visibility.
 - `run_in_activity.py` — shared helper for running synchronous domain work from
   async Temporal activities while heartbeating. Cancellation sets a cooperative
   `threading.Event`, waits up to the activity's cancel deadline for the worker

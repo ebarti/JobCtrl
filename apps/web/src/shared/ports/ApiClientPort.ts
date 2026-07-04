@@ -138,6 +138,8 @@ export interface ApiHealthResponse {
       taskQueue: string;
       startedAt: string;
       lastSeenAt: string;
+      maxConcurrentActivities: number | null;
+      activityExecutorMaxWorkers: number | null;
     } | null;
   };
 }
