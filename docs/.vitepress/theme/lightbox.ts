@@ -193,36 +193,42 @@ function contentSize(trigger: Trigger): Size {
 }
 
 /**
- * Produce the node shown in the overlay. SVGs are deep-cloned with explicit
- * pixel dimensions (from the viewBox) so they scale crisply; images become a
- * fresh <img> pointing at the same source.
+ * Produce the node shown in the overlay — always an <img>.
+ *
+ * Live mermaid SVGs must NOT be cloned into the DOM: the clone keeps the
+ * original's id, and the mermaid component's re-render finds the duplicate and
+ * corrupts it (doubled foreignObject label layers, wiped styles). Serializing
+ * a detached copy into a data: URL <img> makes the expanded view a standalone
+ * SVG document — immune to ids, observers, and component re-renders — and it
+ * still scales as crisp vectors.
  */
-function cloneContent(trigger: Trigger, size: Size): HTMLElement | SVGElement {
+function cloneContent(trigger: Trigger, size: Size): HTMLElement {
+  const img = new Image();
   if (trigger.kind === "img") {
     const source = trigger.el as HTMLImageElement;
-    const img = new Image();
     img.src = source.currentSrc || source.src;
     img.alt = source.alt || "";
-    img.width = size.w;
-    img.height = size.h;
-    img.draggable = false;
-    return img;
+  } else {
+    const svg = trigger.el.cloneNode(true) as SVGSVGElement;
+    // KEEP the id: mermaid's embedded stylesheet is scoped to `#mermaid-N`
+    // selectors, so stripping it renders everything with default (black) SVG
+    // fills. Inside the standalone image document the duplicate id is harmless.
+    // Pin real pixel dimensions (mermaid emits width="100%" + a max-width cap)
+    // so the serialized document has an intrinsic size.
+    svg.style.maxWidth = "none";
+    svg.setAttribute("width", String(size.w));
+    svg.setAttribute("height", String(size.h));
+    if (!svg.getAttribute("xmlns")) {
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    }
+    const xml = new XMLSerializer().serializeToString(svg);
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+    img.alt = "Expanded diagram";
   }
-
-  const svg = trigger.el.cloneNode(true) as SVGSVGElement;
-  // Drop mermaid's intrinsic max-width cap and pin explicit dimensions so the
-  // clone renders at its true resolution inside the scalable stage.
-  svg.style.maxWidth = "none";
-  svg.style.maxHeight = "none";
-  svg.style.width = `${size.w}px`;
-  svg.style.height = `${size.h}px`;
-  svg.setAttribute("width", String(size.w));
-  svg.setAttribute("height", String(size.h));
-  // Mermaid text is theme-coloured; keep the theme background behind it so the
-  // diagram stays readable regardless of the dark overlay backdrop.
-  svg.style.background = "var(--vp-c-bg)";
-  svg.style.borderRadius = "6px";
-  return svg;
+  img.width = size.w;
+  img.height = size.h;
+  img.draggable = false;
+  return img;
 }
 
 /** Open the overlay for the given trigger. */

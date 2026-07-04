@@ -92,16 +92,15 @@
   cursor: grabbing;
 }
 
-.jh-lightbox__content svg,
 .jh-lightbox__content img {
   display: block;
   width: 100%;
   height: 100%;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-}
-
-.jh-lightbox__content img {
   border-radius: 6px;
+  /* Serialized mermaid SVGs are transparent; theme-coloured diagram text needs
+     the theme surface behind it to stay readable over the dark backdrop. */
+  background: var(--vp-c-bg);
 }
 
 /* --------------------------------------------------------------------------
