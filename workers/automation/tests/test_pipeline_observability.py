@@ -706,12 +706,15 @@ def test_discovery_detail_enrichment_uses_same_worker_count(monkeypatch):
     monkeypatch.setattr(
         runner,
         "_run_enrich",
-        lambda workers=1, limit=0: calls.append({"workers": workers, "limit": limit}) or {"status": "ok"},
+        lambda workers=1, limit=0, cancel_event=None, reset_linkedin_candidates=True: calls.append(
+            {"workers": workers, "limit": limit, "reset_linkedin_candidates": reset_linkedin_candidates}
+        )
+        or {"status": "ok"},
     )
 
     runner._run_discovery_enrichment_until_idle(done, result, workers=4, limit=10)
 
-    assert calls == [{"workers": 4, "limit": 10}]
+    assert calls == [{"workers": 4, "limit": 10, "reset_linkedin_candidates": True}]
     assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 
@@ -735,11 +738,20 @@ def test_enrich_limit_propagates_to_runner(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.enrichment.detail",
-        SimpleNamespace(run_enrichment=lambda limit=0, workers=1: calls.append({"limit": limit, "workers": workers})),
+        SimpleNamespace(
+            run_enrichment=lambda limit=0, workers=1, reset_linkedin_candidates=True: calls.append(
+                {"limit": limit, "workers": workers, "reset_linkedin_candidates": reset_linkedin_candidates}
+            )
+            or {"processed": 0, "ok": 0, "partial": 0, "error": 0, "site_errors": {}}
+        ),
     )
 
-    assert runner._run_enrich(workers=3, limit=1) == {"status": "ok"}
-    assert calls == [{"limit": 1, "workers": 3}]
+    assert runner._run_enrich(workers=3, limit=1) == {
+        "status": "ok",
+        "counts": {"processed": 0, "ok": 0, "partial": 0, "error": 0},
+        "site_errors": {},
+    }
+    assert calls == [{"limit": 1, "workers": 3, "reset_linkedin_candidates": True}]
 
 
 def test_stage_kwargs_include_limits_for_discover_and_enrich():

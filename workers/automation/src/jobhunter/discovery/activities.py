@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
-from jobhunter.domain.errors import JobHunterError, SourceUnavailableError, to_application_error
+from jobhunter.domain.errors import JobHunterError, to_application_error
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -55,6 +56,8 @@ class DiscoveryEnrichmentActivityInput:
     expected_db_path: str | None = None
     workers: int = 1
     limit: int = 0
+    progress_completed: int = 0
+    progress_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,7 @@ class DiscoveryEnrichmentActivityOutput:
     pending: int = 0
     error_class: str | None = None
     error_message: str | None = None
+    site_errors: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,14 +144,16 @@ async def discovery_source_family_activity(
             activity_name=f"discover:{payload.family}",
         )
         status = str(result.get("status") or "ok")
-        activity_result = {"status": status, "errors": {}}
-        _raise_on_failure(f"discover:{payload.family}", activity_result, SourceUnavailableError)
+        if not _is_success_status(status):
+            raise _stage_failure_error(f"discover:{payload.family}", result)
         return DiscoverySourceActivityOutput(
             family=str(result.get("family") or payload.family),
             status=status,
             result=dict(result.get("result") or {}),
             source_ids=[str(item) for item in (result.get("source_ids") or [])],
         )
+    except ApplicationError:
+        raise
     except JobHunterError as exc:
         raise to_application_error(exc) from exc
     except Exception as exc:
@@ -178,6 +184,8 @@ async def discovery_enrichment_activity(
                 workers=payload.workers,
                 limit=payload.limit,
                 cancel_event=cancel_event,
+                progress_completed=payload.progress_completed,
+                progress_total=payload.progress_total,
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
@@ -187,15 +195,18 @@ async def discovery_enrichment_activity(
         activity.heartbeat({"status": result.get("status", "ok")})
         run_discovery_hygiene("after")
         status = str(result.get("status") or "ok")
-        activity_result = {"status": status, "errors": {}}
-        _raise_on_failure("discover:enrichment", activity_result, SourceUnavailableError)
+        if not _is_success_status(status):
+            raise _stage_failure_error("discover:enrichment", result)
         return DiscoveryEnrichmentActivityOutput(
             status=status,
             passes=int(result.get("passes") or 0),
             pending=int(result.get("pending") or 0),
             error_class=result.get("error_class"),
             error_message=result.get("error_message"),
+            site_errors=dict(result.get("site_errors") or {}),
         )
+    except ApplicationError:
+        raise
     except JobHunterError as exc:
         raise to_application_error(exc) from exc
     except Exception as exc:
@@ -260,9 +271,48 @@ async def discovery_preparation_fanout_activity(
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
 
 
-def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobHunterError]) -> None:
-    errors = result.get("errors") or {}
-    status = str(result.get("status") or "ok").lower()
-    if errors or status not in _SUCCESS_STATUSES:
-        detail = errors or result.get("error") or result.get("status") or "stage failed"
-        raise error_type(f"{stage} failed: {detail}")
+def _is_success_status(status: str) -> bool:
+    """Treat every ``skipped*`` variant as success.
+
+    ``_skip_status`` emits ``skipped_disabled`` / ``skipped_quality`` /
+    ``skipped_limit`` for families that were intentionally not run; those must
+    not be mistaken for failures. ``stuck:*`` and ``failed`` remain failures.
+    """
+    normalized = str(status or "ok").lower()
+    if normalized in _SUCCESS_STATUSES:
+        return True
+    return normalized.startswith("skipped")
+
+
+def _stage_failure_error(stage: str, result: dict[str, Any]) -> ApplicationError:
+    """Build a fully-typed ``ApplicationError`` from a stage's real failure.
+
+    Preserves the runner's captured ``error_class`` / ``error_message`` /
+    ``error_code`` / ``retryable`` so the workflow (and the durable outcome
+    event) surface the true cause instead of collapsing to "failed: failed".
+    """
+    error_class = result.get("error_class")
+    error_message = result.get("error_message")
+    status = str(result.get("status") or "failed")
+    if error_class and error_message:
+        message = f"{stage} failed: {error_class}: {error_message}"
+    elif error_message:
+        message = f"{stage} failed: {error_message}"
+    else:
+        message = f"{stage} failed: {status}"
+    error_type = str(result.get("error_code") or "stage_failed")
+    retryable = bool(result.get("retryable", True))
+    details = {
+        "errorClass": error_class,
+        "errorMessage": error_message,
+        "passes": result.get("passes"),
+        "pending": result.get("pending"),
+        "siteErrors": result.get("site_errors") or {},
+        "traceback": result.get("error_traceback"),
+    }
+    return ApplicationError(
+        message,
+        details,
+        type=error_type,
+        non_retryable=not retryable,
+    )
