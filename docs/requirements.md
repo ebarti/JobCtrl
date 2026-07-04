@@ -1,10 +1,16 @@
 # Requirements
 
-This document is JobHunter's current software requirements catalog. The
-`Related docs` column points at the current owning documentation, not historical
-plans. Requirements are split between behavioral requirements, which describe
-what the system should do for users, and technical requirements, which describe
-implementation constraints that must remain true.
+This document is JobHunter's current software requirements catalog: the
+invariants that must stay true as the implementation changes. It is split into
+**behavioral requirements** (`BR-*`) — what the system should do for users — and
+**technical requirements** (`TR-*`) — the implementation constraints behind them.
+Each ID is a stable handle that is never reused, so code, PRs, and QA can cite a
+requirement by number.
+
+Every requirement is one row in the tables below. The `Added` column is the date
+the requirement first appeared in this file's git history, not the date it was
+last edited; the `Related docs` column points at the current owning
+documentation, not the historical plan that first proposed it.
 
 ## Behavioral Requirements
 

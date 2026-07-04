@@ -9,6 +9,10 @@ is contained, which integrity gates double as security controls, the hygiene
 rules that keep private data out of the repository, and which seams change the
 posture if JobHunter is ever hosted.
 
+**Read this if** you are changing the API surface, the apply path, or credential
+and data handling, and need to know which boundary keeps private data on the
+machine.
+
 The user-facing companion is the [user Security page](../user/security.md); the
 local data inventory is in [Data & Safety](../user/data-and-safety.md).
 
@@ -32,6 +36,7 @@ Because there is no auth, locality is enforced structurally:
 | Origin/Referer check | Mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) with a non-loopback `Origin` or `Referer` are rejected `403 cross_site_request`. | `apps/api/src/server.ts` |
 | Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists, so actions cannot dispatch into a missing or mismatched runtime. | `apps/api/src/server.ts`, `GET /v1/health` |
 
+::: warning The loopback assumption is load-bearing
 Be honest about the limits. This posture is safe only while the API stays on
 loopback; the moment it is exposed remotely, the loopback assumption breaks and
 real authentication is required (see [Hosted-Future Posture](#hosted-future-posture)).
@@ -39,6 +44,7 @@ Hosted auth, tenant isolation, an encrypted secret vault, and an audit log are
 roadmap items, not current guarantees — see [SECURITY.md](../../SECURITY.md) and
 the SaaS section of the [backlog](../backlog.md). Local data at rest is not
 encrypted.
+:::
 
 ## Apply-Path Containment
 

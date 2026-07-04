@@ -1,6 +1,10 @@
 # Local TypeScript API
 
-The local TypeScript API is the runnable backend app under `apps/api`.
+The local TypeScript API (the process the web app talks to) is the runnable
+backend app under `apps/api`.
+
+**Read this if** you are wiring a UI feature to the backend, adding or changing
+a route, or tracing how a web action reaches the Python worker.
 
 It owns product-facing JSON endpoints, reads the local SQLite database, and
 invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
@@ -15,6 +19,30 @@ not loopback fail with `403` `cross_site_request` before any handler runs.
 Full bearer-token authentication and keychain-to-worker
 credential passing remain a deliberate follow-up that needs coordinated
 frontend and dev-launcher changes.
+
+## API at a glance
+
+Each route family below has its own heading on this page. Jump to the area you
+need:
+
+| Area | What it covers |
+| --- | --- |
+| [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
+| [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
+| [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, audit history, list filters, and delete / hide / restore routes. |
+| [Dashboard and operational metrics](#dashboard-and-operational-metrics) | `GET /v1/dashboard/summary` source health and operational attempt counters. |
+| [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
+| [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
+| [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
+| [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
+| [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
+| [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
+| [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
+| [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
+| [Settings and credentials](#settings-and-credentials) | `/v1/settings` and Keychain-backed `/v1/credentials`. |
+| [Server-Sent Events](#server-sent-events-—-get-v1-events-stream) | The `GET /v1/events/stream` realtime contract. |
+
+## Profile and preferences
 
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobhunter.db` as the source of truth. When the profile
@@ -49,6 +77,8 @@ Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,
 country, and postal-code profile fields; without the key, the field remains a
 normal editable street-address input.
+
+## Artifacts and tailoring audit
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -135,6 +165,8 @@ buzzword-density / structural-variety proxy delta that justified it). Both are
 (and the derived `keywords` block) from the sibling tailored-resume projection
 row of the same generation.
 
+## Jobs read model and lifecycle
+
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, `scoredAt`, `scoreTrace`, and
@@ -169,7 +201,7 @@ mutations.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
-`CorrectScoreUseCase` policy update path because this local API mutation writes
+`CorrectScoreUseCase` policy update path because this TypeScript API mutation writes
 directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
 policy version changes, the API also marks comparable latest uncorrected scores
 stale in `job_score_staleness`; corrected score versions are not marked stale.
@@ -202,6 +234,8 @@ record, so rediscovery can add the same posting again later.
 all-matching bulk mutation body and resets each active failed or exhausted job's
 failed stage to `pending`; non-failed selected jobs are ignored.
 
+## Dashboard and operational metrics
+
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
 source-observation, duplicate, content snapshot, enrichment, apply-URL, and
@@ -211,6 +245,8 @@ web dashboard uses for source health. The same response also includes
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
 messages.
+
+## Discovery controls
 
 Discovery product-control endpoints are local-first and share DTOs from
 `packages/contracts`. The web Discovery page composes these endpoints and the
@@ -263,6 +299,8 @@ type and policy metadata are visible as columns instead of compact badges:
   declines a suggestion. Approved exact-title exclusions are visible in the
   Discovery page and are consumed by future discovery title matching; declined
   suggestions remain recorded but inactive.
+
+## Compensation
 
 `GET /v1/compensation/sources` returns the read-only compensation source policy
 registry used by the Settings compensation-source panel. The response contains
@@ -400,6 +438,8 @@ contain source text, market source snapshots, profile compensation preferences,
 credentials, local paths, or provider payloads. The frontend Operations
 invalidation router uses the event to refresh job list/detail queries.
 
+## Workflow runs
+
 `/v1/workflow-runs` reads the unified `workflow_run_projections` table (the
 Python-sole-writer projection folded from the `Workflow*` lifecycle events) and
 projects each row to a `WorkflowRunSummary` across **all** workflow types —
@@ -422,12 +462,16 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
+## Profile resume preview
+
 `GET /v1/profile/preview.html` renders the baseline Candidate Profile resume
 HTML used by the Profile page Plate editor. The renderer is the same HTML/CSS
 resume renderer used for generated materials. `GET /v1/profile/preview.pdf`
 remains a compatibility endpoint for callers that need a baseline PDF, but the
 Profile web route no longer uses a PDF iframe and no longer has a Profile-level
 LaTeX render override.
+
+## Apply review and outcomes
 
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
@@ -517,6 +561,8 @@ known application, with provider message ID dedupe. Outcome notes and linked
 email bodies may be stored locally, but `job_events.payload_json` stores only
 safe IDs, kinds, sources, timestamps, confidence values, link signals, and
 note/body presence flags.
+
+## Pipeline and preparation actions
 
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The product-facing stage order is `discover -> apply`: the stage
@@ -668,6 +714,8 @@ version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue
 `suppress_tailored_artifacts`. Neither threshold path invokes the scoring LLM.
 
+## Discovery target search
+
 Discover honors the profile Target search saved from the Discovery page.
 Target roles replace the active discovery query list with exact role queries;
 target tracks, seniority floors, role areas, and specializations add structured
@@ -713,14 +761,16 @@ The Pipelines tab uses the same source registry response to offer an optional
 source selector for manual Discover runs; leaving it blank keeps the existing
 all-runnable-source behavior.
 
+## Worker runtime and health
+
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. The API also passes `expectedAppDir` and
 `expectedDbPath` into worker-started workflows. Worker activities verify those
-runtime values before writing, and fail non-retryably if the automation worker
+runtime values before writing, and fail non-retryably if the Python worker
 is connected to a different local app directory or SQLite database. The worker
 writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
-returns the API app/database identity plus the latest automation worker
+returns the API app/database identity plus the latest Python worker
 heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
 block (`status: ok | over_budget`, today's `estimatedUsd`, and the configured
@@ -765,7 +815,7 @@ validates a JSON-RPC 2.0 envelope and acknowledges it with
 a JSON-RPC error response.)
 
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
-`activity[].eventType` so the web UI can render started, completed, and failed
+`activity[].eventType` so the web app can render started, completed, and failed
 stage states from backend events instead of local button state alone. The
 top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
 paginated, sortable table; this keeps Dashboard lightweight without imposing an
@@ -788,7 +838,7 @@ event-history cap.
 ## Related Packages
 
 - `apps/api`: Fastify API app.
-- `apps/web`: React/Vite frontend app.
+- `apps/web`: the React/Vite web app.
 - `packages/contracts`: shared schemas, DTOs, enums, JSON-RPC envelopes, and
   re-exported `@jobhunter/domain-types`.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.

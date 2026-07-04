@@ -4,7 +4,7 @@ Use these repository documents before making architectural, workflow, or QA deci
 
 - `docs/README.md`: canonical map of every public, user, and developer document (GitHub renders it when browsing `docs/`; unpublished on the docs site, whose homepage is the hero page `docs/index.md`).
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
-- `docs/user/` (`getting-started.md`, `configuration.md`, `normal-flows.md`, `data-and-safety.md`, `screenshots.md`): end-user setup, the configuration/env-var reference, expected product flows, data and safety boundaries, and screenshot generation.
+- `docs/user/` (`getting-started.md`, `screenshots.md`, `normal-flows.md`, `configuration.md`, `data-and-safety.md`, `security.md`): end-user setup, the visual product tour (screenshots), expected product flows, the configuration/env-var reference, data and safety boundaries, and the user-facing security model.
 - `docs/developer/README.md`: contributor entry point and architecture/QA reading path.
 - `docs/local-development.md`: install, run, verify, and frontend development commands, plus the synthetic documentation-screenshot workflow.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
@@ -70,7 +70,7 @@ When a doc update is warranted:
 | What changed | Update |
 | --- | --- |
 | User-facing product behavior, CLI commands, runtime requirements, generated local artifacts, or safety notes | `README.md` |
-| End-user setup, configuration/env-var reference, normal flows, data/safety boundaries, or screenshot generation | `docs/user/*.md` |
+| End-user setup, the product tour, configuration/env-var reference, normal flows, data/safety boundaries, or the user-facing security model | `docs/user/*.md` |
 | Install, run, verify, or frontend development commands | `docs/local-development.md` |
 | Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
 | Local TypeScript API routes, JSON-RPC dispatch, or the SSE contract | `docs/local-ts-api.md` |

@@ -6,15 +6,25 @@ directory is for contributors who need to change behavior safely.
 
 ## Start Here
 
-1. [Getting started](../user/getting-started.md) for the local stack.
-2. [Configuration](../user/configuration.md) for runtime variables and local
-   data boundaries.
-3. [System architecture](../architecture/index.md) for the current runtime shape.
-4. [Job pipeline architecture](../architecture/pipeline/index.md) for the
-   workflow-by-workflow execution view with sequence and component diagrams.
-5. [Local reliability QA](../local-reliability-qa.md) for regression ownership.
-6. [Security](security.md) for the trust boundary, apply-path containment, and
+Read these in order; each is one entry in the sidebar's **Start Here** group.
+
+1. [Contributing](../../CONTRIBUTING.md) for the pull-request workflow, commit
+   conventions, and the privacy rules every change must respect.
+2. [Local development](../local-development.md) to install, run, and verify the
+   full local stack.
+3. [Reliability & QA](../local-reliability-qa.md) for the regression matrix and
+   the local workflows that must stay covered.
+4. [Security](security.md) for the trust boundary, apply-path containment, and
    secret/data hygiene rules.
+
+Then the [System Architecture](../architecture/index.md) sidebar section takes
+you from the runtime shape down through the pipeline, stage by stage.
+
+::: tip Here to use JobHunter, not change it?
+Start with the [User Guide](../user/getting-started.md) instead: it covers
+setup, everyday flows, configuration, and exactly what data stays on your
+machine — no contributor tooling required.
+:::
 
 ## Current Runtime Shape
 
@@ -24,7 +34,7 @@ flowchart LR
   Api --> Db["SQLite read/write model"]
   Api --> Rpc["JSON-RPC subprocess"]
   Rpc -- "start workflows" --> Temporal["Temporal dev server"]
-  Temporal -- "task queue" --> Worker["Python automation worker"]
+  Temporal -- "task queue" --> Worker["Python worker"]
   Worker --> Db
   Worker --> Files["Local artifacts"]
   Worker --> Providers["LLMs / job sources / browser automation"]
@@ -43,7 +53,7 @@ The domain is organized around eight bounded contexts:
 - Pipeline
 - Operations / Read-Side
 
-The React app mirrors those contexts under `apps/web/src/contexts/`. Views under
+The web app mirrors those contexts under `apps/web/src/contexts/`. Views under
 `apps/web/src/views/` compose context-owned hooks and components.
 
 ## Current Vs Historical Docs
@@ -94,3 +104,92 @@ Update the owning doc when behavior changes:
 - QA expectations: `docs/local-reliability-qa.md`;
 - roadmap/backlog: `ROADMAP.md` for public direction, `docs/backlog.md` for
   detailed engineering tasks.
+
+## Documentation Standards
+
+Every published page follows these rules. They exist so the site reads as one
+document, stays approachable for non-engineers wherever it can, and never
+breaks the links and § citations that code comments depend on.
+
+### Audiences And Tiers
+
+| Tier | Pages | Bar |
+| --- | --- | --- |
+| 1 — Everyone | Homepage, `docs/user/**` | No unexplained jargon. Every terminal command is followed by one plain sentence saying what it does. Screenshots and diagrams carry the page; text supports them. A reader who has never opened a terminal can still understand what the product does, what each stage means, and what data stays local. |
+| 2 — Contributors | `docs/developer/**`, `docs/local-*.md`, and the section overview pages (`architecture/index.md` plus the three group `index.md` pages) | Technical but self-contained: expand acronyms on first use, open with a plain-language summary, link down to Tier 3 for depth. |
+| 3 — Deep dives | The remaining `architecture/**` pages, `requirements.md`, `decisions.md` | Precision over simplicity — but still template-conformant: summary first, diagram for structural topics, stable § headings. |
+
+### Page Template
+
+Every page opens with:
+
+1. An H1 title that matches its sidebar label (a group's `index.md` uses the
+   group name — "Job Pipeline", not "Overview").
+2. A 1–3 sentence plain-language summary of what the page covers.
+3. On Tier 2–3 pages where the audience is not obvious, a one-line
+   "**Read this if**" naming the question the page answers.
+
+Structural topics (process shapes, data flow, schemas, module layouts) show a
+diagram before long prose. Reference detail — exhaustive tables and lists —
+goes last.
+
+### Content Ordering
+
+Sections, section `index.md` reading paths, and the sidebar in
+`docs/.vitepress/config.ts` all follow **reader-journey order**: the sequence
+of questions a newcomer asks — what is it → how do I use or run it → what does
+it do → how does each part work → where does data live → how do I operate it →
+how is it designed → reference lookup. Keep the three surfaces in sync when
+adding a page.
+
+### Terminology
+
+Use the canonical term everywhere; introduce it once per page with its long
+form when the tier calls for it.
+
+| Canonical | Avoid | First use (Tier 1–2 pages) |
+| --- | --- | --- |
+| the TypeScript API | TS API, local API, product API | "the local TypeScript API (the process the web app talks to)" |
+| the Python worker | automation worker, JobHunter worker | "the Python worker (a Temporal worker process that executes workflows)"; "Temporal worker" is reserved for that parenthetical |
+| the web app | web UI, React app, frontend app | "frontend" stays correct for the architecture layer ("frontend architecture") |
+| Temporal | — | "Temporal (the workflow engine)" |
+| the JSON-RPC bridge | — | the TS↔Python protocol; bare "JSON-RPC" is fine after first use |
+| Server-Sent Events (SSE) | — | expand on first use per page, then "SSE" |
+| read model (noun), read-model (adjective) | — | "the read model"; "read-model projections" |
+| Discover, Enrich, Score, Materials, Apply | — | capitalized when naming pipeline stages; lowercase as ordinary verbs |
+
+### Diagrams
+
+- Mermaid only. Every diagram is preceded or followed by one sentence saying
+  what to notice in it.
+- `flowchart LR` for pipelines and data flow, `flowchart TD` for layered
+  stacks, `sequenceDiagram` for call flows, `erDiagram` for schemas.
+- Never put `;` inside sequence-diagram message text — it is a statement
+  separator and silently blanks the diagram. Mermaid renders client-side, so a
+  broken diagram still builds; check edited diagrams in `pnpm docs:dev`.
+- Diagrams state only facts already verified on the page or in code. No
+  aspirational boxes.
+
+### Callouts
+
+- `::: tip` for guidance and shortcuts.
+- `::: warning` for safety boundaries, destructive actions, and spend.
+- `::: info` for context and history.
+- At most about two callouts per screen of text; a page of callouts is a page
+  of noise.
+
+### Frozen Surfaces
+
+- **URLs never change.** Published paths are cited by code comments, PRs, and
+  external links. Improve titles and sidebar labels instead.
+- **§-numbered headings stay** in `architecture/domain-model/**` (§1–§11) and
+  `architecture/frontend/**` (§1–§15): `packages/domain-types` comments and
+  AGENTS.md cite them.
+- Historical records (`docs/plans/implemented/**`, `docs/incidents/**`,
+  `openspec/**`) keep their original wording, including stale link titles.
+
+### Verification
+
+`pnpm docs:build` runs VitePress's strict dead-link check plus the
+emitted-href gate (`scripts/check-docs-site-links.mjs`). Both must pass before
+review.

@@ -1,7 +1,12 @@
 # Local Development
 
-JobHunter is a pnpm TypeScript workspace plus a uv-managed Python automation
-worker.
+JobHunter is a pnpm TypeScript workspace plus a uv-managed Python worker (a
+Temporal worker process that executes workflows). This page is the local loop
+end to end: install dependencies, run the full stack, verify a change, and the
+frontend, docs-site, and documentation-screenshot workflows.
+
+**Read this if** you are setting JobHunter up on your machine, or you changed
+code and need the commands that prove it still works.
 
 ## Install
 
@@ -27,7 +32,7 @@ pnpm dev:setup
 
 `pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
-automation worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
+Python worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
 the Python dev tools used by local checks. It does not install Temporal,
 Chrome/Chromium, Poppler, or Playwright browser binaries.
 
@@ -38,7 +43,7 @@ pnpm dev
 ```
 
 `pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
-TypeScript API, Vite web app, and the JobHunter automation worker. Before each
+TypeScript API, Vite web app, and the Python worker. Before each
 component starts, the launcher stops the existing tracked JobHunter process
 tree for that component, so rerunning `pnpm dev` starts from a clean owned
 stack. It runs in the foreground so supervised terminals keep the child
@@ -93,7 +98,7 @@ the Web UI on `http://127.0.0.1:8233`. The launcher passes
 `--db-filename "$JOBHUNTER_TEMPORAL_DB"` so workflow history persists across
 launcher restarts instead of disappearing when the process exits. With Temporal
 running, `jobhunter doctor` reports `Temporal: reachable`. The Vite web dev
-server proxies `/v1/*` to the local API by default.
+server proxies `/v1/*` to the TypeScript API by default.
 
 ## Verify
 
