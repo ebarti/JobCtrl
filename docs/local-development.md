@@ -178,9 +178,10 @@ which executes the per-story `play()` interactions and the
 The documentation under `docs/` (minus internal planning docs) is also a
 static VitePress site, configured in `docs/.vitepress/config.ts`. The site
 publishes the user guide, developer guide, architecture docs, and reference
-docs; `docs/plans/`, `docs/incidents/`, and `docs/backlog.md` stay
-repository-only, and links that point at unpublished or repo-root files are
-rewritten to GitHub URLs at build time.
+docs behind a hero landing page (`docs/index.md`); `docs/plans/`,
+`docs/incidents/`, `docs/backlog.md`, and the repo-facing `docs/README.md`
+map stay repository-only, and links that point at unpublished or repo-root
+files are rewritten to GitHub URLs at build time.
 
 ```bash
 pnpm docs:dev
