@@ -2,7 +2,7 @@
 
 Use these repository documents before making architectural, workflow, or QA decisions:
 
-- `docs/INDEX.md`: canonical map of every public, user, and developer document.
+- `docs/README.md`: canonical map of every public, user, and developer document (GitHub renders it when browsing `docs/`; unpublished on the docs site, whose homepage is the hero page `docs/index.md`).
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
 - `docs/user/` (`getting-started.md`, `configuration.md`, `normal-flows.md`, `data-and-safety.md`, `screenshots.md`): end-user setup, the configuration/env-var reference, expected product flows, data and safety boundaries, and screenshot generation.
 - `docs/developer/README.md`: contributor entry point and architecture/QA reading path.

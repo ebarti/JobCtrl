@@ -139,7 +139,8 @@ scrubber is green today.
 
 **The docs site has a publish boundary.** The VitePress config
 (`docs/.vitepress/config.ts`) excludes `docs/plans/`, `docs/incidents/`,
-`docs/backlog.md`, and `docs/delivered.md` from the built site via `srcExclude`,
+`docs/backlog.md`, `docs/delivered.md`, and the repo-facing `docs/README.md`
+from the built site via `srcExclude`,
 and rewrites any inbound link that escapes the published set (repo-root files or
 unpublished internal docs) to an absolute GitHub URL so the deployed site never
 ships a relative link that 404s. When adding a page, keep internal-only material

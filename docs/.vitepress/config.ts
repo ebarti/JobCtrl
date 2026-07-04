@@ -5,15 +5,20 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 const REPO_URL = "https://github.com/ebarti/JobHunter";
 
 // Docs that stay in the repository but are not published on the site.
+// docs/README.md is the repo-facing documentation map (GitHub renders it when
+// browsing docs/); the site's homepage is the hero landing page in index.md.
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
-const UNPUBLISHED_FILES = new Set(["docs/backlog.md", "docs/delivered.md"]);
+const UNPUBLISHED_FILES = new Set([
+  "docs/backlog.md",
+  "docs/delivered.md",
+  "docs/README.md",
+]);
 
 // Single source of truth for page rewrites: fed to VitePress `rewrites` AND
 // used to fix inbound links. VitePress strips `.md` from links but does not
 // apply the rewrite map to them, so a link to `developer/README.md` would
 // otherwise emit `developer/README` — a page that is never built.
 const PAGE_REWRITES: Record<string, string> = {
-  "INDEX.md": "index.md",
   "developer/README.md": "developer/index.md",
 };
 
@@ -25,7 +30,7 @@ function routeForRewrittenPage(docPath: string): string | null {
 }
 
 const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
-  { text: "Overview", link: "/" },
+  { text: "Home", link: "/" },
   {
     text: "User Guide",
     items: [
@@ -166,7 +171,7 @@ export default withMermaid(
     title: "JobHunter",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
-    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md"],
+    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md", "README.md"],
     cleanUrls: true,
     lastUpdated: true,
     rewrites: PAGE_REWRITES,
