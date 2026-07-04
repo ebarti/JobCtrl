@@ -8,6 +8,22 @@ const REPO_URL = "https://github.com/ebarti/JobHunter";
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set(["docs/backlog.md", "docs/delivered.md"]);
 
+// Single source of truth for page rewrites: fed to VitePress `rewrites` AND
+// used to fix inbound links. VitePress strips `.md` from links but does not
+// apply the rewrite map to them, so a link to `developer/README.md` would
+// otherwise emit `developer/README` — a page that is never built.
+const PAGE_REWRITES: Record<string, string> = {
+  "INDEX.md": "index.md",
+  "developer/README.md": "developer/index.md",
+};
+
+function routeForRewrittenPage(docPath: string): string | null {
+  const rewritten = PAGE_REWRITES[docPath];
+  if (!rewritten) return null;
+  // With cleanUrls: `index.md` -> `/`, `developer/index.md` -> `/developer/`.
+  return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
+}
+
 /**
  * Rewrites markdown links that resolve outside the published docs set
  * (repo-root files like ../README.md, or intentionally unpublished internal
@@ -28,9 +44,13 @@ function rewriteEscapingLink(href: string, pageRelativePath: string): string | n
   const isUnpublished =
     UNPUBLISHED_PREFIXES.some((prefix) => repoPath.startsWith(prefix)) ||
     UNPUBLISHED_FILES.has(repoPath);
-  if (!escapesDocs && !isUnpublished) return null;
-  const view = path.endsWith("/") ? "tree" : "blob";
-  return `${REPO_URL}/${view}/main/${repoPath}${hash}`;
+  if (escapesDocs || isUnpublished) {
+    const view = path.endsWith("/") ? "tree" : "blob";
+    return `${REPO_URL}/${view}/main/${repoPath}${hash}`;
+  }
+  const rewrittenRoute = routeForRewrittenPage(repoPath.slice("docs/".length));
+  if (rewrittenRoute) return `${rewrittenRoute}${hash}`;
+  return null;
 }
 
 export default withMermaid(
@@ -41,10 +61,7 @@ export default withMermaid(
     srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md"],
     cleanUrls: true,
     lastUpdated: true,
-    rewrites: {
-      "INDEX.md": "index.md",
-      "developer/README.md": "developer/index.md",
-    },
+    rewrites: PAGE_REWRITES,
     vite: {
       // The workspace-wide esbuild override (security pin) refuses to lower
       // destructuring to Vite 5's default legacy browser targets; a modern

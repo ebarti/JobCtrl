@@ -37,7 +37,7 @@
     "qa:test": "corepack pnpm --filter @jobhunter/api qa:test",
     "docs:screenshots": "corepack pnpm --filter @jobhunter/web e2e -- tests/docs-screenshots.spec.ts",
     "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
+    "docs:build": "vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:preview": "vitepress preview docs",
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
