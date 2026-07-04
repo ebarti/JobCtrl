@@ -46,6 +46,10 @@ From the UI, use the Pipelines page and run `Discover`. From the CLI:
 uv --project workers/automation run jobhunter run discover
 ```
 
+Per-stage commands (`jobhunter enrich`, `score`, `tailor`, `cover`) and the
+single-job path (`jobhunter job <url> --dry-run`) start the same Temporal
+workflows when you want a narrower run.
+
 Discover owns the preparation path:
 
 - source crawling or ATS/API fetches;

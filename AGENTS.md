@@ -2,14 +2,22 @@
 
 Use these repository documents before making architectural, workflow, or QA decisions:
 
+- `docs/INDEX.md`: canonical map of every public, user, and developer document.
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
+- `docs/user/` (`getting-started.md`, `configuration.md`, `normal-flows.md`, `data-and-safety.md`, `screenshots.md`): end-user setup, the configuration/env-var reference, expected product flows, data and safety boundaries, and screenshot generation.
+- `docs/developer/README.md`: contributor entry point and architecture/QA reading path; `docs/developer/screenshot-playbook.md`: synthetic screenshot refresh workflow.
+- `docs/local-development.md`: install, run, verify, and frontend development commands.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
-- `docs/local-ts-api.md`: local TypeScript API, web app development commands, API/web verification, dashboard migration context, and the `GET /v1/events/stream` SSE contract.
-- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries, the frontend stack / state layers / ports / SSE realtime, and the OpenTelemetry → Langfuse observability layer for LLM, workflow, and JSON-RPC spans.
-- `docs/job-pipeline-architecture.md`: phase-by-phase job pipeline execution, sequence diagrams, component diagrams, call paths, persistence, events, projection visibility, and failure behavior.
+- `docs/local-ts-api.md`: local TypeScript API routes, JSON-RPC dispatch, web app development notes, and the `GET /v1/events/stream` SSE contract.
+- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, Temporal-native orchestration, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries, the frontend stack / state layers / ports / SSE realtime, and the OpenTelemetry → Langfuse observability layer for LLM, workflow, and JSON-RPC spans.
+- `docs/job-pipeline-architecture.md`: workflow-by-workflow pipeline execution on Temporal, sequence diagrams, component diagrams, call paths, persistence, events, projection visibility, and failure behavior.
+- `docs/tailoring.md`: resume tailoring prompt contract, generated JSON shape, validation/judge/fabrication gates, provenance, audit metadata, and safe change points.
+- `docs/requirements.md`: product and technical requirements that must stay true as implementation changes.
 - `docs/ddd-target.md`: canonical DDD + hexagonal target architecture, including bounded-context language, aggregates, ports, domain events, projection strategy, and hosted-future seams. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
 - `docs/frontend-target.md`: canonical frontend architecture — three-layer state (server / URL / client), eight bounded contexts mirrored 1:1 from the backend, view-vs-context dichotomy, hexagonal frontend ports, SSE realtime + invalidation router, testing pyramid. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
-- `docs/decisions.md`: architectural decision records — DDD adoption, per-aggregate repositories, in-process EventPublisher + projections, JSON-RPC for TS↔Python, TanStack family adopted for the frontend, frontend hexagonal ports with local + hosted adapters named, SSE realtime via `GET /v1/events/stream` + invalidation router, view-vs-context dichotomy.
+- `docs/decisions.md`: architectural decision records — DDD adoption, per-aggregate repositories, in-process EventPublisher + projections, JSON-RPC for TS↔Python, TanStack family adopted for the frontend, frontend hexagonal ports with local + hosted adapters named, SSE realtime via `GET /v1/events/stream` + invalidation router, view-vs-context dichotomy, and the Temporal-native orchestration ADRs.
+- `ROADMAP.md`: public roadmap; `docs/backlog.md`: detailed engineering backlog, frontend a11y deferrals, and the known-failing web e2e baseline.
+- `docs/plans/`: active plans at the top level, historical records under `implemented/`; `docs/incidents/`: incident reports.
 - `package.json`: current TypeScript/API/web scripts.
 - `workers/automation/pyproject.toml`: Python package metadata, CLI entry point, Python version, optional dev dependencies, and Ruff config.
 
@@ -19,7 +27,8 @@ Use `pnpm dev` for the full local development stack. It stops previously tracked
 
 Known local commands:
 
-- Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed.
+- First-run setup: `pnpm install:interactive` (guided system checks + Node/Python dependencies + Playwright Chromium) or `pnpm dev:setup` (non-interactive dependency sync), then `uv --project workers/automation run jobhunter init` and `uv --project workers/automation run jobhunter doctor`.
+- Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed. The full command tree (per-stage runs, `job <url>`, `backup`, `gmail-auth`, `migrate-resume-html`, …) is documented in `README.md` and `docs/user/`. Work-starting commands start Temporal workflows and require the Temporal dev server plus a running JobHunter worker.
 - Full local stack: `pnpm dev` (attached foreground supervisor; preferred for agents and annotation).
 - Detached local stack: `pnpm dev:start`, then `pnpm dev:status`, `pnpm dev:logs <name>`, and `pnpm dev:stop`.
 - Temporal worker: `uv --project workers/automation run jobhunter worker` (long-lived workflow worker; needs `temporal server start-dev` running).
@@ -34,7 +43,8 @@ Do not run auto-apply, browser submission, destructive profile/database actions,
 
 The unit-test and QA command set must be made explicit as the project evolves. Until a stronger command matrix exists, use the following defaults and narrow them to the touched surface when appropriate:
 
-- Full TypeScript/API/web verification: `pnpm test`.
+- Cross-stack typecheck + lint aggregate: `pnpm check` (contracts, api-client, API, and web typechecks plus Python ruff).
+- Cross-stack test aggregate: `pnpm test` (API Vitest + web build + Python pytest). It does NOT run the web unit/hook/component suite, the type-level tests, or the Playwright e2e specs — run those explicitly for frontend changes.
 - TypeScript API typecheck: `pnpm api:check`.
 - TypeScript API tests: `pnpm api:test`.
 - Web typecheck: `pnpm web:check`.
@@ -60,9 +70,12 @@ When a doc update is warranted:
 | What changed | Update |
 | --- | --- |
 | User-facing product behavior, CLI commands, runtime requirements, generated local artifacts, or safety notes | `README.md` |
+| End-user setup, configuration/env-var reference, normal flows, data/safety boundaries, or screenshot generation | `docs/user/*.md` |
+| Install, run, verify, or frontend development commands | `docs/local-development.md` |
 | Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
-| Local TypeScript API behavior, web app development commands, API/web verification, or dashboard migration details | `docs/local-ts-api.md` |
-| TypeScript API plus Python worker architecture, local-first boundaries, orchestration, or phased migration constraints | `docs/architecture.md` |
+| Local TypeScript API routes, JSON-RPC dispatch, or the SSE contract | `docs/local-ts-api.md` |
+| TypeScript API plus Python worker architecture, Temporal orchestration, or local-first boundaries | `docs/architecture.md` |
+| Resume tailoring contract, validation/judge/fabrication gates, provenance, or tailoring audit metadata | `docs/tailoring.md` |
 | Observability / OpenTelemetry / Langfuse export of LLM, workflow, or JSON-RPC spans | `docs/architecture.md` |
 | Frontend architecture (state layers, bounded contexts, ports, realtime, testing pyramid) | `docs/frontend-target.md` |
 | TypeScript/API/web scripts, package metadata, dependencies, or tooling commands | `package.json` |
@@ -186,7 +199,7 @@ The `apps/web` frontend follows the architecture documented in `docs/frontend-ta
 
 ### Tables
 
-- TanStack Table v8 with column models in `views/<view>/columns.tsx`.
+- Column models live in `views/<view>/columns.tsx` as `DataGridColumn<T>[]` for the shared grid (`apps/web/src/shared/ui/filterable-data-grid.tsx`); `@tanstack/react-table` supplies row-selection/sorting types only, not the table engine.
 - Cell renderers compose context-owned components (`<ScoreBadge>` from `contexts/scoring/`, `<StageBadge>` from `contexts/pipeline/`, `<ApplyRunBadge>` from `contexts/apply/`, …) — never inline JSX duplicating what a context already exports.
 
 ### Anti-patterns (forbidden in feature code)

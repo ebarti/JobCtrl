@@ -166,20 +166,21 @@ substitutions, no inventions:
 
 | Backend context | Frontend folder | Hooks / components owned by the context | View surfaces (composers) where it appears |
 |---|---|---|---|
-| Job Discovery | `contexts/discovery/` | `useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`; future `useImportJobMutation` (`ImportJobUseCase` per backend §5.1) | Jobs view (delete/restore controls), future "Add job" affordance |
-| Job Enrichment | `contexts/enrichment/` | Event-consumer slice (`JobEnriched`, `EnrichmentFailed` invalidation handlers); future `useEnrichmentRetryMutation` for manual re-enrichment | No dedicated affordance today; surfaces in Jobs view via stage badges |
+| Job Discovery | `contexts/discovery/` | Job lifecycle mutations (delete / hide / unhide / restore / permanent-delete, bulk), `useImportJobMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), discovery-settings + source-registry / quarantine / manual-capture / feedback mutations; `<DiscoveryProductControls>` | Jobs view (bulk controls), Discovery view (source + schedule admin) |
+| Job Enrichment | `contexts/enrichment/` | `useEnrichmentRetryMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), `useRefreshCompensationMutation` / `useRefreshAllCompensationMutation`; compensation-evidence components; enrichment/compensation invalidation handlers | Jobs view + Apply Review (compensation audit) |
 | Candidate Profile | `contexts/profile/` | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store | `/profile`, `/settings` routes |
-| Scoring | `contexts/scoring/` | `<ScoreBadge>`, `<ScoreBreakdown>`; future `useCorrectScoreMutation` (`CorrectScoreUseCase` per backend §5.4) | Jobs view (score column + drawer breakdown) |
+| Scoring | `contexts/scoring/` | `<ScoreBadge>`, `<ScoreStalenessBadge>` (plus `<ScoreBreakdown>`, built/tested but not yet composed by a view); `useCorrectScoreMutation` (shipped), `useRescoreJobMutation` / `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation` | Jobs view (score column + audit-triage drawer + rescore/correct) |
 | Materials Generation | `contexts/materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation` (artifacts are owned by `MaterialsSet`) | Jobs view (Generate button), Artifacts view (open in OS) |
 | Apply Automation | `contexts/apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>` | Jobs view (per-row + drawer), Dashboard view (apply-runs card) |
 | Pipeline Orchestration | `contexts/pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`; `<StageBadge>`, `<StageTimeline>`, `<JobActions>` | Jobs view, Dashboard view (funnel) |
-| Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data) |
+| Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useWorkflowRunsListQuery`, `useApplyReviewQueueQuery`, activity/outcomes/health reads, …); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data) |
 
-**Views are NOT bounded contexts.** The Dashboard, Jobs, and Artifacts
-surfaces are *view composers* — they live under `views/dashboard/`,
-`views/jobs/`, `views/artifacts/` (sibling of `contexts/`, see §11) and
-they consume read hooks from `contexts/operations/` plus mutation hooks
-from the appropriate aggregate contexts. Naming the table-and-drawer
+**Views are NOT bounded contexts.** The user-facing surfaces are *view
+composers* — today there are eight of them under `views/` (sibling of
+`contexts/`, see §11): `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`,
+`runs/`, `pipelines/`, `discovery/`, and `debug/`. Each consumes read hooks
+from `contexts/operations/` plus mutation hooks from the appropriate
+aggregate contexts. Naming the table-and-drawer
 surface "Jobs" matches user vocabulary; the *bounded contexts* it spans
 are Discovery, Enrichment, Scoring, Materials, Apply, Pipeline, and
 Operations — every one of which already exists as its own folder. The
@@ -291,18 +292,19 @@ contexts (in the DDD sense): the frontend consumes the backend's
 ubiquitous language as-is and does not push back against the shape.
 There is **one frontend context folder per backend context** — Discovery,
 Enrichment, Profile, Scoring, Materials, Apply, Pipeline Orchestration,
-Operations. Views (Dashboard, Jobs, Artifacts) are **not** contexts; they
-are composers that live under `views/` (§3.10, §11).
+Operations. Views (Dashboard, Jobs, Artifacts, Apply Review, Runs,
+Pipelines, Discovery, Debug) are **not** contexts; they are composers that
+live under `views/` (§3.10, §11).
 
 ### 3.1 Frontend Context Map
 
 ```mermaid
 graph TB
     subgraph "Frontend bounded contexts (1:1 with backend)"
-        DSC["discovery/<br/>delete/restore mutations,<br/>future ImportJob"]
-        ENR["enrichment/<br/>event-consumer slice,<br/>future re-enrich retry"]
+        DSC["discovery/<br/>job lifecycle + import mutations,<br/>source-registry admin"]
+        ENR["enrichment/<br/>retry + compensation refresh,<br/>compensation-evidence UI"]
         PRO["profile/<br/>profile + settings + credentials<br/>+ resume-import wizard"]
-        SCO["scoring/<br/>score badge / breakdown<br/>future ScoreCorrection"]
+        SCO["scoring/<br/>badge / breakdown / staleness<br/>correction + rescore"]
         MAT["materials/<br/>generate materials,<br/>open artifact"]
         APP["apply/<br/>apply / dry-run / cancel,<br/>apply-run timeline"]
         PIP["pipeline/<br/>retry / cancel / mark-applied / mark-skipped<br/>+ stage badges + timeline"]
@@ -310,35 +312,50 @@ graph TB
     end
 
     subgraph "View composers (NOT bounded contexts)"
-        VD["views/dashboard/<br/>KpiGrid, Funnel"]
-        VDBG["views/debug/<br/>DebugActivityTable, FilterBar"]
+        VD["views/dashboard/<br/>KpiGrid, ConversionPanel, Funnel,<br/>SourceHealthCard, ApplyRunsCard"]
+        VDBG["views/debug/<br/>DebugActivityTable, FilterBar, ActivityDrawer"]
         VJ["views/jobs/<br/>JobsTable, FilterBar, BulkActions, DetailDrawer"]
         VA["views/artifacts/<br/>ArtifactsTable, FilterBar, DetailPanel"]
+        VAR["views/apply-review/<br/>review queue + Plate resume editor"]
+        VRUN["views/runs/<br/>workflow runs table + drawer"]
+        VPIP["views/pipelines/<br/>StageTriggerPanel"]
+        VDISC["views/discovery/<br/>sources + schedule settings"]
     end
 
     subgraph "Routes (URL → typed search params)"
         RD["/dashboard"]
-        RDBG["/debug"]
-        RJ["/jobs + /jobs/$jobId"]
+        RDBG["/debug (+/activity/$eventId)"]
+        RJ["/jobs + /jobs/$jobId (+/run/$runId)"]
         RA["/artifacts + /artifacts/$artifactId"]
         RP["/profile (+/import wizard)"]
+        RPREF["/preferences"]
         RS["/settings (+/credentials)"]
+        RAR["/apply-review"]
+        RRUN["/runs (+/$runId)"]
+        RPIP["/pipelines"]
+        RDISC["/discovery"]
     end
 
     subgraph "Shared kernel"
         UI["shared/ui — primitives (shadcn/Radix)"]
         LY["shared/layout — AppShell, Topbar, Nav"]
-        PR["shared/providers — Tenant, Theme, Query, Router, Ports, EventStream"]
-        STO["shared/stores — Zustand (UI prefs, toasts)"]
+        PR["shared/providers — Ports, Tenant, Query, Theme, Density, Toaster"]
+        STO["shared/stores — Zustand (UI prefs, toasts, cmd palette)"]
         PORT["shared/ports — ApiClientPort, EventStreamPort, SessionPort, ..."]
-        LIB["shared/lib — formatters, cn(), zod helpers"]
+        LIB["shared/lib — formatters, cn(), createOptimisticMutation"]
     end
 
     RD --> VD
+    RDBG --> VDBG
     RJ --> VJ
     RA --> VA
     RP --> PRO
+    RPREF --> PRO
     RS --> PRO
+    RAR --> VAR
+    RRUN --> VRUN
+    RPIP --> VPIP
+    RDISC --> VDISC
 
     VD --> OPS
     VD --> APP
@@ -352,6 +369,15 @@ graph TB
     VJ --> ENR
     VA --> OPS
     VA --> MAT
+    VAR --> OPS
+    VAR --> APP
+    VAR --> MAT
+    VAR --> ENR
+    VRUN --> OPS
+    VRUN --> PIP
+    VPIP --> PIP
+    VDISC --> DSC
+    VDISC --> PRO
 
     DSC --> OPS
     ENR --> OPS
@@ -368,7 +394,7 @@ graph TB
     PRO --> UI
 
     PORT -.->|"adapters"| BE["apps/api (Fastify)"]
-    PORT -.->|"adapters"| SSE["GET /v1/events/stream (planned)"]
+    PORT -.->|"adapters"| SSE["GET /v1/events/stream (implemented)"]
 ```
 
 The diagram reads top-down:
@@ -393,9 +419,10 @@ The diagram reads top-down:
 **Backend mirror:** Job Discovery (`docs/ddd-target.md` §3.1, §4.1, §5.1).
 
 **Purpose:** Surface the user-facing affordances over the `Job` aggregate
-— deleting (soft-delete tombstone) and restoring jobs from any view.
-Future home of the manual-import affordance once `ImportJobUseCase` is
-exposed in the API.
+and the discovery-source registry — deleting (soft-delete tombstone),
+hiding, restoring, and permanently deleting jobs from any view; manually
+importing a job by URL; and administering discovery sources, schedules,
+quarantine, the manual-capture queue, and discovery feedback.
 
 **Ubiquitous language** (matches backend):
 - **Job** — the `Job` aggregate root identified by `(TenantId, JobId)`.
@@ -406,11 +433,19 @@ exposed in the API.
 - **Employer** — the hiring company (distinct from `Source`).
 
 **Responsibilities:**
-- Wrap the discovery-context backend write-side endpoints in mutation
-  hooks: `useDeleteJobMutation`, `useDeleteJobsBulkMutation`,
-  `useRestoreJobMutation`, `useRestoreJobsBulkMutation`.
-- Hold (when added) `useImportJobMutation` for manually adding a job by
-  URL.
+- Wrap the discovery-context write-side endpoints in mutation hooks:
+  `useDeleteJobMutation`, `useDeleteJobsBulkMutation`,
+  `usePermanentlyDeleteJobsBulkMutation`, `useHideJobsBulkMutation`,
+  `useUnhideJobsBulkMutation`, `useRestoreJobMutation`,
+  `useRestoreJobsBulkMutation`, and `useImportJobMutation` (import-by-URL;
+  a stub that throws `NotImplementedError` until the backend endpoint lands).
+- Own discovery-source administration: `useDiscoverySettingsQuery` /
+  `useUpdateDiscoverySettingsMutation`, and the product-control mutations
+  (`useUpsertDiscoverySourceMutation`, `usePatchDiscoverySourceStateMutation`,
+  promote/reject source-locator candidate, quarantine decision,
+  manual-capture import/dismiss, discovery feedback, role-match feedback).
+- Own the discovery UI panels `<DiscoveryProductControls>` and
+  `<DiscoveryRuntimeSettingsPanel>` (composed by `views/discovery/`).
 - Own the small inline UI affordances unique to discovery actions
   (delete-confirmation copy, restore toast).
 
@@ -419,18 +454,20 @@ exposed in the API.
 - Stage state transitions beyond delete/restore (that is `pipeline/`).
 - Score, materials, or apply concerns.
 
-**Why it has its own folder despite a thin surface today.** The folder
-exists because (a) the backend bounded context exists, (b) `DeleteJob`
-and `RestoreJob` are use cases of the Discovery context per backend §5.1
-— not of Operations and not of Pipeline, (c) when `ImportJobUseCase`
-ships, its hook lands here without restructure.
+**Folder rationale.** The folder exists because the backend bounded
+context exists and `DeleteJob` / `RestoreJob` / `ImportJob` and the
+source-registry use cases are Discovery-context use cases per backend §5.1
+— not Operations and not Pipeline. What began as a thin delete/restore
+surface has since grown into the full discovery-administration surface
+described above; the folder absorbed that growth without restructure.
 
 ### 3.3 Job Enrichment (Frontend)
 
 **Backend mirror:** Job Enrichment (`docs/ddd-target.md` §3.2, §4.2, §5.2).
 
-**Purpose:** Consume `JobEnriched` and `EnrichmentFailed` events into the
-invalidation router; surface (future) manual re-enrichment retry.
+**Purpose:** Consume enrichment events into the invalidation router;
+surface compensation evidence; and expose manual re-enrichment and
+compensation-refresh actions.
 
 **Ubiquitous language** (matches backend):
 - **JobEnrichment** — the aggregate (one per Job).
@@ -439,20 +476,29 @@ invalidation router; surface (future) manual re-enrichment retry.
 - **FullDescription**, **ApplicationUrl** — value objects.
 
 **Responsibilities:**
-- Register invalidation handlers in `operations/invalidation-router.ts`
-  for `JobEnriched` / `EnrichmentFailed`.
-- (Future) Wrap a manual `EnrichJobUseCase` retry button in
-  `useEnrichmentRetryMutation`.
+- Register invalidation handlers (in `contexts/enrichment/handlers.ts`,
+  wired through `operations/invalidation-router.ts`) for `JobEnriched`,
+  `EnrichmentFailed`, `PostingContentSnapshotCaptured` /
+  `PostingContentSnapshotFailed`, `JobActiveStateChanged`,
+  `ContentDuplicateCandidateDetected`, and `CompensationFactsUpdated`.
+- Wrap the compensation-refresh actions in `useRefreshCompensationMutation`
+  / `useRefreshAllCompensationMutation`. The manual `EnrichJobUseCase` retry
+  hook `useEnrichmentRetryMutation` exists as a **stub** (throws
+  `NotImplementedError`) pending its backend endpoint.
+- Own the compensation-evidence UI: `<CompensationSummaryCell>`,
+  `<CompensationSummaryStrip>`, `<CompensationAuditSection>`, and
+  `<RefreshAllCompensationButton>` (composed by the Jobs drawer and the
+  Apply Review view).
 
-**What it does NOT own today:**
-- Any user-facing UI affordance is implicit. Re-enrichment, when it
-  surfaces as an explicit user action, lands here.
+**What it does NOT own:**
+- Reading the jobs list / detail (that is `operations/`).
+- Scoring, materials, or apply concerns.
 
-**Why it has its own folder despite essentially zero UI today.** Same
-reasoning as Discovery: the backend context exists, `EnrichJobUseCase`
-exists in §5.2, and the moment the UI exposes a manual re-enrichment
-trigger (likely on a per-job action menu), the hook needs an unambiguous
-home.
+**Folder rationale.** The backend context exists and `EnrichJobUseCase`
+is a §5.2 use case; the enrichment folder now carries real compensation
+UI and refresh mutations (with the manual re-enrichment retry hook still a
+stub pending its backend endpoint), and remains the unambiguous home for any
+further enrichment-triggered affordance.
 
 ### 3.4 Candidate Profile
 
@@ -506,8 +552,8 @@ preview the rendered resume PDF.
 
 ### 3.5 Scoring
 
-**Purpose:** Render fit scores, the score breakdown, and (future) score
-correction.
+**Purpose:** Render fit scores, the score breakdown and reasoning, score
+staleness, score correction, and rescore actions.
 
 **Ubiquitous language** (matches Scoring):
 - **FitScore** — 1–10 integer.
@@ -515,19 +561,28 @@ correction.
   `reasoning`.
 - **MatchedKeywords** — ATS keywords matched.
 - **ScoreCorrection** — user-provided override (`CorrectScoreUseCase`
-  per backend §5.4; backlog).
+  per backend §5.4; shipped via `useCorrectScoreMutation` +
+  `<ScoreCorrectionControl>`).
 
 **Backend mirror:** Scoring (`docs/ddd-target.md` §3.4, §4.4, §5.4).
 
 **Responsibilities:**
-- Provide `<ScoreBadge score={...} />` and `<ScoreBreakdown />`
-  components consumed by the Jobs view (table cell + drawer breakdown).
-- (Future, named-not-built) `useCorrectScoreMutation` once the backend
-  exposes the correction endpoint.
+- Provide the scoring render components — `<ScoreBadge>` (jobs table cell
+  + drawer), `<ScoreReasoning>`, and `<ScoreStalenessBadge>`. `<ScoreBreakdown>`
+  is built, tested, and storied but is **not yet composed by any view** (the
+  Jobs drawer surfaces scoring through `<JobAuditTriage>` →
+  `<ScoreCorrectionControl>`); it stays available for wiring.
+- Own score-correction and rescore mutations: `useCorrectScoreMutation`
+  (shipped) plus `useRescoreJobMutation`, `useRescoreCurrentPolicyMutation`,
+  and `useResetStaleScoresForRescoreMutation`, surfaced through
+  `<ScoreCorrectionControl>`, `<RescoreJobButton>`,
+  `<RescoreCurrentPolicyButton>`, and `<ResetStaleScoresButton>`.
+- Own `<CompensationSourcePolicyPanel>` (reads
+  `useCompensationSourcePolicyQuery` from Operations).
 
 **What it does NOT own:**
-- Re-running scoring (that is a `pipeline/` retry-stage action against
-  the `score` stage).
+- The generic per-stage `score` retry (that is a `pipeline/` retry-stage
+  action); scoring owns the domain-level rescore/correction actions above.
 - The fit-score column header in the jobs table (that is `views/jobs/`;
   scoring contributes the cell renderer only).
 
@@ -590,11 +645,11 @@ observe an apply run's live event timeline.
   to `ApplyRunEventRecorded` events scoped to `runId`.
 
 **What it does NOT own:**
-- Reading the apply runs list / detail (that is `operations/` —
-  `useApplyRunsListQuery`, `useApplyRunQuery`; the high-frequency
-  `setQueryData` patching for `ApplyRunEventRecorded` mutates
-  `operations/`-owned cache, but the routing rule lives in the
-  invalidation router).
+- Reading the apply runs list (that is `operations/` —
+  `useApplyRunsListQuery`, derived from the dashboard summary; there is no
+  `useApplyRunQuery`). The high-frequency `setQueryData` patching for
+  `ApplyRunEventRecorded` mutates `operations/`-owned cache, but the
+  routing rule lives in the invalidation router.
 - "Mark applied" / "mark skipped" — those are pipeline-state transitions
   per backend §5.7 and live in `pipeline/`.
 
@@ -649,9 +704,14 @@ the SSE subscription that fans events out to invalidate query keys.
 - **EventStream** — the SSE channel publishing `DomainEvent`s.
 - **InvalidationRouter** — pure function that maps an incoming event to
   the set of query keys to invalidate.
-- **QueryKeyRegistry** — the union of every named projection's query-key
-  factory (`dashboardKeys`, `jobsKeys`, `artifactsKeys`, `applyRunsKeys`,
-  `profileKeys`).
+- **QueryKeyRegistry** — the aggregation of every query-key factory,
+  exported from `contexts/operations/queryKeys.ts`. Today it re-exports 17
+  factories: the read-side ones owned locally by Operations (`jobsKeys`,
+  `artifactsKeys`, `dashboardKeys`, `applyRunsKeys`, `applyReviewKeys`,
+  `activityKeys`, `outcomesKeys`, `workflowRunsKeys`, `healthKeys`,
+  `compensationKeys`) plus each aggregate context's own factory
+  (`profileKeys`, `discoveryKeys`, `enrichmentKeys`, `scoringKeys`,
+  `materialsKeys`, `applyKeys`, `pipelineKeys`).
 
 **Backend mirror:** Operations / Read-Side (`apps/api/src/projections.ts`,
 `workers/automation/.../infrastructure/projections/`).
@@ -664,13 +724,25 @@ the SSE subscription that fans events out to invalidate query keys.
 - Implement the **invalidation router** that consumes events and calls
   `queryClient.invalidateQueries({ queryKey })` (or `setQueryData(...)`
   for high-frequency events).
-- Own *all* projection-typed read hooks: `useDashboardSummaryQuery`,
-  `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`,
-  `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`.
-- Re-export the projection types from `@jobhunter/contracts` so feature
-  contexts and views import projections from `contexts/operations/types`
-  rather than reaching into the contracts package directly. (This is
-  the frontend Anti-Corruption Layer — §6.5.)
+- Own *all* projection-typed read hooks. The core set:
+  `useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
+  `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`,
+  `useActivityListQuery` / `useActivityEventQuery`,
+  `useWorkflowRunsListQuery` / `useWorkflowRunDetailQuery`,
+  `useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`,
+  `useApplicationOutcomesQuery` / `useJobApplicationOutcomesQuery`,
+  `useCompensationSourcePolicyQuery`, `useHealthQuery`, and the
+  discovery-product-control read hooks in `useDiscoveryProductControlsQuery`
+  (source registry, source-locator candidates, source preview, quarantine,
+  manual-capture queue, role-match feedback). Note there is **no**
+  standalone `useApplyRunQuery`: apply-run detail is not yet a dedicated
+  endpoint, so `useApplyRunsListQuery` derives runs from the dashboard
+  summary via `select`, and per-run live events are patched onto
+  `applyRunsKeys.detail(...)` by the invalidation router (§7.5).
+- Re-export projection and API response types (sourced from
+  `@jobhunter/domain-types` via `@jobhunter/contracts`) through
+  `contexts/operations/types.ts` so feature contexts and views can import
+  them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
 
 **What it does NOT own:**
 - Any feature UI. Operations is pure infrastructure code: hooks, types,
@@ -680,9 +752,10 @@ the SSE subscription that fans events out to invalidate query keys.
 
 ### 3.10 Views (Composition Layer — NOT Bounded Contexts)
 
-`views/dashboard/`, `views/jobs/`, and `views/artifacts/` exist as
-sibling folders of `contexts/`. They are *not* bounded contexts; they
-are presentation composers. The dichotomy is intentional and binding:
+The `views/` folder holds eight sibling composers of `contexts/`:
+`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
+`pipelines/`, `discovery/`, and `debug/`. They are *not* bounded contexts;
+they are presentation composers. The dichotomy is intentional and binding:
 
 - A **context** owns a slice of the backend's domain language and the
   hooks/components that surface it. It maps 1:1 to a backend bounded
@@ -696,14 +769,18 @@ are presentation composers. The dichotomy is intentional and binding:
 contexts; a context never depends on a view. A view never depends on
 another view (cross-view navigation goes through the URL).
 
-**The three views:**
+**The eight views:**
 
 | View | Composition |
 |---|---|
-| `views/dashboard/` | `<KpiGrid>` (operations: `useDashboardSummaryQuery`), `<Funnel>` (operations + pipeline `<StageBadge>`), `<ApplyRunsCard>` (operations: `useApplyRunsListQuery`, apply `<ApplyRunBadge>`). |
-| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (binds to URL state), activity-detail navigation for event inspection. |
-| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind table header filters to URL state), `<JobBulkActions>` (discovery: `useDeleteJobsBulkMutation` / `useRestoreJobsBulkMutation`), `<JobDetailDrawer>` (composes `<JobOverview>` + `<ScoreBreakdown>` + `<StageTimeline>` + `<ArtifactGroup>` + `<ApplyHistory>` + `<JobActions>`). |
-| `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`, materials: `useOpenArtifactMutation`). |
+| `views/dashboard/` | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`. |
+| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: delete / hide / restore / permanent-delete bulk mutations), `<JobDetailDrawer>` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact badges + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
+| `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`). |
+| `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. Left pane is the review queue (operations: `useApplyReviewQueueQuery`); right pane composes the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. |
+| `views/runs/` | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; `<WorkflowRunDrawer>` (operations: `useWorkflowRunDetailQuery`) at `/runs/$runId`. |
+| `views/pipelines/` | `<PipelinesView>` — renders the pipeline context's `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). |
+| `views/discovery/` | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery). |
+| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), `<ActivityDetailDrawer>` (operations: `useActivityEventQuery`) at `/activity/$eventId`. |
 
 **The view's only owned components are layout and view-local affordances**
 (filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
@@ -723,7 +800,7 @@ factory per context, with **`TenantId` as the first segment** of every
 query key (resolves §6 question 10).
 
 ```ts
-// contexts/operations/queryKeys.ts — jobsKeys lives here (Operations owns reads)
+// contexts/operations/jobsKeys.ts — Operations owns read-side keys
 export const jobsKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "jobs"] as const,
   lists: (tenantId: TenantId) =>
@@ -765,21 +842,54 @@ sites, persistence adapters, or tests.
 tenant from `TenantProvider`, which reads from `SessionProvider`, which
 reads from the JWT (§9). The hook signature does not change.
 
-**Query-key registry.** `contexts/operations/queryKeys.ts` re-exports
-every context's factory:
+**Query-key registry.** `contexts/operations/queryKeys.ts` is the single
+registry. Read-side factories are owned **locally** by Operations (each in
+its own file, e.g. `operations/jobsKeys.ts`), because their projections are
+Operations-owned reads; the seven aggregate contexts own their own factory
+and Operations re-exports it. There are no `contexts/jobs/`,
+`contexts/artifacts/`, or `contexts/dashboard/` folders — those are read
+concerns, not bounded contexts.
 
 ```ts
 // contexts/operations/queryKeys.ts
-export { jobsKeys } from "../jobs/queryKeys";
-export { artifactsKeys } from "../artifacts/queryKeys";
-export { dashboardKeys } from "../dashboard/queryKeys";
-export { profileKeys } from "../profile/queryKeys";
-export { applyRunsKeys } from "../apply/queryKeys";
-// ...
+// Read-side keys owned locally by Operations:
+export { jobsKeys } from "./jobsKeys.js";
+export { artifactsKeys } from "./artifactsKeys.js";
+export { dashboardKeys } from "./dashboardKeys.js";
+export { applyRunsKeys } from "./applyRunsKeys.js";
+export { applyReviewKeys } from "./applyReviewKeys.js";
+export { activityKeys } from "./activityKeys.js";
+export { outcomesKeys } from "./outcomesKeys.js";
+export { workflowRunsKeys } from "./workflowRunsKeys.js";
+export { healthKeys } from "./healthKeys.js";
+export { compensationKeys } from "./compensationKeys.js";
+// Aggregate-context factories, re-exported from their owning context:
+export { profileKeys } from "../profile/queryKeys.js";
+export { discoveryKeys } from "../discovery/queryKeys.js";
+export { enrichmentKeys } from "../enrichment/queryKeys.js";
+export { scoringKeys } from "../scoring/queryKeys.js";
+export { materialsKeys } from "../materials/queryKeys.js";
+export { applyKeys } from "../apply/queryKeys.js";
+export { pipelineKeys } from "../pipeline/queryKeys.js";
 ```
 
 The invalidation router (§7.4) imports from this registry; nothing else
 imports cross-context query-key factories.
+
+**Full vs stub factories today.** The read-side factories owned by
+Operations (`jobsKeys`, `artifactsKeys`, `dashboardKeys`, `applyRunsKeys`,
+`applyReviewKeys`, `activityKeys`, `outcomesKeys`, `workflowRunsKeys`,
+`healthKeys`) plus the write-side `discoveryKeys` and `profileKeys` carry
+full hierarchical scopes (`all` / `lists` / `list` / `details` / `detail`,
+or context-specific subsets such as `profileKeys.resumeTemplates` and
+`discoveryKeys.sourceRegistry`). The remaining aggregate factories —
+`applyKeys`, `pipelineKeys`, `scoringKeys`, `enrichmentKeys`,
+`materialsKeys` — are today `all(tenantId)`-only stubs: those contexts own
+mutations and components but no cached reads of their own yet, so the
+factory exists for registry symmetry and grows scopes when a context gains
+its first query. One nuance: `compensationKeys` nests under an extra
+`"operations"` segment (`["tenant", tenantId, "operations", "compensation",
+…]`) because compensation reads are an Operations concern.
 
 ### 4.2 Hook Conventions
 
@@ -820,14 +930,22 @@ file-based plugin.** Rationale:
 
 **Final route tree:**
 
+The router uses TanStack Router's flat-file convention (`.` nests, `$`
+marks a path param, a `-` prefix excludes a file from generation — the
+per-route `-*.search.ts` Zod search schemas use that). The not-found case
+is a `notFoundComponent` declared on `__root.tsx`; there is no `404.tsx`
+route file. `routeTree.gen.ts` is generated by `@tanstack/router-plugin`
+and **committed** (not gitignored).
+
 ```mermaid
 graph TB
-    R["__root.tsx<br/>(providers, AppShell, dev tools)"]
+    R["__root.tsx<br/>(providers, AppShell, dev tools,<br/>notFoundComponent)"]
     R --> I["index.tsx<br/>(redirect → /dashboard)"]
     R --> D["dashboard.tsx<br/>(DashboardView)"]
     R --> J["jobs.tsx<br/>(layout — table + drawer)"]
     J --> JI["jobs.index.tsx<br/>(table only)"]
     J --> JK["jobs.$jobId.tsx<br/>(drawer route)"]
+    JK --> JKR["jobs.$jobId.run.$runId.tsx<br/>(apply-run timeline)"]
     R --> A["artifacts.tsx<br/>(layout)"]
     A --> AI["artifacts.index.tsx<br/>(table)"]
     A --> AID["artifacts.$artifactId.tsx<br/>(detail panel)"]
@@ -837,10 +955,19 @@ graph TB
     PIM --> PIM1["profile.import.upload.tsx"]
     PIM --> PIM2["profile.import.preview.tsx"]
     PIM --> PIM3["profile.import.confirm.tsx"]
+    R --> PREF["preferences.tsx"]
     R --> S["settings.tsx<br/>(layout)"]
     S --> SI["settings.index.tsx<br/>(general)"]
     S --> SC["settings.credentials.tsx"]
-    R --> SF["__404.tsx (not-found)"]
+    R --> RUN["runs.tsx<br/>(layout)"]
+    RUN --> RUNI["runs.index.tsx<br/>(table)"]
+    RUN --> RUNK["runs.$runId.tsx<br/>(drawer)"]
+    R --> AR["apply-review.tsx"]
+    R --> PIP["pipelines.tsx"]
+    R --> DISC["discovery.tsx"]
+    R --> DBG["debug.tsx"]
+    R --> ACT["activity.$eventId.tsx<br/>(activity drawer)"]
+    R --> SPK["spikes.table-filters.tsx<br/>(dev spike)"]
 ```
 
 **Search-param conventions per route** (typed via Zod, resolves §6 question
@@ -878,7 +1005,7 @@ separately in §4.5.
 | Aspect | Pattern |
 |---|---|
 | Routes | None directly; read hooks consumed by all routes. |
-| Queries | `useDashboardSummaryQuery()` → `dashboardKeys.summary(tenantId)`; `useJobsListQuery(input)` → `jobsKeys.list(tenantId, input)`; `useJobDetailQuery(jobId)` → `jobsKeys.detail(tenantId, jobId)`; `useArtifactsListQuery(input)` → `artifactsKeys.list(tenantId, input)`; `useArtifactDetailQuery(artifactId)` → `artifactsKeys.detail(tenantId, artifactId)`; `useApplyRunsListQuery()` → `applyRunsKeys.list(tenantId)`; `useApplyRunQuery(runId)` → `applyRunsKeys.detail(tenantId, runId)`. |
+| Queries | Core: `useDashboardSummaryQuery()` → `dashboardKeys.summary(tenantId)`; `useJobsListQuery(input)` → `jobsKeys.list(tenantId, input)`; `useJobDetailQuery(jobId)` → `jobsKeys.detail(tenantId, jobId)`; `useArtifactsListQuery(input)` → `artifactsKeys.list(tenantId, input)`; `useArtifactDetailQuery(artifactId)` → `artifactsKeys.detail(tenantId, artifactId)`. Apply runs: `useApplyRunsListQuery()` keys on `dashboardKeys.summary(tenantId)` and derives the run list via `select` (there is no dedicated apply-runs endpoint yet, and no `useApplyRunQuery`; `applyRunsKeys.detail(tenantId, runId)` exists only as the `setQueryData` patch target in §7.5). Also: `useActivityListQuery` / `useActivityEventQuery`, `useWorkflowRunsListQuery` / `useWorkflowRunDetailQuery`, `useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`, `useApplicationOutcomesQuery` / `useJobApplicationOutcomesQuery`, `useCompensationSourcePolicyQuery`, `useHealthQuery`, and the `useDiscoveryProductControlsQuery` read hooks. |
 | Mutations | None — Operations is read-only. |
 | SSE keys consumed | All — Operations *owns* the invalidation router. |
 | Components | None directly. Owns the `<EventStreamProvider />` and the configured `QueryClient`. |
@@ -888,23 +1015,23 @@ separately in §4.5.
 
 | Aspect | Pattern |
 |---|---|
-| Routes | None directly; mutations triggered from `views/jobs/` (per-row + bulk actions). |
-| Queries | None — read paths flow through Operations. |
-| Mutations | `useDeleteJobMutation({ jobId, reason? })`, `useDeleteJobsBulkMutation(filterOrIds)`, `useRestoreJobMutation({ jobId })`, `useRestoreJobsBulkMutation(filterOrIds)`; future `useImportJobMutation({ url })`. All invalidate `jobsKeys.lists(tenantId)` + `jobsKeys.detail(tenantId, jobId)` + `dashboardKeys.summary(tenantId)`. Optimistic update on the affected list page; rolled back on error. |
-| SSE keys consumed | `JobDiscovered`, `JobUpdated`, `JobDeleted`, `JobRestored`. |
-| Components | None today (mutations triggered through `<JobBulkActions>` in `views/jobs/`); future `<AddJobButton>` for manual import. |
-| Notes | Discovery's hooks live here even though the affordances surface in the Jobs view, because backend §5.1 puts `DeleteJob`/`RestoreJob`/`ImportJob` in the Discovery context. |
+| Routes | `routes/discovery.tsx` (`/discovery`) mounts `views/discovery/`; job delete/restore/hide mutations also fire from `views/jobs/` (bulk actions). |
+| Queries | `useDiscoverySettingsQuery()` (context-owned, → `discoveryKeys.settings(tenantId)`). Source-registry / locator / quarantine / manual-capture / role-match reads are Operations hooks (`useDiscoveryProductControlsQuery`). |
+| Mutations | Job lifecycle: `useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `usePermanentlyDeleteJobsBulkMutation`, `useHideJobsBulkMutation`, `useUnhideJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`, `useImportJobMutation` (stub — throws `NotImplementedError` until the backend endpoint lands). Source administration: `useUpdateDiscoverySettingsMutation` and `useDiscoveryProductControlMutations` (upsert source, patch source state, promote/reject source-locator candidate, quarantine decision, manual-capture import/dismiss, discovery feedback, role-match feedback decision). Job mutations invalidate `jobsKeys.lists(tenantId)` + `jobsKeys.detail(tenantId, jobId)` + `dashboardKeys.summary(tenantId)` with an optimistic list-page patch rolled back on error. |
+| SSE keys consumed | `JobDiscovered`, `JobUpdated`, `JobDeleted`, `JobRestored`, `JobSourceObserved`, `DiscoveryRunStarted` / `Completed` / `Failed`, `CanonicalJobIdentityResolved`, `DuplicateJobLinked` / `DuplicateJobLinkRejected`, `DiscoveryFeedbackRecorded`, `SourceLocationCandidateDiscovered` / `Promoted`, `SourceRegistryEntryCreated` / `Updated`, `SourceStateChanged`. |
+| Components | `<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>` (composed by `views/discovery/`); job bulk actions surface through `<JobBulkActions>` in `views/jobs/`. |
+| Notes | Discovery's hooks live here even though some affordances surface in the Jobs view, because backend §5.1 puts `DeleteJob` / `RestoreJob` / `ImportJob` and source-registry administration in the Discovery context. |
 
 #### 4.4.3 Job Enrichment
 
 | Aspect | Pattern |
 |---|---|
 | Routes | None. |
-| Queries | None. |
-| Mutations | None today; future `useEnrichmentRetryMutation({ jobId })` for manual re-enrichment. |
-| SSE keys consumed | `JobEnriched`, `EnrichmentFailed`. |
-| Components | None today; future `<RetryEnrichmentButton>`. |
-| Notes | This context exists as a folder so its event-handler registrations and future retry button have an unambiguous home. The handler registrations themselves live in `contexts/operations/invalidation-router.ts` for centrality (§7.4); the import path of the handler functions is `contexts/enrichment/handlers.ts`. |
+| Queries | None (compensation reads ride on `JobDetailProjection` / job list). |
+| Mutations | `useEnrichmentRetryMutation({ jobId })` (manual re-enrichment — **stub**, throws `NotImplementedError` until the backend endpoint lands), `useRefreshCompensationMutation`, `useRefreshAllCompensationMutation`. |
+| SSE keys consumed | `JobEnriched`, `EnrichmentFailed`, `PostingContentSnapshotCaptured` / `PostingContentSnapshotFailed`, `JobActiveStateChanged`, `ContentDuplicateCandidateDetected`, `CompensationFactsUpdated`. |
+| Components | `<CompensationSummaryCell>`, `<CompensationSummaryStrip>`, `<CompensationAuditSection>`, `<RefreshAllCompensationButton>`. |
+| Notes | Handler functions live in `contexts/enrichment/handlers.ts` and are registered centrally via `contexts/operations/invalidation-router.ts` (§7.4). |
 
 #### 4.4.4 Candidate Profile
 
@@ -915,17 +1042,17 @@ separately in §4.5.
 | Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step), `useSaveResumeTemplateMutation()`, and `useSetDefaultResumeTemplateMutation()`. All invalidate the corresponding query key. |
 | Forms | TanStack Form with Zod resolvers (§4.6). |
 | Baseline resume editor | `useProfileHtmlPreviewUrl()` returns `apiClient.profilePreviewHtmlUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The Profile editor fetches that generated HTML into the Plate editor whenever the cache key changes. (Resolves §6 question 7.) |
-| Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. |
+| Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. The settings/preferences forms include the daily LLM budget (`dailyBudgetUsd` — the spend ceiling; `0` means unlimited) and an apply-approval-gate control (`applyApprovalRequired`) whose off state renders an explicit `role="alert"` warning that the agent may submit applications without human review. |
 
 #### 4.4.5 Scoring
 
 | Aspect | Pattern |
 |---|---|
-| Routes | None (component-only context). |
-| Queries | None — `JobListProjection` and `JobDetailProjection` already carry `fitScore` and `scoreReasoning`; scoring components consume them as props. |
-| Mutations | (Future) `useCorrectScoreMutation({ jobId, correctedScore, reason })` invalidates `jobsKeys.detail(tenantId, jobId)` and `jobsKeys.lists(tenantId)`. |
-| SSE keys consumed | `JobScored`, `ScoreCorrected`. |
-| Components | `<ScoreBadge score={...} />`, `<ScoreBreakdown breakdown={...} />`. |
+| Routes | None (score data rides on job projections; compensation-source policy read via Operations). |
+| Queries | None for scores — `JobListProjection` and `JobDetailProjection` carry `fitScore` and `scoreReasoning`; scoring components consume them as props. `<CompensationSourcePolicyPanel>` reads `useCompensationSourcePolicyQuery` (Operations). |
+| Mutations | `useCorrectScoreMutation({ jobId, correctedScore, reason })` (shipped), `useRescoreJobMutation`, `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation`. Score-write mutations invalidate `jobsKeys.detail(tenantId, jobId)` and `jobsKeys.lists(tenantId)`; rescore actions return 202 and reconcile via SSE. |
+| SSE keys consumed | `JobScored`, `ScoreCorrected`, `ScoreRescoreRequested`. |
+| Components | `<ScoreBadge>`, `<ScoreBreakdown>` (built; not yet view-wired), `<ScoreReasoning>`, `<ScoreStalenessBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`, `<RescoreCurrentPolicyButton>`, `<ResetStaleScoresButton>`, `<CompensationSourcePolicyPanel>`. |
 
 #### 4.4.6 Materials Generation
 
@@ -942,12 +1069,12 @@ separately in §4.5.
 
 | Aspect | Pattern |
 |---|---|
-| Routes | None top-level; sub-route under jobs for the apply-run timeline drawer (`routes/jobs.$jobId.run.$runId.tsx`). |
-| Queries | None directly — apply-run reads (list, detail) are owned by Operations (`useApplyRunsListQuery`, `useApplyRunQuery`). |
+| Routes | `routes/apply-review.tsx` (`/apply-review`) mounts `views/apply-review/`; a sub-route under jobs (`routes/jobs.$jobId.run.$runId.tsx`) renders the apply-run timeline drawer. |
+| Queries | None directly — apply-run reads are owned by Operations (`useApplyRunsListQuery`, derived from the dashboard summary; there is no `useApplyRunQuery`). Apply Review reads (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`, `useApplicationOutcomesQuery`) are also Operations hooks. |
 | Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
-| SSE keys consumed | `ApplyRunStarted`, `ApplyRunEventRecorded`, `ApplicationSubmitted`, `ApplicationFailed`. |
-| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, and Apply Review decision controls composed with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
-| Notes | The timeline component reads via `useApplyRunQuery` (Operations). The invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
+| SSE keys consumed | `ApplyRunStarted`, `ApplySubmitIntended`, `ApplyRunEventRecorded`, `ApplicationEmailFeedbackIngested`, `ApplicationSubmitted`, `ApplicationFailed`. |
+| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<RunStatusBadge />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, `<ApplyReviewDecisionControls>`, and the `<ApplicationOutcomes>` family (`<JobOutcomePanel>`, `<ManualOutcomeForm>`, `<OutcomeTimeline>`, `<OutcomeSuggestionsPanel>`). Apply Review decision controls compose with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
+| Notes | There is no `useApplyRunQuery`; the timeline reads from the derived apply-runs list, and the invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
 
 #### 4.4.8 Pipeline Orchestration
 
@@ -971,12 +1098,26 @@ do not own queries, mutations, or persistent stores. They own:
 - **Ephemeral view-local state** — bulk-selection sets, "show advanced
   filters" toggles, intentionally lost on navigation.
 
+**Table layer.** The shared table primitive is the custom
+`<FilterableDataGrid>` (`shared/ui/filterable-data-grid.tsx`); each table
+view supplies a `DataGridColumn<T>[]` column model (`views/<view>/columns.tsx`,
+and `activity-columns.tsx` for Debug). It implements sort, per-column
+filter, pagination, row selection, and row activation directly —
+`@tanstack/react-table` is a **types-only** dependency here (the views
+import just `RowSelectionState` / `SortingState`). An earlier shadcn
+`data-table.tsx` (which wraps `@tanstack/react-table` at runtime) still
+lives under `shared/ui/` but is imported by no view.
+
 | View | Owned files | Composes from |
 |---|---|---|
-| `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `Funnel.tsx`, `ApplyRunsCard.tsx` | operations (`useDashboardSummaryQuery`, `useApplyRunsListQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`) |
-| `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `activity-columns.tsx` | operations (`useActivityListQuery`); URL-bound event search, sorting, and pagination |
-| `views/jobs/` | `JobsView.tsx` (assembles table-owned URL filters + bulk-actions toolbar), `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx` | operations (`useJobsListQuery`, `useJobDetailQuery`); discovery (`useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`); scoring (`<ScoreBadge>`, `<ScoreBreakdown>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<GenerateMaterialsButton>`); apply (`<ApplyButton>`, `<DryRunButton>`, `<ApplyHistory>`); artifacts grouping (`<ArtifactGroup>` from `views/artifacts/` since the grouping component is itself view-level) |
-| `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `ArtifactGroup.tsx` (grouping helper used by Jobs drawer) | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`) |
+| `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `ConversionPanel.tsx`, `Funnel.tsx`, `SourceHealthCard.tsx`, `ApplyRunsCard.tsx`, `apply-run-dot-state.ts` | operations (`useDashboardSummaryQuery`, `useApplicationOutcomesQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`, `<OutcomeSuggestionsPanel>`) |
+| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
+| `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `columns.tsx` | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`, artifact badges, `<TailoringExplanationSection>`) |
+| `views/apply-review/` | `ApplyReviewView.tsx` | operations (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`); apply (review mutations, `<ApplyReviewDecisionControls>`, `<CancelApplyButton>`); materials (`<ResumePlateEditor>`, `<ArtifactGroundingRiskPanel>`, `<JobResumeTemplateSelect>`); enrichment (`<CompensationSummaryStrip>`); profile (`useResumeTemplatesQuery`) |
+| `views/runs/` | `RunsView.tsx`, `RunsTable.tsx`, `RunsFilterBar.tsx`, `WorkflowRunDrawer.tsx`, `columns.tsx`, `temporal-web-ui.ts` | operations (`useWorkflowRunsListQuery`, `useWorkflowRunDetailQuery`); apply (`<RunStatusBadge>`); pipeline (`<CancelWorkflowRunButton>`) |
+| `views/pipelines/` | `PipelinesView.tsx` | pipeline (`<StageTriggerPanel>`) |
+| `views/discovery/` | `DiscoveryView.tsx` | discovery (`<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>`); profile (`<TargetSearchSettingsPanel>`, `<DiscoveryAutomationSettingsPanel>`) |
+| `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `ActivityDetailDrawer.tsx`, `activity-columns.tsx`, `activity-tone.ts` | operations (`useActivityListQuery`, `useActivityEventQuery`); URL-bound event search, sorting, pagination |
 
 ### 4.6 Forms Convention (TanStack Form)
 
@@ -1097,18 +1238,29 @@ controls. Density is scoped to the app shell: `.app-shell` owns
   TanStack provider patterns.
 
 **Zustand** for:
-- **Theme and density** (with `persist` middleware → `localStorage` keys
-  `jh:theme`, `jh:density`). Replaces the current `useState<Theme>` +
-  manual `localStorage.getItem`/`setItem` ceremony in `App.tsx`. The
-  provider context (above) reads from this store via a slim selector.
+- **Theme and density** — a single `useUiPreferencesStore` (`persist`
+  middleware → the one `jh:ui-preferences` `localStorage` key holds both
+  theme and density). Replaces the earlier `useState<Theme>` + manual
+  `localStorage.getItem`/`setItem` ceremony. The provider context (above)
+  reads from this store via a slim selector.
 - **Toast queue** — `useToastStore()` exposes `toast({ ... })` callable
   from anywhere (mutation `onError` handlers, hook callbacks); the
   `<Toaster />` (shadcn) subscribes.
-- **Resume-import wizard draft** — see §4.4.4 (Profile context).
+- **Resume-import wizard draft** — see §4.4.4 (Profile context); persisted
+  to `jh:profile-import`.
+- **Pipeline stage-trigger config** — per-stage run parameters for the
+  dashboard / Pipelines `<StageTriggerPanel>` (limit, workers, minScore,
+  validationMode, `dryRun` defaulting to **true**, model, …); persisted to
+  `jh:stage-trigger-config`.
 - **Anything cross-cutting that we discover later** that fits the pattern
   "I want to dispatch from a deep tree without prop drilling, and the
   state is not server-derived." Examples we anticipate: a `commandPalette`
   open/close (cmd-k UX), a `confirmDialog` queue.
+
+Five Zustand stores exist today: `ui-preferences`, `toasts`, and
+`command-palette` (transient), plus `profile-import` and
+`stage-trigger-config` (persisted). Three carry `persist` middleware —
+`jh:ui-preferences`, `jh:profile-import`, and `jh:stage-trigger-config`.
 
 **Why this split (not "all Zustand" or "all context"):**
 
@@ -1239,9 +1391,13 @@ stage, update profile, update settings, update/delete credential) take the
 4. `onSettled`: invalidate the affected keys (forces a re-fetch to
    reconcile any drift with the server).
 
-This pattern is implemented in each context's mutation hooks. The
-`onMutate` patcher is a pure function; it is unit-tested separately from
-the hook.
+This pattern is implemented in each context's mutation hooks via the
+`createOptimisticMutation` helper (`shared/lib/createOptimisticMutation.ts`),
+which has 23 call sites today: 19 supply a real `onMutate` patcher +
+rollback, and 4 are deliberately settle-only (`applyJob`, `dryRun`,
+`cancelApply`, `importResume` — no meaningful pre-response patch, so they
+invalidate on settle only). The `onMutate` patcher is a pure function; it
+is unit-tested separately from the hook.
 
 Synchronous mutations that do not patch a specific cached row still reconcile
 through `onSettled` invalidation. Non-apply-only global/batch pipeline stage
@@ -1334,14 +1490,29 @@ In tests, `PortsProvider` accepts mocks. Components depend on the port
 
 ```ts
 export interface ApiClientPort {
-  jobs(input: JobsListInput): Promise<PaginatedResponse<JobSummary>>;
-  jobDetail(jobId: JobId): Promise<JobDetail>;
-  // ... one method per current api-client method
+  jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+  job(jobKey: string): Promise<JobDetail>;
+  // ... one method per api-client method (~90 today)
 }
 ```
 
-The `FetchApiClientAdapter` *is* the existing `JobHunterApiClient` from
-`@jobhunter/api-client`. The reason we still have a port wrapping it:
+`ApiClientPort` has grown to roughly ninety methods spanning the full API
+surface: read (`dashboardSummary`, `jobs`/`job`, `artifacts`/`artifact`,
+`activity`, `workflowRuns`/`workflowRun`, `applyReviewQueue`,
+`applicationOutcomes`, `health`), job lifecycle (delete/hide/restore/
+permanent-delete + bulk), discovery-source administration, scoring
+(`correctScore`, `rescoreJob`, `retailorJob`, …), materials + resume-review
+drafts + resume templates, apply (`applyJob`, `cancelJobAction`,
+`markApplied`/`markSkipped`), pipeline (`runPipelineStages`, `retryStage`,
+`runJobStage`), and workflow-run control (`cancelWorkflowRun`) — the last
+group landed with the Temporal work (P5). Sync URL helpers
+(`artifactPreviewPdfUrl`, `profilePreviewHtmlUrl`, …) return strings, not
+promises. LLM spend/budget is not a dedicated method; it rides on
+`health()` (`ApiHealthResponse.llmSpend`). Methods take `jobKey: string`,
+not a branded `JobId` (see R13).
+
+The `FetchApiClientAdapter` delegates to the existing `JobHunterApiClient`
+from `@jobhunter/api-client`. The reason we still have a port wrapping it:
 
 1. **Test seam.** Without a port, every test that needs to fake the API
    has to install MSW handlers (slower, more setup). With a port, tests
@@ -1358,33 +1529,45 @@ The `FetchApiClientAdapter` *is* the existing `JobHunterApiClient` from
 ### 6.4 `EventStreamPort` Detail
 
 ```ts
-export interface EventStreamPort {
-  subscribe(opts: { tenantId: TenantId }): EventStreamSubscription;
+type EventStreamStatus = "connecting" | "open" | "closed";
+
+export interface DomainEventEnvelope {
+  eventType: string;
+  tenantId: TenantId;
+  payload: unknown;
 }
 export interface EventStreamSubscription {
-  on(handler: (event: DomainEvent) => void): () => void;
-  status: "connecting" | "open" | "closed";
-  readonly statusChange: (cb: (s: Status) => void) => () => void;
+  on(handler: (event: DomainEventEnvelope) => void): () => void;
+  readonly status: EventStreamStatus;
+  onStatusChange(callback: (status: EventStreamStatus) => void): () => void;
   close(): void;
+}
+export interface EventStreamPort {
+  subscribe(opts: { tenantId: TenantId }): EventStreamSubscription;
+  readonly status: EventStreamStatus;
 }
 ```
 
-The `SseEventStreamAdapter` opens an `EventSource` against
-`GET /v1/events/stream?tenantId=local`. It dispatches each parsed event
-to all subscribed handlers. It exposes connection status so a small
-"connection lost" indicator can render.
+The `SseEventStreamAdapter` (`shared/adapters/local/`) opens an
+`EventSource` against `GET /v1/events/stream`. It dispatches each parsed
+`DomainEventEnvelope` to all subscribed handlers and exposes connection
+status, which `<ConnectionStatusPill>` (in `shared/layout/`, rendered in
+the Topbar) renders as a "live"/"reconnecting" indicator.
 
 The hosted-mode `WebSocketEventStreamAdapter` (if the SSE adapter proves
 limiting under cross-region or CDN-buffered conditions, see fitness
 function §9.4) preserves the same interface; only the transport changes.
 
-### 6.5 `contracts/operations/types` — Frontend ACL
+### 6.5 `contexts/operations/types.ts` — Frontend ACL
 
-The frontend has an Anti-Corruption Layer too: feature contexts import
-projection types from `contexts/operations/types.ts`, not from
-`@jobhunter/contracts` directly. This file re-exports the projection
-types and adds frontend-only refinements (e.g., narrower string-union
-types over `state` / `stage` derived from `STAGES` / `STAGE_STATE_KINDS`).
+The frontend has an Anti-Corruption Layer too: `contexts/operations/types.ts`
+re-exports the projection and API response types and adds frontend-only
+refinements (e.g., narrower string-union types over `state` / `stage`
+derived from `STAGES` / `STAGE_STATE_KINDS`). The projection shapes are
+canonically defined in `@jobhunter/domain-types` (`operations/`) and
+re-exported through `@jobhunter/contracts`; the ACL is the intended single
+import surface for feature code, though `@jobhunter/contracts` is still
+imported directly in places today.
 
 Why an ACL (this thin):
 
@@ -1434,15 +1617,17 @@ formalize a `UseCase` interface for them — the React conventions
 
 ## 7. Realtime — SSE Consumer Architecture
 
-The backend already records `JobEvent` rows in `job_events`
-(`workers/automation`'s `EventPublisher` + `apps/api/src/projections.ts`).
-The frontend gap, as called out in `docs/plans/...` and the briefing, is
-that there is no event consumer — the dashboard does not even poll, it
-loads once on mount; refresh requires a page reload.
+The backend records `JobEvent` rows in `job_events`
+(`workers/automation`'s `EventPublisher` + `apps/api/src/projections.ts`)
+and streams them over `GET /v1/events/stream`. The frontend consumer is
+**implemented**: `SseEventStreamAdapter` (behind `EventStreamPort`) opens
+the connection, `EventStreamProvider` (in `contexts/operations/providers/`)
+manages the subscription lifecycle, and the invalidation router fans each
+event out to the query cache. `<ConnectionStatusPill>` in the Topbar shows
+liveness.
 
-This section defines the realtime architecture. It includes the new
-`apps/api/` endpoint contract that this design depends on; the planning
-team owns when this endpoint ships, not its shape.
+This section defines that realtime architecture, including the
+`apps/api/` SSE endpoint contract it depends on.
 
 ### 7.1 The Endpoint — `GET /v1/events/stream`
 
@@ -1537,47 +1722,57 @@ streams from the current tail (no backfill).
   application code needed for the common case.
 - For IndexedDB-hydrated cold start (§9.7), the application explicitly
   passes `?since=<persistedWatermark>` on first connect.
-- Parse each `event` + `data` into a typed `DomainEvent` (using a Zod
-  schema — see §7.2).
+- Parse each `event` + `data` frame with `parseDomainEvent` — it validates
+  the `eventType` against the runtime `DOMAIN_EVENT_TYPES` set, `JSON.parse`s
+  the payload, and object-checks it (no Zod, no payload-shape schema; see
+  §7.2).
 - Dispatch to the **invalidation router** (§7.4).
 - Expose a status indicator (`connecting | open | closed`) consumed by
   the AppShell to render a small "live"/"reconnecting" badge.
 
 ### 7.2 Typed Event Schemas
 
-The `DomainEvent` discriminated union is mirrored from the backend in
-`@jobhunter/domain-types/events/`. Each event has a `payload` Zod schema
-derived from the existing per-event TypeScript types.
+The event taxonomy lives in `@jobhunter/domain-types` at
+`packages/domain-types/src/events/`. It is a **plain TypeScript
+discriminated union** — there is no Zod. `DomainEvent<T, P>` is the generic
+base interface (its `eventType` field is the discriminant); the union of
+all 68 concrete events is `DomainEventUnion`, with
+`DomainEventType = DomainEventUnion["eventType"]` and a runtime companion
+array `DOMAIN_EVENT_TYPES` (kept exhaustive against `DomainEventType` by a
+compile-time assertion). `@jobhunter/domain-types` has no `zod` dependency.
 
-The frontend's `parseDomainEvent(rawEvent)` validates each incoming
-event against the union; an unknown `event:` type is logged through the
-telemetry port and dropped (forward-compat: the backend can introduce
-`SomethingNew` events without breaking the client; the client gets them
-*next deploy* once the schema is added).
+The frontend's `parseDomainEvent(rawFrame)` (in
+`shared/ports/lib/parseDomainEvent.ts`) validates only that the SSE frame's
+`eventType` is a member of `DOMAIN_EVENT_TYPES`, then `JSON.parse`s the
+`data` payload and object-checks it — it does **not** schema-validate the
+payload shape. An unknown `event:` type is dropped (forward-compat: the
+backend can introduce `SomethingNew` events without breaking the client;
+the client routes them once the union and a handler are added).
 
 ### 7.3 The `EventStreamProvider`
 
 ```ts
-// shared/providers/event-stream.tsx
+// contexts/operations/providers/EventStreamProvider.tsx
 export function EventStreamProvider({ children }: { children: ReactNode }) {
   const tenantId = useTenantId();
   const { eventStream } = usePorts();
-  const queryClient = useQueryClient();
   const router = useInvalidationRouter();
 
   useEffect(() => {
     const sub = eventStream.subscribe({ tenantId });
-    const off = sub.on((event) => router.handle(event, queryClient));
+    const off = sub.on((event) => router(event));
     return () => { off(); sub.close(); };
-  }, [tenantId, eventStream, queryClient, router]);
+  }, [tenantId, eventStream, router]);
 
   return <>{children}</>;
 }
 ```
 
-Mounted just below `<QueryClientProvider />` and `<TenantProvider />` in
-`__root.tsx`. It does not render UI — it manages the subscription
-lifecycle.
+It lives in `contexts/operations/providers/` (not `shared/providers/`) and
+is mounted in the `main.tsx` provider stack below `<QueryClientProvider />`
+and above the theme/density providers. It also exposes `useEventStreamStatus`
+(consumed by `<ConnectionStatusPill>`). It renders no UI of its own — it
+manages the subscription lifecycle.
 
 ### 7.4 The Invalidation Router
 
@@ -1586,7 +1781,7 @@ in `contexts/operations/invalidation-router.ts`. Each backend event type
 has a registered handler:
 
 ```ts
-const handlers: Record<DomainEvent["eventType"], InvalidationHandler> = {
+const handlers: Record<DomainEventType, InvalidationHandler> = {
   JobDiscovered: ({ tenantId }) => [
     jobsKeys.lists(tenantId),
     dashboardKeys.summary(tenantId),
@@ -1606,7 +1801,7 @@ const handlers: Record<DomainEvent["eventType"], InvalidationHandler> = {
     // Specialized: append to in-memory list rather than invalidate.
     return [{ kind: "apply-run-event", tenantId, runId, event }];
   },
-  // ... one entry per DomainEvent variant
+  // ... one entry per DomainEventUnion variant
 };
 
 export function handleEvent(event: DomainEvent, qc: QueryClient): void {
@@ -1623,6 +1818,13 @@ export function handleEvent(event: DomainEvent, qc: QueryClient): void {
 }
 ```
 
+In practice the per-event handler functions are authored in each aggregate
+context's `handlers.ts` (seven files: `discovery`, `enrichment`, `profile`,
+`scoring`, `materials`, `apply`, `pipeline`) and registered centrally in
+`invalidation-router.ts`, which exports `invalidate`, `patchApplyRunEvent`,
+and `useInvalidationRouter`. The illustration above inlines them for
+clarity; Operations itself has no `handlers.ts`.
+
 **Why a router and not per-context subscriptions:**
 
 - **Single point to reason about cross-context invalidation.** A new
@@ -1637,25 +1839,27 @@ export function handleEvent(event: DomainEvent, qc: QueryClient): void {
 Two layers, both required:
 
 1. **Compile-time:** the `handlers` map is typed
-   `Record<DomainEvent["eventType"], InvalidationHandler>`. Adding a new
+   `Record<DomainEventType, InvalidationHandler>`. Adding a new
    variant to the discriminated union in
    `@jobhunter/domain-types/events/` (mirroring a new backend event type)
    is a TypeScript compile error in `apps/web` until a handler is wired.
    This is the *primary* guard.
-2. **Runtime parity test:** `test/every-event-has-handler.test.ts`
-   iterates the `DomainEvent["eventType"]` union (extracted via a `tsd`-style
-   compile-time list or via the Zod discriminated-union schema's
-   `.options` array) and asserts a handler is registered. This is the
-   *backstop* that catches the case where a developer adds a stub
-   handler `() => []` (TS-passing, behaviorally wrong) — the test
-   inspects the source of `handlers` for the new event and fails CI if
-   the body is the obvious empty stub.
+2. **Runtime parity test:**
+   `contexts/operations/every-event-has-handler.test.ts` iterates the
+   runtime `DOMAIN_EVENT_TYPES` array (from `@jobhunter/domain-types`; there
+   is no Zod schema to read `.options` from) and asserts a handler is
+   registered for each. This is the *backstop* that catches the case where a
+   developer adds a stub handler `() => []` (TS-passing, behaviorally wrong).
+   It runs in the web Vitest suite, which is **not yet CI-gated** (tracked in
+   `docs/backlog.md`); the compile-time check in (1) — run in CI via
+   `pnpm -r check` — is the CI-enforced guard, and this parity test is its
+   local runtime backstop.
 
 The pattern mirrors the backend's `scripts/check-domain-type-parity.py`
 (per `architecture.md`'s verification-commands section). A new event on
-the backend triggers a TypeScript compile error AND a parity-test
-failure on the frontend simultaneously — silent invalidation gaps are
-prevented by construction.
+the backend triggers a TypeScript compile error (in CI, via `pnpm -r
+check`) AND a runtime parity-test failure (locally) on the frontend —
+silent invalidation gaps are prevented by construction.
 
 ### 7.5 Strategy: `invalidate` vs `setQueryData` (resolves §6 question 9)
 
@@ -1784,6 +1988,9 @@ For *synchronous* mutations (return value is the final state):
 | `useDeleteJobMutation({ jobId })` | `jobsKeys.lists(tenantId)`, `jobsKeys.detail(tenantId, jobId)`, `dashboardKeys.summary(tenantId)` |
 | `useDeleteJobsBulkMutation(filterOrIds)` | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)` (then optimistically removes from current page) |
 | `useRestoreJobMutation({ jobId })` | Same pair, opposite direction |
+| `useHideJobsBulkMutation` / `useUnhideJobsBulkMutation` | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)` (optimistic list-page patch) |
+| `usePermanentlyDeleteJobsBulkMutation` | `jobsKeys.lists(tenantId)`, `jobsKeys.details(tenantId)`, `dashboardKeys.summary(tenantId)` |
+| `useCorrectScoreMutation({ jobId, correctedScore, reason })` | `jobsKeys.detail(tenantId, jobId)`, `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)` |
 | `useUpdateProfileMutation(body)` | `profileKeys.profile(tenantId)`, `jobsKeys.lists(tenantId)` (scoring depends on profile, but server-side scoring is async — see below), `dashboardKeys.summary(tenantId)` |
 | `useUpdateSettingsMutation(body)` | `profileKeys.settings(tenantId)` |
 | `useUpdateCredentialMutation(body)` | `profileKeys.credentials(tenantId)` |
@@ -1803,6 +2010,9 @@ via SSE):
 | `useApplyJobMutation({ jobId })` | `jobsKeys.detail(tenantId, jobId)`, `applyRunsKeys.list(tenantId)` (to show new run as "starting") | `ApplyRunStarted` → optimistic cache patch with worker info; `ApplicationSubmitted`/`ApplicationFailed` → invalidate `jobsKeys.detail`, `dashboardKeys.summary` |
 | `useDryRunApplyMutation({ jobId })` | Same | Same |
 | `useRetryStageMutation({ jobId, stage, runAfter: true })` | `jobsKeys.detail(tenantId, jobId)` | Same as the async equivalent |
+| `useRescoreCurrentPolicyMutation` / `useRescoreJobMutation` | `jobsKeys.lists`, `dashboardKeys.summary`, `workflowRunsKeys.lists` (queued) | `JobScored` / `ScoreRescoreRequested` → invalidate `jobsKeys` + `dashboardKeys` |
+| `useRetailorCurrentPolicyMutation` / `useRetailorJobMutation` | `jobsKeys.lists`, `workflowRunsKeys.lists` (queued) | `TailorRetailorRequested`, then `ResumeApproved` / `PdfRendered` → invalidate `jobsKeys` + `artifactsKeys` |
+| `useCancelWorkflowRunMutation({ runId })` | `workflowRunsKeys.detail(tenantId, runId)`, `workflowRunsKeys.lists(tenantId)` | `WorkflowCanceled` / `WorkflowTerminated` → invalidate `workflowRunsKeys` + `jobsKeys` + `dashboardKeys` |
 | `useRunPipelineStagesMutation({ stages })` when `apply` queues | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)`, `workflowRunsKeys.lists(tenantId)`, `applyRunsKeys.lists(tenantId)` on settle after the 202 response | Apply events fan out through the invalidation router; preceding non-apply stage results were already returned synchronously |
 
 ### 8.3 The Hybrid Strategy (resolves §6 question 5)
@@ -1862,10 +2072,31 @@ via SSE):
 | `StageExhausted` | jobs (lists, detail), dashboard |
 | `ProfileUpdated` | profile (profile) |
 | `ProfileImported` | profile (profile) |
+| `TailoringPolicyUpdated` | profile (profile), jobs (lists) |
+| `ScoreRescoreRequested` | jobs (lists, detail), dashboard |
+| `JobSourceObserved`, `CanonicalJobIdentityResolved`, `DuplicateJobLinked`, `DuplicateJobLinkRejected` | jobs (lists, detail) |
+| `DiscoveryRunStarted` / `Completed` / `Failed`, `DiscoveryFeedbackRecorded` | dashboard, discovery reads |
+| `SourceLocationCandidateDiscovered` / `Promoted`, `SourceRegistryEntryCreated` / `Updated`, `SourceStateChanged` | discovery reads (source registry / locator) |
+| `PostingContentSnapshotCaptured` / `Failed`, `JobActiveStateChanged`, `ContentDuplicateCandidateDetected` | jobs (lists, detail) |
+| `CompensationFactsUpdated` | jobs (lists, detail), compensation reads |
+| `EmployerAnalyzed`, `BulletProvenanceRecorded`, `TailorRetailorRequested`, `TailoredArtifactsSuppressed` | jobs (lists, detail), artifacts (lists) |
+| `PreparationWorkItemQueued` / `Started` / `Completed` / `Failed` | jobs (lists, detail), dashboard |
+| `ApplySubmitIntended`, `ApplicationEmailFeedbackIngested` | apply-runs, jobs (detail), apply review |
+| `WorkflowStarted` / `Completed` / `Failed` / `Canceled` / `TimedOut` / `Terminated` | workflow-runs (lists, detail), jobs (lists, detail), dashboard |
 
-This table is **the** integration contract between the frontend and the
-backend's event taxonomy. New events on the backend mean a one-row
-addition here and a matching handler in the invalidation router.
+The `DomainEventUnion` has **68** arms today (grouped above where several
+share an invalidation target). This table is representative; the
+authoritative registry is the set of per-context `handlers.ts` files wired
+through `contexts/operations/invalidation-router.ts`, and the
+`every-event-has-handler.test.ts` parity test (§10.2) guarantees every one
+of the 68 has a handler. A new backend event means a handler in the owning
+context and a matching row (or grouped entry) here.
+
+Beyond the per-event targets above, the router appends
+`activityKeys.lists(tenantId)` (the Debug activity feed) to **every**
+event's invalidation set — except `ApplyRunEventRecorded`, which returns
+early to patch `applyRunsKeys.detail` via `setQueryData` (§7.5) and so does
+not invalidate the activity list.
 
 ### 8.5 Composition Patterns
 
@@ -1883,11 +2114,13 @@ export function JobDetailDrawer({ jobId }: { jobId: JobId }) {
     <Sheet open onOpenChange={(open) => !open && navigate({ to: "/jobs" })}>
       <SheetContent side="right">
         <JobOverview job={job} />                {/* views/jobs (this view) */}
-        <ScoreBreakdown breakdown={job.score}/>  {/* contexts/scoring */}
-        <StageTimeline stages={job.stages}/>     {/* contexts/pipeline */}
-        <ArtifactGroup jobId={jobId}/>           {/* views/artifacts (grouping helper) */}
-        <ApplyHistory jobId={jobId}/>            {/* contexts/apply */}
         <JobActions jobId={jobId}/>              {/* contexts/pipeline composer */}
+        <CompensationAuditSection job={job}/>    {/* contexts/enrichment */}
+        <StageTimeline stages={job.stages}/>     {/* contexts/pipeline */}
+        <EmployerAnalysisPanel analysis={...}/>  {/* contexts/materials */}
+        <ApplyHistory jobId={jobId}/>            {/* contexts/apply */}
+        <JobOutcomePanel jobId={jobId}/>         {/* contexts/apply */}
+        <JobAuditHistory jobId={jobId}/>         {/* contexts/operations */}
       </SheetContent>
     </Sheet>
   );
@@ -2063,8 +2296,12 @@ needs to send messages over the same channel (interactive worker control).
 
 ## 10. Testing Strategy
 
-The current frontend has zero tests. The target ships a pyramid that
-matches the architecture's seams.
+The frontend ships a pyramid that matches the architecture's seams. Today
+it comprises roughly **145 colocated `*.test.ts(x)`** under `apps/web/src`
+(66 `.test.ts` + 79 `.test.tsx`, of which **12** are colocated
+`*.a11y.test.tsx`), **9 type-level `*.test-d.ts`** under `apps/web/test/types`,
+**12 Playwright `*.spec.ts`** under `apps/web/e2e`, and **~88
+`*.stories.tsx`** Storybook stories.
 
 ### 10.1 The Pyramid
 
@@ -2089,19 +2326,23 @@ graph TB
   `setQueryData` calls. **This is the most important unit test in the app**
   — it is the contract surface between the backend's events and the
   frontend's cache.
-- **Event-handler parity** (`test/every-event-has-handler.test.ts`) —
-  iterates the `DomainEvent["eventType"]` union and asserts a handler is
-  registered for every variant; flags obvious empty stubs. Backstop to
-  the `Record<DomainEvent["eventType"], InvalidationHandler>` compile-time
-  check (§7.4). Mirrors the backend's `scripts/check-domain-type-parity.py`
-  pattern.
-- **Stage-state parity** (`test/every-stage-state-has-badge.test.ts`) —
+- **Event-handler parity**
+  (`contexts/operations/every-event-has-handler.test.ts`) — iterates the
+  runtime `DOMAIN_EVENT_TYPES` array and asserts a handler is registered for
+  every variant; flags obvious empty stubs. Backstop to the
+  `Record<DomainEventType, InvalidationHandler>` compile-time check (§7.4).
+  Mirrors the backend's `scripts/check-domain-type-parity.py` pattern.
+- **Stage-state parity**
+  (`contexts/pipeline/components/every-stage-state-has-badge.test.tsx`) —
   iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a
   non-default arm for every kind; backstop to the exhaustive `switch`
   on `state.kind`.
 - **Selectors** — pure functions that derive presentation shape from
   projections (e.g., `groupArtifactsByJob`, `summarizeFunnel`).
-- **Zod schemas** — round-trip a projection from JSON → typed → JSON.
+- **Contracts Zod schemas** — round-trip the `@jobhunter/contracts`
+  request / search-param schemas (parse → typed → serialize). The SSE
+  `DomainEvent` union is plain TypeScript, not Zod, so it is not among
+  these (§7.2).
 
 These tests do not mount React components.
 
@@ -2110,10 +2351,12 @@ These tests do not mount React components.
 **Decision (resolves §6 question 14):** **Both** domain hooks (with MSW)
 *and* end-to-end Playwright. The line:
 
-- **Hook tests with MSW:** every domain hook (`useJobsListQuery`,
+- **Hook tests with MSW:** domain hooks (`useJobsListQuery`,
   `useApplyJobMutation`, etc.) — assert that the hook calls the right
   API method, returns the typed shape, invalidates the right keys on
-  success, and rolls back on error.
+  success, and rolls back on error. Per-hook coverage is the standard,
+  though not yet universal — many, not all, of the query / mutation hooks
+  have a colocated test today.
 - **Component tests with MSW:** for components with non-trivial
   interaction (filter bar binding to URL state, bulk select toolbar,
   apply timeline). Render with a router and a query client; drive via
@@ -2130,15 +2373,19 @@ feedback fast for feature development and adds an "it actually works in a
 browser" check on CI.
 
 **MSW setup:** one handler per backend route (mirrors
-`packages/api-client`). Handlers live in `test/msw/handlers.ts`. Each
-test imports a base set and overrides per-case. SSE handlers are
-provided via MSW's experimental SSE support; if it proves limiting, the
-fallback is a custom `EventStreamPort` mock injected through
-`<PortsProvider />`.
+`packages/api-client`). REST handlers live in
+`apps/web/src/test/msw/handlers.ts` and SSE handlers in
+`apps/web/src/test/msw/sse-handlers.ts`. Each test imports a base set and
+overrides per-case; where MSW's SSE support is limiting, the fallback is a
+custom `EventStreamPort` mock injected through `<PortsProvider />`.
 
 ### 10.4 End-to-End Tests (Playwright)
 
-Critical user flows:
+The suite has **12** spec files under `apps/web/e2e/tests/` today:
+`dashboard`, `jobs-drawer`, `jobs-bulk`, `dry-run`, `materials`,
+`profile-edit`, `wizard`, `runs`, `settings`, plus `route-visual-qa`,
+`token-foundation`, and `docs-screenshots` (the last drives the
+screenshots embedded in the docs). Representative critical flows:
 
 1. **Dashboard load** → KPIs render → click a KPI → navigate to filtered
    jobs view → row count matches.
@@ -2165,36 +2412,45 @@ test interacts with the rendered web app at `http://127.0.0.1:5173`.
 
 ### 10.5 Storybook (Component-Driven Development)
 
-Per-primitive and per-domain-component stories. Stories serve three
-audiences:
+~88 colocated `*.stories.tsx` today. Stories serve three audiences:
 
 - **Developers** — visual playground while building.
 - **Designers** — review surface without booting the full app.
-- **Visual regression** — Chromatic (or open-source Loki) snapshots
-  catch unintended visual diffs.
+- **Accessibility + interaction** — the Storybook test runner
+  (`pnpm web:storybook:test`) drives the a11y addon (zero critical/serious
+  axe violations, §10.7) and play functions.
 
 Stories live next to components (`<Component>.stories.tsx`).
-Domain-component stories use **MSW addon** to mock API responses, so a
-story for `<JobsTable />` can show the loading, populated, and empty
-states without booting the real backend.
+Domain-component stories use the **MSW addon** to mock API responses, so a
+story for `<JobsTable />` can show loading, populated, and empty states
+without booting the real backend. Snapshot-based visual regression
+(Chromatic or open-source Loki) is a named-not-built addition on top of the
+existing stories.
 
 ### 10.6 Type-Level Tests
 
-The repo already runs `pnpm -r check`. The frontend additionally:
+Beyond the workspace typecheck, the frontend runs **9 `*.test-d.ts`** files
+under `apps/web/test/types` via Vitest's `typecheck` mode (separate config
+`vitest.types.config.ts`, invoked by `pnpm --filter @jobhunter/web test-d`).
+There is no `tsd` dependency; assertions use Vitest `expectTypeOf`.
 
-- Uses `tsd` for **type assertions on hook return shapes** to catch
-  accidental widening of the inferred types. (E.g., assert that
-  `useJobsListQuery(...)` returns `UseQueryResult<PaginatedResponse<JobSummary>>`,
-  not `UseQueryResult<unknown>`.)
-- Uses **typed search-param tests** — assert the inferred type of
+- **Type assertions on hook return shapes** catch accidental widening of the
+  inferred types. (E.g., assert `useJobsListQuery(...)` returns
+  `UseQueryResult<PaginatedResponse<JobSummary>>`, not
+  `UseQueryResult<unknown>`.)
+- **Typed search-param tests** assert the inferred type of
   `useSearch({ from: "/jobs" })` matches the Zod-derived type.
 
 ### 10.7 Accessibility Spot Checks
 
-Out of scope for the *bulk* of QA, but the test harness includes an
-**`axe-core` integration** in component tests for components that
-contain user input (forms, dialogs). Keep the bar at "no critical
-violations" for these; defer broader audits to a dedicated phase.
+Accessibility is enforced on two surfaces. Colocated `*.a11y.test.tsx`
+files (12 today) run axe against components with user input (forms,
+dialogs, tables). Storybook's a11y addon enforces **zero critical and
+serious axe violations** across stories; a story that exercises a
+pre-existing production defect may set `parameters.a11y.test = "off"`, but
+only with a matching entry in the "Frontend Accessibility Backlog" in
+`docs/backlog.md` (10 such deferrals are recorded there today, matching the
+10 stories in code).
 
 ### 10.8 What We Do NOT Test
 
@@ -2206,22 +2462,26 @@ violations" for these; defer broader audits to a dedicated phase.
 
 ### 10.9 CI Pipeline (Cross-Reference)
 
-The architecture implies this CI pipeline:
+The GitHub Actions TypeScript workflow (`.github/workflows/typescript.yml`)
+runs, in order:
 
-1. `pnpm -r check` (typecheck, including `apps/web`). Compile-time
-   guards (`Record<DomainEvent["eventType"], InvalidationHandler>` etc.) fire
-   here.
-2. `pnpm -r lint` (ESLint).
-3. `pnpm web:test` (Vitest unit + integration). Includes the event-handler
-   parity test and stage-state parity test (§10.2).
-4. `pnpm web:build` (Vite production build).
-5. `pnpm web:e2e` (Playwright headless against the built app + seeded API).
-6. (Optional) `pnpm web:chromatic` (visual regression via stories).
+1. `pnpm -r check` (workspace typecheck, including `apps/web`). The
+   compile-time guards (`Record<DomainEventType, InvalidationHandler>`
+   exhaustiveness, etc.) fire here — this is the CI-enforced parity guard.
+2. `pnpm --filter @jobhunter/api test` (the API Vitest suite; API only).
+3. `pnpm --filter @jobhunter/web build` (Vite production build).
+4. `pnpm --filter @jobhunter/web storybook:build` (static Storybook build).
+5. `pnpm --filter @jobhunter/web storybook:test` (Storybook test runner —
+   play functions + `@storybook/addon-a11y` axe checks — after installing
+   Playwright Chromium).
 
-The frontend's parity tests are the analogue of the backend's
-`scripts/check-domain-type-parity.py` (per `architecture.md`'s
-verification-commands section). Both sides catch event-shape and
-state-machine drift at CI time.
+Not yet gated in CI (run locally / pre-merge; tracked in `docs/backlog.md`):
+the web Vitest unit + integration suite — including the event-handler and
+stage-state parity tests (§10.2) — ESLint, and the Playwright e2e suite
+(§10.4). Chromatic / Loki visual regression is named-not-built (§10.5). The
+frontend's parity tests are the analogue of the backend's
+`scripts/check-domain-type-parity.py`; today their CI-enforced half is the
+`pnpm -r check` typecheck, with the runtime backstop running locally.
 
 ---
 
@@ -2231,19 +2491,19 @@ state-machine drift at CI time.
 apps/web/
 ├── package.json
 ├── tsconfig.json
-├── vite.config.ts                        # @tanstack/router-vite-plugin enabled
+├── vite.config.ts                        # @tanstack/router-plugin (/vite) enabled
 ├── index.html
 ├── public/
 │   └── favicon.svg
 ├── src/
 │   ├── main.tsx                          # createRoot + adapter wiring + <App />
 │   ├── App.tsx                           # NEW App.tsx: providers + RouterProvider
-│   ├── routeTree.gen.ts                  # generated by @tanstack/router-vite-plugin (gitignored)
+│   ├── routeTree.gen.ts                  # generated by @tanstack/router-plugin (committed, NOT gitignored)
 │   ├── styles/
 │   │   ├── globals.css                   # Tailwind CSS 4 imports + @theme inline mappings
 │   │   └── tokens.css                    # shadcn semantic CSS variables + app token values
 │   ├── routes/
-│   │   ├── __root.tsx                    # <PortsProvider>, <QueryClientProvider>, <EventStreamProvider>, <RouterProvider> mounting, <AppShell>, <DevTools>
+│   │   ├── __root.tsx                    # <AppShell>, devtools, notFoundComponent (providers live in main.tsx; RouterProvider in App.tsx)
 │   │   ├── index.tsx                     # / → redirect to /dashboard
 │   │   ├── dashboard.tsx                 # mounts <DashboardView />
 │   │   ├── jobs.tsx                      # layout: search-param schema + <JobsView /> + Outlet (drawer)
@@ -2259,38 +2519,48 @@ apps/web/
 │   │   ├── profile.import.upload.tsx
 │   │   ├── profile.import.preview.tsx
 │   │   ├── profile.import.confirm.tsx
+│   │   ├── preferences.tsx               # application preferences
 │   │   ├── settings.tsx                  # layout
 │   │   ├── settings.index.tsx
 │   │   ├── settings.credentials.tsx
-│   │   └── __404.tsx                     # not-found
+│   │   ├── runs.tsx                      # layout: workflow-runs table + Outlet (drawer)
+│   │   ├── runs.index.tsx
+│   │   ├── runs.$runId.tsx               # workflow-run drawer
+│   │   ├── apply-review.tsx              # mounts <ApplyReviewView />
+│   │   ├── pipelines.tsx                 # mounts <PipelinesView /> (StageTriggerPanel)
+│   │   ├── discovery.tsx                 # mounts <DiscoveryView />
+│   │   ├── debug.tsx                     # mounts <DebugView /> + Outlet (activity drawer)
+│   │   ├── activity.$eventId.tsx         # activity-detail drawer
+│   │   ├── spikes.table-filters.tsx      # dev spike
+│   │   └── -*.search.ts                  # per-route Zod search schemas (excluded from generation)
+│   │   # not-found is a notFoundComponent on __root.tsx — there is no 404.tsx
 │   ├── contexts/                         # 1:1 with backend bounded contexts
 │   │   ├── operations/                   # Operations / Read-Side
-│   │   │   ├── queryKeys.ts              # registry: dashboardKeys, jobsKeys, artifactsKeys, applyRunsKeys, profileKeys
-│   │   │   ├── invalidation-router.ts    # event → invalidations
-│   │   │   ├── types.ts                  # ACL re-exports of @jobhunter/contracts projections
-│   │   │   ├── hooks/
-│   │   │   │   ├── useDashboardSummaryQuery.ts
-│   │   │   │   ├── useJobsListQuery.ts
-│   │   │   │   ├── useJobDetailQuery.ts
-│   │   │   │   ├── useArtifactsListQuery.ts
-│   │   │   │   ├── useArtifactDetailQuery.ts
-│   │   │   │   ├── useApplyRunsListQuery.ts
-│   │   │   │   ├── useApplyRunQuery.ts
-│   │   │   │   └── useInvalidationRouter.ts
+│   │   │   ├── queryKeys.ts              # registry: re-exports 17 factories (10 local + 7 context)
+│   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
+│   │   │   ├── invalidation-router.ts    # event → invalidations (invalidate, patchApplyRunEvent, useInvalidationRouter)
+│   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobhunter/contracts)
+│   │   │   ├── providers/EventStreamProvider.tsx   # SSE subscription lifecycle + useEventStreamStatus
+│   │   │   ├── components/JobAuditHistory.tsx
+│   │   │   ├── hooks/                    # ~18 read hooks: dashboard, jobs (list/detail), artifacts (list/detail),
+│   │   │   │                            #   applyRuns (derived), activity (list/event), workflowRuns (list/detail),
+│   │   │   │                            #   applyReviewQueue, resumeReviewDraft, application outcomes, health,
+│   │   │   │                            #   discovery product controls, useInvalidationRouter
 │   │   │   └── index.ts
 │   │   ├── discovery/                    # Job Discovery
-│   │   │   ├── hooks/
-│   │   │   │   ├── useDeleteJobMutation.ts
-│   │   │   │   ├── useDeleteJobsBulkMutation.ts
-│   │   │   │   ├── useRestoreJobMutation.ts
-│   │   │   │   ├── useRestoreJobsBulkMutation.ts
-│   │   │   │   └── useImportJobMutation.ts   # named-not-built; placeholder
-│   │   │   ├── handlers.ts               # discovery-event invalidation handlers (registered in operations/invalidation-router.ts)
+│   │   │   ├── queryKeys.ts              # discoveryKeys (settings, source registry, locator, quarantine, …)
+│   │   │   ├── hooks/                    # delete/hide/unhide/restore/permanent-delete (bulk) + useImportJobMutation (stub: NotImplementedError)
+│   │   │   │                            #   + useDiscoverySettingsQuery / useUpdateDiscoverySettingsMutation
+│   │   │   │                            #   + useDiscoveryProductControlMutations (source registry, quarantine, manual capture, feedback)
+│   │   │   ├── components/               # DiscoveryProductControls, DiscoveryRuntimeSettingsPanel
+│   │   │   ├── lib/jobListPatches.ts
+│   │   │   ├── handlers.ts               # 17 discovery-event handlers (registered via operations/invalidation-router.ts)
 │   │   │   └── index.ts
 │   │   ├── enrichment/                   # Job Enrichment
-│   │   │   ├── hooks/
-│   │   │   │   └── useEnrichmentRetryMutation.ts  # named-not-built; placeholder
-│   │   │   ├── handlers.ts               # enrichment-event invalidation handlers
+│   │   │   ├── queryKeys.ts              # enrichmentKeys
+│   │   │   ├── hooks/                    # useEnrichmentRetryMutation (shipped), useRefreshCompensationMutation, useRefreshAllCompensationMutation
+│   │   │   ├── components/               # CompensationEvidence (summary cell/strip, audit section), RefreshAllCompensationButton
+│   │   │   ├── handlers.ts               # 8 enrichment/compensation/snapshot handlers
 │   │   │   └── index.ts
 │   │   ├── profile/                      # Candidate Profile
 │   │   │   ├── queryKeys.ts              # profileKeys factory; re-exported from operations/queryKeys.ts
@@ -2303,97 +2573,56 @@ apps/web/
 │   │   │   │   ├── useUpdateSettingsMutation.ts
 │   │   │   │   ├── useCredentialsQuery.ts
 │   │   │   │   ├── useUpdateCredentialMutation.ts
-│   │   │   │   └── useDeleteCredentialMutation.ts
-│   │   │   ├── forms/
-│   │   │   │   ├── profile-form.tsx
-│   │   │   │   ├── settings-form.tsx
-│   │   │   │   └── credential-form.tsx
-│   │   │   ├── components/
-│   │   │   │   ├── ProfileEditor.tsx
-│   │   │   │   ├── ResumeImportWizard.tsx
-│   │   │   │   ├── SettingsPanel.tsx
-│   │   │   │   └── CredentialsPanel.tsx
+│   │   │   │   ├── useDeleteCredentialMutation.ts
+│   │   │   │   ├── useResumeTemplatesQuery.ts
+│   │   │   │   ├── useResumeTemplateMutations.ts   # save version + set default
+│   │   │   │   └── useProfileMutationCount.ts      # derives the preview cacheKey
+│   │   │   ├── forms/                    # profile-form, settings-form (+ discovery-automation), credential-form, import-{upload,preview,confirm}-form, autosave-undo-controller
+│   │   │   ├── components/               # ProfileEditor, StructuredProfileEditor, ResumeImportWizard, SettingsPanel, CredentialsPanel, ResumeTemplatePanel, TargetSearchSettingsPanel, DiscoveryAutomationSettingsPanel, GoogleAddressSearchField, Editor
 │   │   │   ├── stores/
 │   │   │   │   └── profile-import-store.ts   # Zustand+persist for wizard draft
-│   │   │   ├── handlers.ts               # ProfileUpdated/ProfileImported handlers
+│   │   │   ├── lib/                      # json-record, profile-date-fields, profile-patches
+│   │   │   ├── handlers.ts               # ProfileUpdated / ProfileImported / TailoringPolicyUpdated handlers
 │   │   │   └── index.ts
 │   │   ├── scoring/                      # Scoring
-│   │   │   ├── hooks/
-│   │   │   │   └── useCorrectScoreMutation.ts # named-not-built; placeholder
-│   │   │   ├── components/
-│   │   │   │   ├── ScoreBadge.tsx
-│   │   │   │   └── ScoreBreakdown.tsx
-│   │   │   ├── handlers.ts               # JobScored/ScoreCorrected handlers
+│   │   │   ├── queryKeys.ts              # scoringKeys
+│   │   │   ├── hooks/                    # useCorrectScoreMutation (shipped), useRescoreJobMutation, useRescoreCurrentPolicyMutation, useResetStaleScoresForRescoreMutation
+│   │   │   ├── components/               # ScoreBadge, ScoreBreakdown, ScoreReasoning, ScoreStalenessBadge, ScoreCorrectionControl, RescoreJobButton, RescoreCurrentPolicyButton, ResetStaleScoresButton, CompensationSourcePolicyPanel
+│   │   │   ├── lib/                      # parse-reasoning, score-tier
+│   │   │   ├── handlers.ts               # JobScored / ScoreCorrected / ScoreRescoreRequested handlers
 │   │   │   └── index.ts
 │   │   ├── materials/                    # Materials Generation
-│   │   │   ├── hooks/
-│   │   │   │   ├── useGenerateMaterialsMutation.ts
-│   │   │   │   └── useOpenArtifactMutation.ts # artifact owned by MaterialsSet
-│   │   │   ├── components/
-│   │   │   │   ├── GenerateMaterialsButton.tsx
-│   │   │   │   └── OpenArtifactButton.tsx
-│   │   │   ├── handlers.ts               # ResumeApproved/ResumeFailed/CoverLetterGenerated/PdfRendered/MaterialsExhausted handlers
+│   │   │   ├── queryKeys.ts              # materialsKeys
+│   │   │   ├── hooks/                    # useGenerateMaterialsMutation, useOpenArtifactMutation, useSetJobResumeTemplateMutation, useEnsureCurrentResumeMaterialsMutation, useTailorJobMutation, useRetailorJobMutation, useRetailorCurrentPolicyMutation
+│   │   │   ├── components/               # GenerateMaterialsButton, OpenArtifactButton, ArtifactStatusBadge, ArtifactTypeBadge, ResumeTemplateStatusBadge, JobResumeTemplateSelect, EmployerAnalysisPanel, BulletProvenanceList, TailoringExplanationSection, ArtifactTailoringInspector, RetailorCurrentPolicyButton, ResumeAuditPins (ResumePlateEditor, ResumeStandalonePlateEditor, ArtifactGroundingRiskPanel)
+│   │   │   ├── lib/                      # artifact-status/-type format + tone, audit-format, materialsJobDetailPatches
+│   │   │   ├── handlers.ts               # 14 materials/template handlers
 │   │   │   └── index.ts
 │   │   ├── apply/                        # Apply Automation
-│   │   │   ├── hooks/
-│   │   │   │   ├── useApplyJobMutation.ts
-│   │   │   │   ├── useDryRunApplyMutation.ts
-│   │   │   │   └── useCancelApplyMutation.ts
-│   │   │   ├── components/
-│   │   │   │   ├── ApplyButton.tsx
-│   │   │   │   ├── DryRunButton.tsx
-│   │   │   │   ├── CancelApplyButton.tsx
-│   │   │   │   ├── ApplyRunBadge.tsx
-│   │   │   │   ├── ApplyRunTimeline.tsx
-│   │   │   │   └── ApplyHistory.tsx       # composed in jobs drawer
-│   │   │   ├── selectors/
-│   │   │   │   └── applyRunSelectors.ts
-│   │   │   ├── handlers.ts               # ApplyRunStarted/ApplyRunEventRecorded/ApplicationSubmitted/ApplicationFailed handlers
+│   │   │   ├── queryKeys.ts              # applyKeys
+│   │   │   ├── hooks/                    # useApplyJobMutation, useDryRunApplyMutation, useCancelApplyMutation, useApplyReviewMutations (decision + manual-outcome + suggestion + resume-review draft/save/seed/reply/render)
+│   │   │   ├── components/               # ApplyButton, DryRunButton, CancelApplyButton, ApplyRunBadge, RunStatusBadge, ApplyRunTimeline, ApplyHistory, ApplyReviewDecisionControls, ApplicationOutcomes (JobOutcomePanel, ManualOutcomeForm, OutcomeTimeline, OutcomeSuggestionsPanel)
+│   │   │   ├── lib/                      # apply-run-status, apply-run-tone
+│   │   │   ├── selectors/applyRunSelectors.ts
+│   │   │   ├── handlers.ts               # ApplyRunStarted / ApplySubmitIntended / ApplyRunEventRecorded / ApplicationEmailFeedbackIngested / ApplicationSubmitted / ApplicationFailed handlers
 │   │   │   └── index.ts
 │   │   └── pipeline/                     # Pipeline Orchestration
-│   │       ├── hooks/
-│   │       │   ├── useRetryStageMutation.ts
-│   │       │   ├── useCancelStageMutation.ts
-│   │       │   ├── useMarkAppliedMutation.ts
-│   │       │   └── useMarkSkippedMutation.ts
-│   │       ├── components/
-│   │       │   ├── StageBadge.tsx          # exhaustive switch on state.kind
-│   │       │   ├── StageTimeline.tsx
-│   │       │   ├── RetryStageButton.tsx
-│   │       │   ├── CancelStageButton.tsx
-│   │       │   ├── MarkAppliedButton.tsx
-│   │       │   ├── MarkSkippedButton.tsx
-│   │       │   └── JobActions.tsx          # composes per-stage / per-action buttons
-│   │       ├── handlers.ts               # all Stage* event handlers
+│   │       ├── queryKeys.ts              # pipelineKeys
+│   │       ├── hooks/                    # useRunPipelineStagesMutation, useRunJobStageMutation, useRunPendingPreparationMutation, useRetryStageMutation, useRetryFailedJobsMutation, useCancelStageMutation, useCancelWorkflowRunMutation, useMarkAppliedMutation, useMarkSkippedMutation
+│   │       ├── components/               # StageBadge (exhaustive switch), UserFacingStageBadge, StageTimeline, StageTriggerPanel, RetryStageButton, CancelStageButton, CancelWorkflowRunButton, MarkAppliedButton, MarkSkippedButton, JobActions
+│   │       ├── stores/stage-trigger-store.ts   # Zustand+persist (jh:stage-trigger-config)
+│   │       ├── lib/                      # jobDetailPatches, stage/state tones
+│   │       ├── handlers.ts               # Stage* + PreparationWorkItem* + Workflow* handlers
 │   │       └── index.ts
-│   ├── views/                            # NOT bounded contexts — composers only
-│   │   ├── dashboard/
-│   │   │   ├── DashboardView.tsx
-│   │   │   ├── KpiGrid.tsx
-│   │   │   ├── Funnel.tsx
-│   │   │   ├── ApplyRunsCard.tsx
-│   │   │   └── index.ts
-│   │   ├── debug/
-│   │   │   ├── DebugView.tsx
-│   │   │   ├── DebugActivityTable.tsx     # paginated activity table
-│   │   │   ├── DebugFilterBar.tsx         # binds to URL via useSearch
-│   │   │   └── activity-columns.tsx
-│   │   ├── jobs/
-│   │   │   ├── JobsView.tsx
-│   │   │   ├── JobsTable.tsx              # shared data grid with URL-backed product filters
-│   │   │   ├── JobBulkActions.tsx
-│   │   │   ├── JobDetailDrawer.tsx
-│   │   │   ├── JobOverview.tsx
-│   │   │   ├── selectors/
-│   │   │   │   └── jobsSelectors.ts       # pure helpers (e.g. row-grouping)
-│   │   │   └── index.ts
-│   │   └── artifacts/
-│   │       ├── ArtifactsView.tsx
-│   │       ├── ArtifactsTable.tsx
-│   │       ├── ArtifactFilterBar.tsx
-│   │       ├── ArtifactDetailPanel.tsx
-│   │       ├── ArtifactGroup.tsx          # grouping helper used by JobDetailDrawer
-│   │       └── index.ts
+│   ├── views/                            # NOT bounded contexts — composers only (8 folders)
+│   │   ├── dashboard/                    # DashboardView, KpiGrid, ConversionPanel, Funnel, SourceHealthCard, ApplyRunsCard, apply-run-dot-state
+│   │   ├── jobs/                         # JobsView, JobsTable, JobBulkActions, JobDetailDrawer, JobOverview, JobDescription, JobAuditTriage, columns, jobStageFilters, selectors/jobsSelectors
+│   │   ├── artifacts/                    # ArtifactsView, ArtifactsTable, ArtifactFilterBar, ArtifactDetailPanel, columns
+│   │   ├── apply-review/                 # ApplyReviewView (queue + Plate resume editor + decision controls)
+│   │   ├── runs/                         # RunsView, RunsTable, RunsFilterBar, WorkflowRunDrawer, columns, temporal-web-ui
+│   │   ├── pipelines/                    # PipelinesView (StageTriggerPanel)
+│   │   ├── discovery/                    # DiscoveryView (sources + schedule settings panels)
+│   │   └── debug/                        # DebugView, DebugActivityTable, DebugFilterBar, ActivityDetailDrawer, activity-columns, activity-tone
 │   ├── shared/
 │   │   ├── ui/                             # shadcn/ui copies
 │   │   │   ├── button.tsx
@@ -2416,22 +2645,23 @@ apps/web/
 │   │   │   ├── card.tsx
 │   │   │   ├── form.tsx                    # TanStack Form bindings
 │   │   │   ├── table.tsx                   # native table primitives
+│   │   │   ├── filterable-data-grid.tsx     # custom FilterableDataGrid — the table engine (DataGridColumn<T>)
+│   │   │   ├── data-table.tsx               # shadcn wrapper over @tanstack/react-table — unused by any view
 │   │   │   └── copyable-command.tsx        # `<CopyableCommand command={...} />` — preserves the "copyable CLI commands" affordance per docs/decisions.md (2026-05-03)
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx
-│   │   │   ├── Topbar.tsx
-│   │   │   ├── NavBar.tsx
-│   │   │   ├── ConnectionStatusPill.tsx
+│   │   │   ├── Topbar.tsx                  # global job search → /jobs?q
+│   │   │   ├── NavBar.tsx                   # 11 nav destinations
+│   │   │   ├── ConnectionStatusPill.tsx     # SSE status + events-paused + LLM-spend line
 │   │   │   └── ThemeToggle.tsx
-│   │   ├── providers/
-│   │   │   ├── PortsProvider.tsx
+│   │   ├── providers/                      # EventStreamProvider is NOT here — it lives in contexts/operations/providers/
+│   │   │   ├── PortsProvider.tsx           # + usePorts()
 │   │   │   ├── QueryClientProvider.tsx     # wraps TanStack QueryClientProvider with config
-│   │   │   ├── EventStreamProvider.tsx
-│   │   │   ├── TenantProvider.tsx
+│   │   │   ├── TenantProvider.tsx          # + useTenantId()
 │   │   │   ├── ThemeProvider.tsx
 │   │   │   ├── DensityProvider.tsx
 │   │   │   └── ToasterProvider.tsx
-│   │   ├── ports/
+│   │   ├── ports/                          # port interfaces only
 │   │   │   ├── ApiClientPort.ts
 │   │   │   ├── EventStreamPort.ts
 │   │   │   ├── StoragePort.ts
@@ -2440,29 +2670,35 @@ apps/web/
 │   │   │   ├── OpenInOsPort.ts
 │   │   │   ├── TelemetryPort.ts
 │   │   │   ├── FeatureFlagPort.ts
-│   │   │   └── adapters/
+│   │   │   ├── lib/parseDomainEvent.ts     # SSE frame → DomainEventEnvelope (DOMAIN_EVENT_TYPES membership check)
+│   │   │   └── index.ts
+│   │   ├── adapters/                        # concrete adapters — sibling of ports/, NOT ports/adapters/
+│   │   │   └── local/
 │   │   │       ├── FetchApiClientAdapter.ts
 │   │   │       ├── SseEventStreamAdapter.ts
 │   │   │       ├── LocalStorageAdapter.ts
 │   │   │       ├── LocalSessionAdapter.ts
 │   │   │       ├── NavigatorClipboardAdapter.ts
-│   │   │       ├── OpenArtifactAdapter.ts
+│   │   │       ├── OpenArtifactAdapter.ts     # OpenInOsPort impl
 │   │   │       ├── ConsoleTelemetryAdapter.ts
 │   │   │       └── StaticFeatureFlagAdapter.ts
 │   │   ├── stores/
-│   │   │   ├── ui-preferences.ts           # Zustand+persist (theme, density)
+│   │   │   ├── ui-preferences.ts           # Zustand+persist → jh:ui-preferences (theme, density)
 │   │   │   ├── toasts.ts                   # Zustand
 │   │   │   └── command-palette.ts          # Zustand (open/close + search)
 │   │   ├── hooks/
-│   │   │   ├── useTenantId.ts
+│   │   │   ├── useTenantId.ts              # re-export of TenantProvider's useTenantId
 │   │   │   ├── useTheme.ts
 │   │   │   ├── useDensity.ts
-│   │   │   └── useToast.ts
+│   │   │   ├── useToast.ts
+│   │   │   └── useEscapeKey.ts
 │   │   ├── lib/
 │   │   │   ├── cn.ts                       # tailwind-merge helper
+│   │   │   ├── createOptimisticMutation.ts # snapshot → patch → rollback → invalidate helper
 │   │   │   ├── formatters.ts               # date / size / score formatters
 │   │   │   ├── exhaustive.ts               # assertNever helper
-│   │   │   └── zod-search.ts               # Zod helpers for search-param schemas
+│   │   │   ├── queryClient.ts              # QueryClient config + defaults
+│   │   │   ├── errors.ts / type-guards.ts / file.ts / relative-time.ts / job-description-blocks.ts
 │   │   └── types/
 │   │       └── ambient.d.ts                # vite env types
 │   ├── test/
@@ -2478,12 +2714,19 @@ apps/web/
 └── e2e/
     ├── playwright.config.ts
     ├── fixtures/                           # seed SQLite + JSON fixtures
-    └── tests/
+    └── tests/                          # 12 specs
         ├── dashboard.spec.ts
         ├── jobs-drawer.spec.ts
-        ├── apply.spec.ts
-        ├── profile.spec.ts
-        └── ... etc
+        ├── jobs-bulk.spec.ts
+        ├── dry-run.spec.ts
+        ├── materials.spec.ts
+        ├── profile-edit.spec.ts
+        ├── wizard.spec.ts
+        ├── runs.spec.ts
+        ├── settings.spec.ts
+        ├── route-visual-qa.spec.ts
+        ├── token-foundation.spec.ts
+        └── docs-screenshots.spec.ts
 ```
 
 ```mermaid
@@ -2507,6 +2750,11 @@ graph TB
     VW --> VD2["dashboard/"]
     VW --> VJ2["jobs/"]
     VW --> VA2["artifacts/"]
+    VW --> VAR2["apply-review/"]
+    VW --> VRUN2["runs/"]
+    VW --> VPIP2["pipelines/"]
+    VW --> VDISC2["discovery/"]
+    VW --> VDBG2["debug/"]
 
     SHA --> UI2["ui/ (shadcn)"]
     SHA --> LY2["layout/"]
@@ -2588,7 +2836,7 @@ event and every frontend cache key. A missed handler silently breaks a
 context's freshness; a wrong handler can over- or under-invalidate.
 
 **Mitigations:**
-- Compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing
+- Compile-time `Record<DomainEventType, InvalidationHandler>` typing
   forces a handler entry for every event variant (§7.4 fitness function).
 - Runtime parity test (`every-event-has-handler.test.ts`, §10.2) catches
   obvious empty stubs that pass TypeScript.
@@ -2685,25 +2933,27 @@ the query cache. A missed callsite means a button silently no-ops.
   jobs-filter-prefill flow that the custom event powered; deletion regression is
   caught in E2E.
 
-### R7. Drift between `@jobhunter/domain-types` Zod schemas and SSE payloads
+### R7. Drift between `@jobhunter/domain-types` events and SSE payloads
 
-The backend writes `payload_json` against `domain-types` schemas; the
-frontend parses against `domain-types` schemas. If the backend writes a
-new field without bumping the schema package version, the frontend's
-parser may drop the event (strict-Zod) or pass an under-typed object
-(lax-Zod).
+The backend writes `payload_json`; the frontend consumes it against the
+`@jobhunter/domain-types` event union. That union is **plain TypeScript,
+not Zod** (§7.2): `parseDomainEvent` only checks that `eventType` is in
+`DOMAIN_EVENT_TYPES` and that the payload parses to an object — it does
+**not** validate the payload *shape*. So an out-of-shape or under-populated
+payload is not rejected at runtime; the compiler trusts the declared type.
 
 **Mitigations:**
-- The frontend parses with **strict Zod** schemas; unknown fields are
-  rejected; an unknown event-type is logged and dropped (§7.2).
-- The backend's `scripts/check-domain-type-parity.py` already enforces
-  TS↔Python parity; the SSE event taxonomy is the same set, so drift
-  on new events is structurally caught.
-- Event versioning (`JobScored.v1`, `JobScored.v2` per `ddd-target.md`
-  §10 risks) is the long-term answer; today, the schema package is the
-  single source of truth, and any new field is introduced via the
-  schema first, the writer second, the reader third — same atomic PR
-  for a single-user product.
+- A new *event type* is caught: an unknown `eventType` is dropped at the
+  boundary, and adding a backend event forces a `DomainEventUnion` arm +
+  an invalidation handler (compile-time `Record<DomainEventType, …>` +
+  the parity test, §7.4/§10.2).
+- The backend's `scripts/check-domain-type-parity.py` enforces TS↔Python
+  parity on the taxonomy, so the event *set* cannot silently diverge.
+- Payload *field* drift is not runtime-validated (no Zod). The discipline
+  is: change the shared type first, the writer second, the reader third,
+  in one atomic PR — cheap for a single-user product. Adding runtime
+  payload validation (e.g., a Zod layer in `parseDomainEvent`) is the
+  named escalation if field drift ever bites.
 
 ### R8. View-vs-context boundary erosion
 
@@ -2820,7 +3070,7 @@ first's reconciliation.
 
 | Term | Context | Definition |
 |---|---|---|
-| **AppShell** | Frontend (Layout) | The persistent chrome around the route content: topbar, navigation, theme toggle, connection-status pill. Lives in `shared/layout/AppShell.tsx`. |
+| **AppShell** | Frontend (Layout) | The persistent chrome around the route content: topbar (with a global job search that navigates to `/jobs?q=…`), navigation (11 destinations via `NavBar`), theme toggle, connection-status pill. Lives in `shared/layout/AppShell.tsx`. |
 | **ACL (Frontend)** | Architecture | The thin Anti-Corruption Layer in `contexts/operations/types.ts` that re-exports backend projection types into frontend code. Provides a single point to refine or override types as the frontend evolves. |
 | **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobhunter/api-client`; hosted adapter adds JWT injection. |
 | **ApplyRunBadge** | Frontend (Apply context) | Status pill rendered in the dashboard / drawer that summarizes an `ApplyRun`'s current `SubmissionResult`. |
@@ -2832,15 +3082,15 @@ first's reconciliation.
 | **CommandPalette** | Frontend (Shared) | A `cmd-k` style palette rendered above all routes, backed by a Zustand store; named-not-built (deferred until needed). |
 | **Composer (View)** | Frontend (Pattern) | A view component (e.g., `JobDetailDrawer`) that imports rendering components from multiple contexts. Composers own layout, never data fetching across contexts (except read hooks from Operations). Lives under `views/`, not under `contexts/`. |
 | **CopyableCommand** | Frontend (Shared UI) | `<CopyableCommand command={...} />` primitive in `shared/ui/`. Renders a CLI command with a copy-to-clipboard affordance. Preserves the "copyable commands stay" behavior from `docs/decisions.md` (2026-05-03) — buttons call structured mutations, but the CLI string remains visible for transparency / debugging. |
-| **DashboardProjection** | Operations (Frontend mirror) | The shape of the dashboard summary returned by `apiClient.dashboardSummary()`; defined in `@jobhunter/contracts`. |
+| **DashboardProjection** | Operations (Frontend mirror) | The shape of the dashboard summary returned by `apiClient.dashboardSummary()`; defined in `@jobhunter/domain-types` (`operations/`) and re-exported through `@jobhunter/contracts`. |
 | **Density** | Frontend (UI Preferences) | Row-spacing preference: `compact | regular | comfy`. Persisted to `localStorage` via Zustand. |
-| **Discovery (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Discovery. Owns delete/restore mutations, the future ImportJob mutation, and the discovery-event invalidation handlers. |
-| **DomainEvent (Frontend mirror)** | Operations | The discriminated union of all event types streamed via SSE. Mirrors the backend domain events. |
+| **Discovery (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Discovery. Owns job-lifecycle mutations (delete / hide / restore / permanent-delete + `useImportJobMutation`), discovery-source administration (settings, source registry, quarantine, manual capture, feedback), the `<DiscoveryProductControls>` UI, and 17 discovery-event invalidation handlers. |
+| **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobhunter/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion` (68 arms today; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, `DOMAIN_EVENT_TYPES` the runtime array). No Zod. |
 | **Drawer Route** | Frontend (Routing) | A child route (e.g., `routes/jobs.$jobId.tsx`) that opens a side panel layered over its parent's content. The URL preserves the underlying view. |
-| **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns the enrichment-event invalidation handlers and the future `useEnrichmentRetryMutation`. Has minimal UI today; the folder exists so its hooks have an unambiguous home as the surface grows. |
+| **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns `useEnrichmentRetryMutation`, the compensation-refresh mutations, the compensation-evidence components, and the enrichment/compensation invalidation handlers. |
 | **EventStreamPort** | Frontend (Hexagonal) | Port abstracting the SSE connection. Local adapter is `SseEventStreamAdapter`; hosted alternative is `WebSocketEventStreamAdapter`. |
 | **EventStreamProvider** | Frontend (Provider) | Component mounted in `__root.tsx` that opens the event-stream subscription, wires it to the invalidation router, and exposes connection status. |
-| **Event-Handler Parity Test** | Frontend (Testing) | The CI test that iterates the `DomainEvent["eventType"]` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing. Mirrors backend `scripts/check-domain-type-parity.py`. |
+| **Event-Handler Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates the `DomainEventType` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEventType, InvalidationHandler>` typing (the CI-enforced half, via `pnpm -r check`); web Vitest is not yet CI-gated. Mirrors backend `scripts/check-domain-type-parity.py`. |
 | **FeatureFlagPort** | Frontend (Hexagonal) | Port for feature gating. Local adapter is `StaticFeatureFlagAdapter` (always returns defaults); hosted adapter is backend-served via `apiClient.featureFlags()` and cached in Query. The seam exists today; no flags ship now. |
 | **Frontend Bounded Context** | Architecture | See "Bounded Context (Frontend)." |
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |
@@ -2873,7 +3123,7 @@ first's reconciliation.
 | **TanStack Query** | Frontend (Library) | The server-state cache. All projection reads, mutations, and SSE-driven invalidations route through it. |
 | **TanStack Router** | Frontend (Library) | The routing library. File-based routes via Vite plugin; typed search params via Zod schemas; per-route loaders for prefetching. |
 | **TanStack Start** | Frontend (Evolution) | The SSR/RSC framework built on TanStack Router and Query. Named as the SSR evolution path; not built today. |
-| **Shared Data Grid** | Frontend (UI Primitive) | Table primitive used by registry, jobs, artifacts, and runs tables. Provides the common sort, per-column filter, pagination, row selection, and row activation behavior. |
+| **Shared Data Grid (`FilterableDataGrid`)** | Frontend (UI Primitive) | The custom table primitive in `shared/ui/filterable-data-grid.tsx`, used by the jobs, artifacts, runs, and debug/activity tables via per-view `DataGridColumn<T>[]` column models. Provides sort, per-column filter, pagination, row selection, and row activation. `@tanstack/react-table` is a types-only dependency (`RowSelectionState` / `SortingState`); the shadcn `data-table.tsx` wrapper is unused. |
 | **TelemetryPort** | Frontend (Hexagonal) | Port for emitting frontend telemetry. Local adapter is no-op + console; hosted adapter is `OpenTelemetryWebAdapter`. |
 | **TenantProvider** | Frontend (Provider) | Context that exposes `useTenantId()`. Today reads from `LocalSessionAdapter`; tomorrow from JWT. |
 | **TenantPrefix** | Frontend (Query keys) | The first segment of every query key: `["tenant", tenantId, ...]`. Ensures cache isolation across tenants from day one. |
@@ -2881,10 +3131,10 @@ first's reconciliation.
 | **ToastQueue** | Frontend (Shared) | The Zustand store driving the shadcn `<Toaster />`. Mutations call `toast({ ... })` from `onError`. |
 | **Typed Search Params** | Frontend (Routing) | URL search params declared by a Zod schema on a route, inferred-typed for `useSearch()`. The replacement for component-local filter `useState`. |
 | **URL State** | Frontend (Modeling) | Filter, sort, pagination, drawer-open state stored in the URL via typed search params. One of the three layers (§2.1). |
-| **View** | Frontend (Composition) | A composer under `views/dashboard/`, `views/jobs/`, or `views/artifacts/`. Owns layout, URL binding, and ephemeral view-local state; consumes hooks from `contexts/operations/` and components / mutations from aggregate contexts. **Not** a bounded context. |
-| **View Composition Layer** | Frontend (Architecture) | The `views/` folder; sibling of `contexts/`. Holds the three composers (Dashboard, Jobs, Artifacts) and is the only layer permitted to import from multiple contexts in one file. |
-| **Stage-State Parity Test** | Frontend (Testing) | The CI test that iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a non-default arm for every kind. Backstops the exhaustive `switch` on `state.kind`. |
-| **Zustand** | Frontend (Library) | Lightweight client-state store. Used for `ui-preferences`, `toasts`, `command-palette`, and the resume-import wizard draft. |
+| **View** | Frontend (Composition) | A composer under `views/` (today: `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`, `discovery/`, `debug/`). Owns layout, URL binding, and ephemeral view-local state; consumes hooks from `contexts/operations/` and components / mutations from aggregate contexts. **Not** a bounded context. |
+| **View Composition Layer** | Frontend (Architecture) | The `views/` folder; sibling of `contexts/`. Holds the eight composers (Dashboard, Jobs, Artifacts, Apply Review, Runs, Pipelines, Discovery, Debug) and is the only layer permitted to import from multiple contexts in one file. |
+| **Stage-State Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a non-default arm for every kind. Backstops the exhaustive `switch` on `state.kind`. (Web Vitest is not yet CI-gated.) |
+| **Zustand** | Frontend (Library) | Lightweight client-state store. Five today: `ui-preferences`, `toasts`, `command-palette`, the resume-import wizard draft (`profile-import`), and the pipeline `stage-trigger-config`; three persist (`jh:ui-preferences`, `jh:profile-import`, `jh:stage-trigger-config`). |
 
 ---
 

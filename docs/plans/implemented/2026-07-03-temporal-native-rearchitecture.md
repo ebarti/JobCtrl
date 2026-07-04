@@ -1,6 +1,9 @@
 # Temporal-Native Rearchitecture
 
-> **Status:** approved for implementation.
+> **Status:** implemented — all phases delivered (P0 #233, P1a #231, P1b #235,
+> P2 #238, P3 #237, P4 #239, P5 #240; merged 2026-07-03 → 2026-07-04). One
+> naming deviation from this plan: the orchestrator workflow kept the name
+> `JobPipelineWorkflow` instead of the proposed `PipelineOrchestratorWorkflow`.
 > **Source:** 2026-07-02 six-agent resilience audit (all findings file:line-verified)
 > plus three read-only explorations (per-job runner readiness, apply internals,
 > contract/ADR surface).
@@ -10,7 +13,7 @@
 ## Context
 
 Temporal was adopted (see
-[`2026-05-07-temporal-and-worker-reliability-stack.md`](implemented/2026-05-07-temporal-and-worker-reliability-stack.md))
+[`2026-05-07-temporal-and-worker-reliability-stack.md`](2026-05-07-temporal-and-worker-reliability-stack.md))
 to make the pipeline durable and self-healing. The audit found it wired
 correctly but architecturally sidelined:
 

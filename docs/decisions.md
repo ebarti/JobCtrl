@@ -218,6 +218,11 @@ Consequences:
 - read-side joins were canonicalised through projection tables in Phase 9
   (see next ADR)
 
+Amended (2026-07-04): the bespoke `apply_runs` and `apply_run_events` tables
+listed above were dropped (see the 2026-05-07 apply-run decision below); apply
+lifecycle state now persists as domain events in `job_events` and is read back
+through `apply_run_projections`. The other per-aggregate tables remain.
+
 ## 2026-05-06: In-Process EventPublisher + Read-Model Projections
 
 Status: accepted
@@ -251,6 +256,14 @@ Consequences:
 - the legacy LEFT-JOIN-with-COALESCE helpers (`_LATEST_SCORE_JOIN`,
   `_LATEST_MATERIALS_JOIN`, `_LATEST_ENRICHMENT_JOIN`,
   `_LATEST_APPLY_RUN_JOIN`) are deleted from `read-model.ts`
+
+Amended (2026-07-04): the projection set has grown from five to **seven**. The
+Temporal work added `workflow_run_projections` (Python-sole-writer; the unified
+Workflow Runs list) and `source_quality_stats` (per-source discovery health).
+The canonical list is `PROJECTION_TABLES` in
+`infrastructure/projections/sqlite_projection_store.py`: `job_list_projections`,
+`dashboard_projections`, `job_detail_projections`, `artifact_list_projections`,
+`apply_run_projections`, `workflow_run_projections`, `source_quality_stats`.
 
 ## 2026-05-06: JSON-RPC 2.0 for the TS API ↔ Python Worker
 
@@ -355,6 +368,15 @@ Consequences:
   `docs/frontend-target.md`) is TanStack Start — same primitives, named
   not built.
 - Cites: `docs/frontend-target.md` §4.1, §4.3, §4.5, §4.6.
+
+Amended (2026-07-04): three details above have drifted. (1) The router codegen
+plugin is `@tanstack/router-plugin` — the `@tanstack/router-vite-plugin` package
+was renamed; the Vite integration is imported from it. (2) `routeTree.gen.ts` is
+**committed** to the repo (`apps/web/src/routeTree.gen.ts`), not gitignored. (3)
+The invalidation router wires **seven** aggregate-context `DomainEvent` handlers
+(`contexts/{discovery,enrichment,profile,scoring,materials,apply,pipeline}/handlers.ts`);
+`operations/` hosts the router itself rather than a handler, so there are seven
+handlers across the eight context folders, not eight.
 
 ## 2026-05-06: Frontend Hexagonal Ports With Local + Hosted Adapters Named
 
@@ -489,6 +511,16 @@ Consequences:
   fires.
 - Cites: `docs/frontend-target.md` §7, §8.4.
 
+Amended (2026-07-04): the `DomainEvent` type is a **plain TypeScript
+discriminated union**, not a Zod schema. It lives in
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, 68 event types
+in `DOMAIN_EVENT_TYPES`), mirrored by the Python registry — it is not in
+`packages/contracts`. The SSE adapter validates each frame by set-membership on
+the known event types plus `JSON.parse`
+(`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by Zod parsing. The
+`Record<DomainEvent["eventType"], InvalidationHandler>` typing and the
+`every-event-has-handler.test.ts` parity test still hold.
+
 ## 2026-05-06: View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror
 
 Status: accepted
@@ -557,6 +589,11 @@ Consequences:
   a violation.
 - Cites: `docs/frontend-target.md` §3.10, §11.
 
+Amended (2026-07-04): the view layer has grown from three folders to **eight**
+under `apps/web/src/views/`: `apply-review`, `artifacts`, `dashboard`, `debug`,
+`discovery`, `jobs`, `pipelines`, `runs`. The composer-not-context rule and the
+eight-context-folder mirror above are unchanged.
+
 ## 2026-05-07: Collapse `apply_runs` into the Temporal workflow run
 
 Status: accepted
@@ -594,6 +631,157 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
 
+Amended (2026-07-04): the decision above is accurate that the bespoke
+`apply_runs` / `apply_run_events` tables were dropped, but the Python
+`SqliteApplyRunRepository` class was **not** deleted — it is retained in
+`apply/launcher.py` and now persists apply lifecycle facts through
+`record_job_event` into the `job_events` event store (consistent with
+"persistence happens via `record_job_event`" above). Only the bespoke tables and
+the TS `apply_runs → apply_run_projections` projector were removed.
+
+## 2026-06-09: Employer Analysis Via A 3-SDK Agent Ensemble
+
+Status: accepted
+
+Decision: canonical employer/company analysis that feeds scoring and materials
+is produced by a three-SDK agent ensemble behind the hexagonal
+`AnalysisDraftPort` / `AnalysisSynthesizerPort` (`domain/ports/materials.py`).
+`ClaudeAnalysisAdapter` (Claude Agent SDK), `CodexAnalysisAdapter` (Codex SDK),
+and `AntigravityAnalysisAdapter` (Google Antigravity / Gemini SDK) draft in
+parallel; `ClaudeAnalysisSynthesizer` merges them via `run_ensemble`
+(`infrastructure/analysis/`). This is a separate LLM path from the
+prefix-dispatched `LlmPort` used for scoring and tailoring generation.
+
+Rationale:
+
+- multiple independent drafts plus a synthesis pass reduce single-model
+  hallucination and improve grounding on employer facts
+- each adapter lazy-imports its SDK, so a missing SDK degrades to the available
+  legs instead of failing the run
+- an explicit port keeps the ensemble swappable and testable with fixtures
+
+Consequences:
+
+- the Codex leg isolates `CODEX_HOME` so ensemble runs do not pollute the user's
+  own Codex chats (#149)
+- ensemble legs, the synthesizer, and the voice pass are traced as Langfuse
+  generation spans (#213)
+- adding or removing a leg is an adapter change behind the port, not a change to
+  the materials domain
+
+Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
+
+## 2026-06-24: HTML/CSS Resume Rendering Replaces LaTeX
+
+Status: accepted
+
+Decision: the default resume renderer is HTML/CSS printed to PDF through
+Playwright (`html_pdf`); LaTeX (`latex_pdf`, `pdflatex`) is retained only as an
+explicitly selected compatibility renderer via `JOBHUNTER_RESUME_RENDERER`.
+
+Rationale:
+
+- HTML/CSS + Playwright emits layout boxes that Apply Review consumes, so edits,
+  comments, validation, and final PDF rendering stay tied to one generation
+- the previous hand-rolled PDF writer truncated content; rendering through a real
+  HTML renderer keeps the PDF faithful to the reviewed text (#210)
+- TeX Live is large and awkward to ship; HTML/CSS avoids that dependency for the
+  default path and any future container
+
+Consequences:
+
+- Playwright Chromium is a runtime requirement for resume PDF rendering
+- LaTeX support remains for custom templates behind the explicit `latex_pdf`
+  mode; `PDFLATEX_PATH` overrides the binary location
+- tailoring fails closed if the resume PDF render fails, rather than shipping a
+  degraded artifact
+
+Cites: PRs #188, #210.
+
+## 2026-06-30: Requirement-Led Resume Tailoring
+
+Status: accepted
+
+Decision: resume tailoring is driven by the job's extracted requirements. The
+pipeline derives a requirement-fit view and grounds keyword coverage in the
+shipped resume text, surfacing a requirement-fit report in job detail and Apply
+Review. The change was designed and archived through the OpenSpec
+propose/implement/archive workflow.
+
+Rationale:
+
+- tailoring against concrete requirements produces more relevant, less generic
+  resumes than tailoring against the raw job description
+- coverage claims are only meaningful when computed over the actual generated
+  resume text, not inferred from job keywords (per the auditability discipline in
+  `CLAUDE.md`)
+- OpenSpec keeps the spec, tasks, and archive of a non-trivial materials change
+  reviewable
+
+Consequences:
+
+- job detail exposes a requirement-fit report when the data exists
+- keyword coverage is counted only when evidence-grounded in the shipped resume
+  (#216, #224, #228)
+- Apply Review labels coverage basis and revision semantics from the grounded
+  audit (#229)
+
+Cites: PRs #201 (proposal), #202 (implementation); follow-ups #216, #224, #228,
+#229.
+
+## 2026-07-02: SQLite Backup Command + Schema-Version Guard
+
+Status: accepted
+
+Decision: the local database ships a first-class backup command and a
+schema-version guard. `jobhunter backup` (`cli.py`) writes a consistent copy via
+`backup_database` (`database.py`); every connection runs `_ensure_schema_version`,
+which stamps `PRAGMA user_version` to the code's `SCHEMA_VERSION` and refuses to
+open a database whose schema is newer than the running code.
+
+Rationale:
+
+- the SQLite database is the single durable store of profile, jobs, events,
+  projections, and review drafts; it needs a safe backup path
+- opening a database written by newer code risks silent corruption, so the guard
+  fails fast instead
+- a stamped version gives future migrations a deterministic starting point
+
+Consequences:
+
+- users can snapshot the workspace before destructive or upgrade operations
+- a newer-than-code database raises a clear error rather than being written
+- an older or unstamped database is adopted by stamping the current version
+
+Cites: PR #206.
+
+## 2026-07-02: Cross-Source Deduplication By Content Identity
+
+Status: accepted
+
+Decision: discovered postings are deduplicated across all sources by content
+identity, not only within jobspy or by URL. `domain/job_content_identity.py`
+defines the content-match basis; the discovery repository resolves an incoming
+posting to an existing `Job` after native-id and URL misses
+(`infrastructure/discovery/sqlite_repository.py`).
+
+Rationale:
+
+- the same role is frequently posted on multiple boards with different URLs;
+  URL-only dedup created duplicate jobs
+- a genuine-employer-identity check avoids collapsing distinct roles that merely
+  share superficial text
+- dedup at discovery keeps duplicates out of enrichment, scoring, and materials
+
+Consequences:
+
+- a posting can resolve to an existing job by content identity and record how it
+  matched (`ContentMatchBasis`)
+- the discovery port surfaces the match basis for auditability
+- cross-board duplicates are collapsed before downstream stages run
+
+Cites: PR #212 (building on earlier dedup work #108).
+
 ## 2026-07-03: At-Most-Once Apply With Binding Approval Gate
 
 Status: accepted
@@ -626,6 +814,8 @@ Consequences:
   confirmation evidence with conservative verification confidence
 
 ## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
+
+Status: accepted
 
 Decision: Temporal workflow execution becomes visible and self-terminalizing
 without a TypeScript Temporal SDK and without trigger-coupled reapers.
@@ -684,7 +874,7 @@ Consequences:
   the unified runs list until they re-run (accepted cutover loss per
   `feedback_no_strangler.md`); the dashboard's recent-apply panel is unchanged.
 
-Cites: `docs/plans/2026-07-03-temporal-native-rearchitecture.md` (P0).
+Cites: `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md` (P0).
 
 ## 2026-07-03: DiscoverWorkflow And Default-Off Temporal Schedules
 
@@ -791,3 +981,59 @@ Consequences:
   completion through the workflow-runs read model
 - the old synchronous handler body is not retained as a compatibility wrapper
 - tests cover the extracted compensation core separately from RPC dispatch
+
+## 2026-07-03: Classified Errors Drive Temporal Retry; Bounded Attempts
+
+Status: accepted
+
+Decision: worker activities raise classified domain errors that map to Temporal
+retry behaviour, and activities are interruptible. Retryable failures retry
+within the activity's policy; non-retryable failures (e.g. `budget_exceeded`
+from `BudgetExceededError`, `domain/errors.py`) fail fast without retry. LLM
+retries and per-stage score attempts are explicitly bounded.
+
+Rationale:
+
+- retrying a non-retryable failure (budget exceeded, permanent validation error)
+  wastes spend and hides the real cause
+- unbounded LLM retries and score attempts can run up cost after a broad
+  discovery run
+- interruptible activities let cancellation and timeouts take effect promptly
+
+Consequences:
+
+- Temporal retry policy is driven by error classification, not a blanket policy
+- score attempts are capped and LLM retries are bounded (P1a)
+- non-retryable errors surface as terminal workflow failures in the runs view
+
+Cites: PRs #231 (P1a: bound LLM retries, cap score attempts), #235 (P1b:
+classified errors into Temporal retry, interruptible activities).
+
+## 2026-07-03: Per-Job JobPreparationWorkflow Replaces The Preparation Queue
+
+Status: accepted
+
+Decision: per-job preparation (enrichment → scoring → tailoring eligibility →
+material generation or suppression) is a per-job Temporal workflow,
+`JobPreparationWorkflow` with deterministic id `prep-{jobKey}`, exposed behind a
+preparation port (`domain/ports/preparation.py`). It replaces the earlier
+in-process preparation queue. `DiscoverWorkflow` starts one preparation child per
+discovered job.
+
+Rationale:
+
+- a per-job workflow gives each job its own retry, timeout, heartbeat, and
+  finalize boundary instead of one coarse queue
+- deterministic ids make double-start idempotent (a live job returns the running
+  handle)
+- preparation lifecycle becomes visible in the runs read model like other
+  workflows
+
+Consequences:
+
+- preparation emits `PreparationWorkItem*` lifecycle events
+- per-job stage truth remains in `JobPipelineState`; preparation orchestrates, it
+  does not own stage-state invariants
+- the in-process preparation queue and its reaper are removed
+
+Cites: PR #237 (P3).

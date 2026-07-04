@@ -15,6 +15,9 @@ offers Homebrew installs for missing machine-level tools when available, then
 runs the repository dependency setup: frozen pnpm install, uv sync, and
 Playwright Chromium installs for both the web package and the Python worker.
 
+`pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
+`--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
+
 For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
 
@@ -124,8 +127,8 @@ must never point at a real `~/.jobhunter` workspace.
 
 The React frontend under `apps/web` follows the architecture documented in
 [`docs/frontend-target.md`](frontend-target.md): TanStack Router / Query /
-Table / Form on top of shadcn/ui + Tailwind, with an SSE-fed invalidation
-router for realtime cache fan-out.
+Form on top of shadcn/ui + Tailwind, a shared filterable data grid for
+tables, and an SSE-fed invalidation router for realtime cache fan-out.
 
 Run the dev server:
 

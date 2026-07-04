@@ -10,8 +10,8 @@ directory is for contributors who need to change behavior safely.
 2. [Configuration](../user/configuration.md) for runtime variables and local
    data boundaries.
 3. [Architecture](../architecture.md) for the current runtime shape.
-4. [Job pipeline architecture](../job-pipeline-architecture.md) for stage-by-
-   stage sequence and class diagrams.
+4. [Job pipeline architecture](../job-pipeline-architecture.md) for the
+   workflow-by-workflow execution view with sequence and component diagrams.
 5. [Local reliability QA](../local-reliability-qa.md) for regression ownership.
 
 ## Current Runtime Shape
@@ -21,10 +21,10 @@ flowchart LR
   Web["React/Vite web app"] --> Api["TypeScript Fastify API"]
   Api --> Db["SQLite read/write model"]
   Api --> Rpc["JSON-RPC subprocess"]
-  Rpc --> Worker["Python automation worker"]
+  Rpc -- "start workflows" --> Temporal["Temporal dev server"]
+  Temporal -- "task queue" --> Worker["Python automation worker"]
   Worker --> Db
   Worker --> Files["Local artifacts"]
-  Worker --> Temporal["Temporal dev server"]
   Worker --> Providers["LLMs / job sources / browser automation"]
   Db --> Sse["SSE event stream"]
   Sse --> Web
@@ -54,8 +54,8 @@ The React app mirrors those contexts under `apps/web/src/contexts/`. Views under
   project history; current product behavior belongs in the canonical docs and
   live code.
 - `openspec/` contains current and archived OpenSpec-style requirements. When a
-  feature ships, sync public docs and `docs/delivered.md` so the archive is not
-  the only discoverable source.
+  feature ships, sync the public docs so the archive is not the only
+  discoverable source.
 
 ## Validation
 
@@ -91,5 +91,4 @@ Update the owning doc when behavior changes:
 - frontend architecture: `docs/frontend-target.md`;
 - QA expectations: `docs/local-reliability-qa.md`;
 - roadmap/backlog: `ROADMAP.md` for public direction, `docs/backlog.md` for
-  detailed engineering tasks;
-- shipped feature summaries: `docs/delivered.md`.
+  detailed engineering tasks.

@@ -1,8 +1,8 @@
 # Roadmap
 
 This roadmap is the public, contributor-facing view. The detailed engineering
-backlog lives in [docs/backlog.md](docs/backlog.md), and delivered work is
-archived in [docs/delivered.md](docs/delivered.md).
+backlog lives in [docs/backlog.md](docs/backlog.md); delivered work is
+recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/).
 
 ## Now
 
