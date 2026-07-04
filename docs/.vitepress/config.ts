@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { defineConfig } from "vitepress";
+import { defineConfig, type DefaultTheme } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
 const REPO_URL = "https://github.com/ebarti/JobHunter";
@@ -23,6 +23,71 @@ function routeForRewrittenPage(docPath: string): string | null {
   // With cleanUrls: `index.md` -> `/`, `developer/index.md` -> `/developer/`.
   return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
 }
+
+const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  { text: "Overview", link: "/" },
+  {
+    text: "User Guide",
+    items: [
+      { text: "Getting Started", link: "/user/getting-started" },
+      { text: "Configuration", link: "/user/configuration" },
+      { text: "Normal Flows", link: "/user/normal-flows" },
+      { text: "Data & Safety", link: "/user/data-and-safety" },
+      { text: "Screenshots", link: "/user/screenshots" },
+    ],
+  },
+];
+
+const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "Developer Guide",
+    items: [
+      { text: "Overview", link: "/developer/" },
+      { text: "Local Development", link: "/local-development" },
+      { text: "Local TypeScript API", link: "/local-ts-api" },
+      { text: "Reliability & QA", link: "/local-reliability-qa" },
+      { text: "Screenshot Playbook", link: "/developer/screenshot-playbook" },
+    ],
+  },
+  {
+    text: "Architecture",
+    items: [
+      { text: "System Architecture", link: "/architecture" },
+      { text: "Job Pipeline", link: "/job-pipeline-architecture" },
+      { text: "Domain Model (DDD)", link: "/ddd-target" },
+      { text: "Frontend", link: "/frontend-target" },
+      { text: "Resume Tailoring", link: "/tailoring" },
+    ],
+  },
+  {
+    text: "Reference",
+    items: [
+      { text: "Requirements", link: "/requirements" },
+      { text: "Decisions (ADRs)", link: "/decisions" },
+    ],
+  },
+];
+
+// Sectioned sidebar: user-guide pages (and the homepage) show only the User
+// Guide; developer-facing pages show the developer sidebar. Developer pages
+// live at mixed top-level paths, so each is enumerated. VitePress picks the
+// key by slash-count-descending order and ties keep insertion order, so the
+// "/" fallback must stay LAST.
+const SIDEBAR: DefaultTheme.Sidebar = {
+  "/user/": USER_SIDEBAR,
+  "/developer/": DEVELOPER_SIDEBAR,
+  "/local-development": DEVELOPER_SIDEBAR,
+  "/local-ts-api": DEVELOPER_SIDEBAR,
+  "/local-reliability-qa": DEVELOPER_SIDEBAR,
+  "/architecture": DEVELOPER_SIDEBAR,
+  "/job-pipeline-architecture": DEVELOPER_SIDEBAR,
+  "/ddd-target": DEVELOPER_SIDEBAR,
+  "/frontend-target": DEVELOPER_SIDEBAR,
+  "/tailoring": DEVELOPER_SIDEBAR,
+  "/requirements": DEVELOPER_SIDEBAR,
+  "/decisions": DEVELOPER_SIDEBAR,
+  "/": USER_SIDEBAR,
+};
 
 /**
  * Rewrites markdown links that resolve outside the published docs set
@@ -96,46 +161,7 @@ export default withMermaid(
         { text: "Developer", link: "/developer/" },
         { text: "Architecture", link: "/architecture" },
       ],
-      sidebar: [
-        { text: "Overview", link: "/" },
-        {
-          text: "User Guide",
-          items: [
-            { text: "Getting Started", link: "/user/getting-started" },
-            { text: "Configuration", link: "/user/configuration" },
-            { text: "Normal Flows", link: "/user/normal-flows" },
-            { text: "Data & Safety", link: "/user/data-and-safety" },
-            { text: "Screenshots", link: "/user/screenshots" },
-          ],
-        },
-        {
-          text: "Developer Guide",
-          items: [
-            { text: "Overview", link: "/developer/" },
-            { text: "Local Development", link: "/local-development" },
-            { text: "Local TypeScript API", link: "/local-ts-api" },
-            { text: "Reliability & QA", link: "/local-reliability-qa" },
-            { text: "Screenshot Playbook", link: "/developer/screenshot-playbook" },
-          ],
-        },
-        {
-          text: "Architecture",
-          items: [
-            { text: "System Architecture", link: "/architecture" },
-            { text: "Job Pipeline", link: "/job-pipeline-architecture" },
-            { text: "Domain Model (DDD)", link: "/ddd-target" },
-            { text: "Frontend", link: "/frontend-target" },
-            { text: "Resume Tailoring", link: "/tailoring" },
-          ],
-        },
-        {
-          text: "Reference",
-          items: [
-            { text: "Requirements", link: "/requirements" },
-            { text: "Decisions (ADRs)", link: "/decisions" },
-          ],
-        },
-      ],
+      sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
       search: { provider: "local" },
       outline: { level: [2, 3] },
