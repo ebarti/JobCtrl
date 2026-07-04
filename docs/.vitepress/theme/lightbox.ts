@@ -437,8 +437,18 @@ function openLightbox(trigger: Trigger): void {
   stage.addEventListener("pointercancel", endDrag);
 
   // Click on empty backdrop (not the diagram) closes; a completed pan does not.
+  // Hit-test by coordinates, not event.target: setPointerCapture retargets the
+  // derived click event to the stage, so target comparison would treat every
+  // click on the content as a backdrop click and close the overlay.
   stage.addEventListener("click", (event) => {
-    if (!moved && event.target === stage) close();
+    if (moved) return;
+    const rect = content.getBoundingClientRect();
+    const inContent =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (!inContent) close();
   });
 
   stage.addEventListener("dblclick", (event) => {
