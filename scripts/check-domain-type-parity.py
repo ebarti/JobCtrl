@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify TS and Python domain type/event names + field sets match.
 
-This is the two-language drift sensor described in ddd-target.md §10.5 and
+This is the two-language drift sensor described in docs/architecture/domain-model/reference.md §10.5 and
 migration plan S-03. It compares:
 
   1. Event type names across both languages.

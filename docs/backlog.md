@@ -55,6 +55,13 @@ frontend adapters remain deferred until the local product is solid.
 
 ### Frontend/API Parity
 
+- BR-007 is partially unmet on the operations dashboard (2026-07-04
+  requirements audit): no "stuck" work bucket exists anywhere in the web app,
+  and the recent-activity feed renders on the Debug view while
+  `DashboardView.tsx` never consumes the `summary.activity` payload the API
+  already returns. Fix is product work — add the stuck bucket and move the
+  activity feed onto the dashboard; do not reword the requirement to match
+  the current UI.
 - Extend targeted row patching beyond the single `ApplyRunEventRecorded`
   handler. The SSE pipeline and invalidation router are live, and
   `ApplyRunEventRecorded` is the only handler that returns a
@@ -272,7 +279,7 @@ These items are intentionally deferred until local validation is solid.
 ## Frontend Cloud-Mode Adapters
 
 These are the named-not-built cloud adapters from
-[`docs/frontend-target.md`](frontend-target.md) §9. The seam exists today;
+[`docs/architecture/frontend/integration.md`](architecture/frontend/integration.md) §9. The seam exists today;
 the adapter swap is gated by the fitness function. Per the no-strangler
 memo, when a fitness function fires the adapter swap is rip-and-replace —
 no dual-mount, no compatibility shim.
@@ -291,12 +298,12 @@ no dual-mount, no compatibility shim.
   `useSession()` hook returning `{ tenantId, userId, roles, expiresAt }`.
   Fitness function: the API is exposed beyond `127.0.0.1` (also the
   trigger for the backend Identity & Access context per
-  `docs/ddd-target.md` §9.4).
+  `docs/architecture/domain-model/cloud.md` §9.4).
 - **Tenant-scoped routing prefix `/t/$tenantId/*`.** §9.4.
   TanStack Router layout route; tenant switcher in the AppShell;
   `<TenantProvider />` reads the path segment first, JWT default tenant
   second. Cache isolation is already free (query keys are tenant-first
-  per `docs/frontend-target.md` §4.1). Fitness function: a single user
+  per `docs/architecture/frontend/patterns.md` §4.1). Fitness function: a single user
   belongs to more than one tenant.
 - **`OpenTelemetryWebAdapter` for the `TelemetryPort`.** §9.5.
   Emits OTLP spans for route navigations, mutation calls, and error

@@ -1,7 +1,7 @@
 /**
  * Operations / Read-Side projection types — TypeScript mirror.
  *
- * See ddd-target.md §4.8 / §6.6 and the Python source of truth at
+ * See docs/architecture/domain-model/ §4.8 / §6.6 and the Python source of truth at
  * ``workers/automation/src/jobhunter/domain/operations/projections.py``.
  *
  * Pure data shapes — no I/O.

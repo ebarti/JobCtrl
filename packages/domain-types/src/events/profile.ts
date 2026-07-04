@@ -1,7 +1,7 @@
 /**
  * Candidate Profile domain events.
  *
- * @see ddd-target.md §4.3
+ * @see docs/architecture/domain-model/tactical.md §4.3
  */
 
 import type { TenantId } from "../tenant.js";

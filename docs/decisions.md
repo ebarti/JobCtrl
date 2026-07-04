@@ -169,7 +169,7 @@ Consequences:
 Status: accepted
 
 Decision: restructure the worker (and the read-side of the TS API) around the
-eight bounded contexts defined in `docs/ddd-target.md` — Job Discovery,
+eight bounded contexts defined in `docs/architecture/domain-model/` — Job Discovery,
 Job Enrichment, Candidate Profile, Scoring, Materials Generation, Apply
 Automation, Pipeline Orchestration, and Operations / Read-Side. Each context
 has an aggregate root, value objects, domain events, driving use cases, and
@@ -181,7 +181,7 @@ Rationale:
   was preventing meaningful refactor and making the TS↔Python seam fragile
 - explicit aggregates make invariants enforceable in one place per context
 - ports + adapters give us a clean evolution path to the hosted architecture
-  named in `docs/ddd-target.md` §5 / §9 (Postgres, S3, SQS, Browserbase,
+  named in `docs/architecture/domain-model/` §5 / §9 (Postgres, S3, SQS, Browserbase,
   Temporal) without dual-writes
 
 Consequences:
@@ -203,7 +203,7 @@ Decision: every aggregate root has a dedicated repository port (`JobRepository`,
 `ProfileRepository`, `ScoreRepository`, `MaterialsRepository`,
 `EnrichmentRepository`, `ApplyRunRepository`, `PipelineStateRepository`).
 Local adapters are SQLite-backed; hosted adapters (Postgres) are named in
-`docs/ddd-target.md` but not implemented yet.
+`docs/architecture/domain-model/` but not implemented yet.
 
 Rationale:
 
@@ -237,7 +237,7 @@ projections (`job_list_projections`, `dashboard_projections`,
 `job_detail_projections`, `artifact_list_projections`,
 `apply_run_projections`) that the TS read-model and dashboards query
 directly. The hosted-future cutover is a SQS-FIFO transactional outbox per
-`docs/ddd-target.md` §6.3.
+`docs/architecture/domain-model/` §6.3.
 
 Rationale:
 
@@ -289,7 +289,7 @@ Rationale:
   (`sync`, `workflow`, `streaming`), and a single long-lived worker
   per API process
 - the protocol matches what we'd ship to a hosted gRPC / HTTP transport
-  later — Section 9 of `docs/ddd-target.md` names the swap
+  later — §9 of `docs/architecture/domain-model/cloud.md` names the swap
 
 Consequences:
 
@@ -369,9 +369,9 @@ Consequences:
   developers must run `pnpm web:dev` once after pulling new routes for
   the codegen to settle.
 - The hosted SSR / RSC evolution path (§9.1, §9.2 of
-  `docs/frontend-target.md`) is TanStack Start — same primitives, named
+  `docs/architecture/frontend/`) is TanStack Start — same primitives, named
   not built.
-- Cites: `docs/frontend-target.md` §4.1, §4.3, §4.5, §4.6.
+- Cites: `docs/architecture/frontend/` §4.1, §4.3, §4.5, §4.6.
 
 Amended (2026-07-04): three details above have drifted. (1) The router codegen
 plugin is `@tanstack/router-plugin` — the `@tanstack/router-vite-plugin` package
@@ -405,7 +405,7 @@ adapter named-not-built per the cloud-evolution path:
 
 Rationale:
 
-- Mirrors the backend's hexagonal architecture (`docs/ddd-target.md` §3,
+- Mirrors the backend's hexagonal architecture (`docs/architecture/domain-model/` §3,
   §5) so the same vocabulary applies on both sides of the wire.
 - Cloud-evolution seams are in place from day one: every port that needs
   to swap when JobHunter goes hosted (auth, storage, telemetry, event
@@ -440,7 +440,7 @@ Consequences:
   *cannot* be the same as local-mode (browsers cannot open local files);
   the hosted adapter returns `Unsupported` and the UI surfaces a
   presigned-URL download affordance instead.
-- Cites: `docs/frontend-target.md` §6, §9.
+- Cites: `docs/architecture/frontend/` §6, §9.
 
 ## 2026-05-06: SSE Realtime Via `GET /v1/events/stream` + Invalidation Router
 
@@ -487,7 +487,7 @@ Rationale:
   polyfill).
 - The router is testable in isolation: `handleEvent(event,
   mockQueryClient)` for each event type, asserting the exact set of
-  `invalidateQueries` / `setQueryData` calls. Per `docs/frontend-target.md`
+  `invalidateQueries` / `setQueryData` calls. Per `docs/architecture/frontend/`
   §10.2, this is "the most important unit test in the app" — the
   contract surface between the backend's events and the frontend's cache.
 - The `Record<DomainEvent["eventType"], InvalidationHandler>` typing makes
@@ -513,7 +513,7 @@ Consequences:
   for a single-user local app; it would matter under hosted multi-tenant
   scale, which is exactly when the WebSocket adapter's fitness function
   fires.
-- Cites: `docs/frontend-target.md` §7, §8.4.
+- Cites: `docs/architecture/frontend/` §7, §8.4.
 
 Amended (2026-07-04): the `DomainEvent` type is a **plain TypeScript
 discriminated union**, not a Zod schema. It lives in
@@ -591,7 +591,7 @@ Consequences:
   any import of `views/*` from a `contexts/*` file is a violation; any
   import of one `contexts/*` from another (other than `operations/`) is
   a violation.
-- Cites: `docs/frontend-target.md` §3.10, §11.
+- Cites: `docs/architecture/frontend/` §3.10, §11.
 
 Amended (2026-07-04): the view layer has grown from three folders to **eight**
 under `apps/web/src/views/`: `apply-review`, `artifacts`, `dashboard`, `debug`,
@@ -796,7 +796,7 @@ Consequences:
 
 Cites: PRs #142 (per-bullet provenance), #143 (voice pass + final audit against
 rendered text), #144 (serve audit from canonical rows), #148 (formatting-tolerant
-grounding). See `docs/tailoring.md`.
+grounding). See `docs/architecture/tailoring.md`.
 
 ## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
 

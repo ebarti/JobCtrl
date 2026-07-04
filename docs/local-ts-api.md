@@ -825,7 +825,7 @@ point the proxy at a non-default API port.
 The API exposes a Server-Sent Events endpoint that the frontend's
 `SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
 the browser's native `EventSource`. Per
-[`docs/frontend-target.md`](frontend-target.md) §7.1, this endpoint is the
+[`docs/architecture/frontend/realtime.md`](architecture/frontend/realtime.md) §7.1, this endpoint is the
 single realtime channel from the worker / API write-side to the frontend's
 TanStack Query cache; the frontend's `InvalidationRouter` translates each
 `DomainEvent` into the right `invalidateQueries` / `setQueryData` calls.
@@ -847,7 +847,7 @@ the server resolves `tenantId` from the JWT, the JWT-derived tenant is
 canonical, and a mismatched query-string value returns `403 Forbidden`.
 
 `since` is optional and is used only by the planned IndexedDB warm-start path
-(`docs/frontend-target.md` §9.7) to resume from a persisted watermark on
+(`docs/architecture/frontend/integration.md` §9.7) to resume from a persisted watermark on
 first connect; the browser's native `EventSource` auto-reconnect uses the
 `Last-Event-ID` header instead.
 
@@ -907,7 +907,7 @@ guarantees that tenantless local rows still match the local-mode filter without
 a write-side backfill.
 
 Tenant scope is mandatory; there is no "all tenants" mode
-(`docs/frontend-target.md` §7.8).
+(`docs/architecture/frontend/realtime.md` §7.8).
 
 ### Resume-position precedence
 

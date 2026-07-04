@@ -9,12 +9,12 @@ Use these repository documents before making architectural, workflow, or QA deci
 - `docs/local-development.md`: install, run, verify, and frontend development commands.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
 - `docs/local-ts-api.md`: local TypeScript API routes, JSON-RPC dispatch, web app development notes, and the `GET /v1/events/stream` SSE contract.
-- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, Temporal-native orchestration, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries, the frontend stack / state layers / ports / SSE realtime, and the OpenTelemetry → Langfuse observability layer for LLM, workflow, and JSON-RPC spans.
-- `docs/job-pipeline-architecture.md`: workflow-by-workflow pipeline execution on Temporal, sequence diagrams, component diagrams, call paths, persistence, events, projection visibility, and failure behavior.
-- `docs/tailoring.md`: resume tailoring prompt contract, generated JSON shape, validation/judge/fabrication gates, provenance, audit metadata, and safe change points.
+- `docs/architecture/`: the System Architecture section — `index.md` (system shape, eight bounded contexts, core data flow, local commands), `runtime.md` (runtime boundaries of the TypeScript app/API plus Python worker, Temporal-native orchestration, JSON-RPC TS↔Python protocol, local-first boundaries), `observability.md` (OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans), `storage.md` (SQLite and generated files), `scoring.md`, `materials.md`, and `read-model.md` (projection-backed read model).
+- `docs/architecture/pipeline/`: workflow-by-workflow pipeline execution on Temporal — `index.md` (execution surfaces, workflow catalog, source files), `envelope.md` (universal envelope, activities, error taxonomy), `stages.md` (per-stage call paths and sequence diagrams), `operations.md` (spend ceiling, discovery schedule, persistence map, events, projection visibility, failure behavior).
+- `docs/architecture/tailoring.md`: resume tailoring prompt contract, generated JSON shape, validation/judge/fabrication gates, provenance, audit metadata, and safe change points.
 - `docs/requirements.md`: product and technical requirements that must stay true as implementation changes.
-- `docs/ddd-target.md`: canonical DDD + hexagonal target architecture, including bounded-context language, aggregates, ports, domain events, projection strategy, and hosted-future seams. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
-- `docs/frontend-target.md`: canonical frontend architecture — three-layer state (server / URL / client), eight bounded contexts mirrored 1:1 from the backend, view-vs-context dichotomy, hexagonal frontend ports, SSE realtime + invalidation router, testing pyramid. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
+- `docs/architecture/domain-model/`: canonical DDD + hexagonal target architecture (§1–§11 numbering preserved across subpages), including bounded-context language, aggregates, ports, domain events, projection strategy, and hosted-future seams. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
+- `docs/architecture/frontend/`: canonical frontend architecture (§1–§15 numbering preserved across subpages) — three-layer state (server / URL / client), eight bounded contexts mirrored 1:1 from the backend, view-vs-context dichotomy, hexagonal frontend ports, SSE realtime + invalidation router, testing pyramid. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
 - `docs/decisions.md`: architectural decision records — DDD adoption, per-aggregate repositories, in-process EventPublisher + projections, JSON-RPC for TS↔Python, TanStack family adopted for the frontend, frontend hexagonal ports with local + hosted adapters named, SSE realtime via `GET /v1/events/stream` + invalidation router, view-vs-context dichotomy, and the Temporal-native orchestration ADRs.
 - `ROADMAP.md`: public roadmap; `docs/backlog.md`: detailed engineering backlog, frontend a11y deferrals, and the known-failing web e2e baseline.
 - `docs/plans/`: active plans at the top level, historical records under `implemented/`; `docs/incidents/`: incident reports.
@@ -74,10 +74,11 @@ When a doc update is warranted:
 | Install, run, verify, or frontend development commands | `docs/local-development.md` |
 | Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
 | Local TypeScript API routes, JSON-RPC dispatch, or the SSE contract | `docs/local-ts-api.md` |
-| TypeScript API plus Python worker architecture, Temporal orchestration, or local-first boundaries | `docs/architecture.md` |
-| Resume tailoring contract, validation/judge/fabrication gates, provenance, or tailoring audit metadata | `docs/tailoring.md` |
-| Observability / OpenTelemetry / Langfuse export of LLM, workflow, or JSON-RPC spans | `docs/architecture.md` |
-| Frontend architecture (state layers, bounded contexts, ports, realtime, testing pyramid) | `docs/frontend-target.md` |
+| TypeScript API plus Python worker architecture, Temporal orchestration, or local-first boundaries | `docs/architecture/` (`runtime.md`, `index.md`) |
+| Pipeline workflow execution, activities, stages, spend ceiling, or persistence/events | `docs/architecture/pipeline/` |
+| Resume tailoring contract, validation/judge/fabrication gates, provenance, or tailoring audit metadata | `docs/architecture/tailoring.md` |
+| Observability / OpenTelemetry / Langfuse export of LLM, workflow, or JSON-RPC spans | `docs/architecture/observability.md` |
+| Frontend architecture (state layers, bounded contexts, ports, realtime, testing pyramid) | `docs/architecture/frontend/` |
 | TypeScript/API/web scripts, package metadata, dependencies, or tooling commands | `package.json` |
 | Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `workers/automation/pyproject.toml` |
 | Agent workflow rules, PR expectations, repo-specific constraints, or automation guidance | `AGENTS.md` |
@@ -156,7 +157,7 @@ If any required verification cannot be run, the final status is not done. Report
 
 ## Frontend Conventions
 
-The `apps/web` frontend follows the architecture documented in `docs/frontend-target.md` and the four ADRs landed on 2026-05-06 in `docs/decisions.md` (TanStack family adopted, frontend hexagonal ports, SSE realtime + invalidation router, view-vs-context dichotomy). Follow these conventions on every frontend change; they exist so the architecture stays the architecture.
+The `apps/web` frontend follows the architecture documented in `docs/architecture/frontend/` and the four ADRs landed on 2026-05-06 in `docs/decisions.md` (TanStack family adopted, frontend hexagonal ports, SSE realtime + invalidation router, view-vs-context dichotomy). Follow these conventions on every frontend change; they exist so the architecture stays the architecture.
 
 ### Folder structure
 
@@ -178,7 +179,7 @@ The `apps/web` frontend follows the architecture documented in `docs/frontend-ta
 ### Mutation invalidation
 
 - Per-aggregate `useMutation` hook in the owning context (e.g., `useApplyJobMutation` in `contexts/apply/hooks/`).
-- Each mutation declares its own `onSettled` `invalidateQueries` set per `docs/frontend-target.md` §8.2. Default mutation options do **not** invalidate broadly.
+- Each mutation declares its own `onSettled` `invalidateQueries` set per `docs/architecture/frontend/integration.md` §8.2. Default mutation options do **not** invalidate broadly.
 - Synchronous mutations: optimistic update + invalidate on settle. Async (202) mutations: small immediate "queued" invalidation; the real result arrives via the SSE invalidation router.
 
 ### Optimistic mutations

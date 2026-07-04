@@ -177,7 +177,7 @@ data to the fixture corpus.
 ## Frontend QA
 
 The `apps/web` test pyramid follows the strategy defined in
-[`docs/frontend-target.md`](frontend-target.md) §10. Run the layers via the
+[`docs/architecture/frontend/testing.md`](architecture/frontend/testing.md) §10. Run the layers via the
 commands listed under the "Frontend" section of
 [`docs/local-development.md`](local-development.md).
 

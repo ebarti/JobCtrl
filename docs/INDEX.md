@@ -38,19 +38,37 @@
   `release_check.py` gate, and hosted-future security seams.
 - [`developer/screenshot-playbook.md`](developer/screenshot-playbook.md):
   repeatable synthetic screenshot refresh workflow.
-- [`architecture.md`](architecture.md): runtime boundaries and repository
-  ownership.
-- [`job-pipeline-architecture.md`](job-pipeline-architecture.md):
-  workflow-by-workflow pipeline execution on Temporal, sequence diagrams,
-  component diagrams, call paths, persistence, events, and failure behavior.
-- [`tailoring.md`](tailoring.md): resume tailoring prompt contract, generated
-  JSON shape, validation/judge/fabrication gates, provenance, audit metadata,
-  and safe change points.
-- [`ddd-target.md`](ddd-target.md): canonical DDD + hexagonal architecture,
-  domain language, and backend ownership rules.
-- [`frontend-target.md`](frontend-target.md): canonical frontend architecture,
-  state layers, bounded contexts, ports, SSE realtime, invalidation, and test
-  pyramid.
+- [`architecture/index.md`](architecture/index.md): system shape,
+  bounded-context composition, core data flow, and local commands — the System
+  Architecture section map.
+- [`architecture/runtime.md`](architecture/runtime.md): runtime boundaries —
+  frontend, TypeScript product API, Python automation engine, local Temporal.
+- [`architecture/observability.md`](architecture/observability.md): the
+  OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans.
+- [`architecture/storage.md`](architecture/storage.md): SQLite layout and
+  generated local files.
+- [`architecture/scoring.md`](architecture/scoring.md): retrieval before
+  scoring and the fit-assessment policy.
+- [`architecture/materials.md`](architecture/materials.md): employer analysis,
+  per-bullet provenance, voice pass + final audit, and the tailoring
+  explanation read model.
+- [`architecture/read-model.md`](architecture/read-model.md): apply feedback
+  loop and read-model projections.
+- [`architecture/pipeline/`](architecture/pipeline/index.md):
+  workflow-by-workflow pipeline execution on Temporal — envelope and activities
+  (`envelope.md`), stage walkthrough with sequence diagrams (`stages.md`), and
+  operations, persistence, and events (`operations.md`).
+- [`architecture/domain-model/`](architecture/domain-model/index.md): canonical
+  DDD + hexagonal architecture (§1–§11 preserved across subpages): strategic
+  and tactical design, ports, integration, persistence, cloud seams, risks,
+  and glossary.
+- [`architecture/frontend/`](architecture/frontend/index.md): canonical
+  frontend architecture (§1–§15 preserved across subpages): contexts, patterns,
+  state and ports, SSE realtime, integration, testing, folder structure, and
+  reference.
+- [`architecture/tailoring.md`](architecture/tailoring.md): resume tailoring
+  prompt contract, generated JSON shape, validation/judge/fabrication gates,
+  provenance, audit metadata, and safe change points.
 - [`local-development.md`](local-development.md): setup, run, build, test, lint,
   and screenshot commands.
 - [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app

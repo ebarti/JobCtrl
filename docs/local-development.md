@@ -126,7 +126,7 @@ must never point at a real `~/.jobhunter` workspace.
 ## Frontend
 
 The React frontend under `apps/web` follows the architecture documented in
-[`docs/frontend-target.md`](frontend-target.md): TanStack Router / Query /
+[`docs/architecture/frontend/`](architecture/frontend/index.md): TanStack Router / Query /
 Form on top of shadcn/ui + Tailwind, a shared filterable data grid for
 tables, and an SSE-fed invalidation router for realtime cache fan-out.
 

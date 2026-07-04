@@ -276,8 +276,9 @@ explains the disposable database, routes, and refresh process.
   and screenshot references.
 - [docs/developer/](docs/developer/): contributor onboarding and architecture
   reading path.
-- [docs/architecture.md](docs/architecture.md): current runtime architecture.
-- [docs/job-pipeline-architecture.md](docs/job-pipeline-architecture.md):
+- [docs/architecture/](docs/architecture/index.md): system architecture — runtime
+  boundaries, observability, storage, scoring, materials audit, and read model.
+- [docs/architecture/pipeline/](docs/architecture/pipeline/index.md):
   stage-by-stage pipeline sequence and class diagrams.
 - [docs/local-reliability-qa.md](docs/local-reliability-qa.md): regression
   matrix and QA gates.

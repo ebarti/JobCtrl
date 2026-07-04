@@ -48,7 +48,7 @@ untrusted page content. It is isolated in its own Temporal workflow with tighter
 retries and layered containment. The launcher (`apply/launcher.py`), the browser
 adapter (`apply/chrome.py`), and the agent adapter
 (`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
-is in the [job pipeline architecture](../job-pipeline-architecture.md#apply).
+is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 
 - **Atomic approval claim.** The launcher opens a `BEGIN IMMEDIATE` stage-lock
   transaction and, while `approval_required` is on for a live (non-dry-run)
@@ -98,7 +98,7 @@ rendered text; and a structured judge (plus adversarial personas on high-fit job
 must pass before approval. The same never-fabricate and skill/tool gates run over
 the cover-letter body before it can ship. These gates fail closed — when no clean
 candidate survives, the resume is not approved and the last accepted artifact is
-preserved. Full detail is in [Resume Tailoring](../tailoring.md).
+preserved. Full detail is in [Resume Tailoring](../architecture/tailoring.md).
 
 ## Secrets And Data Hygiene
 
@@ -149,7 +149,7 @@ in the excluded set and link to it normally; the config handles the rewrite.
 
 The local-only posture is a deliberate stop on the way to a hosted multi-tenant
 target, and the seams that would change security are already named in
-[`docs/ddd-target.md`](../ddd-target.md) §9 (with fitness functions in §9.4) and
+[`docs/architecture/domain-model/cloud.md`](../architecture/domain-model/cloud.md) §9 (with fitness functions in §9.4) and
 the SaaS section of the [backlog](../backlog.md). The load-bearing ones:
 
 - **API authentication.** "No auth" holds only while the API is loopback-bound.
