@@ -64,7 +64,7 @@ from jobhunter.domain.enrichment.value_objects import (
     FullDescription,
 )
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.errors import TransientNetworkError
+from jobhunter.domain.errors import ConfigurationError, TransientNetworkError
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobhunter.infrastructure.enrichment.sqlite_repository import (
@@ -563,6 +563,46 @@ SITE_DELAYS = {
 }
 
 
+def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exception) -> None:
+    """Record a single job's unexpected enrichment failure without aborting the batch.
+
+    ``validate_transition=False`` because the failure-recording path must never
+    itself raise on an odd prior state (e.g. a ``succeeded -> failed`` write when
+    the row was already marked succeeded earlier in the loop).
+    """
+    message = f"{type(exc).__name__}: {exc}"[:500]
+    try:
+        from jobhunter.state import record_job_event, set_stage_state, utc_now
+
+        set_stage_state(
+            conn,
+            url,
+            "enrich",
+            "failed",
+            error_code="ENRICH_INTERNAL_ERROR",
+            error_message=message,
+            retryable=True,
+            finished_at=utc_now(),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            url,
+            "enrich",
+            "StageFailed",
+            level="error",
+            message=message,
+            payload={
+                "errorCode": "ENRICH_INTERNAL_ERROR",
+                "errorMessage": message,
+                "retryable": True,
+            },
+        )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to record enrichment job failure for %s", url)
+
+
 def scrape_site_batch(
     conn: sqlite3.Connection | None,
     site: str,
@@ -645,301 +685,308 @@ def scrape_site_batch(
                     title[:50] if title else url[:50],
                 )
 
-                from jobhunter.state import (
-                    ensure_job_stage_rows,
-                    record_job_event,
-                    set_stage_state,
-                    utc_now,
-                )
-
-                started_at = utc_now()
-                ensure_job_stage_rows(conn, url)
-                set_stage_state(conn, url, "enrich", "running", started_at=started_at)
-                record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
-
-                # Load / build the JobEnrichment aggregate
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
-                if aggregate is None:
-                    aggregate = JobEnrichment.empty(
-                        tenant_id=LOCAL_TENANT,
-                        job_id=JobId(url),
-                        updated_at=started_at,
+                try:
+                    from jobhunter.state import (
+                        ensure_job_stage_rows,
+                        record_job_event,
+                        set_stage_state,
+                        utc_now,
                     )
 
-                if aggregate.is_enriched:
-                    # Already enriched — count as ok and skip.
+                    started_at = utc_now()
+                    ensure_job_stage_rows(conn, url)
+                    set_stage_state(conn, url, "enrich", "running", started_at=started_at)
+                    record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
+
+                    # Load / build the JobEnrichment aggregate
+                    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                    if aggregate is None:
+                        aggregate = JobEnrichment.empty(
+                            tenant_id=LOCAL_TENANT,
+                            job_id=JobId(url),
+                            updated_at=started_at,
+                        )
+
+                    if aggregate.is_enriched:
+                        # Already enriched — count as ok and skip.
+                        stats["processed"] += 1
+                        stats["ok"] += 1
+                        set_stage_state(
+                            conn,
+                            url,
+                            "enrich",
+                            "succeeded",
+                            attempt_count=aggregate.attempt_count,
+                            started_at=started_at,
+                            finished_at=utc_now(),
+                        )
+                        if i < len(jobs) - 1:
+                            time.sleep(delay)
+                        continue
+
+                    aggregate = aggregate.start_attempt(
+                        extraction_tier=ExtractionTier.JSON_LD,
+                        started_at=started_at,
+                    )
+
+                    cascade_result = _apply_discovery_description_fallback(
+                        conn, url, scrape_detail_page(page, url)
+                    )
+                    cascade_result = _apply_authenticated_linkedin_apply_url(
+                        site=site,
+                        url=url,
+                        cascade_result=cascade_result,
+                        resolver=resolver,
+                        page=page,
+                    )
                     stats["processed"] += 1
-                    stats["ok"] += 1
-                    set_stage_state(
-                        conn,
-                        url,
-                        "enrich",
-                        "succeeded",
-                        attempt_count=aggregate.attempt_count,
-                        started_at=started_at,
-                        finished_at=utc_now(),
-                    )
-                    if i < len(jobs) - 1:
-                        time.sleep(delay)
-                    continue
 
-                aggregate = aggregate.start_attempt(
-                    extraction_tier=ExtractionTier.JSON_LD,
-                    started_at=started_at,
-                )
+                    tier = cascade_result.get("tier_used")
+                    status = cascade_result["status"]
+                    elapsed = cascade_result.get("elapsed", 0)
 
-                cascade_result = _apply_discovery_description_fallback(
-                    conn, url, scrape_detail_page(page, url)
-                )
-                cascade_result = _apply_authenticated_linkedin_apply_url(
-                    site=site,
-                    url=url,
-                    cascade_result=cascade_result,
-                    resolver=resolver,
-                    page=page,
-                )
-                stats["processed"] += 1
+                    if tier:
+                        stats["tiers"][tier] = stats["tiers"].get(tier, 0) + 1
 
-                tier = cascade_result.get("tier_used")
-                status = cascade_result["status"]
-                elapsed = cascade_result.get("elapsed", 0)
+                    tier_str = f"T{tier}" if tier else "--"
+                    desc_len = len(cascade_result.get("full_description") or "")
+                    apply_str = "yes" if cascade_result.get("application_url") else "no"
+                    err_str = (
+                        f" | err={cascade_result.get('error')}"
+                        if cascade_result.get("error")
+                        else ""
+                    )
+                    log.info(
+                        "  %s | %s | desc=%s chars | apply=%s | %.1fs%s",
+                        status,
+                        tier_str,
+                        f"{desc_len:,}",
+                        apply_str,
+                        elapsed,
+                        err_str,
+                    )
 
-                if tier:
-                    stats["tiers"][tier] = stats["tiers"].get(tier, 0) + 1
-
-                tier_str = f"T{tier}" if tier else "--"
-                desc_len = len(cascade_result.get("full_description") or "")
-                apply_str = "yes" if cascade_result.get("application_url") else "no"
-                err_str = (
-                    f" | err={cascade_result.get('error')}"
-                    if cascade_result.get("error")
-                    else ""
-                )
-                log.info(
-                    "  %s | %s | desc=%s chars | apply=%s | %.1fs%s",
-                    status,
-                    tier_str,
-                    f"{desc_len:,}",
-                    apply_str,
-                    elapsed,
-                    err_str,
-                )
-
-                finished_at = utc_now()
-                if status in ("ok", "partial"):
-                    stats[status] += 1
-                    fallback_source = cascade_result.get("fallback_source")
-                    stage_metadata: dict[str, object] = {}
-                    if fallback_source:
-                        stage_metadata.update(
-                            {
-                                "fallbackSource": fallback_source,
-                                "detailStatus": cascade_result.get("detail_status"),
-                                "detailError": cascade_result.get("detail_error"),
-                            }
+                    finished_at = utc_now()
+                    if status in ("ok", "partial"):
+                        stats[status] += 1
+                        fallback_source = cascade_result.get("fallback_source")
+                        stage_metadata: dict[str, object] = {}
+                        if fallback_source:
+                            stage_metadata.update(
+                                {
+                                    "fallbackSource": fallback_source,
+                                    "detailStatus": cascade_result.get("detail_status"),
+                                    "detailError": cascade_result.get("detail_error"),
+                                }
+                            )
+                        if cascade_result.get("authenticated_apply_url_method"):
+                            stage_metadata["authenticatedApplyUrlMethod"] = (
+                                cascade_result.get("authenticated_apply_url_method")
+                            )
+                        if cascade_result.get("authenticated_apply_url_error"):
+                            stage_metadata["authenticatedApplyUrlError"] = (
+                                cascade_result.get("authenticated_apply_url_error")
+                            )
+                        full_desc = FullDescription(
+                            text=cascade_result["full_description"] or ""
                         )
-                    if cascade_result.get("authenticated_apply_url_method"):
-                        stage_metadata["authenticatedApplyUrlMethod"] = (
-                            cascade_result.get("authenticated_apply_url_method")
+                        apply_url = (
+                            ApplicationUrl(value=cascade_result["application_url"])
+                            if cascade_result.get("application_url")
+                            else None
                         )
-                    if cascade_result.get("authenticated_apply_url_error"):
-                        stage_metadata["authenticatedApplyUrlError"] = (
-                            cascade_result.get("authenticated_apply_url_error")
+                        succeeded = aggregate.succeed_attempt(
+                            full_description=full_desc,
+                            application_url=apply_url,
+                            extraction_tier=_tier_from_legacy(tier),
+                            finished_at=finished_at,
                         )
-                    full_desc = FullDescription(
-                        text=cascade_result["full_description"] or ""
-                    )
-                    apply_url = (
-                        ApplicationUrl(value=cascade_result["application_url"])
-                        if cascade_result.get("application_url")
-                        else None
-                    )
-                    succeeded = aggregate.succeed_attempt(
-                        full_description=full_desc,
-                        application_url=apply_url,
-                        extraction_tier=_tier_from_legacy(tier),
-                        finished_at=finished_at,
-                    )
-                    repo.save(succeeded)
-                    _record_posting_snapshot_from_cascade(
-                        conn,
-                        url=url,
-                        source_id=site or "enrichment",
-                        title=title or "",
-                        cascade_result=cascade_result,
-                        captured_at=finished_at,
-                    )
-                    set_stage_state(
-                        conn,
-                        url,
-                        "enrich",
-                        "succeeded",
-                        attempt_count=succeeded.attempt_count,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        metadata=stage_metadata or None,
-                    )
-                    completed_payload = {
-                        "tier": tier,
-                        "elapsed": elapsed,
-                        "descriptionChars": desc_len,
-                        "applicationUrlFound": bool(
-                            cascade_result.get("application_url")
-                        ),
-                    }
-                    if cascade_result.get("authenticated_apply_url_method"):
-                        completed_payload["authenticatedApplyUrlMethod"] = (
-                            cascade_result.get("authenticated_apply_url_method")
+                        repo.save(succeeded)
+                        _record_posting_snapshot_from_cascade(
+                            conn,
+                            url=url,
+                            source_id=site or "enrichment",
+                            title=title or "",
+                            cascade_result=cascade_result,
+                            captured_at=finished_at,
                         )
-                    if cascade_result.get("authenticated_apply_url_error"):
-                        completed_payload["authenticatedApplyUrlError"] = (
-                            cascade_result.get("authenticated_apply_url_error")
+                        set_stage_state(
+                            conn,
+                            url,
+                            "enrich",
+                            "succeeded",
+                            attempt_count=succeeded.attempt_count,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            metadata=stage_metadata or None,
                         )
-                    if fallback_source:
-                        completed_payload.update(
-                            {
-                                "fallbackSource": fallback_source,
-                                "detailStatus": cascade_result.get("detail_status"),
-                                "detailError": cascade_result.get("detail_error"),
-                            }
-                        )
-                    record_job_event(
-                        conn,
-                        url,
-                        "enrich",
-                        "StageCompleted",
-                        message=f"Enrichment {status}: {desc_len} description chars",
-                        payload=completed_payload,
-                    )
-                elif status == "inactive":
-                    stats["error"] += 1
-                    _record_posting_snapshot_from_cascade(
-                        conn,
-                        url=url,
-                        source_id=site or "enrichment",
-                        title=title or "",
-                        cascade_result=cascade_result,
-                        captured_at=finished_at,
-                    )
-                    err = EnrichmentError(
-                        code="POSTING_INACTIVE",
-                        message=str(cascade_result.get("error") or "posting inactive")[:500],
-                        retryable=False,
-                    )
-                    failed = aggregate.fail_attempt(
-                        error=err, finished_at=finished_at
-                    )
-                    repo.save(failed)
-                    set_stage_state(
-                        conn,
-                        url,
-                        "enrich",
-                        "failed",
-                        attempt_count=failed.attempt_count,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        error_code="POSTING_INACTIVE",
-                        error_message=err.message,
-                        retryable=False,
-                    )
-                    record_job_event(
-                        conn,
-                        url,
-                        "enrich",
-                        "StageFailed",
-                        level="info",
-                        message=err.message,
-                        payload={
-                            "errorCode": "POSTING_INACTIVE",
-                            "errorMessage": err.message,
-                            "retryable": False,
-                            "attemptNumber": failed.attempt_count,
-                            "status": status,
+                        completed_payload = {
                             "tier": tier,
                             "elapsed": elapsed,
-                            "durationMs": int(elapsed * 1000) if elapsed else None,
                             "descriptionChars": desc_len,
                             "applicationUrlFound": bool(
                                 cascade_result.get("application_url")
                             ),
-                            "activeState": cascade_result.get("active_state"),
-                            "active_state": cascade_result.get("active_state"),
-                            "verificationMethod": cascade_result.get(
-                                "verification_method"
-                            ),
-                            "verification_method": cascade_result.get(
-                                "verification_method"
-                            ),
-                            "httpStatus": cascade_result.get("http_status"),
-                            "http_status": cascade_result.get("http_status"),
-                        },
-                    )
-                else:
-                    stats["error"] += 1
-                    retryable = _detail_failure_retryable(cascade_result)
-                    err = EnrichmentError(
-                        code="DETAIL_ERROR",
-                        message=str(cascade_result.get("error") or "unknown")[:500],
-                        retryable=retryable,
-                    )
-                    failed = aggregate.fail_attempt(
-                        error=err, finished_at=finished_at
-                    )
-                    repo.save(failed)
-                    set_stage_state(
-                        conn,
-                        url,
-                        "enrich",
-                        "failed",
-                        attempt_count=failed.attempt_count,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        error_code="DETAIL_ERROR",
-                        error_message=err.message,
-                        retryable=retryable,
-                        next_action=f"jobhunter retry enrich {url}" if retryable else None,
-                    )
-                    record_job_event(
-                        conn,
-                        url,
-                        "enrich",
-                        "StageFailed",
-                        level="error",
-                        message=err.message,
-                        payload={
-                            "errorCode": "DETAIL_ERROR",
-                            "errorMessage": err.message,
-                            "retryable": retryable,
-                            "attemptNumber": failed.attempt_count,
-                            "status": status,
-                            "tier": tier,
-                            "elapsed": elapsed,
-                            "durationMs": int(elapsed * 1000) if elapsed else None,
-                            "descriptionChars": desc_len,
-                            "applicationUrlFound": bool(
-                                cascade_result.get("application_url")
-                            ),
-                            "activeState": cascade_result.get("active_state"),
-                            "active_state": cascade_result.get("active_state"),
-                            "verificationMethod": cascade_result.get(
-                                "verification_method"
-                            ),
-                            "verification_method": cascade_result.get(
-                                "verification_method"
-                            ),
-                            "httpStatus": cascade_result.get("http_status"),
-                            "http_status": cascade_result.get("http_status"),
-                        },
-                    )
-                    _record_posting_snapshot_failure_from_cascade(
-                        conn,
-                        url=url,
-                        source_id=site or "enrichment",
-                        cascade_result=cascade_result,
-                        failed_at=finished_at,
-                    )
+                        }
+                        if cascade_result.get("authenticated_apply_url_method"):
+                            completed_payload["authenticatedApplyUrlMethod"] = (
+                                cascade_result.get("authenticated_apply_url_method")
+                            )
+                        if cascade_result.get("authenticated_apply_url_error"):
+                            completed_payload["authenticatedApplyUrlError"] = (
+                                cascade_result.get("authenticated_apply_url_error")
+                            )
+                        if fallback_source:
+                            completed_payload.update(
+                                {
+                                    "fallbackSource": fallback_source,
+                                    "detailStatus": cascade_result.get("detail_status"),
+                                    "detailError": cascade_result.get("detail_error"),
+                                }
+                            )
+                        record_job_event(
+                            conn,
+                            url,
+                            "enrich",
+                            "StageCompleted",
+                            message=f"Enrichment {status}: {desc_len} description chars",
+                            payload=completed_payload,
+                        )
+                    elif status == "inactive":
+                        stats["error"] += 1
+                        _record_posting_snapshot_from_cascade(
+                            conn,
+                            url=url,
+                            source_id=site or "enrichment",
+                            title=title or "",
+                            cascade_result=cascade_result,
+                            captured_at=finished_at,
+                        )
+                        err = EnrichmentError(
+                            code="POSTING_INACTIVE",
+                            message=str(cascade_result.get("error") or "posting inactive")[:500],
+                            retryable=False,
+                        )
+                        failed = aggregate.fail_attempt(
+                            error=err, finished_at=finished_at
+                        )
+                        repo.save(failed)
+                        set_stage_state(
+                            conn,
+                            url,
+                            "enrich",
+                            "failed",
+                            attempt_count=failed.attempt_count,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            error_code="POSTING_INACTIVE",
+                            error_message=err.message,
+                            retryable=False,
+                        )
+                        record_job_event(
+                            conn,
+                            url,
+                            "enrich",
+                            "StageFailed",
+                            level="info",
+                            message=err.message,
+                            payload={
+                                "errorCode": "POSTING_INACTIVE",
+                                "errorMessage": err.message,
+                                "retryable": False,
+                                "attemptNumber": failed.attempt_count,
+                                "status": status,
+                                "tier": tier,
+                                "elapsed": elapsed,
+                                "durationMs": int(elapsed * 1000) if elapsed else None,
+                                "descriptionChars": desc_len,
+                                "applicationUrlFound": bool(
+                                    cascade_result.get("application_url")
+                                ),
+                                "activeState": cascade_result.get("active_state"),
+                                "active_state": cascade_result.get("active_state"),
+                                "verificationMethod": cascade_result.get(
+                                    "verification_method"
+                                ),
+                                "verification_method": cascade_result.get(
+                                    "verification_method"
+                                ),
+                                "httpStatus": cascade_result.get("http_status"),
+                                "http_status": cascade_result.get("http_status"),
+                            },
+                        )
+                    else:
+                        stats["error"] += 1
+                        retryable = _detail_failure_retryable(cascade_result)
+                        err = EnrichmentError(
+                            code="DETAIL_ERROR",
+                            message=str(cascade_result.get("error") or "unknown")[:500],
+                            retryable=retryable,
+                        )
+                        failed = aggregate.fail_attempt(
+                            error=err, finished_at=finished_at
+                        )
+                        repo.save(failed)
+                        set_stage_state(
+                            conn,
+                            url,
+                            "enrich",
+                            "failed",
+                            attempt_count=failed.attempt_count,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            error_code="DETAIL_ERROR",
+                            error_message=err.message,
+                            retryable=retryable,
+                            next_action=f"jobhunter retry enrich {url}" if retryable else None,
+                        )
+                        record_job_event(
+                            conn,
+                            url,
+                            "enrich",
+                            "StageFailed",
+                            level="error",
+                            message=err.message,
+                            payload={
+                                "errorCode": "DETAIL_ERROR",
+                                "errorMessage": err.message,
+                                "retryable": retryable,
+                                "attemptNumber": failed.attempt_count,
+                                "status": status,
+                                "tier": tier,
+                                "elapsed": elapsed,
+                                "durationMs": int(elapsed * 1000) if elapsed else None,
+                                "descriptionChars": desc_len,
+                                "applicationUrlFound": bool(
+                                    cascade_result.get("application_url")
+                                ),
+                                "activeState": cascade_result.get("active_state"),
+                                "active_state": cascade_result.get("active_state"),
+                                "verificationMethod": cascade_result.get(
+                                    "verification_method"
+                                ),
+                                "verification_method": cascade_result.get(
+                                    "verification_method"
+                                ),
+                                "httpStatus": cascade_result.get("http_status"),
+                                "http_status": cascade_result.get("http_status"),
+                            },
+                        )
+                        _record_posting_snapshot_failure_from_cascade(
+                            conn,
+                            url=url,
+                            source_id=site or "enrichment",
+                            cascade_result=cascade_result,
+                            failed_at=finished_at,
+                        )
 
-                conn.commit()
+                    conn.commit()
+                except TransientNetworkError:
+                    raise
+                except Exception as exc:
+                    log.exception("Enrichment job failed: %s", url)
+                    stats["error"] += 1
+                    _record_enrich_job_failure(conn, url, exc)
 
                 if i < len(jobs) - 1:
                     if cancel_event is not None and cancel_event.is_set():
@@ -1351,119 +1398,123 @@ def _reset_authenticated_linkedin_retry_candidates(
     resolver: object | None = None
     try:
         for row in rows:
-            attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
-            if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
-                continue
-            current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
-            if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
-                continue
-            url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
-            now = utc_now()
-            aggregate = repo.load(LOCAL_TENANT, JobId(url))
-            if aggregate is None:
-                continue
-
-            if aggregate.is_enriched:
-                if resolver is None and resolver_factory is not None:
-                    try:
-                        resolver = resolver_factory()
-                    except Exception:
-                        log.warning(
-                            "LinkedIn apply resolver unavailable; skipping apply-URL recovery",
-                            exc_info=True,
-                        )
-                        resolver_factory = None
-                if resolver is None:
+            try:
+                attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
+                if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                     continue
-                resolved = _apply_authenticated_linkedin_apply_url(
-                    site="linkedin",
-                    url=url,
-                    cascade_result={
-                        "status": "ok",
-                        "full_description": (
-                            aggregate.full_description.text
-                            if aggregate.full_description
-                            else ""
-                        ),
-                        "application_url": None,
-                    },
-                    resolver=resolver,
-                    page=None,
-                )
-                apply_url_value = resolved.get("application_url")
-                recovered = (
-                    ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
-                )
-                # Every authenticated pass records an attempt so a
-                # never-resolving row is bounded by attempt count exactly
-                # like the extraction cascade; the description is never
-                # touched.
-                repo.save(
-                    aggregate.record_apply_url_recovery(
-                        application_url=recovered,
-                        extraction_tier=ExtractionTier.CSS_SELECTORS,
-                        started_at=now,
-                        finished_at=utc_now(),
+                current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
+                if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
+                    continue
+                url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
+                now = utc_now()
+                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                if aggregate is None:
+                    continue
+
+                if aggregate.is_enriched:
+                    if resolver is None and resolver_factory is not None:
+                        try:
+                            resolver = resolver_factory()
+                        except Exception:
+                            log.warning(
+                                "LinkedIn apply resolver unavailable; skipping apply-URL recovery",
+                                exc_info=True,
+                            )
+                            resolver_factory = None
+                    if resolver is None:
+                        continue
+                    resolved = _apply_authenticated_linkedin_apply_url(
+                        site="linkedin",
+                        url=url,
+                        cascade_result={
+                            "status": "ok",
+                            "full_description": (
+                                aggregate.full_description.text
+                                if aggregate.full_description
+                                else ""
+                            ),
+                            "application_url": None,
+                        },
+                        resolver=resolver,
+                        page=None,
                     )
+                    apply_url_value = resolved.get("application_url")
+                    recovered = (
+                        ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
+                    )
+                    # Every authenticated pass records an attempt so a
+                    # never-resolving row is bounded by attempt count exactly
+                    # like the extraction cascade; the description is never
+                    # touched.
+                    repo.save(
+                        aggregate.record_apply_url_recovery(
+                            application_url=recovered,
+                            extraction_tier=ExtractionTier.CSS_SELECTORS,
+                            started_at=now,
+                            finished_at=utc_now(),
+                        )
+                    )
+                    record_job_event(
+                        conn,
+                        url,
+                        "enrich",
+                        "StageProgress",
+                        message=(
+                            "LinkedIn authenticated apply URL recovered"
+                            if recovered is not None
+                            else "LinkedIn authenticated apply URL unresolved"
+                        ),
+                        payload={
+                            "reason": "linkedin_authenticated_apply_url",
+                            "applicationUrlFound": recovered is not None,
+                            "authenticatedApplyUrlMethod": resolved.get(
+                                "authenticated_apply_url_method"
+                            ),
+                            "authenticatedApplyUrlError": resolved.get(
+                                "authenticated_apply_url_error"
+                            ),
+                            "automated": True,
+                        },
+                    )
+                    recovery_count += 1
+                    if recovered is not None:
+                        backfill_count += 1
+                    if limit and limit > 0 and (reset_count + recovery_count) >= limit:
+                        break
+                    continue
+
+                repo.save(aggregate.reset(reset_at=now))
+                conn.execute(
+                    "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
+                    (url,),
+                )
+                ensure_job_stage_rows(conn, url)
+                set_stage_state(
+                    conn,
+                    url,
+                    "enrich",
+                    "pending",
+                    validate_transition=False,
                 )
                 record_job_event(
                     conn,
                     url,
                     "enrich",
-                    "StageProgress",
-                    message=(
-                        "LinkedIn authenticated apply URL recovered"
-                        if recovered is not None
-                        else "LinkedIn authenticated apply URL unresolved"
-                    ),
+                    "StageReset",
+                    message="LinkedIn authenticated enrichment retry queued",
                     payload={
                         "reason": "linkedin_authenticated_apply_url",
-                        "applicationUrlFound": recovered is not None,
-                        "authenticatedApplyUrlMethod": resolved.get(
-                            "authenticated_apply_url_method"
-                        ),
-                        "authenticatedApplyUrlError": resolved.get(
-                            "authenticated_apply_url_error"
-                        ),
+                        "previousStatus": str(current_status or ""),
                         "automated": True,
+                        "resetAt": now,
                     },
                 )
-                recovery_count += 1
-                if recovered is not None:
-                    backfill_count += 1
+                reset_count += 1
                 if limit and limit > 0 and (reset_count + recovery_count) >= limit:
                     break
+            except Exception:  # noqa: BLE001 - one bad row must not abort the scan
+                log.exception("LinkedIn authenticated retry candidate scan failed for a row")
                 continue
-
-            repo.save(aggregate.reset(reset_at=now))
-            conn.execute(
-                "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
-                (url,),
-            )
-            ensure_job_stage_rows(conn, url)
-            set_stage_state(
-                conn,
-                url,
-                "enrich",
-                "pending",
-                validate_transition=False,
-            )
-            record_job_event(
-                conn,
-                url,
-                "enrich",
-                "StageReset",
-                message="LinkedIn authenticated enrichment retry queued",
-                payload={
-                    "reason": "linkedin_authenticated_apply_url",
-                    "previousStatus": str(current_status or ""),
-                    "automated": True,
-                    "resetAt": now,
-                },
-            )
-            reset_count += 1
-            if limit and limit > 0 and (reset_count + recovery_count) >= limit:
-                break
     finally:
         close = getattr(resolver, "close", None)
         if callable(close):
@@ -1495,6 +1546,41 @@ def _snapshot_confidence_value(confidence: SnapshotConfidence) -> float:
     return 0.35
 
 
+def _looks_like_broken_browser_env(message: str | None) -> bool:
+    """Heuristic: does a scrape error mean the browser install is broken?
+
+    A missing Playwright browser binary is a deterministic environment fault —
+    retrying it just burns time (and authenticated browser passes). Detect the
+    Playwright launch signatures so the systemic error is classified
+    non-retryable rather than as a transient network blip.
+    """
+    text = str(message or "").lower()
+    return "executable doesn't exist" in text or "playwright install" in text
+
+
+def _systemic_enrichment_error(site_errors: dict[str, dict[str, str]]) -> Exception:
+    """Build the stage-level error when every enrichment site failed.
+
+    Returns a non-retryable ``ConfigurationError`` when every site failed for a
+    broken-environment reason (missing browser binary), otherwise a retryable
+    ``TransientNetworkError``. The message carries every site's
+    ``error_class: error_message`` so the failure is diagnosable instead of
+    collapsing to "failed".
+    """
+    summary = "; ".join(
+        f"{site}: {info.get('error_class', 'Error')}: {info.get('error_message', '')}"
+        for site, info in site_errors.items()
+    )
+    message = f"All enrichment sites failed: {summary}"
+    broken_env = bool(site_errors) and all(
+        _looks_like_broken_browser_env(info.get("error_message"))
+        for info in site_errors.values()
+    )
+    if broken_env:
+        return ConfigurationError(message)
+    return TransientNetworkError(message)
+
+
 def _run_detail_scraper(
     conn: sqlite3.Connection,
     sites: list[str] | None = None,
@@ -1502,6 +1588,7 @@ def _run_detail_scraper(
     workers: int = 1,
     job_urls: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
+    reset_linkedin_candidates: bool = True,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -1525,12 +1612,13 @@ def _run_detail_scraper(
         where_parts.append(f"jobs.url IN ({placeholders})")
         params.extend(selected_urls)
 
-    _reset_authenticated_linkedin_retry_candidates(
-        conn,
-        job_urls=selected_urls,
-        limit=max_per_site,
-        resolver_factory=_default_linkedin_apply_resolver_factory,
-    )
+    if reset_linkedin_candidates:
+        _reset_authenticated_linkedin_retry_candidates(
+            conn,
+            job_urls=selected_urls,
+            limit=max_per_site,
+            resolver_factory=_default_linkedin_apply_resolver_factory,
+        )
 
     rows = conn.execute(
         f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
@@ -1541,7 +1629,7 @@ def _run_detail_scraper(
 
     if not rows:
         log.info("No pending jobs to scrape.")
-        return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
+        return {"processed": 0, "ok": 0, "partial": 0, "error": 0, "site_errors": {}}
 
     site_jobs: dict[str, list[tuple]] = {}
     for row in rows:
@@ -1573,11 +1661,21 @@ def _run_detail_scraper(
         "tiers": {1: 0, 2: 0, 3: 0},
     }
 
+    site_errors: dict[str, dict[str, str]] = {}
+    any_site_succeeded = False
+
     def _merge_stats(stats: dict) -> None:
         for k in ("processed", "ok", "partial", "error"):
             total_stats[k] += stats[k]
         for t, count in stats["tiers"].items():
             total_stats["tiers"][t] = total_stats["tiers"].get(t, 0) + count
+
+    def _record_site_error(site: str, exc: Exception) -> None:
+        site_errors[site] = {
+            "error_class": type(exc).__name__,
+            "error_message": str(exc)[:500],
+        }
+        log.exception("Enrichment site batch failed: %s", site)
 
     if workers > 1 and len(order) > 1:
         def _scrape_site(site: str) -> dict:
@@ -1614,7 +1712,16 @@ def _run_detail_scraper(
             for future in as_completed(futures):
                 if cancel_event is not None and cancel_event.is_set():
                     raise TransientNetworkError("enrichment canceled")
-                _merge_stats(future.result())
+                site = futures[future]
+                try:
+                    stats = future.result()
+                except TransientNetworkError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one broken site must not abort the rest
+                    _record_site_error(site, exc)
+                    continue
+                any_site_succeeded = True
+                _merge_stats(stats)
     else:
         for site in order:
             if cancel_event is not None and cancel_event.is_set():
@@ -1622,17 +1729,24 @@ def _run_detail_scraper(
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
-            if cancel_event is None:
-                stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
-            else:
-                stats = scrape_site_batch(
-                    conn,
-                    site,
-                    jobs,
-                    delay=delay,
-                    max_jobs=max_per_site,
-                    cancel_event=cancel_event,
-                )
+            try:
+                if cancel_event is None:
+                    stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
+                else:
+                    stats = scrape_site_batch(
+                        conn,
+                        site,
+                        jobs,
+                        delay=delay,
+                        max_jobs=max_per_site,
+                        cancel_event=cancel_event,
+                    )
+            except TransientNetworkError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one broken site must not abort the rest
+                _record_site_error(site, exc)
+                continue
+            any_site_succeeded = True
             _merge_stats(stats)
             log.info(
                 "Site summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
@@ -1643,6 +1757,9 @@ def _run_detail_scraper(
                 stats["tiers"].get(2, 0),
                 stats["tiers"].get(3, 0),
             )
+
+    if site_errors and total_stats["processed"] == 0 and not any_site_succeeded:
+        raise _systemic_enrichment_error(site_errors)
 
     log.info(
         "TOTAL: %d processed | %d ok | %d partial | %d error",
@@ -1664,6 +1781,7 @@ def _run_detail_scraper(
         savings = ((total - llm_calls) / total) * 100
         log.info("LLM calls: %d/%d (%.0f%% saved)", llm_calls, total, savings)
 
+    total_stats["site_errors"] = site_errors
     return total_stats
 
 
@@ -1762,6 +1880,7 @@ def run_enrichment(
     limit: int = 100,
     workers: int = 1,
     cancel_event: threading.Event | None = None,
+    reset_linkedin_candidates: bool = True,
 ) -> dict:
     """Main entry point for detail page enrichment.
 
@@ -1799,7 +1918,13 @@ def run_enrichment(
             updated = resolve_wttj_urls(conn)
             log.info("WTTJ: %d URLs updated", updated)
 
-    return _run_detail_scraper(conn, max_per_site=limit, workers=workers, cancel_event=cancel_event)
+    return _run_detail_scraper(
+        conn,
+        max_per_site=limit,
+        workers=workers,
+        cancel_event=cancel_event,
+        reset_linkedin_candidates=reset_linkedin_candidates,
+    )
 
 
 # Keep helper imports referenced for type-checkers' "unused" warnings —
