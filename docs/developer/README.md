@@ -6,9 +6,9 @@ directory is for contributors who need to change behavior safely.
 
 ## Start Here
 
-You are reading the **Developer Guide**, the first entry in the sidebar's **Start
-Here** group. Start with the repository's `CONTRIBUTING.md`, then work through the
-rest of the group in order:
+You are reading the overview of the sidebar's **Developer Guide** group. Start
+with the repository's `CONTRIBUTING.md`, then work through the rest of the
+group in order:
 
 1. [Contributing](../../CONTRIBUTING.md) for the pull-request workflow, commit
    conventions, and the privacy rules every change must respect.

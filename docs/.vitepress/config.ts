@@ -29,14 +29,19 @@ function routeForRewrittenPage(docPath: string): string | null {
   return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
 }
 
-// Sidebar entries follow reader-journey order (see "Documentation Standards"
-// in docs/developer/README.md): install → see it → use it daily → tune it →
-// understand the data → protect it. URLs are frozen; only labels and order
-// may change here.
-const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+// One unified sidebar for the whole site — the user and developer guides are
+// one navigation tree, in reader-journey order (see "Documentation Standards"
+// in docs/developer/README.md): use the product (User Guide: install → see
+// it → use it daily → tune it → understand the data → protect it) → change
+// the product (Developer Guide) → understand the system (System
+// Architecture) → look things up (API, Reference). Large sections default to
+// collapsed; VitePress auto-expands the group holding the active page. URLs
+// are frozen; only labels and order may change here.
+const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
   {
     text: "User Guide",
+    collapsed: false,
     items: [
       { text: "Getting Started", link: "/user/getting-started" },
       { text: "Product Tour", link: "/user/screenshots" },
@@ -46,13 +51,11 @@ const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Security", link: "/user/security" },
     ],
   },
-];
-
-const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
-    text: "Start Here",
+    text: "Developer Guide",
+    collapsed: false,
     items: [
-      { text: "Developer Guide", link: "/developer/" },
+      { text: "Overview", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
       { text: "Reliability & QA", link: "/local-reliability-qa" },
       { text: "Security", link: "/developer/security" },
@@ -66,6 +69,7 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   // linear reading path.
   {
     text: "System Architecture",
+    collapsed: true,
     items: [
       { text: "Overview", link: "/architecture/" },
       { text: "Runtime Boundaries", link: "/architecture/runtime" },
@@ -129,23 +133,6 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
     ],
   },
 ];
-
-// Sectioned sidebar: user-guide pages (and the homepage) show only the User
-// Guide; developer-facing pages show the developer sidebar. Developer pages
-// live at mixed top-level paths, so each is enumerated. VitePress picks the
-// key by slash-count-descending order and ties keep insertion order, so the
-// "/" fallback must stay LAST.
-const SIDEBAR: DefaultTheme.Sidebar = {
-  "/user/": USER_SIDEBAR,
-  "/developer/": DEVELOPER_SIDEBAR,
-  "/architecture/": DEVELOPER_SIDEBAR,
-  "/local-development": DEVELOPER_SIDEBAR,
-  "/local-ts-api": DEVELOPER_SIDEBAR,
-  "/local-reliability-qa": DEVELOPER_SIDEBAR,
-  "/requirements": DEVELOPER_SIDEBAR,
-  "/decisions": DEVELOPER_SIDEBAR,
-  "/": USER_SIDEBAR,
-};
 
 /**
  * Rewrites markdown links that resolve outside the published docs set
@@ -215,8 +202,7 @@ export default withMermaid(
     },
     themeConfig: {
       nav: [
-        { text: "User Guide", link: "/user/getting-started" },
-        { text: "Developer", link: "/developer/" },
+        { text: "Guide", link: "/user/getting-started" },
         { text: "Architecture", link: "/architecture/" },
       ],
       sidebar: SIDEBAR,
