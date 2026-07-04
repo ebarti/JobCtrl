@@ -3,6 +3,10 @@
 This file records architectural decisions. Keep entries short, dated, and
 append-only unless a decision is superseded.
 
+For the full inventory of every plan and spec that produced these decisions —
+tracked plans and the untracked private planning corpus — see the Historical
+Spec Ledger in `plans/README.md`.
+
 ## 2026-05-01: Local-First Before SaaS Hardening
 
 Status: accepted
@@ -639,6 +643,88 @@ Amended (2026-07-04): the decision above is accurate that the bespoke
 "persistence happens via `record_job_event`" above). Only the bespoke tables and
 the TS `apply_runs → apply_run_projections` projector were removed.
 
+## 2026-06-01: Application-Outcome Feedback Loop With Bounded Gmail Ingestion
+
+Status: accepted
+
+Decision: JobHunter tracks what happens to a submitted application and closes the
+loop with a bounded, Gmail-only email feedback path. A local review/outcome model
+(review decisions, reviewed outcomes, linked email evidence, outcome suggestions)
+lives in SQLite behind the existing Apply, Pipeline, Operations, and
+Profile/Gmail boundaries — no new CRM context. A dedicated Gmail feedback module
+(`infrastructure/gmail/feedback.py`, separate from the verification-only MCP
+server) searches for messages that match a known application, scores confidence,
+and fetches a full message body only after the message is linked to an
+application; deterministic v1 classification maps bodies to confirmation,
+recruiter reply, interview, assessment, rejection, offer, bounce, or unknown, and
+produces outcome suggestions the user accepts or declines.
+
+Rationale:
+
+- outcome data is the signal that shows whether discovery, scoring, and tailoring
+  are actually working; without it the pipeline is open-loop
+- reusing the existing bounded contexts avoids a premature CRM abstraction for a
+  single-user product
+- a bounded feedback scanner (not a general mailbox reader) plus
+  fetch-body-only-after-link keeps mailbox access proportionate to the feature
+
+Consequences:
+
+- raw Gmail bodies stay out of event payloads, telemetry, logs, and dashboard
+  projections; only safe evidence identifiers are written into `job_events`
+- email evidence is stored locally with body text and a body hash so duplicate
+  Gmail message ids dedupe
+- outcomes are suggestions until a user commits them; manual outcomes remain
+  available without any mailbox scan
+- the Apply Review queue (`views/apply-review/`) and the job drawer outcome
+  timeline read these local models through Operations hooks
+
+Cites: `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`;
+PRs #115, #116, #117.
+
+## 2026-06-03: Resume Tailoring Quality Is A Product System, Not Prompt Wording
+
+Status: accepted
+
+Decision: resume quality is controlled by typed evidence, deterministic checks,
+and a tiered review gate rather than by prompt wording alone. Achievement evidence
+becomes a typed profile value object with a claim mode (verified,
+evidence-reframing, adjacent translation, draft-requiring-confirmation); only
+verified and evidence-reframed claims may be auto-approved. Deterministic quality
+checks (`domain/materials/quality.py`) enforce standard sections, required
+evidence IDs, verified-metric sourcing, keyword coverage / anti-stuffing, and
+seniority-appropriate scope before and after generation. High-fit jobs
+(fit >= 8/10) additionally run a six-persona adversarial review
+(`domain/materials/adversarial.py`) after the normal judge; any blocker keeps the
+resume unapproved.
+
+Rationale:
+
+- "creativity" cannot be one boolean — the system needs claim modes so evidence
+  reframing is auto-approvable while adjacent/draft claims require confirmation
+- ATS readability, keyword stuffing, and seniority mismatch are partly
+  deterministic and should be caught without spending an LLM judge call
+- high-fit opportunities justify extra adversarial scrutiny; low-fit jobs should
+  not pay that latency and cost
+- quality needs golden failure fixtures (unsupported metric, AI voice, weak
+  seniority, ATS-unfriendly, keyword stuffing, missing evidence, high-fit blocker)
+  so regressions are caught locally without live LLM credentials
+
+Consequences:
+
+- profiles store typed achievement evidence and per-claim auto-approval policy;
+  profiles without it stay valid
+- deterministic quality failures feed the repair loop; warnings can trigger a
+  retry but never silently approve unsupported claims
+- the adversarial gate is skipped below the threshold and only runs after the
+  judge passes
+- a fixture-driven eval corpus under
+  `workers/automation/tests/fixtures/tailoring_quality/` runs with fake ports; no
+  fixture contains a real resume, profile, or application
+
+Cites: `docs/plans/implemented/2026-06-03-resume-tailoring-quality.md`;
+PRs #124, #125, #126, #127, #128.
+
 ## 2026-06-09: Employer Analysis Via A 3-SDK Agent Ensemble
 
 Status: accepted
@@ -670,6 +756,128 @@ Consequences:
   the materials domain
 
 Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
+
+## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
+
+Status: accepted
+
+Decision: every audit claim shown for a generated resume is computed against the
+shipped rendered text and served from canonical rows, never inferred from the job
+description or derived on read. Accepted generations record per-bullet provenance
+(`provenance_builder.py`) whose `generated_text` matches the rendered resume;
+keyword coverage is computed by a rendered-text audit (`coverage_audit.py`) so a
+keyword counts as covered only when a provenance-backed bullet demonstrates it;
+coverage-bearing claims are bound to shipped lines by `claim_grounding.py` before
+they count; and a formatting-tolerant grounding pass (normalize + snap-to-source)
+tolerates whitespace and markup drift. The read model serves this audit data from
+canonical rows only.
+
+Rationale:
+
+- the auditability discipline in `CLAUDE.md` requires every displayed claim to
+  have an explicit source of truth; inferring coverage from job keywords or from
+  LEFT-JOIN-derived guesses violates that
+- provenance computed against the same payload that ships to the user keeps the
+  audit faithful to the artifact, not to an intermediate draft
+- serving audit from canonical rows (rip-and-replace of the derived read paths)
+  removes the class of bug where the UI shows a value no source can defend
+
+Consequences:
+
+- failed re-tailor attempts never destroy the last accepted generation's artifact
+  or provenance rows; failures remain audit history
+- post-generation warnings are lifecycle-labeled (used-to-repair,
+  accepted-residual, or produced-after-acceptance) so the audit says whether a
+  warning influenced the shipped artifact
+- Apply Review labels the coverage basis (`grounded_shipped_text_v1` vs
+  `judge_claimed_legacy`) instead of hiding it
+- adding an audit field means persisting it at the owning layer first, then
+  projecting it — not computing it on read
+
+Cites: PRs #142 (per-bullet provenance), #143 (voice pass + final audit against
+rendered text), #144 (serve audit from canonical rows), #148 (formatting-tolerant
+grounding). See `docs/tailoring.md`.
+
+## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
+
+Status: accepted
+
+Decision: a job's fit score is derived deterministically from a per-requirement
+ledger, not from independent free-text signals. The Materials employer analysis
+supplies grounded requirements (tier, weight, verbatim job-evidence span); the
+Scoring context assesses candidate fit per requirement, resolves `FitScore` from
+the weighted requirement contributions (`domain/scoring/requirement_fit.py`), and
+persists a `RequirementFitReport` keyed by score version, employer-analysis
+generation, profile snapshot, and scoring policy. Employer analysis is a hard
+prerequisite: scoring requires it before it runs. The same requirement facts then
+drive tailoring directives and Apply Review coverage, so one requirement matrix
+explains score, tailoring action, and resume coverage across Jobs and Apply
+Review.
+
+Rationale:
+
+- the previous implementation had three overlapping truths (broad scoring
+  dimensions, canonical employer requirements, post-generation coverage) with no
+  single canonical answer for why a score happened or what the tailor should
+  optimize
+- deriving the score from a weighted, evidence-referenced ledger makes each score
+  explainable and makes high-weight missing requirements provably lower the score
+- reusing the same requirement IDs end to end lets tailoring optimize exactly what
+  scoring measured and lets Apply Review show coverage against the same
+  requirements
+
+Consequences:
+
+- legacy `matched` / `missing` / `transferable` signals become derived summaries
+  of the report rather than independent inputs
+- old jobs without a report show `not_assessed` with a re-score path; the
+  heuristic requirement matcher was retired once the report was available
+  everywhere (no dual read model retained)
+- unsupported missing requirements are prohibited claims for tailoring; hard
+  blockers cap the score independently of the weighted average
+- the report is projected onto job detail with Python/TypeScript projection parity
+
+Cites: `docs/plans/implemented/2026-06-15-requirement-fit-ledger.md`;
+PRs #162–#177, #189.
+
+## 2026-06-20: Compensation Is Warning-Only Evidence From Reported Company-Role Observations
+
+Status: accepted
+
+Decision: JobHunter surfaces compensation as auditable, warning-only evidence and
+never lets it change ranking, scoring, apply-readiness, or apply dispatch. A
+deterministic source-access policy registry gates which observation sources are
+usable; posted-salary facts are parsed from discovery text and stored canonically
+without mutating `jobs.salary`; market estimates are computed only from reported
+company-role observations (opt-in/licensed provider feeds and permitted public
+community data), keyed by company/role/level with freshness, sample count, source
+agreement, and company tier. Estimates are projected through the canonical read
+model (`compensationSummary` / `compensationAudit` on job list and detail) with
+EUR-normalized ranges, confidence intervals, and safe source attribution.
+
+Rationale:
+
+- compensation is decision-support, not an eligibility gate; letting weak salary
+  data silently move ranking or apply-readiness would be unsafe
+- estimating only from reported company-role observations (never title/location
+  public aggregates) keeps estimates defensible, per the auditability discipline
+- a source-access policy plus safe attribution keeps unlicensed scraping out and
+  keeps provider payloads out of events, projections, and logs
+
+Consequences:
+
+- no automated third-party provider scrape or cache path and no US salary
+  baseline; unavailable sources render as explicit unavailable-licensed seams
+- weak evidence degrades to wider intervals or non-range states instead of
+  overconfident precise ranges; fallback tiers are seniority-aware
+- `CompensationFactsUpdated` events carry safe state markers only and route
+  through Operations invalidation; event payloads never contain source text,
+  credentials, or local paths
+- a maintenance refresh (CLI `compensation-refresh`, plus job-scoped and all-jobs
+  web/API actions) reparses and re-estimates existing jobs without rerunning
+  discovery
+
+Cites: PRs #180, #181, #182, #183, #184, #185, #187.
 
 ## 2026-06-24: HTML/CSS Resume Rendering Replaces LaTeX
 
