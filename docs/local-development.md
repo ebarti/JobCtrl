@@ -199,6 +199,8 @@ check cannot see). Together they are the docs link-integrity gate; CI runs
 them on every pull request that touches `docs/`
 (`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
-parse — check edited diagrams in `pnpm docs:dev` before merging. Deploys to
+parse — check edited diagrams in `pnpm docs:dev` before merging. Note that
+`pnpm docs:preview` snapshots the built file list at startup: after any
+rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
 variable and the Cloudflare credentials are configured.
