@@ -5,7 +5,7 @@ and no server that receives your job-search data. The trust boundary is your own
 computer: the local SQLite database, generated resumes and cover letters, browser
 profiles, logs, and credentials all live under `~/.jobhunter/` and stay there
 unless a step you run explicitly sends something to an external service. This
-page describes what those steps are, the consent gates that guard risky actions,
+page describes what those steps are, the approval gates that guard risky actions,
 and the honest limits of running everything locally.
 
 This page owns JobHunter's threat model and safety gates. For the full inventory
@@ -33,15 +33,21 @@ submission.
 
 ## What Stays On Your Machine
 
-These never leave your machine and are never sent to any LLM or telemetry
-endpoint:
+JobHunter never uploads these files anywhere — they exist only on your disk:
 
 - the `jobhunter.db` SQLite database (profile, jobs, events, projections,
   settings, artifact metadata, and its `-wal` / `-shm` sidecars);
-- generated resumes, cover letters, and PDFs;
+- generated resume, cover-letter, and PDF files;
 - browser profiles and apply-worker state;
 - raw Gmail message bodies;
-- local logs and prompt/completion traces.
+- local logs and locally written prompt/completion traces.
+
+Files staying local is not the same as their *content* staying local: the text
+of a tailored resume or cover letter necessarily passes through the LLM
+provider that generates it, is included in the apply prompt, and appears in
+Langfuse traces if you enabled that export — exactly the rows in the table
+above. If you configured no external provider, nothing in this list leaves in
+any form.
 
 ::: warning Local data is not encrypted
 JobHunter does not encrypt the database, the `.env` file, or generated
@@ -50,13 +56,14 @@ security. Treat `~/.jobhunter/` as sensitive: do not commit it, copy it into
 shared locations, or attach it to bug reports.
 :::
 
-## Consent And Control Gates
+## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive
 a real browser and submit a real application. Several gates stand between a
-discovered job and a submitted one. In plain terms: JobHunter shows you a dry run
-first, will not submit anything for real until you explicitly approve that exact
-job, and never submits the same application twice.
+discovered job and a submitted one. In plain terms: you can rehearse any
+application with a dry run (recommended, but not an enforced prerequisite),
+nothing is submitted for real until you explicitly approve that exact job, and
+the same application is never submitted twice.
 
 ### Apply Approval Is Required By Default
 

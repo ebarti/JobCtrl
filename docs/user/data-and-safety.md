@@ -54,10 +54,10 @@ Review configuration before running large pipelines.
 
 ## Auto-Apply Safety
 
-Apply automation can submit real applications, so it is guarded by consent
-gates: a dry run first, an explicit approval before any live submission, a
-browser-level guard during dry runs, no application submitted twice, and a daily
-spend ceiling. The apply agent also reads untrusted job pages, so prompt
+Apply automation can submit real applications, so it is guarded by approval
+gates: a rehearsal dry run (recommended before approving anything), an explicit
+approval before any live submission, a browser-level guard during dry runs, no
+application submitted twice, and a daily spend ceiling. The apply agent also reads untrusted job pages, so prompt
 injection is a real exposure. The full gate model, the apply agent's automation
 posture, and how credentials appear in the apply prompt live in
 [Security](security.md).
