@@ -114,14 +114,8 @@ pnpm web:build
 pnpm qa:test
 ```
 
-Regenerate public documentation screenshots from the synthetic E2E workspace:
-
-```bash
-pnpm docs:screenshots
-```
-
-The screenshot command writes PNG files under `docs/assets/screenshots/` and
-must never point at a real `~/.jobhunter` workspace.
+Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
+[Documentation Screenshots](#documentation-screenshots).
 
 ## Frontend
 
@@ -207,3 +201,39 @@ parse — check edited diagrams in `pnpm docs:dev` before merging. Note that
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
 variable and the Cloudflare credentials are configured.
+
+## Documentation Screenshots
+
+Public screenshots are generated from synthetic data only — never from a real
+`~/.jobhunter` workspace.
+
+```bash
+pnpm docs:screenshots
+```
+
+The command runs `apps/web/e2e/tests/docs-screenshots.spec.ts` through the
+Playwright e2e harness: it seeds a disposable E2E app directory with the local
+QA seed (`apps/api/test/qa-seed.ts` — fake candidate, jobs, stage state,
+scores, materials, requirement-fit evidence, employer analysis, artifacts, and
+a worker heartbeat), starts the API and web app on E2E ports, and writes PNGs
+to `docs/assets/screenshots/`. No real LLM provider, job source, Gmail
+account, or browser submission is involved.
+
+When running multiple worktrees, override the disposable paths and ports:
+
+```bash
+JOBHUNTER_E2E_APP_DIR=/tmp/jobhunter-docs-shots \
+JOBHUNTER_E2E_API_PORT=8890 \
+JOBHUNTER_E2E_WEB_PORT=5290 \
+pnpm docs:screenshots
+```
+
+Refresh checklist: run the command on a clean checkout, review every PNG for
+private data / broken layout / local-path leaks, update docs if screenshot
+names changed, and finish with `git diff --check`.
+
+Safety rules: never point generation at `~/.jobhunter`; never use real
+resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
+automation, mailbox scans, real crawling, or real LLM calls for screenshots;
+keep output deterministic (fixed viewport, synthetic database, seeded
+heartbeat, no external providers).

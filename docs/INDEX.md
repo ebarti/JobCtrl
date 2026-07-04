@@ -36,8 +36,6 @@
 - [`developer/security.md`](developer/security.md): trust boundary and threat
   model, locality enforcement, apply-path containment, secret/data hygiene, the
   `release_check.py` gate, and hosted-future security seams.
-- [`developer/screenshot-playbook.md`](developer/screenshot-playbook.md):
-  repeatable synthetic screenshot refresh workflow.
 - [`architecture/index.md`](architecture/index.md): system shape,
   bounded-context composition, core data flow, and local commands — the System
   Architecture section map.
@@ -69,8 +67,8 @@
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume tailoring
   prompt contract, generated JSON shape, validation/judge/fabrication gates,
   provenance, audit metadata, and safe change points.
-- [`local-development.md`](local-development.md): setup, run, build, test, lint,
-  and screenshot commands.
+- [`local-development.md`](local-development.md): setup, run, build, test, lint
+  commands, and the synthetic documentation-screenshot workflow.
 - [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app
   development notes, and the `GET /v1/events/stream` SSE contract.
 - [`local-reliability-qa.md`](local-reliability-qa.md): local QA checklist,

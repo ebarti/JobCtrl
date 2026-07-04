@@ -5,8 +5,8 @@ Use these repository documents before making architectural, workflow, or QA deci
 - `docs/INDEX.md`: canonical map of every public, user, and developer document.
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
 - `docs/user/` (`getting-started.md`, `configuration.md`, `normal-flows.md`, `data-and-safety.md`, `screenshots.md`): end-user setup, the configuration/env-var reference, expected product flows, data and safety boundaries, and screenshot generation.
-- `docs/developer/README.md`: contributor entry point and architecture/QA reading path; `docs/developer/screenshot-playbook.md`: synthetic screenshot refresh workflow.
-- `docs/local-development.md`: install, run, verify, and frontend development commands.
+- `docs/developer/README.md`: contributor entry point and architecture/QA reading path.
+- `docs/local-development.md`: install, run, verify, and frontend development commands, plus the synthetic documentation-screenshot workflow.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
 - `docs/local-ts-api.md`: local TypeScript API routes, JSON-RPC dispatch, web app development notes, and the `GET /v1/events/stream` SSE contract.
 - `docs/architecture/`: the System Architecture section — `index.md` (system shape, eight bounded contexts, core data flow, local commands), `runtime.md` (runtime boundaries of the TypeScript app/API plus Python worker, Temporal-native orchestration, JSON-RPC TS↔Python protocol, local-first boundaries), `observability.md` (OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans), `storage.md` (SQLite and generated files), `scoring.md`, `materials.md`, and `read-model.md` (projection-backed read model).

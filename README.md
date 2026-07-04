@@ -266,8 +266,8 @@ pnpm docs:screenshots
 
 ![Apply Review with synthetic data](docs/assets/screenshots/apply-review.png)
 
-The screenshot playbook in
-[docs/developer/screenshot-playbook.md](docs/developer/screenshot-playbook.md)
+The Documentation Screenshots section of
+[docs/local-development.md](docs/local-development.md)
 explains the disposable database, routes, and refresh process.
 
 ## Documentation

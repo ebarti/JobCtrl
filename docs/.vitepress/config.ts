@@ -47,7 +47,6 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Local Development", link: "/local-development" },
       { text: "Reliability & QA", link: "/local-reliability-qa" },
       { text: "Security", link: "/developer/security" },
-      { text: "Screenshot Playbook", link: "/developer/screenshot-playbook" },
     ],
   },
   {

@@ -47,5 +47,6 @@ The screenshot flow captures these eight surfaces.
 ![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
 *Runs: workflow run history with status, mode, timing, and a Temporal web UI link.*
 
-See [docs/developer/screenshot-playbook.md](../developer/screenshot-playbook.md)
-for the implementation details and refresh checklist.
+See the [Documentation Screenshots](../local-development.md#documentation-screenshots)
+section of the local development guide for implementation details and the
+refresh checklist.
