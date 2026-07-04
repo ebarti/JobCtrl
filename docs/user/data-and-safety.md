@@ -1,4 +1,4 @@
-# Data And Safety
+# Data & Safety
 
 The short version: your job-search data stays on your machine. Your profile,
 jobs, generated resumes and cover letters, logs, and browser state all live in a

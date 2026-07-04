@@ -105,7 +105,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         ],
       },
       {
-        text: "Frontend",
+        text: "Frontend Architecture",
         collapsed: true,
         items: [
           { text: "Overview", link: "/architecture/frontend/" },
