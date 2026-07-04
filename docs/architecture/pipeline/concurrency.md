@@ -21,6 +21,11 @@ flowchart LR
     W --> P["JobPipelineWorkflow: stages in order, child workflows for discover / apply"]
     W --> A["ApplyWorkflow: single-flight per job id"]
     BUDGET["check_spend_budget preflight"] -.->|blocks over-budget starts| D & P & A
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+    class CLI,W,SLOTS,EXEC,D,P,A,BUDGET py
+    class TQ infra
 ```
 
 ## The Worker's Capacity Model

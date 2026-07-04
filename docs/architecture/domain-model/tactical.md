@@ -19,6 +19,11 @@ flowchart LR
     A["Apply Automation"] --> Aa["ApplyRun"]
     O["Pipeline Orchestration"] --> Oo["JobPipelineState"]
     R["Operations / Read-Side"] --> Rr["(no aggregate — projections only)"]
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class D,E,P,S,M,A,O,Djob,Ejob,Pp,Ss,Mm,Aa,Oo py
+    class R,Rr store
 ```
 
 Each context below owns the one aggregate root named on the right; its section

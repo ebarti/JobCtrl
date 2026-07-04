@@ -21,6 +21,17 @@
   height: auto !important;
 }
 
+/* Mermaid measures htmlLabels in a detached container where VitePress's
+   .vp-doc paragraph margins/line-height do not apply, then the label renders
+   inside .vp-doc where they do — the delta clips the last line of tall
+   multi-line nodes. Pin label typography to what the measurement saw. */
+.vp-doc .mermaid p,
+.vp-doc .mermaid .nodeLabel,
+.vp-doc .mermaid .edgeLabel {
+  margin: 0;
+  line-height: 1.35;
+}
+
 /* --------------------------------------------------------------------------
    Zoom affordance
    -------------------------------------------------------------------------- */

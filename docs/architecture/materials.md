@@ -13,6 +13,11 @@ flowchart LR
     EA["Employer analysis<br/>(3-SDK ensemble + grounding gate)"] --> PROV["Tailoring + provenance<br/>(FK bindings, never-fabricate and skill/tool gates)"]
     PROV --> VOICE["Voice pass + final audit<br/>(re-validated against rendered text)"]
     VOICE --> READ["Tailoring explanation read model<br/>(canonical projection rows)"]
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class EA,PROV,VOICE py
+    class READ store
 ```
 
 The four Materials sub-steps run in order; each gate re-checks against the actual

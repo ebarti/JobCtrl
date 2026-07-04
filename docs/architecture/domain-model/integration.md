@@ -19,6 +19,15 @@ flowchart LR
     Api["TypeScript API"] -->|"JSON-RPC bridge (subprocess / HTTP)"| Ctx
     Ctx -->|"workflow dispatch"| Temporal["Temporal workflows"]
     Temporal -->|"result domain events"| Bus
+
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class Ctx,Bus py
+    class Api ts
+    class Temporal infra
+    class Proj store
 ```
 
 The JSON-RPC bridge is the only cross-process hop; everything downstream of it —
@@ -52,6 +61,11 @@ graph LR
         EB -->|"events"| PO
         EB -->|"events"| OPS["Operations"]
     end
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class PO,JE,SC,MG,AA,JD,EB py
+    class OPS store
 ```
 
 ### 6.2 Event vs Command vs Request/Response

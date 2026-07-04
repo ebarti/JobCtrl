@@ -33,15 +33,28 @@ machine — no contributor tooling required.
 ```mermaid
 flowchart LR
   Web["React/Vite web app"] --> Api["TypeScript Fastify API"]
-  Api --> Db["SQLite read/write model"]
+  Api --> Db[("SQLite read/write model")]
   Api --> Rpc["JSON-RPC subprocess"]
   Rpc -- "start workflows" --> Temporal["Temporal dev server"]
   Temporal -- "task queue" --> Worker["Python worker"]
   Worker --> Db
   Worker --> Files["Local artifacts"]
-  Worker --> Providers["LLMs / job sources / browser automation"]
+  Worker --> Providers(["LLMs / job sources / browser automation"])
   Db --> Sse["SSE event stream"]
   Sse --> Web
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+  class Web ui
+  class Api,Sse ts
+  class Rpc,Worker py
+  class Temporal infra
+  class Db,Files store
+  class Providers ext
 ```
 
 The domain is organized around eight bounded contexts:
@@ -121,6 +134,11 @@ breaks the links and § citations that code comments depend on.
 | 2 — Contributors | `docs/developer/**`, `docs/local-*.md`, and the section overview pages (`architecture/index.md` plus the three group `index.md` pages) | Technical but self-contained: expand acronyms on first use, open with a plain-language summary, link down to Tier 3 for depth. |
 | 3 — Deep dives | The remaining `architecture/**` pages, `requirements.md`, `decisions.md` | Precision over simplicity — but still template-conformant: summary first, diagram for structural topics, stable § headings. |
 
+The primary audience is technical. The plain-language bar exists to remove
+*unnecessary* jargon and unexplained shorthand, not to dilute precision:
+Tier 2–3 pages should read like engineering documents written by someone who
+wanted them understood.
+
 ### Page Template
 
 Every page opens with:
@@ -159,13 +177,31 @@ form when the tier calls for it.
 | Server-Sent Events (SSE) | — | expand on first use per page, then "SSE" |
 | read model (noun), read-model (adjective) | — | "the read model"; "read-model projections" |
 | Discover, Enrich, Score, Materials, Apply | — | capitalized when naming pipeline stages; lowercase as ordinary verbs |
+| a dry run (noun), dry-run (adjective) | "Dry-Run Apply" as a standalone name | "rehearse with a dry run"; a recommended rehearsal, never described as an enforced prerequisite |
+| approval gates; approve a submission | consent gates, sign-off | the user-facing name for the apply gate model; the recorded decision is `approve_submit` |
+| a live submission | live apply (as a noun) | the real, non-dry-run application submit |
+| the apply agent | apply bot, apply worker | the Claude Code CLI subprocess that drives the browser ("apply-worker state" remains the on-disk directory name) |
 
 ### Diagrams
 
 - Mermaid only. Every diagram is preceded or followed by one sentence saying
   what to notice in it.
 - `flowchart LR` for pipelines and data flow, `flowchart TD` for layered
-  stacks, `sequenceDiagram` for call flows, `erDiagram` for schemas.
+  stacks, `sequenceDiagram` for call flows, `erDiagram` for schemas. Prefer
+  `TD` once a flowchart passes ~8 nodes: the text column is narrow, and wide
+  LR ribbons scale down to unreadable.
+- Global colors, typography, and spacing come from the theme layer —
+  `docs/.vitepress/theme/mermaid-theme.ts` owns curated light **and** dark
+  palettes and `MermaidRenderer.vue` applies them per color mode. Never
+  hard-code page-level mermaid init or `%%init%%` blocks.
+- Structural flowcharts color nodes with the shared semantic classes, exactly
+  as the system map on `architecture/index.md` (the reference implementation)
+  defines them: `ui` (blue — browser/user surfaces), `ts` (indigo —
+  TypeScript services), `py` (emerald — Python side), `infra` (amber —
+  Temporal), `store` (cyan — SQLite, files, caches), `ext` (slate, dashed —
+  outside services). Persistent stores render as cylinders `[( )]`, external
+  services as stadiums `([ ])`. Include only the classes a diagram uses, and
+  class every node.
 - Never put `;` inside sequence-diagram message text — it is a statement
   separator and silently blanks the diagram. Mermaid renders client-side, so a
   broken diagram still builds; check edited diagrams in `pnpm docs:dev`.

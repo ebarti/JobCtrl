@@ -120,6 +120,15 @@ flowchart LR
     APPLY -->|write| LOGS
     DB -->|"artifact_list_projections"| API["TypeScript API"]
     API --> WEB["Web app artifact views"]
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class GEN,APPLY py
+    class API ts
+    class WEB ui
+    class DB,ART,LOGS store
 ```
 
 A file and its database registration are written together; the read model serves

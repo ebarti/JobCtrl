@@ -9,16 +9,25 @@ detail lives in the [Stage Walkthrough](pipeline/stages.md); the domain model is
 on, and what it must not be used for.
 
 ```mermaid
-flowchart LR
+flowchart TD
     D["Discovery-normalized postings"] --> R["Hybrid lexical retrieval (retrieval.py)"]
-    E["EmbeddingIndexPort (optional, DisabledEmbeddingIndex locally)"] -.-> R
+    E(["EmbeddingIndexPort (optional, DisabledEmbeddingIndex locally)"]) -.-> R
     R -->|"top-N pool"| S["Scorer LLM call"]
-    P["scoring_policies (versioned rubric + calibration anchors)"] --> S
+    P[("scoring_policies (versioned rubric + calibration anchors)")] --> S
     PROF["Profile snapshot + preferences"] --> S
-    S --> ROW["job_scores row: FitScore 1-10, fit_band, blockers, criteria_json, trace_json"]
+    S --> ROW[("job_scores row: FitScore 1-10, fit_band, blockers, criteria_json, trace_json")]
     ROW --> UI["TypeScript API + jobs drawer"]
     UI -->|"user correction"| C["ScoreCorrected event"]
     C -->|"new score version + calibration anchor"| P
+
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+    class D,R,S,PROF,C py
+    class P,ROW store
+    class UI ts
+    class E ext
 ```
 
 Retrieval narrows the candidate pool before any LLM call; a user correction feeds

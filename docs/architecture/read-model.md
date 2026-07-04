@@ -16,6 +16,15 @@ flowchart LR
     IR -->|"invalidate / patch query keys"| TQ["TanStack Query cache"]
     API --> TQ
     TQ --> UI["Views"]
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class W py
+    class API,SSE ts
+    class IR,UI ui
+    class EV,PT,TQ store
 ```
 
 Every write appends to `job_events` and refreshes projections; the Server-Sent
@@ -23,13 +32,18 @@ Events (SSE) stream then tells the web app's cache which queries to refetch.
 
 ```mermaid
 flowchart LR
-    RD["application_review_decisions (approve_submit)"] --> CLAIM["Atomic apply claim (Python launcher)"]
+    RD[("application_review_decisions (approve_submit)")] --> CLAIM["Atomic apply claim (Python launcher)"]
     CLAIM --> INTENT["ApplySubmitIntended checkpoint"]
     INTENT --> SUBMIT["Live submission"]
-    SUBMIT --> OUT["application_outcomes"]
-    GM["Bounded Gmail scan (feedback.py)"] --> EVID["application_email_evidence"]
-    EVID --> SUG["application_outcome_suggestions"]
+    SUBMIT --> OUT[("application_outcomes")]
+    GM["Bounded Gmail scan (feedback.py)"] --> EVID[("application_email_evidence")]
+    EVID --> SUG[("application_outcome_suggestions")]
     SUG -->|"user accepts / declines"| OUT
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class CLAIM,INTENT,SUBMIT,GM py
+    class RD,OUT,EVID,SUG store
 ```
 
 The apply path is gated and checkpointed: an approved review decision precedes

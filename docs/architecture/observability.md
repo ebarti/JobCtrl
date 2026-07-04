@@ -14,11 +14,16 @@ flowchart LR
         RPC["JSON-RPC dispatch"]
     end
     OTel["OpenTelemetry (BatchSpanProcessor to OTLPSpanExporter)"]
-    LF["Langfuse OTLP traces endpoint"]
+    LF(["Langfuse OTLP traces endpoint"])
     LLM --> OTel
     WF --> OTel
     RPC --> OTel
     OTel -->|"OTLP/HTTP, HTTP Basic auth"| LF
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+    class LLM,WF,RPC,OTel py
+    class LF ext
 ```
 
 Every span originates in the Python worker; the TypeScript API and web app are

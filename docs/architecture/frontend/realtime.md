@@ -14,12 +14,21 @@ cache. At a glance:
 
 ```mermaid
 flowchart LR
-  W["Python worker"] --> DB["SQLite<br/>job_events"]
+  W["Python worker"] --> DB[("SQLite<br/>job_events")]
   DB --> API["apps/api<br/>SSE endpoint"]
   API --> ES["EventSource<br/>(browser)"]
   ES --> IR["Invalidation<br/>router"]
   IR --> QC["Query cache"]
   QC --> UI["React views<br/>refetch + re-render"]
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  class W py
+  class API ts
+  class ES,IR,UI ui
+  class DB,QC store
 ```
 
 The worker records an event, the endpoint streams it, the router turns it into

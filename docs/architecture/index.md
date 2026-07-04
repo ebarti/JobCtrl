@@ -2,9 +2,75 @@
 
 JobHunter is a local-first system: a TypeScript API and a web app (the web app
 talks to the API) orchestrate a Python worker over Temporal (the workflow
-engine). This page holds the system shape, the bounded-context composition, and
-the core data flow; the rest of the section drills into each boundary in reading
-order.
+engine). This is the whole machine on one map — every process, store, and
+external dependency, with the data that flows between them:
+
+```mermaid
+flowchart TD
+  subgraph Client["🌐 Your browser"]
+    Web["Web app<br/>(React + TanStack)"]
+  end
+  subgraph TS["⚡ TypeScript host"]
+    Api["TypeScript API<br/>(Fastify, projection-backed)"]
+    Projections["Projection refresher<br/>(refreshProjections)"]
+    JsonRpc["JSON-RPC bridge<br/>(SubprocessJsonRpcAdapter)"]
+  end
+  subgraph Py["🐍 Python automation"]
+    RpcSrv["jobhunter rpc<br/>(JSON-RPC server)"]
+    Cli["jobhunter CLI"]
+    Worker["Python worker<br/>(queue jobhunter-default)"]
+    Workflows["Workflows + activities<br/>Discover / JobPipeline / JobPreparation<br/>Apply / ProfileImport / CompensationRefresh"]
+    Bus["InProcessEventBus"]
+    Repos["Per-aggregate<br/>repositories"]
+    Builder["ProjectionBuilder"]
+  end
+  Temporal["⏱️ Temporal dev server<br/>(gRPC :7233, UI :8233)"]
+  Db[("SQLite<br/>~/.jobhunter/jobhunter.db")]
+  Files[/"Artifact files<br/>resumes · covers · PDFs"/]
+  subgraph Ext["🌍 Outside world"]
+    Boards(["Job boards / ATSes"])
+    LLM(["LLM providers"])
+    Browser(["Browser automation<br/>(local Chrome)"])
+  end
+
+  Web -- "HTTP + SSE" --> Api
+  Api --> Projections
+  Api -- "complex commands" --> JsonRpc
+  Projections -- "projection rows" --> Db
+  JsonRpc -- "JSON-RPC 2.0<br/>(stdin/stdout)" --> RpcSrv
+  RpcSrv -- "start workflows" --> Temporal
+  RpcSrv -- "sync methods" --> Repos
+  Cli -- "start + await workflows" --> Temporal
+  Temporal -- "task queue" --> Worker
+  Worker --> Workflows
+  Workflows -- "domain writes" --> Repos
+  Repos -- "aggregate rows + job_events" --> Db
+  Repos -- "domain events" --> Bus
+  Bus --> Builder
+  Builder -- "projection rows" --> Db
+  Repos -- "artifact files" --> Files
+  Workflows -- "searches + postings" --> Boards
+  Workflows -- "prompts / completions" --> LLM
+  Workflows -- "form fills (apply)" --> Browser
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+  class Web ui
+  class Api,Projections,JsonRpc ts
+  class RpcSrv,Cli,Worker,Workflows,Bus,Repos,Builder py
+  class Temporal infra
+  class Db,Files store
+  class Boards,LLM,Browser ext
+```
+
+What to notice: every durable fact converges on SQLite — workflows write
+aggregates and `job_events` on the Python side, projection builders turn events
+into read rows, and the web app reads only projections; commands travel the
+other way, over JSON-RPC and Temporal. Click the map to zoom.
 
 **Read this if** you want the whole-system picture before diving into a single
 boundary, or you need to know which page answers a given question.
@@ -65,50 +131,13 @@ Repository ownership mirrors the runtime boundaries:
 - `workers/automation`: uv-managed Python worker and CLI package.
 - `packages/tsconfig`: shared TypeScript compiler presets.
 
-```mermaid
-flowchart LR
-  subgraph TS["TypeScript host"]
-    Web["Web app"]
-    Api["TypeScript API\n(Fastify, projection-backed)"]
-    Projections["TS projection refresher\n(apps/api/src/projections.ts)"]
-    JsonRpc["SubprocessJsonRpcAdapter\n(apps/api/src/json-rpc-adapter.ts)"]
-  end
-  subgraph Py["Python automation"]
-    RpcSrv["jobhunter rpc\n(JsonRpcServer, infra/rpc/server.py)"]
-    Cli["jobhunter CLI"]
-    Worker["jobhunter worker\n(Temporal worker, queue jobhunter-default)"]
-    Workflows["Workflows + activities\n(Discover / JobPipeline / JobPreparation /\nApply / ProfileImport / CompensationRefresh)"]
-    Bus["InProcessEventBus\n(infra/events/in_process_bus.py)"]
-    Repos["Per-aggregate repositories"]
-    Builder["ProjectionBuilder\n(infra/projections/projection_builder.py)"]
-  end
-  Temporal["Temporal dev server\n(gRPC 127.0.0.1:7233, UI :8233)"]
-  Db["SQLite\n~/.jobhunter/jobhunter.db"]
-  Files["Local artifact files"]
-  Boards["Job boards / ATSes"]
-  LLM["LLM providers"]
-  Browser["Local browser automation"]
-
-  Web --> Api
-  Api --> Projections
-  Api --> JsonRpc
-  Projections --> Db
-  JsonRpc -- "JSON-RPC 2.0\n(stdin/stdout)" --> RpcSrv
-  RpcSrv -- "workflow-mode methods\nstart workflows" --> Temporal
-  RpcSrv -- "analyze_job / cancel_run\n(sync, inline)" --> Repos
-  Cli -- "work-starting commands\nstart + await workflows" --> Temporal
-  Temporal -- "task queue" --> Worker
-  Worker --> Workflows
-  Workflows --> Repos
-  Repos --> Db
-  Repos --> Bus
-  Bus --> Builder
-  Builder --> Db
-  Repos --> Files
-  Workflows --> Boards
-  Workflows --> LLM
-  Workflows --> Browser
-```
+These boundaries are the subgraphs of the system map at the top of this page;
+the source anchors are `apps/api/src/projections.ts`,
+`apps/api/src/json-rpc-adapter.ts`, `infra/rpc/server.py`,
+`infra/events/in_process_bus.py`, and
+`infra/projections/projection_builder.py`. The rpc server's workflow-mode
+methods start Temporal workflows, while `analyze_job` / `cancel_run` run
+synchronously against the repositories.
 
 ## Bounded Context Composition
 

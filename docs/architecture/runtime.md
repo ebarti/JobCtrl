@@ -140,6 +140,9 @@ flowchart TB
   Routes["routes/* → views/*"]
 
   Main --> PP --> TP --> QC --> ES --> TH --> DN --> TT --> TS --> App --> Shell --> Routes
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  class Main,PP,TP,QC,ES,TH,DN,TT,TS,App,Shell,Routes ui
 ```
 
 `EventStreamProvider` lives in `contexts/operations/providers/` because the
@@ -152,7 +155,7 @@ in `shared/providers/`.
 ```mermaid
 flowchart LR
   Worker["Python worker<br/>+ apps/api writes"]
-  Events["job_events<br/>(SQLite)"]
+  Events[("job_events<br/>(SQLite)")]
   Endpoint["GET /v1/events/stream<br/>(text/event-stream;<br/>COALESCE tenant filter)"]
   ES["EventSource<br/>(browser auto-reconnect via Last-Event-ID)"]
   Provider["EventStreamProvider"]
@@ -169,6 +172,15 @@ flowchart LR
   Parser --> Router
   Router --> Keys
   Router --> Cache
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  class Worker py
+  class Endpoint ts
+  class ES,Provider,Parser,Router,Keys ui
+  class Events,Cache store
 ```
 
 The invalidation router is **the** integration contract between the backend's

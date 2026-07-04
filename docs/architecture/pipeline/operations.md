@@ -103,13 +103,13 @@ the API). Both rebuild the same projection tables from the same events.
 
 ```mermaid
 flowchart LR
-    Events["job_events (append-only)"]
-    Metrics["operational_attempt_metrics"]
-    Stages["job_stage_states"]
-    Agg["aggregate tables"]
+    Events[("job_events (append-only)")]
+    Metrics[("operational_attempt_metrics")]
+    Stages[("job_stage_states")]
+    Agg[("aggregate tables")]
     PB["ProjectionBuilder (Python worker)"]
     RP["refreshProjections (TypeScript API)"]
-    Proj["projection tables<br/>job_list / job_detail / dashboard /<br/>artifacts / apply_run / workflow_run"]
+    Proj[("projection tables<br/>job_list / job_detail / dashboard /<br/>artifacts / apply_run / workflow_run")]
     Api["TypeScript API read endpoints"]
     SSE["GET /v1/events/stream (250ms poll)"]
     UI["React + TanStack Query"]
@@ -125,6 +125,15 @@ flowchart LR
     Events --> SSE
     Api --> UI
     SSE --> UI
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class PB py
+    class RP,Api,SSE ts
+    class UI ui
+    class Events,Metrics,Stages,Agg,Proj store
 ```
 
 `job_list_projections.current_stage` is a *product-stage* field: builders write

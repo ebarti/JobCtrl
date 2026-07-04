@@ -74,6 +74,13 @@ graph TB
     SECRETS -.->|"Credential fetch"| JD
     SECRETS -.->|"Credential fetch"| JE
     SECRETS -.->|"Credential fetch"| AA
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+    class JD,JE,SC,MG,AA,CP,PO,PREP,CMP py
+    class OPS store
+    class IAM,BILL,AUDIT,SECRETS ext
 ```
 
 Notice how the five **Core Domain** contexts each publish a Published-Language
