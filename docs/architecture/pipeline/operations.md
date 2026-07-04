@@ -131,6 +131,20 @@ before the UI card visibly changes: durable facts are recorded first, then
 projections refresh and the next SSE tick invalidates the query cache. The SSE
 contract is specified in [`local-ts-api.md`](../../local-ts-api.md).
 
+### Projection Recovery
+
+Read-model projections are rebuildable state, and two recovery paths keep them
+truthful on existing databases:
+
+- Both initialization paths — the Python worker and the TypeScript API —
+  migrate legacy `workflow_run_projections` schemas before use, so older local
+  databases cannot fail projection upserts mid-workflow.
+- When workflow events were already watermarked but the Python-owned
+  workflow-run projection table is missing rows, the projection is rebuilt
+  from the event log instead of staying silently empty.
+- Dashboard pipeline progress consults terminal workflow-run state, so a stale
+  `StageStarted` row can no longer present a dead workflow as running.
+
 ## Failure Behavior Summary
 
 - **Transient failures retry; preconditions fail fast.** Retryable errors retry

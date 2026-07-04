@@ -32,7 +32,7 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 | `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal dev-server SQLite history store. |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
-| `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Temporal worker activity concurrency. |
+| `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
 | `JOBHUNTER_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
 | `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
 | `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |

@@ -66,6 +66,7 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Overview", link: "/architecture/pipeline/" },
           { text: "Envelope & Activities", link: "/architecture/pipeline/envelope" },
+          { text: "Concurrency & Fan-out", link: "/architecture/pipeline/concurrency" },
           { text: "Stage Walkthrough", link: "/architecture/pipeline/stages" },
           { text: "Operations & Events", link: "/architecture/pipeline/operations" },
         ],

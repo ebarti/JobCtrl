@@ -725,9 +725,11 @@ heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
 block (`status: ok | over_budget`, today's `estimatedUsd`, and the configured
 `dailyBudgetUsd` — default `25`, `0` = unlimited) read from the local
-`llm_spend` metering table. The web topbar surfaces missing or stale worker
-heartbeats, and the pipeline stage trigger blocks new worker-backed actions
-until the worker is healthy. Server-side, worker-backed action routes are
+`llm_spend` metering table, plus worker startup concurrency metadata
+(`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
+surfaces missing or stale worker heartbeats, the Settings page surfaces the
+worker activity-slot configuration, and the pipeline stage trigger blocks new
+worker-backed actions until the worker is healthy. Server-side, worker-backed action routes are
 gated by the same check and return
 `503 { ok: false, error: "worker_runtime_unavailable", worker }` while the
 heartbeat is missing, stale, or mismatched. Action routes share dispatch

@@ -5,6 +5,7 @@ stage family, activities per side effect. This page holds the product shape,
 execution surfaces, and the workflow catalog:
 
 - [Workflow Envelope, Activities & Retries](envelope.md) — the universal envelope, activity inventory, and error taxonomy
+- [Concurrency & Fan-out](concurrency.md) — worker capacity, where fan-out happens, and what bounds throughput
 - [Stage Walkthrough](stages.md) — Discover → Enrich → Prepare → Score → Tailor → Cover → PDF → Apply, with sequence diagrams
 - [Operations, Persistence & Events](operations.md) — spend ceiling, discovery schedule, persistence map, events/SSE, failure behavior
 

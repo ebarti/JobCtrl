@@ -54,8 +54,9 @@
   loop and read-model projections.
 - [`architecture/pipeline/`](architecture/pipeline/index.md):
   workflow-by-workflow pipeline execution on Temporal — envelope and activities
-  (`envelope.md`), stage walkthrough with sequence diagrams (`stages.md`), and
-  operations, persistence, and events (`operations.md`).
+  (`envelope.md`), concurrency and fan-out (`concurrency.md`), stage
+  walkthrough with sequence diagrams (`stages.md`), and operations,
+  persistence, and events (`operations.md`).
 - [`architecture/domain-model/`](architecture/domain-model/index.md): canonical
   DDD + hexagonal architecture (§1–§11 preserved across subpages): strategic
   and tactical design, ports, integration, persistence, cloud seams, risks,
