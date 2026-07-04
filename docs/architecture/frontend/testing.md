@@ -1,7 +1,11 @@
 # 10. Testing Strategy
 
-The frontend test pyramid — unit/hook/component, type-level, Storybook + a11y,
-and Playwright E2E. Part of the [Frontend Architecture](index.md) reference.
+The frontend test pyramid — unit / hook / component, type-level, Storybook +
+accessibility (a11y), and Playwright end-to-end (E2E). Part of the
+[Frontend Architecture](index.md) reference.
+
+**Read this if** you are adding a test and need to know which layer it belongs
+in, or which checks run in CI versus locally.
 
 The frontend ships a pyramid that matches the architecture's seams. Today
 it comprises roughly **145 colocated `*.test.ts(x)`** under `apps/web/src`

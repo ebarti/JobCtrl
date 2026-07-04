@@ -1,8 +1,13 @@
-# Workflow Envelope, Activities & Retries
+# Envelope & Activities
 
-Every workflow shares one envelope: the same start/heartbeat/completion shape,
-the same activity conventions, and one error taxonomy mapped onto Temporal retry
-policies.
+The **envelope** is the contract every workflow obeys: one shared
+start / heartbeat / completion shape, the same activity conventions, and a single
+error taxonomy mapped onto Temporal (the workflow engine) retry policies. This
+page covers that envelope, the nineteen activities the workflows call, and how
+the error taxonomy drives retries.
+
+**Read this if** you need to know how a workflow starts, heartbeats, and
+terminalizes, what activities exist, or why a given failure retried or stopped.
 
 ## The Universal Workflow Envelope
 
@@ -60,6 +65,10 @@ sequenceDiagram
     Rec->>DB: record matching terminal Workflow* (first-terminal-wins)
 ```
 
+Notice that every path ends in exactly one terminal `Workflow*` event: finalize
+writes it on the normal and cancel paths, and the reconciler backstops the crash
+path.
+
 ### Deterministic Workflow IDs
 
 Deterministic IDs plus `WorkflowIDConflictPolicy.USE_EXISTING` are how JobHunter
@@ -88,8 +97,8 @@ tenant, job id, work-item kind, **target version**, and **source event id**:
 
 ### Finalize + The Describe-Based Reconciler
 
-When a worker is killed mid-run, an activity times out, or the Temporal dev
-server loses history on restart, finalize may never run. The **reconciler** is
+When the Python worker is killed mid-run, an activity times out, or the Temporal
+dev server loses history on restart, finalize may never run. The **reconciler** is
 the backstop. It is not a trigger-coupled reaper; it is a describe loop inside
 the worker's 15-second heartbeat loop (`cli.py`, `_reconcile_workflow_runs`):
 

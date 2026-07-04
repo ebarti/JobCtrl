@@ -133,16 +133,19 @@ Part of the [Domain Model](index.md) reference.
 
 ## 11. Glossary
 
+Terms are listed alphabetically. The **Context** column names the bounded
+context — or cross-cutting platform concern — that owns each term.
+
 | Term | Context | Definition |
 |---|---|---|
 | **Aggregate** | DDD | A cluster of entities and value objects treated as a unit for data changes, with a single root entity. |
 | **AntiCorruptionLayer** | DDD | A translation layer that prevents external models from corrupting the internal domain model. Used at bounded context boundaries. |
 | **ApplicationUrl** | Enrichment | The direct URL where a candidate submits their application; may differ from the posting URL. |
 | **ApplyRun** | Apply Automation | A single attempt to submit a job application through browser automation. |
-| **AuditSink** | Platform (Audit Log) | A driven port that receives structured audit records for every write operation. Cloud adapter writes to Postgres `audit_events` + CloudWatch Logs. |
 | **Artifact** | Materials Generation | Any generated file (resume, cover letter, PDF) with provenance metadata. |
 | **ArtifactStatus** | Materials Generation | Lifecycle of an artifact: `candidate`, `approved`, `rejected`, `superseded`. |
 | **Attempt** | Pipeline Orchestration | A numbered try at completing a pipeline stage for a job. |
+| **AuditSink** | Platform (Audit Log) | A driven port that receives structured audit records for every write operation. Cloud adapter writes to Postgres `audit_events` + CloudWatch Logs. |
 | **BlockedReason** | Pipeline Orchestration | Why a stage cannot proceed (upstream dependency not met). |
 | **BrowserWorker** | Apply Automation | An isolated Chrome instance allocated for one apply run. |
 | **CoverLetter** | Materials Generation | A job-specific cover letter generated from the profile and tailored resume. |
@@ -150,9 +153,9 @@ Part of the [Domain Model](index.md) reference.
 | **DomainEvent** | DDD | An immutable record of something important that happened in the domain, named in past tense. |
 | **DryRun** | Apply Automation | An apply attempt that navigates the ATS but does not submit the application. |
 | **Employer** | Discovery | The hiring company, distinct from the source board where the job was found. |
+| **EnrichmentAttempt** | Enrichment | A child entity within `JobEnrichment`; records one try at extracting full description and application URL from a job's detail page. |
 | **Entitlement** | Platform (Billing) | A tenant's right to perform a specific operation (e.g., apply run, LLM call) based on their subscription plan and current usage. |
 | **EntitlementPort** | Platform (Billing) | A driven port that processing contexts call to check whether a tenant is allowed to perform an expensive operation before executing it. |
-| **EnrichmentAttempt** | Enrichment | A child entity within `JobEnrichment`; records one try at extracting full description and application URL from a job's detail page. |
 | **EvolutionTrigger** | Evolutionary Architecture | A concrete, testable condition that initiates migration from a local-mode adapter to its cloud equivalent. See Section 9.4. |
 | **ExtractionTier** | Enrichment | The method used to extract job details: JSON-LD (Tier 1), CSS selectors (Tier 2), LLM-assisted (Tier 3). |
 | **FitScore** | Scoring | A 1-10 integer rating of candidate-job match quality. |
@@ -162,33 +165,33 @@ Part of the [Domain Model](index.md) reference.
 | **JobId** | Discovery | A system-generated stable identifier for a job. |
 | **JobPipelineState** | Pipeline Orchestration | The collection of stage states for one job across all pipeline stages. |
 | **JudgeVerdict** | Materials Generation | LLM-as-judge evaluation of a tailored resume's quality and faithfulness. |
-| **MaterialsSet** | Materials Generation | The grouped artifacts (tailored resume, cover letter, PDFs) for one job application, tracked as a single aggregate. |
 | **MatchedKeywords** | Scoring | ATS keywords from the job description that match the candidate's profile. |
+| **MaterialsSet** | Materials Generation | The grouped artifacts (tailored resume, cover letter, PDFs) for one job application, tracked as a single aggregate. |
 | **McpConfig** | Apply Automation | Playwright MCP server configuration for a browser automation session. |
 | **MessageGroupId** | Platform (Events) | SQS FIFO message group ID, set to `tenantId` to guarantee per-tenant event ordering in the cloud event bus. |
 | **NextAction** | Pipeline Orchestration | The recommended CLI command or UI action to advance a blocked or failed stage. |
-| **Pipeline** | Pipeline Orchestration | The canonical sequence of stages: discover → enrich → score → tailor → cover → apply. |
 | **OutboxPoller** | Platform (Events) | A sidecar process that reads uncommitted domain events from the Postgres `outbox` table and publishes them to SQS FIFO. Guarantees at-least-once delivery with crash-consistency. |
+| **Pipeline** | Pipeline Orchestration | The canonical sequence of stages: discover → enrich → score → tailor → cover → apply. |
 | **Port** | Hexagonal Architecture | An interface through which the application communicates with the outside world. Driving ports are use cases; driven ports are infrastructure dependencies. |
 | **PostingUrl** | Discovery | The original URL where a job was found on an external board. Dedup is global within a tenant (not per-source). |
-| **PublishedLanguage** | DDD | Types and schemas that a bounded context exports for consumption by other contexts. `ProfileSnapshot` and domain event schemas are examples. |
 | **Profile** | Candidate Profile | The complete candidate data document: resume baseline, experience, education, skills, tailoring policy, writing style. |
 | **ProfileSnapshot** | Candidate Profile | An immutable, validated copy of the Profile provided to consuming contexts. |
+| **PublishedLanguage** | DDD | Types and schemas that a bounded context exports for consumption by other contexts. `ProfileSnapshot` and domain event schemas are examples. |
 | **Repository** | DDD | A port that provides the illusion of an in-memory collection of aggregates, abstracting persistence. |
 | **RetryPolicy** | Pipeline Orchestration | Configuration for max attempts and backoff rules per pipeline stage. |
 | **ScoreBreakdown** | Scoring | Structured explanation of why a job received its fit score. |
 | **ScoreCorrection** | Scoring | A user-provided override of an LLM-generated score, with rationale. |
-| **SecretPort** | Platform (Secrets) | A driven port for retrieving per-tenant credentials. Local adapter reads `.env`/Keychain; cloud adapter reads AWS Secrets Manager. |
 | **SearchStrategy** | Discovery | The extraction method used to find jobs: `jobspy`, `workday_api`, `smart_extract`, `manual`. |
+| **SecretPort** | Platform (Secrets) | A driven port for retrieving per-tenant credentials. Local adapter reads `.env`/Keychain; cloud adapter reads AWS Secrets Manager. |
 | **Source** | Discovery | The origin board or career site where a job was found (e.g., LinkedIn, Greenhouse). |
 | **Stage** | Pipeline Orchestration | A named step in the pipeline: `discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`. |
 | **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `NeedsVerification`, `Stale`, `Canceled` — eleven variants, see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `needs_verification`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |
 | **SubmissionResult** | Apply Automation | The outcome of an apply attempt: `applied`, `failed`, `captcha`, `login_issue`, `expired`, `manual`, `dry_run`. |
 | **TailoredResume** | Materials Generation | A resume customized for a specific job, derived from the master baseline via LLM. |
 | **TailoringPlan** | Materials Generation | Deterministic constraints derived from profile evidence, tailoring policy, job text, and fit score before resume generation and validation. |
+| **TailoringPolicy** | Candidate Profile | Rules governing what the LLM may modify during resume tailoring, including claim mode, auto-approval boundaries, adjacent achievement drafts, rewrite permissions, and writing controls. |
 | **TenantContext** | Platform (Identity) | A request-scoped value object containing `tenantId`, `userId`, and `roles`, injected by the API gateway / auth middleware into every use case call. |
 | **TenantId** | Platform (Identity) | A globally unique identifier for a tenant (organization or individual account). First-class domain concept threaded through all aggregates, events, and port calls. In local mode, a singleton constant. |
-| **TailoringPolicy** | Candidate Profile | Rules governing what the LLM may modify during resume tailoring, including claim mode, auto-approval boundaries, adjacent achievement drafts, rewrite permissions, and writing controls. |
 | **TokenUsage** | Apply Automation | LLM token consumption and cost tracking for an apply run. |
 | **TransactionalOutbox** | Platform (Events) | A Postgres table (`outbox`) where domain events are written in the same transaction as the aggregate mutation, guaranteeing crash-consistent event delivery. |
 | **ValidationResult** | Materials Generation | Output of content validation: banned words check, fabrication check, structural integrity check. |

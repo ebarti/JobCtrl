@@ -3,6 +3,15 @@
 The eight frontend contexts mirroring the backend 1:1, and the view-vs-context
 dichotomy. Part of the [Frontend Architecture](index.md) reference.
 
+**Read this if** you need to know which context owns a given hook, component, or
+mutation — or why a user-facing page is not itself a context.
+
+A *bounded context* is a self-contained slice of the domain with its own model
+and vocabulary; the backend defines the eight this app mirrors in
+[Strategic Design — Bounded Contexts](../domain-model/strategic.md). This page
+does not redefine them — it shows how each maps to a folder under
+`apps/web/src/contexts/` and how views compose them.
+
 The frontend's contexts are a **conformist** projection of the backend's
 contexts (in the DDD sense): the frontend consumes the backend's
 ubiquitous language as-is and does not push back against the shape.
@@ -132,7 +141,7 @@ The diagram reads top-down:
 
 ### 3.2 Job Discovery (Frontend)
 
-**Backend mirror:** Job Discovery (`docs/ddd-target.md` §3.1, §4.1, §5.1).
+**Backend mirror:** Job Discovery (backend domain model [§3.1](../domain-model/strategic.md), [§4.1](../domain-model/tactical.md), [§5.1](../domain-model/ports.md)).
 
 **Purpose:** Surface the user-facing affordances over the `Job` aggregate
 and the discovery-source registry — deleting (soft-delete tombstone),
@@ -143,7 +152,7 @@ quarantine, the manual-capture queue, and discovery feedback.
 **Ubiquitous language** (matches backend):
 - **Job** — the `Job` aggregate root identified by `(TenantId, JobId)`.
 - **JobId** — the system-generated stable identifier (per
-  `ddd-target.md` §3.1 / §4.1).
+  backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md)).
 - **PostingUrl** — the original source URL.
 - **Source** — the board / employer site.
 - **Employer** — the hiring company (distinct from `Source`).
@@ -179,7 +188,7 @@ described above; the folder absorbed that growth without restructure.
 
 ### 3.3 Job Enrichment (Frontend)
 
-**Backend mirror:** Job Enrichment (`docs/ddd-target.md` §3.2, §4.2, §5.2).
+**Backend mirror:** Job Enrichment (backend domain model [§3.2](../domain-model/strategic.md), [§4.2](../domain-model/tactical.md), [§5.2](../domain-model/ports.md)).
 
 **Purpose:** Consume enrichment events into the invalidation router;
 surface compensation evidence; and expose manual re-enrichment and
@@ -238,7 +247,7 @@ preview the rendered resume PDF.
   from a resume PDF (frontend-only presentation term; the underlying
   backend use case is `ImportProfileUseCase`).
 
-**Backend mirror:** Candidate Profile (`docs/ddd-target.md` §3.3, §4.3, §5.3).
+**Backend mirror:** Candidate Profile (backend domain model [§3.3](../domain-model/strategic.md), [§4.3](../domain-model/tactical.md), [§5.3](../domain-model/ports.md)).
 
 **Responsibilities:**
 - Render the profile editor with TanStack Form.
@@ -280,7 +289,7 @@ staleness, score correction, and rescore actions.
   per backend §5.4; shipped via `useCorrectScoreMutation` +
   `<ScoreCorrectionControl>`).
 
-**Backend mirror:** Scoring (`docs/ddd-target.md` §3.4, §4.4, §5.4).
+**Backend mirror:** Scoring (backend domain model [§3.4](../domain-model/strategic.md), [§4.4](../domain-model/tactical.md), [§5.4](../domain-model/ports.md)).
 
 **Responsibilities:**
 - Provide the scoring render components — `<ScoreBadge>` (jobs table cell
@@ -309,7 +318,7 @@ PDFs for a given job; observe progress; open generated artifacts in the
 OS default app.
 
 **Ubiquitous language** (matches Materials Generation context in
-`docs/ddd-target.md` §4.5):
+backend domain model [§4.5](../domain-model/tactical.md)):
 - **MaterialsSet** — the generation set for one job, identified by
   `(TenantId, JobId, generation)`.
 - **Generation** — the version counter on `MaterialsSet`.
@@ -321,7 +330,7 @@ OS default app.
 - **ValidationResult** — banned-words / fabrication / structural check.
 - **JudgeVerdict** — LLM-as-judge evaluation of the tailored resume.
 
-**Backend mirror:** Materials Generation (`docs/ddd-target.md` §3.5, §4.5, §5.5).
+**Backend mirror:** Materials Generation (backend domain model [§3.5](../domain-model/strategic.md), [§4.5](../domain-model/tactical.md), [§5.5](../domain-model/ports.md)).
 
 **Responsibilities:**
 - Wrap `apiClient.generateMaterials(jobId, ...)` in a mutation hook.
@@ -351,7 +360,7 @@ observe an apply run's live event timeline.
 - **SubmissionResult** — `applied | failed | captcha | login_issue | expired | manual | dry_run`.
 - **ApplyRunEvent** — telemetry event within an apply run.
 
-**Backend mirror:** Apply Automation (`docs/ddd-target.md` §3.6, §4.6, §5.6).
+**Backend mirror:** Apply Automation (backend domain model [§3.6](../domain-model/strategic.md), [§4.6](../domain-model/tactical.md), [§5.6](../domain-model/ports.md)).
 
 **Responsibilities:**
 - Mutation hooks: `useApplyJobMutation`, `useDryRunApplyMutation`,
@@ -382,7 +391,7 @@ detail.
 - **NextAction** — recommended action when blocked/failed.
 - **AttemptCount** — current attempt index.
 
-**Backend mirror:** Pipeline Orchestration (`docs/ddd-target.md` §3.7, §4.7, §5.7).
+**Backend mirror:** Pipeline Orchestration (backend domain model [§3.7](../domain-model/strategic.md), [§4.7](../domain-model/tactical.md), [§5.7](../domain-model/ports.md)).
 
 **Responsibilities:**
 - Provide `<StageBadge state={...} />` (exhaustive `switch` on

@@ -1,9 +1,13 @@
 # Stage Walkthrough
 
-Workflow-by-workflow execution detail — call paths, sequence diagrams, and
-failure behavior for each stage from discovery to apply.
+This page follows a job posting through every pipeline stage in order — Discover,
+Detail Enrichment, Preparation, Score, Tailor, Cover, PDF, and Apply — as it runs
+on the Python worker under Temporal (the workflow engine). For each stage it
+covers what the stage accomplishes, its call path and sequence diagram, the
+events it writes, and how it fails.
 
-Each stage below covers purpose, sequence, data/events, and failure behavior.
+**Read this if** you need to know exactly what a stage does, what it persists, or
+why a run failed at that stage.
 
 ### Discover
 
@@ -138,8 +142,10 @@ crashing unrelated jobs.
 
 ### Preparation
 
-`JobPreparationWorkflow` is the durable bridge from Discover into the Scoring and
-Materials contexts. Discovery derives a deterministic, sorted target list after
+Preparation is where a discovered, enriched job becomes an apply-ready candidate:
+it scores the job and, for eligible high-fit matches, tailors a resume, writes a
+cover letter, and renders the PDF. `JobPreparationWorkflow` is the durable bridge
+from Discover into the Scoring and Materials contexts. Discovery derives a deterministic, sorted target list after
 enrichment, then starts one preparation workflow per job with ID
 `prep-{idempotency_key}` and `USE_EXISTING`. Temporal — not a local claim loop —
 owns retry, recovery, and duplicate suppression.
@@ -250,7 +256,7 @@ marks comparable uncorrected scores stale in `job_score_staleness` when a new
 policy version lands. Parser warnings and failed LLM calls are recorded so a
 failure never masquerades as a successful low-fit result. Scoring prompt/model/
 schema/rubric/policy changes must run the local scoring eval gate documented in
-[`local-reliability-qa.md`](../../local-reliability-qa.md).
+[Local Reliability QA](../../local-reliability-qa.md).
 
 ### Tailor
 
@@ -271,10 +277,10 @@ are never persisted.
 
 Tailoring is where the fabrication gate and per-bullet claim grounding live.
 **For gate depth — the fabrication detector, claim-grounding, judge and
-adversarial personas, and repair loop — see [`tailoring.md`](../tailoring.md).**
-The tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
+adversarial personas, and repair loop — see [Resume Tailoring Logic](../tailoring.md).**
+The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
-into the cover step.
+into the Cover step.
 
 ### Cover
 
@@ -291,7 +297,7 @@ remaining pending cover letters.
 
 `render_pdf` renders missing PDFs for the current approved materials. It is the
 deterministic tail of preparation (no LLM, no spend preflight) and emits
-`PdfRendered`. As a prep step it retries under the cover retry policy.
+`PdfRendered`. As a prep step it retries under the Cover retry policy.
 
 ### Apply
 
@@ -311,7 +317,7 @@ There are **two entry paths** into `ApplyWorkflow`:
 sequenceDiagram
     autonumber
     participant Web as Web UI
-    participant Api as TS API
+    participant Api as TypeScript API
     participant Rpc as JSON-RPC
     participant T as Temporal
     participant AW as ApplyWorkflow

@@ -5,6 +5,20 @@ provenance-backed artifacts, then audits every displayed claim against the
 rendered text. The prompt/validation contract itself is documented in the
 [Tailoring Contract](tailoring.md).
 
+**Read this if** you need to know how tailored artifacts are generated and how
+every displayed keyword, provenance, and truthfulness claim is audited.
+
+```mermaid
+flowchart LR
+    EA["Employer analysis<br/>(3-SDK ensemble + grounding gate)"] --> PROV["Tailoring + provenance<br/>(FK bindings, never-fabricate and skill/tool gates)"]
+    PROV --> VOICE["Voice pass + final audit<br/>(re-validated against rendered text)"]
+    VOICE --> READ["Tailoring explanation read model<br/>(canonical projection rows)"]
+```
+
+The four Materials sub-steps run in order; each gate re-checks against the actual
+rendered text, and per-bullet provenance, coverage, and voice are served from
+canonical projection rows.
+
 ## Canonical Employer Analysis (Materials sub-step)
 
 The Materials context owns a persisted, inspectable "ideal candidate" analysis
@@ -57,7 +71,8 @@ through the analysis draft/synthesizer ports, not the generic LLM client.
   Persistence is canonical rows (`job_employer_analysis` + per-model
   sub-analysis and failure child tables), never `metadata_json`. The use case
   publishes `EmployerAnalyzed`, which lands a `job_events` row so the projection
-  rebuilds and the SSE invalidation router refreshes the job detail.
+  rebuilds and the Server-Sent Events (SSE) invalidation router refreshes the job
+  detail.
 - **Read path**: a single projection owner serves the analysis on the job-detail
   read model (`job_detail_projections.employer_analysis_json`), built identically
   by the Python projection builder and `apps/api/src/projections.ts` and served

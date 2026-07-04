@@ -1,8 +1,13 @@
-# Operations, Persistence & Events
+# Operations & Events
 
-Cross-cutting pipeline mechanics: the daily spend ceiling, the (off-by-default)
-discovery schedule, where every stage persists, and how domain events reach the
-UI over SSE.
+The cross-cutting mechanics that keep the pipeline running day to day under
+Temporal (the workflow engine): the daily spend ceiling, the (off-by-default)
+discovery schedule, where every stage persists, how domain events reach the web
+app over Server-Sent Events (SSE), how read-model projections recover after a
+crash, and how the pipeline behaves when things fail.
+
+**Read this if** you are setting a budget, scheduling discovery, tracing where a
+stage's data lands, or working out how the system recovers from a failure.
 
 ## Spend Ceiling
 
@@ -41,7 +46,7 @@ schedule on or off, or changing its cron, requires bouncing the worker.
 
 ## Persistence Map
 
-The worker writes to a single local SQLite database. Tables group by context;
+The Python worker writes to a single local SQLite database. Tables group by context;
 the append-only `job_events` log plus the projection tables are the read-model
 spine.
 
@@ -103,9 +108,9 @@ flowchart LR
     Stages["job_stage_states"]
     Agg["aggregate tables"]
     PB["ProjectionBuilder (Python worker)"]
-    RP["refreshProjections (TS API)"]
+    RP["refreshProjections (TypeScript API)"]
     Proj["projection tables<br/>job_list / job_detail / dashboard /<br/>artifacts / apply_run / workflow_run"]
-    Api["TS API read endpoints"]
+    Api["TypeScript API read endpoints"]
     SSE["GET /v1/events/stream (250ms poll)"]
     UI["React + TanStack Query"]
 
@@ -129,12 +134,12 @@ earlier. Note that `GET /v1/events/stream` is a **250 ms poller** over new
 `job_events` rows, not a push stream — which is why a stage can complete a beat
 before the UI card visibly changes: durable facts are recorded first, then
 projections refresh and the next SSE tick invalidates the query cache. The SSE
-contract is specified in [`local-ts-api.md`](../../local-ts-api.md).
+contract is specified in [Local TypeScript API](../../local-ts-api.md).
 
 ### Projection Recovery
 
-Read-model projections are rebuildable state, and two recovery paths keep them
-truthful on existing databases:
+Read-model projections are rebuildable state; two recovery paths plus a
+defensive dashboard read keep them truthful on existing databases:
 
 - Both initialization paths — the Python worker and the TypeScript API —
   migrate legacy `workflow_run_projections` schemas before use, so older local

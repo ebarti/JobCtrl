@@ -1,8 +1,39 @@
-# Resume Tailoring Logic
+# Tailoring Contract
 
-This document explains how JobHunter generates a tailored resume for one job,
+This page explains how JobHunter generates a tailored resume for one job,
 what question it asks the model, what the model is allowed to change, and which
 checks decide whether the result becomes an approved artifact.
+
+**Read this if** you need to know what tailoring guarantees, what the model may
+and may not change, or why a resume was rejected.
+
+## The Contract At A Glance
+
+Tailoring is a constrained rewrite of the candidate's own profile toward one job,
+behind a stack of gates. What it guarantees:
+
+- Every candidate fact comes only from the profile; the target job is context,
+  never candidate evidence.
+- Required experience and skill-category IDs and required bullets are preserved;
+  the model cannot add sections, experiences, skill categories, or education.
+- No fabricated metric, date, title, employer, or ungrounded named technology
+  survives into an approved artifact.
+- Keyword coverage is computed against the rendered resume text, never inferred
+  from the job description.
+- A failed re-tailor never destroys the last accepted generation's artifact or
+  provenance.
+
+Approval must clear every gate below (each detailed under
+[Validation Layers](#validation-layers)):
+
+| Gate | What it enforces | Kind |
+| --- | --- | --- |
+| Schema + field validation | JSON shape, required IDs, allowed skills, title safety, max bullets | deterministic |
+| Rendered-text + quality | required anchors present, evidence/metrics verified, prohibited claims absent, keyword stuffing bounded | deterministic |
+| Post-generation fit | fit score and must-have coverage against the target profile | LLM + deterministic |
+| Structured judge | independent pass/fail safety and quality (skipped only in lenient mode) | LLM |
+| Adversarial review | six-persona challenge for high-fit jobs | LLM |
+| Fabrication gate | never-fabricate token scan + prose skill/tool allowlist; re-run after the voice pass; fails closed | deterministic |
 
 Tailoring is owned by the Materials bounded context. The main implementation is
 in `workers/automation/src/jobhunter/domain/materials/use_cases.py`, supported

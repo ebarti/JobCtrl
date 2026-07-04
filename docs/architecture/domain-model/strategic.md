@@ -3,6 +3,12 @@
 The eight bounded contexts, their ubiquitous language, and the relationships
 between them. Part of the [Domain Model](index.md) reference.
 
+A **bounded context** is a slice of the backend with its own vocabulary and its
+own data, where a term like "Job" carries one precise meaning. Drawing these
+boundaries explicitly is what stops one context's assumptions from leaking into
+another. This page names the eight contexts, says what each owns (and does not
+own), and maps how they hand work to one another.
+
 ### Context Map
 
 ```mermaid
@@ -69,6 +75,11 @@ graph TB
     SECRETS -.->|"Credential fetch"| JE
     SECRETS -.->|"Credential fetch"| AA
 ```
+
+Notice how the five **Core Domain** contexts each publish a Published-Language
+event to Pipeline Orchestration, which in turn commands them and forwards
+progress to Operations; the platform contexts at the bottom (Identity, Billing,
+Audit, Secrets) are cloud-only seams that do not exist in local-first mode.
 
 ### 3.1 Job Discovery
 

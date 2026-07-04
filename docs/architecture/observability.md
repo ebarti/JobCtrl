@@ -3,7 +3,28 @@
 JobHunter exports OpenTelemetry spans for LLM calls, Temporal workflows, and the
 TS↔Python JSON-RPC boundary to Langfuse — opt-in, off until configured.
 
-The Python automation worker exports OpenTelemetry spans over OTLP/HTTP to a
+**Read this if** you want to trace an LLM call, workflow, or JSON-RPC dispatch,
+or wire the worker up to Langfuse.
+
+```mermaid
+flowchart LR
+    subgraph Worker["The Python worker"]
+        LLM["LLM calls"]
+        WF["Temporal workflows + activities"]
+        RPC["JSON-RPC dispatch"]
+    end
+    OTel["OpenTelemetry (BatchSpanProcessor to OTLPSpanExporter)"]
+    LF["Langfuse OTLP traces endpoint"]
+    LLM --> OTel
+    WF --> OTel
+    RPC --> OTel
+    OTel -->|"OTLP/HTTP, HTTP Basic auth"| LF
+```
+
+Every span originates in the Python worker; the TypeScript API and web app are
+not instrumented yet (see [Out of Scope](#out-of-scope) below).
+
+The Python worker exports OpenTelemetry spans over OTLP/HTTP to a
 Langfuse instance for LLM tracing. The wiring lives under
 `workers/automation/src/jobhunter/infrastructure/observability/`:
 
@@ -21,6 +42,8 @@ Langfuse instance for LLM tracing. The wiring lives under
   sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too.
+
+## Span Sources
 
 These sources emit spans:
 
@@ -54,6 +77,8 @@ every stage. Discovery sources use that limit as a bounded debug crawl cap,
 switch to sequential source execution when a cap is present, and skip remaining
 sources after the cap is reached.
 
+## Employer-Analysis Ensemble Spans
+
 The employer-analysis ensemble is the first capability on the **agent-SDK**
 standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). The
 legs currently run `claude-opus-4-8` (the Claude draft and synthesizer, and
@@ -78,6 +103,8 @@ is recorded on the span and re-raised into the existing per-leg
 retry/partial-failure path, and missing SDK usage degrades to a span without
 token counts rather than fabricating them.
 
+## Trace Propagation And Startup
+
 The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side
 (`infrastructure/temporal/worker.py`) so trace context propagates from the
@@ -91,6 +118,8 @@ exit so the `BatchSpanProcessor` flushes any in-flight spans.
 `jobhunter doctor` includes a `Langfuse` row that probes the OTLP endpoint
 with a `HEAD` request — `OK reachable`, `MISSING (set
 LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
+
+## Out of Scope
 
 Out of scope for this layer: TypeScript API / web instrumentation and
 distributed-trace propagation across the TS↔Python JSON-RPC boundary

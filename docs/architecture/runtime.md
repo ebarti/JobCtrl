@@ -1,11 +1,26 @@
 # Runtime Boundaries
 
-Four cooperating local processes make up JobHunter. This page walks each runtime
+JobHunter runs as four long-lived local processes, plus a `jobhunter rpc`
+subprocess the TypeScript API spawns on demand. This page walks each runtime
 boundary — what it owns, what it must never do, and how the pieces talk.
 
-### Frontend
+**Read this if** you need to know which process is responsible for a behavior,
+or where a change belongs.
 
-The React frontend under `apps/web` owns user interaction:
+| Process | What it is | Owns |
+| --- | --- | --- |
+| The web app | React/Vite single-page app (`apps/web`) | user interaction and view state |
+| The TypeScript API | Fastify server (`apps/api`), loopback-bound | typed read models and local product endpoints; spawns the `jobhunter rpc` subprocess |
+| The Python worker | `jobhunter worker`, a Temporal worker | executes workflows and activities (discovery, scoring, tailoring, apply, …) |
+| Temporal dev server | the workflow engine (gRPC `:7233`, Web UI `:8233`) | durable workflow execution and history |
+| `jobhunter rpc` subprocess | spawned by the TypeScript API on the first JSON-RPC call and reused | JSON-RPC dispatch for complex commands |
+
+You start the first four; the API spawns and reuses the `jobhunter rpc`
+subprocess itself.
+
+## Frontend
+
+The web app under `apps/web` owns user interaction:
 
 - dashboard summary
 - jobs list and job detail
@@ -18,14 +33,14 @@ The frontend uses `@jobhunter/api-client` for API transport and
 `@jobhunter/contracts` for shared schemas and DTOs. It should not know shell
 command syntax.
 
-The frontend follows its own DDD + hexagonal target documented in
-[`docs/frontend-target.md`](frontend/index.md) — three-layer state separation,
+The frontend follows its own DDD + hexagonal target documented in the
+[Frontend](frontend/index.md) section — three-layer state separation,
 eight bounded contexts that mirror the backend 1:1, view-vs-context dichotomy,
-hexagonal frontend ports, SSE realtime via the invalidation router, and a
-projection-typed Operations read-side. The summary below cross-links to the
-target sections; the target doc is the canonical detail.
+hexagonal frontend ports, Server-Sent Events (SSE) realtime via the invalidation
+router, and a projection-typed Operations read-side. The summary below
+cross-links to those pages; the Frontend section is the canonical detail.
 
-#### Stack
+### Stack
 
 | Concern | Choice | Target ref |
 |---|---|---|
@@ -39,13 +54,13 @@ target sections; the target doc is the canonical detail.
 | Forms | TanStack Form + Zod `safeParse` | §4.6 |
 | Client state | Zustand (`shared/stores/`) — UI prefs, toast queue, command palette, profile-import wizard draft (`persist` middleware where durability matters) | §4.9, §4.10 |
 | Test runner | Vitest + React Testing Library + MSW for unit / hook / component | §10.2, §10.3 |
-| End-to-end | Playwright against a seeded local API + SQLite fixture | §10.4 |
+| End-to-end | Playwright against a seeded local TypeScript API + SQLite fixture | §10.4 |
 | Component-driven dev | Storybook with `addon-msw` and `addon-a11y` (critical+serious axe violations fail CI) | §10.5, §10.7 |
 | Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm --filter @jobhunter/web test-d` | §10.6 |
 
-#### Three Layers of State
+### Three Layers of State
 
-Every piece of state lives in exactly one layer (`docs/frontend-target.md` §2.1):
+Every piece of state lives in exactly one layer (Frontend §2.1):
 
 | Layer | Owner | What lives here |
 |---|---|---|
@@ -58,10 +73,10 @@ No server data in `useState`; no filter / pagination / sort / drawer state in
 truth per fact; components consume state through hooks (never raw stores or the
 `QueryClient` directly).
 
-#### Frontend Bounded Contexts
+### Frontend Bounded Contexts
 
 `apps/web/src/contexts/<name>/` mirrors the backend's eight bounded contexts
-1:1 (`docs/frontend-target.md` §3, §11):
+1:1 (Frontend §3, §11):
 
 | Frontend folder | Owns | Backend mirror |
 |---|---|---|
@@ -77,17 +92,17 @@ truth per fact; components consume state through hooks (never raw stores or the
 The eight view folders (`views/dashboard/`, `views/jobs/`, `views/artifacts/`,
 `views/apply-review/`, `views/pipelines/`, `views/runs/`, `views/discovery/`,
 and `views/debug/`) are **composers, not contexts**
-(`docs/frontend-target.md` §3.10). They import hooks from
+(Frontend §3.10). They import hooks from
 `contexts/operations/` and components / mutations from aggregate contexts;
 they own layout and view-local ephemeral UI (e.g., bulk-selection sets) and
 nothing else. View → context dependency is one-way; views never depend on
 other views.
 
-#### Hexagonal Frontend Ports
+### Hexagonal Frontend Ports
 
 Components and feature hooks depend only on **ports**; concrete adapters bind
 to the ports in `shared/providers/PortsProvider.tsx`
-(`docs/frontend-target.md` §6):
+(Frontend §6):
 
 | Port | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|
@@ -103,9 +118,9 @@ to the ports in `shared/providers/PortsProvider.tsx`
 The "frontend driving ports" (use cases) are the per-context hooks themselves
 (`useApplyJobMutation`, `useDeleteJobMutation`, …) — React conventions are the
 de-facto driving-port representation; no `UseCase` interface is formalised
-(`docs/frontend-target.md` §6.7).
+(Frontend §6.7).
 
-#### Provider Stack
+### Provider Stack
 
 The provider stack as wired in `apps/web/src/main.tsx` (top-down):
 
@@ -129,10 +144,10 @@ flowchart TB
 
 `EventStreamProvider` lives in `contexts/operations/providers/` because the
 Operations context owns the SSE subscription and the invalidation-router
-dispatch (`docs/frontend-target.md` §3.9, §7.3); every other provider lives
+dispatch (Frontend §3.9, §7.3); every other provider lives
 in `shared/providers/`.
 
-#### Realtime — SSE → Invalidation Router → Cache
+### Realtime — SSE → Invalidation Router → Cache
 
 ```mermaid
 flowchart LR
@@ -162,11 +177,11 @@ isolation. Every backend event has a handler; the
 `Record<DomainEvent["eventType"], InvalidationHandler>` typing makes a missing
 handler a TypeScript compile error, and the
 `every-event-has-handler.test.ts` parity test catches obvious empty-stub
-implementations (`docs/frontend-target.md` §7.4).
+implementations (Frontend §7.4).
 
-#### Test Pyramid
+### Test Pyramid
 
-`docs/frontend-target.md` §10. Vitest + React Testing Library + MSW for unit /
+Frontend §10. Vitest + React Testing Library + MSW for unit /
 hook / component tests; Playwright for end-to-end critical flows; Storybook
 with the a11y addon for component-driven development. Two parity tests guard
 the cross-language seams:
@@ -179,9 +194,9 @@ the cross-language seams:
 Detailed coverage and the a11y bar live in
 [`docs/local-reliability-qa.md`](../local-reliability-qa.md).
 
-### TypeScript Product API
+## TypeScript API
 
-The local TypeScript API under `apps/api` owns typed JSON read models and
+The TypeScript API under `apps/api` owns typed JSON read models and
 local product endpoints. It is intentionally bound to loopback by default
 because it exposes local job, profile, and artifact metadata.
 
@@ -209,7 +224,7 @@ soft delete/restore, hide/unhide, permanent delete, and settings writes)
 execute inline in the TS process against shared `@jobhunter/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
 JSON-RPC to signal the Temporal workflow. Complex commands travel through
-`SubprocessJsonRpcAdapter` to the long-lived `jobhunter rpc` worker. The
+`SubprocessJsonRpcAdapter` to the long-lived `jobhunter rpc` subprocess. The
 JSON-RPC surface is eleven methods: nine workflow-mode methods whose handlers
 return a workflow spec that the RPC server starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
@@ -231,7 +246,7 @@ non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
 mutating requests with a non-loopback `Origin`/`Referer` are rejected with
 `403 cross_site_request`.
 
-### Python Automation Engine
+## Python Automation Engine
 
 Python owns automation execution:
 
@@ -251,7 +266,7 @@ its aggregate, repository (in `infrastructure/<context>/`), and ports (in
 `domain/ports/`). The CLI is the human-facing driving adapter; the JSON-RPC
 server (`jobhunter rpc`) is the API-facing driving adapter.
 
-### Workflow Orchestration (Local Temporal)
+## Workflow Orchestration (Local Temporal)
 
 A local Temporal dev server (`temporal server start-dev --db-filename
 "$JOBHUNTER_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
@@ -390,7 +405,7 @@ off, so fresh installs do not run background discovery.
 Live workflow state — running workflows, history, signals, retries — is
 visible at `http://127.0.0.1:8233` in the Temporal Web UI.
 
-#### Loop Closure — Visibility, Finalize, Reconciler
+### Loop Closure — Visibility, Finalize, Reconciler
 
 Workflow execution is made durable and visible in the read-model without a
 TypeScript Temporal SDK and without trigger-coupled reapers:

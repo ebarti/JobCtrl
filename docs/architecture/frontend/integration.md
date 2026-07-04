@@ -1,15 +1,23 @@
 # 8–9. Cross-Context Integration & Evolution Paths
 
-Cross-context coordination rules incl. the §8.2 mutation-invalidation matrix,
-plus the named-but-not-built cloud-mode adapters (§9). Part of the
+Cross-context coordination rules — including the §8.2 mutation-invalidation
+matrix — plus the named-but-not-built cloud-mode adapters (§9). Part of the
 [Frontend Architecture](index.md) reference.
+
+**Read this if** you are wiring a mutation's cache invalidations, composing a
+cross-context UI surface, or weighing what a hosted deployment would add.
+
+The page has two halves. §8 is about *today* — how a change in one context
+reaches the others through shared query keys, the SSE invalidation router, and
+view composition. §9 is about *later* — the cloud-mode adapters, each named with
+a concrete trigger (a "fitness function") that says when it is worth building.
 
 ## 8. Cross-Context Integration
 
 ### 8.1 What "Integration" Means in the Frontend
 
 The backend's bounded contexts integrate via domain events on a
-synchronous in-process bus (`docs/ddd-target.md` §6). The frontend's
+synchronous in-process bus (backend domain model [§6](../domain-model/integration.md)). The frontend's
 contexts integrate via:
 
 1. **Shared query keys** — a mutation in `apply/` invalidates a key
@@ -239,7 +247,7 @@ no interactivity.
 `<SessionProvider />` is mounted.
 
 **Hosted-mode named adapter:** `JwtSessionAdapter` (Auth0 / AWS Cognito —
-matches the backend's `docs/ddd-target.md` §9 choice). Surfaces:
+matches the backend domain model's [§9](../domain-model/cloud.md) choice). Surfaces:
 `<SessionProvider />`, `<RequireAuth />` route guard,
 `useSession()` hook returning `{ tenantId, userId, roles, expiresAt }`.
 
@@ -250,7 +258,7 @@ matches the backend's `docs/ddd-target.md` §9 choice). Surfaces:
 
 **Fitness function:** **Trigger when** the API is exposed beyond
 `127.0.0.1`. (This is also the trigger for the backend Identity & Access
-context per `docs/ddd-target.md` §9.4.)
+context per backend domain model [§9.4](../domain-model/cloud.md).)
 
 ### 9.4 Tenant-Scoped Routing (Multi-Tenant Switcher)
 
@@ -277,7 +285,7 @@ one tenant.
 
 **Hosted-mode named adapter:** `OpenTelemetryWebAdapter` — emits OTLP
 spans for route navigations, mutation calls, error boundaries; sent to
-the backend's audit pipeline (`docs/ddd-target.md` §9 Audit Log context).
+the backend's audit pipeline (backend domain model [§9](../domain-model/cloud.md) Audit Log context).
 
 **Fitness function:** **Trigger when** SOC2 / GDPR access-log
 requirements arise. The port exists; the adapter swap is ~50 LOC.

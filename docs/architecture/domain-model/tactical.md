@@ -3,6 +3,28 @@
 Aggregates, entities, value objects, and domain events per context. Part of the
 [Domain Model](index.md) reference.
 
+An **aggregate** is a cluster of related data with one entity as its "root",
+treated as a single unit for every change: one command modifies one aggregate,
+and its rules (invariants) must hold when the change commits. Seven of the eight
+contexts own exactly one aggregate root; Operations owns none — it only projects
+read models from the events the others emit.
+
+```mermaid
+flowchart LR
+    D["Job Discovery"] --> Djob["Job"]
+    E["Job Enrichment"] --> Ejob["JobEnrichment"]
+    P["Candidate Profile"] --> Pp["Profile"]
+    S["Scoring"] --> Ss["JobScore"]
+    M["Materials Generation"] --> Mm["MaterialsSet"]
+    A["Apply Automation"] --> Aa["ApplyRun"]
+    O["Pipeline Orchestration"] --> Oo["JobPipelineState"]
+    R["Operations / Read-Side"] --> Rr["(no aggregate — projections only)"]
+```
+
+Each context below owns the one aggregate root named on the right; its section
+then lists that root's invariants, entities, value objects, and the domain
+events it emits.
+
 ### 4.1 Job Discovery Context
 
 #### Aggregate: Job
@@ -441,7 +463,7 @@ models) built from domain events emitted by other contexts.
 - `job_detail_projections` — full job view with all stage states, events, and artifacts.
 - `artifact_list_projections` — all artifacts across jobs with provenance.
 - `apply_run_projections` — apply run telemetry with event timelines, keyed by the Temporal workflow run id.
-- `workflow_run_projections` — unified list of all Temporal workflow runs and their terminal status. This projection is **Python-sole-writer** (folded from the `Workflow*` events); the TS API mirrors it read-only.
+- `workflow_run_projections` — unified list of all Temporal workflow runs and their terminal status. This projection is **Python-sole-writer** (folded from the `Workflow*` events); the TypeScript API mirrors it read-only.
 - `source_quality_stats` — per-source discovery health (success/failure attribution, quarantine, circuit-breaker signals).
 
 The retired `discovery_run_projections` write-only table no longer owns any
@@ -450,7 +472,7 @@ read-model behaviour; source health is projected through `source_quality_stats`.
 **Domain Services:**
 - `ProjectionBuilder` — subscribes to domain events and updates projections.
   In the local-first architecture, this is synchronous (direct DB writes after
-  domain operations); both the Python worker and the TS API
+  domain operations); both the Python worker and the TypeScript API
   (`apps/api/src/projections.ts`) maintain projections idempotently against the
   shared `event_watermarks.operations_projections` watermark. In the hosted
   future, this becomes an async event consumer.

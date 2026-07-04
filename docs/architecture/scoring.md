@@ -1,10 +1,12 @@
-# Scoring Architecture
+# Scoring
 
 How a discovered job becomes a defensible fit score: profile retrieval feeds a
 deterministic, versioned scoring policy over structured evidence. Execution-level
 detail lives in the [Stage Walkthrough](pipeline/stages.md); the domain model is in
 [Tactical Design](domain-model/tactical.md).
 
+**Read this if** you need to know how the fit score is produced, what it is based
+on, and what it must not be used for.
 
 ```mermaid
 flowchart LR
@@ -14,10 +16,13 @@ flowchart LR
     P["scoring_policies (versioned rubric + calibration anchors)"] --> S
     PROF["Profile snapshot + preferences"] --> S
     S --> ROW["job_scores row: FitScore 1-10, fit_band, blockers, criteria_json, trace_json"]
-    ROW --> UI["Local API + jobs drawer"]
+    ROW --> UI["TypeScript API + jobs drawer"]
     UI -->|"user correction"| C["ScoreCorrected event"]
     C -->|"new score version + calibration anchor"| P
 ```
+
+Retrieval narrows the candidate pool before any LLM call; a user correction feeds
+back as a new score version and a calibration anchor on the scoring policy.
 
 ## Retrieval Before Scoring
 
@@ -48,7 +53,7 @@ warnings, and correction history.
 
 The score breakdown separates soft fit from hard eligibility. `fit_band`,
 `confidence`, matched/missing/transferable signals, warnings, and hard blockers
-are exposed through the local API and jobs drawer. User corrections create a new
+are exposed through the TypeScript API and jobs drawer. User corrections create a new
 score version, preserve the correction rationale, publish `ScoreCorrected`, and
 can be read back as transparent feedback signals alongside existing job actions.
 They also create a non-sensitive correction signal that is persisted as a
@@ -56,7 +61,9 @@ calibration anchor on the next `scoring_policies` version. The current policy
 keeps rubric weights and fit-band thresholds stable; subsequent scores load the
 latest policy version and include the active anchor IDs in `trace_json`.
 
+::: warning Applicant-side triage only — not an employer hiring system
 This is not an employer-side candidate selection system. If JobHunter is ever
 used to rank people for hiring decisions, the architecture needs a separate
 governance layer for validation, bias audits, notices, adverse-impact review,
 and human-review procedures before production use.
+:::
