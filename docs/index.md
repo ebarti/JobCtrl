@@ -10,8 +10,8 @@ hero:
       text: Get Started
       link: /user/getting-started
     - theme: alt
-      text: How It Works
-      link: /architecture/
+      text: Product Tour
+      link: /user/screenshots
     - theme: alt
       text: Developer Guide
       link: /developer/
@@ -19,7 +19,7 @@ hero:
 features:
   - icon: 🔎
     title: Profile-Driven Discovery
-    details: Multi-source discovery driven by your target roles, locations, and seniority — with provenance, dedup evidence, and a closed list for dead postings.
+    details: Multi-source discovery driven by your target roles, locations, and seniority — tracking where each job came from, removing duplicates, and retiring postings that have closed.
     link: /user/normal-flows
     linkText: See the flows
   - icon: 🎯
@@ -29,12 +29,12 @@ features:
     linkText: Scoring architecture
   - icon: 📝
     title: Audited Materials
-    details: Tailored resumes and cover letters with per-bullet provenance, fabrication gates, and keyword coverage computed against the shipped text.
+    details: Tailored resumes and cover letters where every bullet traces back to its source, gates guard against invented facts, and keyword coverage is measured against the final document.
     link: /architecture/materials
     linkText: Materials & audit
   - icon: ✅
     title: Supervised Apply
-    details: Dry-run first, an explicit approval before any live submission, a browser-layer dry-run guard, and at-most-once submits.
+    details: Dry-run first, an explicit approval before any live submission, a browser-level guard during dry runs, and no application is ever submitted twice.
     link: /user/security
     linkText: The consent gates
   - icon: 🔒

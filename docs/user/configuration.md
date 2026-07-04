@@ -1,8 +1,15 @@
 # Configuration
 
-JobHunter configuration is intentionally local. Some settings are stored in the
-local SQLite database through the web UI; secrets and runtime switches are read
-from environment variables.
+Most people never need this page. JobHunter ships with working defaults, and the
+Discovery targets and preferences you set in the web app cover day-to-day use.
+The two settings worth knowing first are an **LLM provider key** (required before
+scoring or materials can run) and the **daily LLM spend budget** (which caps
+cost) — both are covered below.
+
+JobHunter configuration is intentionally local. Some settings live in the local
+SQLite database, set through the web app; secrets and runtime switches are read
+from environment variables. Everything here is optional unless a feature you want
+depends on it.
 
 ## Configuration Sources
 
@@ -29,7 +36,7 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 | `JOBHUNTER_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
 | `JOBHUNTER_WEB_PORT` | `5173` | Requested Vite development port. |
 | `VITE_JOBHUNTER_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
-| `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal dev-server SQLite history store. |
+| `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
 | `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
@@ -128,6 +135,9 @@ Authenticate with:
 uv --project workers/automation run jobhunter gmail-auth
 uv --project workers/automation run jobhunter doctor
 ```
+
+The first runs the Gmail sign-in and writes your local token; the second
+re-checks that the connector is now available.
 
 The connector requests Gmail read-only scope. Raw Gmail bodies stay local and are
 not copied into events, telemetry, broad projections, or logs.

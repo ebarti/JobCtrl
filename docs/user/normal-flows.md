@@ -1,8 +1,9 @@
 # Normal Flows
 
-This page describes the product flow a normal local user follows. Command-line
-paths remain available for maintenance and diagnostics, but the web app is the
-primary operating surface.
+This is your daily loop with JobHunter: set up once, then repeat Discover →
+review → Apply. The web app is the main way you work; the command line stays
+available for maintenance and diagnostics. For a screen-by-screen walkthrough of
+each page below, see the [Product Tour](screenshots.md).
 
 ```mermaid
 flowchart LR
@@ -15,18 +16,22 @@ flowchart LR
   DryRun --> Submit["Approve real submission when ready"]
 ```
 
+*Your daily loop. Steps 1–2 are one-time setup; steps 3–7 repeat each day. Under
+the hood, Discover runs Enrich, Score, and Materials for each eligible job.*
+
 ## 1. Build The Candidate Profile
 
-Use the Profile page or resume import flow to create structured profile data.
+Use the Profile page or the resume import flow to create structured profile data.
 The profile includes personal details, work authorization, experience,
 education, skills, target search preferences, writing style, resume rendering
-settings, and tailoring controls.
+settings, and tailoring controls. It is the source of truth every later stage
+scores and tailors against.
 
-Profile and settings forms autosave after a short delay. Explicit Save buttons
-use the same API mutation path.
+Profile and settings forms autosave after a short delay. The explicit Save
+buttons use the same save path.
 
 ![JobHunter Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
-*The Profile page collects personal information, resume baseline, experience, skills, and voluntary EEO fields alongside the baseline resume editor.*
+*The Profile page collects personal information, resume baseline, experience, skills, and voluntary equal-opportunity (EEO) fields alongside the baseline resume editor.*
 
 ## 2. Configure Discovery
 
@@ -39,24 +44,29 @@ Use the Discovery page to set:
 - manual capture and quarantined source decisions.
 
 Target locations are validated before they can drive discovery. Discovery uses
-exact and recall role queries, then filters and scores results downstream.
+exact and broader recall role queries, then filters and scores the results
+downstream.
 
 ![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
 *The Discovery page configures target search, seniority floors, locations and work models, minimum fit score, job boards, and the source registry.*
 
 ## 3. Run Discover
 
-From the UI, use the Pipelines page and run `Discover`. From the CLI:
+From the web app, open the Pipelines page and start `Discover`. From the command
+line:
 
 ```bash
 uv --project workers/automation run jobhunter run discover
 ```
 
+Starts a Discover run from the terminal — the same workflow the Pipelines page
+starts.
+
 ![JobHunter Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
 *The Pipelines page starts a Discover run with limit, worker count, and a dry-run toggle.*
 
 Per-stage commands (`jobhunter enrich`, `score`, `tailor`, `cover`) and the
-single-job path (`jobhunter job <url> --dry-run`) start the same Temporal
+single-job path (`jobhunter job <url> --dry-run`) start the same underlying
 workflows when you want a narrower run.
 
 Discover owns the preparation path:
@@ -65,17 +75,17 @@ Discover owns the preparation path:
 - detail enrichment;
 - scoring;
 - tailoring eligibility;
-- material generation or suppression for eligible jobs.
+- material generation, or suppression, for eligible jobs.
 
-Internal stages such as `enrich`, `score`, `tailor`, and `cover` remain visible
-in job detail and diagnostics, but the user-facing preparation stage is
-Discover.
+Internal stages such as Enrich and Score, and material generation (the `tailor`
+and `cover` commands), stay visible in job detail and diagnostics, but the
+user-facing preparation stage is Discover.
 
 ## 4. Review Jobs
 
-The Jobs view supports filters, sorting, pagination, deep links, deleted/hidden
-views, fit-score ranges, stage state, source provenance, compensation evidence,
-and job detail drawers.
+The Jobs view supports filters, sorting, pagination, deep links, deleted and
+hidden views, fit-score ranges, stage state, source provenance, compensation
+evidence, and job detail drawers.
 
 ![JobHunter Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
 *The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
@@ -83,7 +93,7 @@ and job detail drawers.
 Use the job detail drawer to inspect:
 
 - score, confidence, blockers, gaps, and score policy metadata;
-- requirement-fit report when present;
+- the requirement-fit report when present;
 - audit history;
 - source and enrichment evidence;
 - generated artifacts;
@@ -97,48 +107,53 @@ starting apply automation.
 
 ## 5. Generate And Inspect Materials
 
-Eligible jobs receive tailored resumes and cover letters during Discover. You
-can also generate materials for a single job from the job detail drawer.
+Eligible jobs receive tailored resumes and cover letters during Discover. You can
+also generate materials for a single job from the job detail drawer.
 
-Generated material records are preserved as audit history. Re-generation does
-not destroy the accepted material already in use; replacement artifacts become
-active only after validation and approval.
+Generated material records are kept as audit history. Re-generation does not
+destroy the accepted material already in use; a replacement becomes active only
+after it validates and you approve it.
 
 ## 6. Review And Edit The Resume
 
-Apply Review loads the generated HTML/CSS resume into a Plate editor. The editor
-keeps the final PDF link, source pins, risk labels, JobHunter comments, line
-anchors, and draft state together.
+Apply Review opens the generated resume in an in-browser editor. The editor keeps
+the final PDF link, the source behind each line, risk flags, JobHunter's line
+comments, and your draft together.
 
 ![JobHunter Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
 *Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobHunter line comments, and approve or dry-run controls.*
 
 Typical review actions:
 
-- edit generated resume text or formatting;
+- edit the generated resume text or formatting;
 - reply to JobHunter line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;
 - approve only after the edited draft is saved, valid, and rendered.
 
-Failed validation remains audit history and does not hide the last accepted
+Failed validation stays as audit history and does not hide the last accepted
 artifact.
 
 ## 7. Dry-Run Apply Before Submission
 
-Apply automation can submit applications. Start with dry runs:
+Apply automation can submit real applications, so start with dry runs:
 
 ```bash
 uv --project workers/automation run jobhunter apply --dry-run --limit 1
 uv --project workers/automation run jobhunter apply --url https://example.com/job/123 --dry-run
 ```
 
+The first dry-runs Apply for one eligible job; the second dry-runs a specific job
+by URL. A dry run never submits — it shows what would happen without sending
+anything.
+
 Only approve real submission after inspecting the dry run, final materials,
-field mapping, blockers, and apply-run history.
+field mapping, blockers, and apply-run history. The full consent model is on the
+[Security](security.md) page.
 
 ## 8. Inspect Progress
 
-Useful CLI commands:
+Useful command-line checks:
 
 ```bash
 uv --project workers/automation run jobhunter status
@@ -146,7 +161,10 @@ uv --project workers/automation run jobhunter runs
 uv --project workers/automation run jobhunter runs --failed-only
 ```
 
-Useful UI views:
+These print your pipeline status, list all workflow runs, and list only failed
+runs, respectively.
+
+Useful web app views:
 
 - Dashboard for high-level counts and source health.
 - Jobs for triage and per-job actions.
@@ -156,4 +174,4 @@ Useful UI views:
 - Debug for event-level inspection.
 
 ![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
-*The Runs page lists workflow runs with status, mode, timing, and a link into the Temporal web UI.*
+*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
