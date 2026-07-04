@@ -1201,7 +1201,8 @@ agents are managed fleet resources.
 > stage commands through a `StageCommandDispatcher` port with an
 > `InProcessDispatcher` local adapter and a Temporal *hosted* adapter. That seam
 > no longer exists: **Temporal is the local orchestrator.** A pipeline run is a
-> `JobPipelineWorkflow` (deterministic id `run-{uuid}`); per-job preparation is a
+> `JobPipelineWorkflow` (starter-generated random id `run-{uuid4}`, no
+> overlap/dedup control); per-job preparation is a
 > `JobPreparationWorkflow` (`prep-{idempotency_key}`); each stage is a Temporal activity
 > with retry, timeout, heartbeat, and finalize semantics. For the concrete
 > execution model see `docs/architecture.md` and
@@ -1673,7 +1674,8 @@ A pipeline run **is a Temporal workflow**, not an in-process process manager.
 The earlier `PipelineRunManager` / `_StageTracker` design in `pipeline.py` has
 been deleted; there is no in-process pipeline runner.
 
-- **`JobPipelineWorkflow`** (deterministic id `run-{uuid}`) coordinates a run.
+- **`JobPipelineWorkflow`** (starter-generated random id `run-{uuid4}`, with
+  no overlap or dedup control) coordinates a run.
   Discovery is its own tenant-scoped `DiscoverWorkflow` (`discover-{tenantId}`),
   which plans source families, runs one activity per source family with real
   heartbeats, drains enrichment, then fans out per-job preparation as
