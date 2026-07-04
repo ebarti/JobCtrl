@@ -1,4 +1,4 @@
-# Normal Flows
+# Daily Workflow
 
 This is your daily loop with JobHunter: set up once, then repeat Discover →
 review → Apply. The web app is the main way you work; the command line stays
@@ -6,18 +6,31 @@ available for maintenance and diagnostics. For a screen-by-screen walkthrough of
 each page below, see the [Product Tour](screenshots.md).
 
 ```mermaid
-flowchart LR
-  Profile["Create profile"] --> Configure["Configure targets"]
-  Configure --> Discover["Discover jobs"]
-  Discover --> Review["Review jobs and scores"]
-  Review --> Materials["Generate materials"]
-  Materials --> ApplyReview["Edit and approve in Apply Review"]
-  ApplyReview --> DryRun["Run apply dry-run"]
-  DryRun --> Submit["Approve real submission when ready"]
+flowchart TD
+  subgraph Setup["One-time setup"]
+    Profile["Create your profile"] --> Configure["Configure discovery targets"]
+  end
+  subgraph Loop["The daily loop"]
+    Discover["Discover finds, scores, and\nprepares materials for jobs"]
+    Review["You review jobs and scores"]
+    ApplyReview["You edit and approve\nmaterials in Apply Review"]
+    DryRun["A dry run rehearses\nthe application"]
+    Submit["You approve the\nlive submission"]
+    Discover --> Review --> ApplyReview --> DryRun --> Submit
+    Submit -. "next batch" .-> Discover
+  end
+  Configure --> Discover
+
+  classDef you fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef auto fill:#d1fae5,stroke:#059669,color:#064e3b
+  class Profile,Configure,Review,ApplyReview,Submit you
+  class Discover,DryRun auto
 ```
 
-*Your daily loop. Steps 1–2 are one-time setup; steps 3–7 repeat each day. Under
-the hood, Discover runs Enrich, Score, and Materials for each eligible job.*
+*Blue steps are yours; green steps are JobHunter's. Setup happens once, the
+loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
+each eligible job — and the dry run is the recommended rehearsal, not an
+enforced prerequisite.*
 
 ## 1. Build The Candidate Profile
 
@@ -134,7 +147,7 @@ Typical review actions:
 Failed validation stays as audit history and does not hide the last accepted
 artifact.
 
-## 7. Dry-Run Apply Before Submission
+## 7. Rehearse With A Dry Run
 
 Apply automation can submit real applications, so start with dry runs:
 
@@ -148,7 +161,7 @@ by URL. A dry run never submits — it shows what would happen without sending
 anything.
 
 Only approve real submission after inspecting the dry run, final materials,
-field mapping, blockers, and apply-run history. The full consent model is on the
+field mapping, blockers, and apply-run history. The full approval model is on the
 [Security](security.md) page.
 
 ## 8. Inspect Progress

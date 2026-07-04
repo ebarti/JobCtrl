@@ -14,6 +14,9 @@ authorization, experience, education, skills, and the baseline resume that
 tailoring builds on. This is the single source of truth JobHunter scores and
 tailors against, so the more accurate it is, the better every later step works.
 
+**What to do here:** fill in everything you can and keep it truthful — every
+score and every generated resume builds on this page.
+
 ## Configure Discovery
 
 ![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
@@ -22,6 +25,9 @@ Next, tell JobHunter what you are looking for. On the Discovery page you set you
 target roles, locations and work models, a seniority floor, a minimum fit score,
 and which job boards and sources to use. These settings drive every Discover run,
 so they decide which jobs even show up.
+
+**What to do here:** set target roles, locations, and a seniority floor, and
+pick your boards. Tight targets beat broad ones.
 
 ## Run The Pipeline
 
@@ -32,6 +38,9 @@ choose how far it reaches: a result limit, how many workers run in parallel, and
 a dry-run toggle. Discover does the heavy lifting — it finds jobs, then enriches,
 scores, and prepares tailored materials for the ones worth pursuing.
 
+**What to do here:** start a Discover run; keep the limit small on your first
+runs so you can judge the results before scaling up.
+
 ## The Dashboard
 
 ![JobHunter dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
@@ -39,6 +48,9 @@ scores, and prepares tailored materials for the ones worth pursuing.
 The dashboard is your home base. It summarizes pipeline progress, how many jobs
 sit at each stage, the health of your job sources, and your most recent apply
 runs. Check here first to see what happened while a run was working.
+
+**What to check here:** whether your sources are healthy and where jobs are
+piling up between stages.
 
 ## The Jobs Table
 
@@ -49,6 +61,9 @@ filter, sort, and triage in bulk — hiding jobs you do not want and focusing on
 the strongest matches. Compensation and company columns help you compare at a
 glance.
 
+**What to do here:** sort by fit score, hide what you do not want, and open
+anything above your bar.
+
 ## Job Detail
 
 ![JobHunter job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
@@ -57,6 +72,9 @@ Click a job to open its detail drawer — the audit view for a single posting. I
 shows the fit score and why it was given, which requirements you match or fall
 short on, matched and transferable skills, keywords, and compensation evidence.
 This is where you decide whether a job is worth applying to.
+
+**What to decide here:** whether the score's evidence convinces you this job
+deserves materials and an application.
 
 ## Apply Review
 
@@ -68,6 +86,9 @@ posting, alongside JobHunter's own line comments. You can edit the resume, reply
 to comments, and — only after saving and validating — approve a dry run or a real
 submission.
 
+**What to do here:** edit until the resume reads right and stays truthful,
+rehearse with a dry run, and approve the submission when you are satisfied.
+
 ## Runs History
 
 ![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
@@ -76,6 +97,9 @@ The Runs page is the history of every workflow run, with status, mode, timing,
 and a link into the web interface of Temporal, the workflow engine, for deep
 debugging. Come here to confirm a run finished, or to investigate one that
 failed.
+
+**What to check here:** that runs finish, and which one to open in Temporal
+when something fails.
 
 ::: info Generating these screenshots
 Screenshots are produced from synthetic data only and must never include a real

@@ -24,7 +24,7 @@
 - [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
   generated artifacts, and open-source sharing guidance.
 - [`user/security.md`](user/security.md): security model, what leaves the
-  machine, consent/control gates, credential storage, and the apply-agent
+  machine, approval/control gates, credential storage, and the apply-agent
   threat model.
 - [`user/screenshots.md`](user/screenshots.md): public screenshot generation
   command and covered UI surfaces.

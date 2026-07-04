@@ -45,7 +45,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "Getting Started", link: "/user/getting-started" },
       { text: "Product Tour", link: "/user/screenshots" },
-      { text: "Normal Flows", link: "/user/normal-flows" },
+      { text: "Daily Workflow", link: "/user/normal-flows" },
       { text: "Configuration", link: "/user/configuration" },
       { text: "Data & Safety", link: "/user/data-and-safety" },
       { text: "Security", link: "/user/security" },
@@ -53,7 +53,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
   },
   {
     text: "Developer Guide",
-    collapsed: false,
+    collapsed: true,
     items: [
       { text: "Overview", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
@@ -123,10 +123,12 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
   },
   {
     text: "API",
+    collapsed: true,
     items: [{ text: "Local TypeScript API", link: "/local-ts-api" }],
   },
   {
     text: "Reference",
+    collapsed: true,
     items: [
       { text: "Requirements", link: "/requirements" },
       { text: "Decisions (ADRs)", link: "/decisions" },
@@ -210,6 +212,10 @@ export default withMermaid(
       search: { provider: "local" },
       outline: { level: [2, 3] },
     },
+    // Diagram styling lives in the theme layer: docs/.vitepress/theme
+    // registers its own Mermaid renderer with curated light/dark palettes
+    // (mermaid-theme.ts). This block only keeps the plugin's markdown
+    // transform + dep pre-bundling active.
     mermaid: {},
   }),
 );

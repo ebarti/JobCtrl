@@ -1,8 +1,10 @@
 # Getting Started
 
-JobHunter runs entirely on your own computer. This guide takes you from an empty
-machine to the app open in your browser. It is local-first: your data stays on
-your machine unless you explicitly configure an external provider.
+JobHunter runs entirely on your own computer. This guide takes you from an
+empty machine to the app open in your browser. Today that means **installing
+from source** — there is no packaged installer yet, so setup is
+developer-shaped even though daily use is not. It is local-first: your data
+stays on your machine unless you explicitly configure an external provider.
 
 ::: tip Want to see the product first?
 The [Product Tour](screenshots.md) walks through every screen with annotated
@@ -172,4 +174,4 @@ estimated LLM spend against your budget.
 
 If the app shows the worker as missing or stale, check `pnpm dev:status` and the
 worker logs before starting any pipeline stage. When you are ready to run the
-pipeline, [Normal Flows](normal-flows.md) walks through the daily loop.
+pipeline, [Daily Workflow](normal-flows.md) walks through the daily loop.
