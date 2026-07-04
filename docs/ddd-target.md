@@ -18,10 +18,22 @@ Adapters). It is the authoritative reference for:
 Every modeling choice includes rationale so a senior engineer joining the team
 can re-derive the decision independently.
 
+> **Status — realised, not aspirational.** The DDD + hexagonal domain model in
+> this document is implemented in the codebase; the migration that landed it is
+> recorded in `docs/plans/implemented/2026-05-06-ddd-migration.md`. Read this as
+> a description of the **current** architecture with named hosted seams, not a
+> future target. One seam has since crossed from "hosted-future" to "local-now":
+> **Temporal is the local orchestrator today** — workflows and activities run
+> against a local `temporal server start-dev`, not a cloud-only engine (see
+> `docs/architecture.md` and `docs/job-pipeline-architecture.md`). The remaining
+> hosted seams named in Section 9 (Postgres, S3, SQS FIFO, Auth0/Cognito,
+> Browserbase, Secrets Manager) are still named-not-built.
+
 **Cloud deployment is a hard requirement.** Local-first mode is a validation
 gate, not the end state. Every decision in this document is designed
-to ship to a hosted multi-tenant cloud deployment. Section 9 is not
-"compatibility" — it is the target deployment model.
+to ship to a hosted multi-tenant cloud deployment. Section 9 remains the target
+for those not-yet-built seams; it is no longer accurate for Temporal, which is
+already the local execution engine.
 
 ### Non-Goals
 
@@ -113,6 +125,8 @@ graph TB
     subgraph "Supporting Domain"
         CP["Candidate Profile"]
         PO["Pipeline Orchestration"]
+        PREP["Preparation (per-job)"]
+        CMP["Compensation"]
     end
 
     subgraph "Generic Subdomain"
@@ -143,6 +157,9 @@ graph TB
     PO -->|"commands ▸"| SC
     PO -->|"commands ▸"| MG
     PO -->|"commands ▸"| AA
+
+    PO -->|"starts JobPreparationWorkflow ▸"| PREP
+    CMP -.->|"CompensationFactsUpdated"| OPS
 
     OPS -.->|"Projection queries"| JD
     OPS -.->|"Projection queries"| SC
@@ -506,6 +523,49 @@ different optimization concerns (denormalized views, pagination, text search,
 aggregate counts) than the write side (transactional consistency, invariant
 enforcement). Operations consumes canonical stage states and projection rows
 directly.
+
+---
+
+### 3.9 Compensation (Supporting Capability)
+
+**Purpose:** Attach compensation evidence from licensed or configured sources
+(Levels.fyi, Glassdoor) to jobs and employers, and expose it to Scoring, the
+read model, and Apply Review.
+
+**Actual shape:** Compensation is a lightweight supporting capability, **not a
+full aggregate-bearing context**. It has no aggregate root or repository of its
+own. It contributes:
+
+- a `refresh_compensation` Temporal workflow with a shared core under
+  `infrastructure/compensation/`;
+- the `CompensationFactsUpdated` domain event (emitted inline and folded into
+  the read model by Operations);
+- source adapters gated by access-mode configuration (see
+  `docs/user/configuration.md`, "Compensation Sources").
+
+**What it does NOT own:** Job identity, scoring, or materials. It supplies
+evidence that other contexts consume.
+
+---
+
+### 3.10 Preparation (Per-Job Orchestration)
+
+**Purpose:** Drive a single discovered job through its per-job preparation
+sequence — scoring, tailoring, cover letter, and PDF rendering (with artifact
+suppression handled at fan-out time) — as one durable unit of work.
+
+**Actual shape:** Preparation is a per-job orchestration capability layered on
+Pipeline Orchestration, **not a full aggregate-bearing context**. It exposes a
+driven port (`domain/ports/preparation.py`) and the `JobPreparationWorkflow`
+(deterministic id `prep-{idempotency_key}`, keyed by tenant, job, work kind,
+policy target version, and source event) that replaced the earlier in-process
+preparation queue (see the 2026-07-03 decision in `docs/decisions.md`). It emits
+`PreparationWorkItem*` lifecycle events. It has no aggregate root of its own;
+per-job stage truth remains in `JobPipelineState`.
+
+**What it does NOT own:** Stage-state invariants (owned by Pipeline
+Orchestration) or the actual work of each stage (owned by the processing
+contexts).
 
 ---
 
@@ -893,9 +953,16 @@ StageState =
   | Blocked   { blockedBy: Stage[], errorCode, errorMessage }
   | Skipped   { reason: string }
   | Exhausted { attemptCount, maxAttempts, errorCode, errorMessage, nextAction? }
+  | NeedsVerification { reason: string, nextAction? }
   | Stale     { reason: string }
   | Canceled  { canceledAt, reason? }
 ```
+
+`NeedsVerification` is where an ambiguous live apply run parks after submit
+intent (at-most-once apply): the run cannot be safely auto-requeued, so it waits
+for human resolution rather than risking a duplicate employer submission (see
+the 2026-07-03 "At-Most-Once Apply" decision in `docs/decisions.md`). The domain
+model carries eleven stage-state variants in total.
 
 - `RetryPolicy { maxAttempts: int, backoffMs?: int }`
 
@@ -933,17 +1000,28 @@ Orchestration hasn't acknowledged.
 This context has no aggregates of its own. It maintains **projections** (read
 models) built from domain events emitted by other contexts.
 
-**Projections:**
-- `DashboardProjection` — aggregate counts by stage, state, source, score distribution.
-- `JobListProjection` — denormalized job rows with current stage state, score, artifact status.
-- `JobDetailProjection` — full job view with all stage states, events, and artifacts.
-- `ArtifactListProjection` — all artifacts across jobs with provenance.
-- `ApplyRunProjection` — apply run telemetry with event timelines.
+**Projections:** seven denormalised read-model tables
+(`PROJECTION_TABLES` in
+`infrastructure/projections/sqlite_projection_store.py`):
+
+- `job_list_projections` — denormalized job rows with current stage state, score, artifact status.
+- `dashboard_projections` — aggregate counts by stage, state, source, score distribution.
+- `job_detail_projections` — full job view with all stage states, events, and artifacts.
+- `artifact_list_projections` — all artifacts across jobs with provenance.
+- `apply_run_projections` — apply run telemetry with event timelines, keyed by the Temporal workflow run id.
+- `workflow_run_projections` — unified list of all Temporal workflow runs and their terminal status. This projection is **Python-sole-writer** (folded from the `Workflow*` events); the TS API mirrors it read-only.
+- `source_quality_stats` — per-source discovery health (success/failure attribution, quarantine, circuit-breaker signals).
+
+The retired `discovery_run_projections` write-only table no longer owns any
+read-model behaviour; source health is projected through `source_quality_stats`.
 
 **Domain Services:**
 - `ProjectionBuilder` — subscribes to domain events and updates projections.
   In the local-first architecture, this is synchronous (direct DB writes after
-  domain operations). In the hosted future, this becomes an async event consumer.
+  domain operations); both the Python worker and the TS API
+  (`apps/api/src/projections.ts`) maintain projections idempotently against the
+  shared `event_watermarks.operations_projections` watermark. In the hosted
+  future, this becomes an async event consumer.
 
 ---
 
@@ -953,6 +1031,19 @@ models) built from domain events emitted by other contexts.
 
 - **Driving ports** (inbound): named as use cases — `ScoreJobUseCase`, `TailorResumeUseCase`.
 - **Driven ports** (outbound): named as capabilities — `JobRepository`, `LlmPort`, `BrowserPort`.
+
+> **Realisation status.** The driving-port use-case names below are the
+> conceptual command surface; the implemented application layer under
+> `application/` currently exposes about eighteen use cases, and some names
+> differ from the idealised ones listed here. A few driven ports in the tables
+> below are documented as conceptual seams and are **not realised as distinct
+> named types** in the current code: `ProfileSnapshotPort` (the code passes
+> `ProfileSnapshot` value objects; see `domain/profile/snapshot.py`),
+> `ArtifactStoragePort` (artifacts are written directly to the local filesystem
+> and registered in the read model), `EventSubscriber` (the in-process
+> `InProcessEventBus` is subscribed directly), and `ReadModelStore` (the
+> projection store in `infrastructure/projections/` is the concrete read side).
+> They are kept here because each names a real hosted-future seam.
 
 ### 5.1 Job Discovery Context
 
@@ -991,7 +1082,7 @@ from SQLite to Postgres without changing Discovery logic.
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `DetailPageFetcherPort` | `PlaywrightBrowserAdapter` (local Playwright instance) | `BrowserbaseAdapter` (**Browserbase** managed browser fleet; sessions allocated per-tenant with concurrency cap; fallback: headless Chromium in **Kubernetes pods** with Playwright) |
-| `LlmPort` | `GeminiAdapter`, `OpenAiAdapter`, `LocalLlmAdapter` | `CloudLlmGatewayAdapter` (internal gateway service fronting Anthropic Claude / Google Gemini / OpenAI APIs with per-tenant token metering, rate limiting, and cost attribution via **Billing** context) |
+| `LlmPort` | A single `LlmAdapter` (`infrastructure/llm/llm_client.py`) that selects the provider from the model-spec prefix (`gemini:` / `openai:` / `local:`) and wraps the legacy `LLMClient` — there is no per-provider adapter class | `CloudLlmGatewayAdapter` (internal gateway service fronting Anthropic Claude / Google Gemini / OpenAI APIs with per-tenant token metering, rate limiting, and cost attribution via **Billing** context) |
 | `EnrichmentRepository` | `SqliteEnrichmentRepository` | `PostgresEnrichmentRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** Enrichment's Playwright dependency is the primary
@@ -1031,7 +1122,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `LlmPort` | `GeminiAdapter`, `OpenAiAdapter`, `LocalLlmAdapter` | `CloudLlmGatewayAdapter` (see Enrichment; shared gateway service) |
+| `LlmPort` | A single `LlmAdapter`, prefix-dispatched by model spec (see Enrichment) | `CloudLlmGatewayAdapter` (see Enrichment; shared gateway service) |
 | `ScoreRepository` | `SqliteScoreRepository` | `PostgresScoreRepository` (RDS Postgres, tenant-scoped) |
 | `ProfileSnapshotPort` | `LocalProfileSnapshotAdapter` (reads the SQLite-backed Profile repository) | `ProfileServiceGrpcClient` (internal **gRPC** call to Profile service; tenant context propagated via gRPC metadata) |
 
@@ -1044,6 +1135,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | **Driving** | `RenderPdfUseCase` | Render documents to PDF |
 | **Driving** | `TailorBatchUseCase` | Batch tailor + cover + PDF for multiple jobs |
 | **Driven** | `LlmPort` | LLM for tailoring and cover letter generation |
+| **Driven** | `AnalysisDraftPort` / `AnalysisSynthesizerPort` | Employer/company analysis via the 3-SDK agent ensemble (second LLM path) |
 | **Driven** | `PdfRendererPort` | Render LaTeX or HTML to PDF |
 | **Driven** | `ArtifactStoragePort` | Write and register generated files |
 | **Driven** | `MaterialsRepository` | Persist MaterialsSet aggregates |
@@ -1052,7 +1144,8 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `LlmPort` | `GeminiAdapter`, `OpenAiAdapter` | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
+| `LlmPort` | A single `LlmAdapter`, prefix-dispatched by model spec (see Enrichment) | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
+| `AnalysisDraftPort` / `AnalysisSynthesizerPort` | The 3-SDK agent ensemble (`infrastructure/analysis/`): `ClaudeAnalysisAdapter`, `CodexAnalysisAdapter`, and `AntigravityAnalysisAdapter` draft employer/company analysis in parallel; `ClaudeAnalysisSynthesizer` merges them via `run_ensemble`. This is a **second LLM path**, distinct from the prefix-dispatched `LlmPort` above | Same ensemble fronted by the cloud LLM gateway, with per-tenant token metering |
 | `PdfRendererPort` | `HtmlResumePdfAdapter` (default structured resume HTML/CSS + Playwright renderer with layout boxes), `LatexPdfAdapter` (`pdflatex` compatibility renderer), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering; keep LaTeX/Tectonic only for compatibility if required. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
 | `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobhunter/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobhunter-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |
@@ -1098,13 +1191,21 @@ agents are managed fleet resources.
 | **Driving** | `MarkAppliedUseCase` | Manually mark a job as applied (no apply run). Transitions apply stage to `Succeeded`. |
 | **Driving** | `SkipJobUseCase` | Skip a job at relevant stages (e.g., below score threshold, not interested). Transitions specified stages to `Skipped`. |
 | **Driven** | `PipelineStateRepository` | Persist JobPipelineState aggregates |
-| **Driven** | `StageCommandDispatcher` | Dispatch commands to processing contexts |
 | **Driven** | `EventPublisher` | Publish domain events |
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `PipelineStateRepository` | `SqlitePipelineStateRepository` | `PostgresPipelineStateRepository` (RDS Postgres, tenant-scoped) |
-| `StageCommandDispatcher` | `InProcessDispatcher` (direct function calls) | `TemporalWorkflowAdapter` (**Temporal** durable workflow engine; each pipeline run is a Temporal workflow, each stage dispatch is a Temporal activity; provides retry, timeout, visibility, and saga compensation out of the box; tenant context propagated via workflow metadata) |
+
+> **Stage dispatch is Temporal, not an in-process seam.** Earlier drafts routed
+> stage commands through a `StageCommandDispatcher` port with an
+> `InProcessDispatcher` local adapter and a Temporal *hosted* adapter. That seam
+> no longer exists: **Temporal is the local orchestrator.** A pipeline run is a
+> `JobPipelineWorkflow` (deterministic id `run-{uuid}`); per-job preparation is a
+> `JobPreparationWorkflow` (`prep-{idempotency_key}`); each stage is a Temporal activity
+> with retry, timeout, heartbeat, and finalize semantics. For the concrete
+> execution model see `docs/architecture.md` and
+> `docs/job-pipeline-architecture.md`.
 
 ### 5.8 Operations / Read-Side Context
 
@@ -1256,7 +1357,7 @@ The `payload_json` field contains the event-specific data (typed per event).
 **Transport: swappable — subprocess locally, HTTP/gRPC in cloud.**
 
 The application protocol (message shape) is **transport-independent**. The
-transport is an adapter concern behind the `StageCommandDispatcher` port.
+transport is an adapter concern behind the JSON-RPC transport adapter.
 
 **Why JSON-RPC 2.0 as the application protocol:**
 
@@ -1311,19 +1412,21 @@ transport is an adapter concern behind the `StageCommandDispatcher` port.
 }
 ```
 
-**Three dispatch modes** (matching current behavior, formalized):
+**Three dispatch modes** (`sync`, `workflow`, `streaming`):
 
 | Mode | When | JSON-RPC pattern | Examples |
 |---|---|---|---|
-| **Synchronous** | Result needed immediately, < 30s | Standard request → response | `profile_import`, `score` (single job) |
-| **Fire-and-forget with handle** | Long-running, > 30s | Request → `{ "runId": "..." }` immediately. Results arrive as domain events in `job_events`. | `apply`, `retry-stage`, `discover` |
-| **Streaming with progress** | Batch ops with incremental status | Request → newline-delimited JSON-RPC notifications on stdout, final response on completion | `run --stream` (pipeline), `score --batch` |
+| **`sync`** | Result needed immediately, < 30s | Standard request → response | `analyze_job` (inline employer analysis), `cancel_run` |
+| **`workflow`** | Long-running work | Request → `{ runId, workflowId, firstExecutionRunId }` immediately. The Python handler builds a `WorkflowStartSpec` and starts a Temporal workflow; results arrive as domain events in `job_events`. | `apply`, `discover`, `profile_import`, `refresh_compensation`, per-stage commands |
+| **`streaming`** | Batch ops with incremental status | Request → newline-delimited JSON-RPC notifications, final response on completion | reserved; no registered method currently uses it |
 
-For fire-and-forget mode, the `SubprocessJsonRpcAdapter` spawns the process
-detached (matching current `defaultActionDispatcher` behavior). The caller
-receives a `runId` and polls via the Operations read model or subscribes to
-domain events. In cloud mode, the `TemporalActivityAdapter` provides the same
-pattern natively — the Temporal workflow ID serves as the `runId`.
+The earlier `fire_and_forget` mode was deleted (see the JSON-RPC decision in
+`docs/decisions.md`); `workflow` dispatch replaced it. The Python `JsonRpcServer`
+starts the Temporal workflow through an injected `WorkflowStarter` and returns
+the workflow handle; cooperative cancellation is a `cancel_run` method that
+signals the in-flight workflow. The TS API does not enqueue Temporal work
+directly — Temporal stays behind the Python worker. (The CLI `--stream` flag is
+now a no-op: Temporal owns scheduling.)
 
 **Key design constraint:** The `params` object always carries `tenantId`. In
 local mode, the subprocess adapter injects `tenantId: "local"`. In cloud mode,
@@ -1339,13 +1442,16 @@ handle through JSON-RPC. The TS API does not enqueue Temporal work directly.
 **Evolution trigger:** multi-process deployment requiring durable workflow
 orchestration (see Section 9.4).
 
-**Shared contract:** Both sides import the event type definitions from a shared
-schema. Today this is `packages/contracts` (Zod schemas) and mirrored Python
-dataclasses. The target adds a `packages/events` package that defines all
-domain event schemas in a language-neutral format (**TypeSpec** as the IDL,
-generating JSON Schema, TypeScript types, and Python dataclasses). TypeSpec is
-chosen over raw JSON Schema because it supports discriminated unions, which
-map directly to the domain event and StageState sum types.
+**Shared contract:** Both sides import the same domain event definitions. The
+authority is a **plain TypeScript discriminated union** in
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, currently 68
+event types enumerated in `DOMAIN_EVENT_TYPES`, guarded by a compile-time
+exhaustiveness check), mirrored byte-for-byte by the Python registry in
+`workers/automation/src/jobhunter/domain/events/__init__.py`. This is **not**
+Zod and does **not** live in `packages/contracts`. At the SSE boundary the
+frontend validates each frame by set-membership on the known event types plus
+`JSON.parse` (`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by
+schema parsing. Keeping the two registries in lockstep is a release check.
 
 ### 6.6 Operations Read-Model Projection Strategy
 
@@ -1403,14 +1509,15 @@ commands are dispatched to the Python worker via JSON-RPC.
 | `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TS API** | Tombstone write. No Python needed. |
 | `restoreJob` | `RestoreJobUseCase` (Discovery) | **TS API** | Tombstone removal. |
 | `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | Shared schema validation and normalized SQLite write. |
-| pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands via `StageCommandDispatcher` | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
+| pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands that start Temporal workflows | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
 
 **Trade-off:** The TS API hosting simple commands means the `StageStateMachine`
 logic exists in both TypeScript (via `packages/domain-types`) and Python. This
 is acceptable because: (a) the state machine is a small, pure function with
-well-defined transitions; (b) it is generated from the shared TypeSpec IDL, so
-both implementations are derived from one source; (c) the alternative —
+well-defined transitions; (b) both implementations derive from the same
+hand-authored `packages/domain-types` definitions (mirrored in Python and kept
+in lockstep by tests), not from divergent hand-copies; (c) the alternative —
 routing every button click through a Python subprocess — adds unacceptable
 latency for simple UI operations.
 
@@ -1560,36 +1667,33 @@ stateDiagram-v2
   `in_progress` apply runs and transition them to `failed` with
   `error_code: ORPHANED`.
 
-### 8.4 Saga / Process Manager: Multi-Stage Pipeline Run
+### 8.4 Multi-Stage Pipeline Run — Temporal Workflow
 
-A pipeline run (e.g., `jobhunter run --stream`) is a process manager that
-coordinates multiple stages:
+A pipeline run **is a Temporal workflow**, not an in-process process manager.
+The earlier `PipelineRunManager` / `_StageTracker` design in `pipeline.py` has
+been deleted; there is no in-process pipeline runner.
 
-```
-PipelineRunManager:
-  for each stage in requested_stages:
-    wait for upstream stages to complete
-    for each eligible job:
-      dispatch StageCommand to processing context
-      on StageCompleted: update JobPipelineState, check next stage
-      on StageFailed: update JobPipelineState, check retry eligibility
-      on StageExhausted: update JobPipelineState, mark exhausted
-```
+- **`JobPipelineWorkflow`** (deterministic id `run-{uuid}`) coordinates a run.
+  Discovery is its own tenant-scoped `DiscoverWorkflow` (`discover-{tenantId}`),
+  which plans source families, runs one activity per source family with real
+  heartbeats, drains enrichment, then fans out per-job preparation as
+  independent root workflows.
+- **`JobPreparationWorkflow`** (`prep-{idempotency_key}`) is the per-job root
+  workflow that sequences scoring → tailoring → cover letter → PDF rendering
+  for a single job. It is started with `USE_EXISTING` rather than as a child
+  workflow, so finishing discovery cannot terminate in-flight preparation.
+- **Each stage is a Temporal activity** with its own retry policy, timeout, and
+  heartbeat; `_run_stage_observed` remains the per-activity event/metric/span
+  boundary. Non-retryable failures (e.g. `budget_exceeded`) fail fast.
+- **Terminal state is durable.** Every workflow emits a `WorkflowStarted` marker
+  and records exactly one terminal `Workflow*` event through a finalize activity
+  (`infrastructure/temporal/finalize.py`); a describe-based reconciler in the
+  worker heartbeat loop backstops finalize for cancelled or crashed executions.
+- **Saga compensation** (e.g. browser-worker cleanup after apply failure) uses
+  Temporal's activity/compensation mechanics rather than a hand-rolled manager.
 
-In streaming mode, stages run concurrently. The process manager uses the
-`_StageTracker` pattern (already in `pipeline.py`) to coordinate: each stage
-polls for pending work, processes a batch, and signals completion when upstream
-is done and no work remains.
-
-**Cloud mode:** The `PipelineRunManager` is implemented as a **Temporal
-workflow**. Each stage dispatch is a Temporal activity with configurable
-retries, timeouts, and heartbeats. Saga compensation (e.g., cleaning up
-browser workers after apply failure) uses Temporal's built-in compensation
-mechanism. The `_StageTracker` pattern maps to Temporal's workflow state,
-which is durable across process restarts. Streaming mode maps to parallel
-Temporal activities with a `ContinueAsNew` pattern for long-running pipelines.
-**Evolution trigger:** multi-machine worker deployment or need for durable
-pipeline recovery across process restarts (see Section 9.4).
+For the full execution model, sequence diagrams, and failure behaviour see
+`docs/architecture.md` and `docs/job-pipeline-architecture.md`.
 
 ### 8.5 Stage State Machine
 
@@ -1605,6 +1709,8 @@ stateDiagram-v2
     Running --> Succeeded: processing completed successfully
     Running --> Failed: processing error
     Running --> Canceled: user cancels
+    Running --> NeedsVerification: apply ambiguous after submit intent
+    NeedsVerification --> Pending: human resolves / retry
     Failed --> Pending: retry requested
     Failed --> Exhausted: max attempts reached
     Blocked --> Pending: upstream dependency resolved
@@ -1615,7 +1721,7 @@ stateDiagram-v2
 ```
 
 **Terminal states:** `Succeeded`, `Skipped`, `Exhausted` (until manually reset),
-`Canceled` (until retried).
+`Canceled` (until retried), `NeedsVerification` (until a human resolves it).
 
 **Transition rules enforced by `StageStateMachine`:**
 
@@ -1630,11 +1736,13 @@ stateDiagram-v2
 | `Running` | `Succeeded` | Processing completes | Result is valid |
 | `Running` | `Failed` | Processing errors | Error is captured |
 | `Running` | `Canceled` | User cancels | For apply runs: kill Claude Code subprocess + Chrome cleanup. For other stages: set cancellation flag checked by stage runner between LLM calls. |
+| `Running` | `NeedsVerification` | Apply ambiguous after submit intent | Live apply run cannot be safely auto-requeued; parks for human resolution (at-most-once apply) |
 | `Failed` | `Pending` | Retry requested | `attemptCount < maxAttempts` or `resetAttempts` |
 | `Failed` | `Exhausted` | Max attempts reached | `attemptCount >= maxAttempts` |
 | `Blocked` | `Pending` | Upstream resolved | All upstream stages are `Succeeded` or `Skipped` |
 | `Exhausted` | `Pending` | Manual reset | `resetAttempts = true` |
 | `Canceled` | `Pending` | Retry requested | User action via `RetryStageUseCase` |
+| `NeedsVerification` | `Pending` | Human resolves | User confirms the real outcome or requeues via `RetryStageUseCase` |
 | `Succeeded` | `Stale` | Upstream data changed | Upstream stage re-ran (e.g., re-enrichment triggers stale score). Detected when Orchestration processes a `JobEnriched` event for a job that already has `score` in `Succeeded`. |
 | `Stale` | `Pending` | Re-process requested | User or Orchestration initiates re-processing |
 
@@ -1659,6 +1767,15 @@ Cloud deployment is a **hard requirement**, not a future aspiration. The
 local-first phase validates the product; this section defines the target
 deployment model that ships to production.
 
+> **What already landed locally.** Temporal is no longer a hosted-future item —
+> it is the local orchestration engine today (`temporal server start-dev`). The
+> genuinely-unbuilt hosted seams that remain are: the multi-tenant `TenantId`
+> source (constant → JWT), remote managed providers (Postgres/RDS, S3, SQS FIFO,
+> Browserbase, the LLM gateway, Secrets Manager), the hosted read-model store,
+> and the platform contexts (Identity, Billing, Audit, Secrets). Read the
+> Temporal rows below as *scale-out of an existing engine*, not *introduction of
+> a new one*.
+
 ### What Changes
 
 | Concern | Local-First (validation) | Cloud (target) | Concrete Technology |
@@ -1668,7 +1785,7 @@ deployment model that ships to production.
 | **Event bus** | In-process synchronous dispatcher | Durable message queue with transactional outbox | **AWS SQS FIFO** queues (one per bounded context). Transactional outbox in Postgres (same DB as aggregate). Outbox poller runs as a sidecar process. Message group ID = `tenantId` for per-tenant ordering. Dead-letter queue for failed events. |
 | **Browser automation** | Local Chrome on CDP ports | Managed browser fleet | **Browserbase** managed sessions (primary). Fallback: headless Chromium in **Kubernetes pods** with Playwright, one pod per apply run, auto-scaled. Per-tenant concurrency cap enforced by Billing entitlements. |
 | **LLM calls** | Direct API calls (Gemini, OpenAI) | Managed LLM gateway | Internal **LLM Gateway Service** (FastAPI). Fronts Anthropic Claude API, Google Gemini, OpenAI. Per-tenant token metering, rate limiting, cost attribution. Gateway publishes `LlmUsageRecorded` events to Billing context. |
-| **Worker execution** | Subprocess (`uv run jobhunter ...`) | Durable workflow engine | **Temporal** (self-hosted on Kubernetes). Each pipeline run = Temporal workflow. Each stage = Temporal activity. Temporal provides retry, timeout, visibility, and saga compensation. Worker fleet auto-scales via **KEDA** based on queue depth. |
+| **Worker execution** | Local Temporal (`temporal server start-dev`) + a single local worker | Same Temporal programming model, scaled out | **Temporal already runs locally**: each pipeline run is a workflow, each stage an activity, with retry/timeout/visibility/finalize. The cloud change is the *deployment*, not the engine — a hosted Temporal cluster (self-hosted on Kubernetes or Temporal Cloud) with a worker fleet auto-scaled via **KEDA**. |
 | **Identity & auth** | Single user, no auth | Multi-tenant JWT/OAuth | **Auth0** (or AWS Cognito) for authentication. JWT tokens with `tenant_id` and `user_id` claims. API gateway validates JWT and injects `TenantContext` into every request. |
 | **Secrets** | macOS Keychain / `.env` | Encrypted vault | **AWS Secrets Manager**. Credentials for LLM APIs, job board accounts, and ATS login stored per-tenant. `SecretPort` adapter fetches at runtime; secrets never persisted in application state. |
 | **API binding** | Loopback (127.0.0.1) | Public endpoint with TLS + auth | **AWS ALB** → **Kubernetes Ingress** → Fastify API pods. TLS termination at ALB. Rate limiting via **AWS WAF**. |
@@ -1793,10 +1910,11 @@ outside Secrets Manager.
    The `BrowserPort` interface is unchanged. Hosted adapter adds: session pool
    management, per-tenant concurrency limits, and automatic cleanup on timeout.
 
-5. **Worker fleet migration:** Swap `InProcessDispatcher` for
-   `TemporalWorkflowAdapter`. The `StageCommandDispatcher` port interface is
-   unchanged. Temporal adds: durable retry, timeout, visibility dashboards, and
-   saga compensation without changing the domain's command/event contracts.
+5. **Worker fleet migration:** Temporal already runs locally, so this is a
+   scale-out, not a swap. Move from a single local worker against
+   `temporal server start-dev` to an auto-scaled worker fleet against a hosted
+   Temporal cluster. The workflow and activity definitions are unchanged; there
+   is no `InProcessDispatcher` to replace.
 
 6. **Multi-tenancy:** `TenantId` is already a first-class domain concept in
    every aggregate identity, every domain event, and every port call (see
@@ -1820,7 +1938,7 @@ cloud" (circular), but measurable conditions.
 |---|---|---|---|
 | SQLite with WAL mode | AWS RDS Postgres 16 + pgbouncer | Concurrent active users > 1 **OR** DB size > 10 GB **OR** multi-process writes required | SQLite's single-writer lock is the hard limit. 10 GB is a practical performance ceiling for WAL mode with full-text queries. |
 | In-process synchronous event bus | Transactional outbox + SQS FIFO | Multi-process deployment (> 1 API instance **OR** > 1 worker instance) | In-process dispatch cannot cross process boundaries. The outbox pattern is the minimum viable distributed event bus. |
-| Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC / Temporal activities | Worker fleet > 1 machine **OR** apply queue depth consistently > 10 pending jobs **OR** pipeline run > 30 min (exceeds saga recovery window of subprocess) | Subprocess can't survive host restarts. Temporal provides durable retry. |
+| Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC to a Python worker service | TS API and worker deployed as separate services **OR** worker fleet > 1 machine | Only the JSON-RPC *transport* changes (subprocess stdio → HTTP POST); the message shapes are identical. Durable workflow execution is already provided locally by Temporal. |
 | Local Chrome on CDP ports | Browserbase managed sessions | **Any** cloud deployment | Chrome requires elevated container privileges or `--no-sandbox` (security risk). Browserbase eliminates this entirely. This is a day-1 cloud blocker, not a gradual migration. |
 | SQLite Candidate Profile tables | Postgres `profiles` + child profile tables | Multi-tenant deployment **OR** concurrent profile editors | Local SQLite has a single-writer limit; hosted profile editing needs tenant-scoped concurrency control. |
 | `LocalFilesystemAdapter` (tailored resumes, PDFs) | S3 with tenant-prefixed keys | Multi-node deployment (no shared filesystem) **OR** artifact size > 1 GB per tenant | Local filesystem doesn't span nodes. |
@@ -1901,11 +2019,11 @@ single-user system.
    that replays unprocessed events. Keep the event store (`job_events`) as the
    source of truth for rebuilding projections.
 
-5. **Two-language domain model drift.** TypeScript contracts and Python domain
-   types can drift if not kept in sync. **Mitigation:** The shared event schema
-   package (`packages/events`) with code generation for both languages. CI
-   validates that Python dataclasses and TypeScript types are structurally
-   compatible.
+5. **Two-language domain model drift.** TypeScript and Python domain types can
+   drift if not kept in sync. **Mitigation:** `packages/domain-types` is the
+   shared authority — hand-authored TypeScript mirrored byte-for-byte by the
+   Python registry — and tests plus a release check enforce that the two stay in
+   lockstep (the 68-entry domain event registry is the canonical example).
 
 6. **Over-engineering risk.** DDD + hexagonal architecture adds indirection. For
    a local-first single-user product, this indirection must pay for itself in
@@ -2051,7 +2169,7 @@ single-user system.
 | **SearchStrategy** | Discovery | The extraction method used to find jobs: `jobspy`, `workday_api`, `smart_extract`, `manual`. |
 | **Source** | Discovery | The origin board or career site where a job was found (e.g., LinkedIn, Greenhouse). |
 | **Stage** | Pipeline Orchestration | A named step in the pipeline: `discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`. |
-| **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `Stale`, `Canceled` — see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |
+| **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `NeedsVerification`, `Stale`, `Canceled` — eleven variants, see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `needs_verification`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |
 | **SubmissionResult** | Apply Automation | The outcome of an apply attempt: `applied`, `failed`, `captcha`, `login_issue`, `expired`, `manual`, `dry_run`. |
 | **TailoredResume** | Materials Generation | A resume customized for a specific job, derived from the master baseline via LLM. |
 | **TailoringPlan** | Materials Generation | Deterministic constraints derived from profile evidence, tailoring policy, job text, and fit score before resume generation and validation. |

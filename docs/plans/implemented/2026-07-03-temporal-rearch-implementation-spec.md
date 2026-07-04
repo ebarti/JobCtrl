@@ -1,5 +1,8 @@
 # Temporal Rearchitecture — Implementation Spec for Phases P1b–P5
 
+> **Status:** implemented — all phases delivered (P1b #235, P2 #238, P3 #237,
+> P4 #239, P5 #240; merged 2026-07-03 → 2026-07-04). Kept as a historical
+> record of the handoff.
 > **Audience:** an external implementing agent (Codex). This document is
 > self-contained and prescriptive: follow it literally. Where it says STOP,
 > stop and report rather than improvising.

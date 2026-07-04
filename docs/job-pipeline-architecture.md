@@ -1,1215 +1,924 @@
 # Job Pipeline Architecture
 
 This document explains how JobHunter's job pipeline executes today. It is the
-deep-dive companion to [`architecture.md`](architecture.md): the top-level
-architecture doc names the runtime boundaries, while this document follows each
-pipeline stage through the UI, API, JSON-RPC worker boundary, Temporal
-workflow, Python activities, persistence, events, and projections.
+deep-dive companion to [`architecture.md`](architecture.md): that file names the
+runtime boundaries and system topology (TypeScript app/API, Python worker,
+Temporal, SQLite, SSE), while this document follows the work itself — from a
+button click or CLI command, through the JSON-RPC boundary, into Temporal
+workflows and Python activities, and back out through persistence, events, and
+projections to the UI.
 
-The canonical domain model remains [`ddd-target.md`](ddd-target.md). This file
-documents the implemented local execution shape.
+The canonical domain model is [`ddd-target.md`](ddd-target.md). Resume tailoring
+has its own deep-dive in [`tailoring.md`](tailoring.md); this file summarizes the
+tailor stage and points there for gate depth.
 
-Use the first sections for the shared execution model. Each stage section then
-uses the same shape: purpose and boundary, sequence diagram, component diagram,
-data/events, and failure behavior. Component diagrams include concrete classes
-where the code has them and module/use-case components where the implementation
-is intentionally function-based.
+Read the shared-model sections first (product shape, execution surfaces, the
+universal workflow envelope, the workflow catalog, activities, and the error
+taxonomy). The stage walkthrough then follows each phase end to end.
 
-## Pipeline Phases
+Every long-running unit of work in JobHunter is a **Temporal workflow**. There
+is no in-process pipeline engine and no flag that falls back to one — the old
+sequential/threaded runner was deleted. If work takes longer than an HTTP
+request, it runs on the worker under Temporal.
 
-The user-facing stage order is:
+## Product Shape: Discover → Apply
+
+The user-facing stage order is deliberately small:
 
 ```text
 discover -> apply
 ```
 
 `Discover` is the single preparation stage. It finds jobs, enriches usable
-postings, derives deterministic per-job preparation workflows for scoring,
-tailoring, cover letters, and PDFs, and performs artifact suppression for jobs
-that no longer qualify. `Apply` stays separate because it can submit
-applications and has its own safety controls.
+postings, and then fans out durable per-job preparation (scoring, tailoring,
+cover letters, PDFs) plus artifact suppression for jobs that no longer qualify.
+`Apply` is separate because it can submit real applications and carries its own
+safety controls.
 
-The persisted/internal stage vocabulary still includes the preparation
-substatuses:
+Internally, preparation still uses a finer stage vocabulary that appears in
+stage rows, low-level contracts, CLI maintenance commands, and diagnostics:
 
 ```text
 discover -> enrich -> score -> tailor -> cover -> apply
 ```
 
-Those names remain in stage rows, low-level contracts, CLI maintenance paths,
-and diagnostics. Job list projections and the product UI map `enrich`, `score`,
-`tailor`, and `cover` back to `Discover` while still exposing their detail in
-job timelines and operational views.
-
-Discovery preparation runs these internal steps:
-
-1. Detail enrichment fetches full descriptions and application URLs.
-2. `JobPreparationWorkflow` score steps call the Scoring context with the
-   current scoring policy.
-3. Tailor eligibility is recomputed from persisted scores, hard blockers, the
-   live fit-score threshold, and the current tailoring policy.
-4. `JobPreparationWorkflow` tailor, cover, and PDF steps call Materials
-   Generation for eligible jobs missing current-policy active artifacts.
-
-`discover` and `apply` are deliberately separate workflow boundaries. The
-Pipelines UI still sends both through `POST /v1/pipeline/actions/run-stage`; the
-TS API dispatches JSON-RPC `run_stage`. A discover-only request starts
-`DiscoverWorkflow` directly with deterministic id `discover-{tenantId}`. Apply
-requests start `JobPipelineWorkflow`, which delegates to child `ApplyWorkflow`
-and reports lifecycle progress through apply-specific events and projections.
-The dedicated JSON-RPC `apply` method is reserved for per-job apply and retry
-actions.
+The product UI folds `enrich`, `score`, `tailor`, and `cover` back under
+`Discover` (job timelines and operational views still expose the detail). The
+one exception is `cover`: when a tailored resume already exists and `cover` is
+the first actionable row, the list projection advances the product stage to
+`apply` while keeping `current_substage='cover'` visible for repair.
 
 ## Execution Surfaces
 
-There are five execution surfaces. They share the same Python stage
-implementations where possible, but they differ in orchestration.
+Every surface builds the same kind of workflow start spec and starts a workflow
+on the JobHunter task queue. They differ only in which entry point is used and
+which workflow is selected.
 
-| Surface | Entry point | Execution model | Stages |
-| --- | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts `DiscoverWorkflow`, which owns source-family activities, enrichment, and per-job `JobPreparationWorkflow` fan-out; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
-| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
-| Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | The Jobs toolbar can explicitly continue active pending preparation backlogs. The API selects the first eligible pending preparation substage per matching job, groups selected job URLs by `enrich`, `score`, `tailor`, or `cover`, and dispatches bounded `run_stage` workflows without resetting failures or running `apply`. | Internal preparation recovery |
-| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | The API resets retryable failed stages, and with `runAfter: true` groups reset preparation rows by internal stage before dispatching batch `run_stage` workflows with explicit `jobUrls` and requested workers. The route records the workflow id, job URLs, worker count, and per-job `StageQueued` events with `source: "bulk_retry_failed"`; it never auto-runs `apply`. | Internal preparation recovery |
-| CLI batch run | `jobhunter run ...` | The CLI builds the same `WorkflowStartSpec` shape as JSON-RPC, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
-| Temporal discovery workflow | `DiscoverWorkflow` | Tenant-scoped workflow (`discover-{tenantId}`) with one activity per source family, one enrichment activity, and batched preparation child starts. | Discover |
-| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow for remaining batch orchestration; it delegates `discover` to child `DiscoverWorkflow` and `apply` to child `ApplyWorkflow`. | Discover and Apply |
-| Temporal preparation workflow | `JobPreparationWorkflow` | Deterministic per-job workflow keyed by `prep-{idempotency_key}` that runs score, tailor, cover, and PDF steps in order. | Internal preparation |
-| Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
-| Temporal profile import workflow | `ProfileImportWorkflow` | Single-activity workflow for resume PDF profile import. | Profile |
-| Temporal compensation refresh workflow | `CompensationRefreshWorkflow` | Single-activity workflow for posted compensation and market estimate refresh. | Compensation |
+| Surface | Entry point | What it starts |
+| --- | --- | --- |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API dispatches JSON-RPC `run_stage`. A `discover`-only request starts `DiscoverWorkflow`; anything else starts `JobPipelineWorkflow` (which delegates `discover` and `apply` to child workflows). |
+| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
+| Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
+| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |
+| CLI | `jobhunter <command>` | Builds the same spec, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobhunter discover` / `run discover` is the normal path; `score`/`tailor`/`cover` are maintenance commands. |
+| Temporal schedule | `jobhunter-discovery-local` | Optional cron schedule that starts `DiscoverWorkflow`. Off by default (see [Discovery Schedule](#discovery-schedule)). |
 
-### End-To-End UI/API Call Path
+### Entry Points → JSON-RPC → Workflow Selection
+
+The TS API never runs pipeline logic itself. It maps UI/CLI intent to a JSON-RPC
+method over a long-lived `jobhunter rpc` subprocess (stdin/stdout, one JSON
+envelope per line). The method registry in
+`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py` marks each
+method as either `mode="workflow"` (start a workflow, return its ids) or
+`mode="sync"` (run inline, return the result). The server also supports a
+`streaming` generator mode; no default method currently uses it.
+
+| JSON-RPC method | Mode | Workflow selected |
+| --- | --- | --- |
+| `run_stage` | workflow | `DiscoverWorkflow` if stages are exactly `["discover"]`, else `JobPipelineWorkflow` |
+| `apply` | workflow | `ApplyWorkflow` (per-job, `apply-{tenant}-{jobKey}`) |
+| `rescore_job`, `rescore_jobs_not_on_current_scoring_policy` | workflow | `JobPreparationWorkflow` / `JobPipelineWorkflow` (score) |
+| `tailor_job`, `retailor_job`, `retailor_current_policy` | workflow | `JobPreparationWorkflow` (`tailor`,`cover`,`pdf`) |
+| `refresh_compensation` | workflow | `CompensationRefreshWorkflow` |
+| `profile_import` | workflow | `ProfileImportWorkflow` |
+| `analyze_job` | sync | none (inline read) |
+| `cancel_run` | sync | none (issues a Temporal cancel to a running handle) |
+
+Workflow selection for `run_stage` lives in
+`workers/automation/src/jobhunter/workflow_specs.py`
+(`build_run_stage_workflow_spec` and `build_apply_workflow_spec`).
+
+### Async vs Sync (202 vs 200)
+
+The distinction matters for anyone reading the API or the UI:
+
+- **Workflow-mode methods are asynchronous.** The method returns
+  `{ runId, workflowId }` the moment Temporal accepts the start, and the HTTP
+  route answers **202 Accepted**. The outcome is *not* in that response — it
+  arrives later in the read model and is pushed to the UI via SSE invalidation.
+  A failure to *start* (bad input, worker unreachable) returns an error status,
+  not a 202; a request the API resolves **without** starting a workflow — an
+  ineligible stage or a pure stage reset — answers **200 OK**, not 202.
+- **Sync-mode methods block for their result** and answer **200 OK** with the
+  payload inline. Only `analyze_job` and `cancel_run` are synchronous.
+
+So a green "Run stage" click that returns 202 means "queued and running", not
+"done". This is why the UI reconciles later through projections and SSE.
+
+### End-to-End Call Path
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant User
-    participant Web as Web UI<br/>Pipelines tab
-    participant Api as TS API<br/>server.ts
-    participant Dispatcher as defaultActionDispatcher
-    participant JsonRpc as SubprocessJsonRpcAdapter
-    participant Rpc as jobhunter rpc<br/>JsonRpcServer
-    participant Temporal as Temporal
-    participant Discover as DiscoverWorkflow
-    participant Source as source-family activities
-    participant Enrich as discovery_enrichment activity
-    participant Prep as JobPreparationWorkflow
-    participant Scoring as Scoring context
-    participant Materials as Materials context
+    participant Web as Web UI
+    participant Api as TS API (Fastify)
+    participant Rpc as jobhunter rpc (JSON-RPC)
+    participant T as Temporal
+    participant WF as Workflow (worker)
     participant DB as SQLite
-    participant SSE as SSE / projections
+    participant SSE as SSE poller (250ms)
 
-    User->>Web: Click Run stage
+    User->>Web: Run stage (discover / apply)
     Web->>Api: POST /v1/pipeline/actions/run-stage
-    Api->>Dispatcher: Build ActionCommandPayload per stage
+    Api->>Rpc: run_stage(stages, limit, workers)
+    Rpc->>T: start workflow (spec + deterministic id)
+    T-->>Rpc: {runId, workflowId}
+    Rpc-->>Api: accepted
+    Api-->>Web: 202 Accepted (runId, workflowId)
+    Note over WF,DB: work runs asynchronously on the worker
+    WF->>DB: WorkflowStarted, business activities, terminal Workflow*
+    DB-->>SSE: new job_events rows
+    SSE-->>Web: invalidate TanStack Query caches, UI updates
+```
 
-    Dispatcher->>JsonRpc: call("run_stage", ordered stages)
-    JsonRpc->>Rpc: JSON-RPC line over stdin/stdout
-    Rpc->>Temporal: start workflow for stage
-    Temporal-->>Rpc: workflow handle
-    Rpc-->>JsonRpc: {runId, workflowId}
+## The Universal Workflow Envelope
 
-    alt discover preparation
-        Temporal->>Discover: run discover-{tenantId}
-        Discover->>Source: run source-family activities
-        Source->>DB: discovery writes, progress, source events
-        Discover->>Enrich: drain discovered job details
-        Enrich->>DB: enrichment writes and events
-        Discover->>Prep: start prep-{idempotency_key} workflows
-        Prep->>Scoring: score_job with current policy
-        Prep->>Materials: tailor, cover, render PDFs
-        Scoring-->>DB: scores and score events
-        Materials-->>DB: materials/suppression events
-    else apply step
-        Temporal->>Temporal: execute child ApplyWorkflow
-        Temporal->>DB: ApplyRun* events while workflow runs
+Every workflow — all six — wraps its business logic in the same envelope so a
+run is always visible in the read model and always terminalizes, even on crash.
+The helpers live in
+`workers/automation/src/jobhunter/infrastructure/temporal/finalize.py`.
+
+1. **`record_workflow_started`** emits a `WorkflowStarted` marker at the top of
+   `run`, with a compact camelCase input summary.
+2. **`check_spend_budget`** runs as a preflight for spendful workflows (see
+   [Spend Ceiling](#spend-ceiling)). It runs with `maximum_attempts=1`, so a
+   depleted budget fails the run before any paid work.
+3. **Business activities** run (stages, per-job steps, apply, import, refresh).
+4. **`record_workflow_outcome`** emits exactly one terminal event on every exit
+   path — `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`,
+   `WorkflowTimedOut`, or `WorkflowTerminated`. On the cancel path the finalize
+   activity uses `ActivityCancellationType.ABANDON` so the tiny SQLite write can
+   finish while the workflow unwinds.
+
+Both finalize activities are small local writes: they append to the append-only
+`job_events` log (with `job_url = NULL`, since a run is a batch, not a job) and
+then explicitly call `ProjectionBuilder.refresh()` so `workflow_run_projections`
+updates even in a process with no bus-subscribed builder. Workflow bodies stay
+deterministic: all clock/uuid/SQLite IO happens inside activities; the bodies
+only read `workflow.info()` / `workflow.now()`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant T as Temporal
+    participant WF as Workflow body
+    participant Act as Activities
+    participant DB as SQLite (job_events + projections)
+    participant Rec as Worker reconciler (15s loop)
+
+    T->>WF: run(payload)
+    WF->>Act: record_workflow_started
+    Act->>DB: WorkflowStarted + refresh workflow_run_projections
+    opt spendful workflow
+        WF->>Act: check_spend_budget (preflight, attempts=1)
+        Act-->>WF: ok / BudgetExceededError
     end
-
-    JsonRpc-->>Dispatcher: dispatch result
-
-    Dispatcher-->>Api: action response
-    Api-->>Web: 202 if workflow queued, 200 if start failed
-    DB->>SSE: projections refresh / events stream
-    SSE-->>Web: invalidate query cache and update UI
+    WF->>Act: business activities
+    Act->>DB: domain + Stage* events
+    alt normal exit
+        WF->>Act: record_workflow_outcome(succeeded|failed)
+    else canceled
+        WF->>Act: record_workflow_outcome(canceled, ABANDON)
+    end
+    Act->>DB: terminal Workflow* event + refresh
+    Note over Rec,DB: backstop when finalize never runs
+    Rec->>T: describe open workflow_run_projections
+    T-->>Rec: CLOSED / NOT_FOUND / RUNNING
+    Rec->>DB: record matching terminal Workflow* (first-terminal-wins)
 ```
 
-### Shared Components
+### Deterministic Workflow IDs
 
-```mermaid
-classDiagram
-    class StageTriggerPanel {
-      +activeStage
-      +stage options
-      +submit run-stage request
-    }
-    class FastifyApi {
-      +POST /v1/pipeline/actions/run-stage
-      +build ActionCommandPayload
-    }
-    class DefaultActionDispatcher {
-      +toJsonRpcCall()
-      +map JSON-RPC response
-    }
-    class SubprocessJsonRpcAdapter {
-      +spawn uv run jobhunter rpc
-      +write JSON-RPC request
-      +resolve pending response
-    }
-    class JsonRpcServer {
-      +register sync handlers
-      +register workflow handlers
-      +dispatch request
-    }
-    class JobPipelineWorkflow {
-      +run ordered stages
-      +execute stage activities
-      +delegate apply child workflow
-    }
-    class DiscoverWorkflow {
-      +plan source families
-      +run source activities
-      +run enrichment activity
-      +fan out prep children
-    }
-    class StageActivities {
-      +_run_stage_observed()
-      +run_discovery_source_family()
-      +run_discovery_enrichment_stage()
-      +start_discovery_preparation_workflows()
-      +_run_enrich()
-      +_run_score()
-      +_run_tailor()
-      +_run_cover()
-      +_run_pdf()
-    }
-    class ApplyWorkflow {
-      +run ApplyActivity
-    }
-    class OperationsReadSide {
-      +refreshProjections()
-      +SSE invalidation
-    }
+Deterministic IDs plus `WorkflowIDConflictPolicy.USE_EXISTING` are how JobHunter
+gets idempotent starts: re-requesting the same work attaches to the in-flight
+execution instead of spawning a duplicate.
 
-    StageTriggerPanel --> FastifyApi
-    FastifyApi --> DefaultActionDispatcher
-    DefaultActionDispatcher --> SubprocessJsonRpcAdapter
-    SubprocessJsonRpcAdapter --> JsonRpcServer
-    JsonRpcServer --> DiscoverWorkflow : run_stage discover
-    JsonRpcServer --> JobPipelineWorkflow : run_stage apply
-    JsonRpcServer --> ApplyWorkflow : per-job apply
-    JobPipelineWorkflow --> DiscoverWorkflow : discover child
-    JobPipelineWorkflow --> ApplyWorkflow : apply child workflow
-    DiscoverWorkflow --> StageActivities
-    StageActivities --> OperationsReadSide : events
-    ApplyWorkflow --> OperationsReadSide : events
-```
+| Workflow | ID scheme | Conflict policy |
+| --- | --- | --- |
+| `DiscoverWorkflow` (standalone / schedule) | `discover-{tenant}` | one live discovery per tenant |
+| `DiscoverWorkflow` (child of pipeline) | `{parent}-discover` | scoped to the parent |
+| `ApplyWorkflow` (per-job) | `apply-{tenant}-{jobKey}` | one live apply per job |
+| `ApplyWorkflow` (child of pipeline) | `{parent}-apply` | scoped to the parent |
+| `JobPreparationWorkflow` | `prep-{idempotency_key}` | `USE_EXISTING` |
+| `JobPipelineWorkflow`, `ProfileImportWorkflow`, `CompensationRefreshWorkflow` | server-generated | — |
 
-## Shared Stage Mechanics
+The preparation idempotency key
+(`make_preparation_idempotency_key`, in `domain/preparation`) is derived from
+tenant, job id, work-item kind, **target version**, and **source event id**:
 
-### Stage Observation
+- `target_version` is the scoring-policy version for `score` targets and the
+  tailoring-policy version for `tailor`/`cover`/`pdf` targets.
+- `source_event_id` is the latest of `JobDiscovered`, `JobUpdated`,
+  `JobEnriched`, `PostingContentSnapshotCaptured`, or `StageCompleted` for that
+  job. A new source fact yields a new key, so genuinely new work gets a new
+  workflow while reruns of unchanged work dedupe onto the existing one.
 
-Non-apply stages run under `_run_stage_observed()` in
-`workers/automation/src/jobhunter/pipeline/runner.py`. That wrapper:
+### Finalize + The Describe-Based Reconciler
 
-- emits `StageStarted`, `StageCompleted`, or `StageFailed` lifecycle rows to
-  `job_events`;
-- emits OpenTelemetry/Langfuse spans named `pipeline.stage.<stage>`;
-- converts runner results into a stage status (`ok`, `partial`, or `error`);
-- keeps the JSON-RPC caller informed even when downstream projections refresh
-  later.
+When a worker is killed mid-run, an activity times out, or the Temporal dev
+server loses history on restart, finalize may never run. The **reconciler** is
+the backstop. It is not a trigger-coupled reaper; it is a describe loop inside
+the worker's 15-second heartbeat loop (`cli.py`, `_reconcile_workflow_runs`):
 
-Discover source steps use `_run_discovery_source()`, a source-level variant that
-also emits `DiscoveryRunStarted`, `DiscoveryRunCompleted`, and
-`DiscoveryRunFailed` rows for source-quality aggregation. Long-running sources
-own durable progress through the same discovery-run aggregate. For example,
-JobSpy reports completed search combinations, current query/location, observed
-raw rows, accepted new rows, duplicates, filtered rows, and source errors while
-the crawl is still running. The dashboard progress read model renders that
-source-level detail instead of only showing the coarse stage count.
+- For each non-terminal `workflow_run_projections` row it calls
+  `describe()` on the workflow handle.
+- A **CLOSED** execution records the matching terminal `Workflow*` event
+  (COMPLETED→succeeded, FAILED→failed, CANCELED→canceled,
+  TERMINATED→terminated, TIMED_OUT→timed_out).
+- A **NOT_FOUND** execution (dev-server history loss) records
+  `WorkflowTerminated` so the run stops showing as forever-running.
+- A **RUNNING / CONTINUED_AS_NEW** execution is left alone.
 
-Discover has a no-overlap Temporal policy and one source-family activity per
-planned family. Source-family activities are allowed to run longer than the
-default 30-minute activity window and heartbeat `DiscoveryRunProgress` payloads.
-Temporal retries the failed source-family activity, not the whole discovery
-batch, and the workflow preserves the legacy source order so global limit and
-source-budget semantics remain stable. Source adapters are responsible for
-idempotency, source-quality retry, progress, and cooperative cancellation.
+The reconciler never overwrites terminal truth. Both `JobPipelineWorkflow` and
+`ApplyWorkflow` encode stage/apply failure in their *return value*, so a failing
+run still closes COMPLETED on the Temporal side even though finalize already
+wrote `WorkflowFailed`. Before writing, the reconciler takes `BEGIN IMMEDIATE`
+and re-reads the row; if a real terminal outcome landed since the snapshot, it
+leaves it. A first-terminal-wins fold in the projection builder backstops
+anything that slips past.
 
-When a user stops a running Discover workflow, the API emits a failed progress
-event and terminalizes the matching `discovery_runs` row so the UI, audit log,
-and source-quality projections agree that the source is no longer active.
-Worker startup recovery applies the same terminal state to stale source runs
-left running by a prior worker process.
+## Workflow Catalog
 
-### Dry Run
+Six workflows are registered in
+`workers/automation/src/jobhunter/infrastructure/temporal/registry.py`
+(`WORKFLOWS`). All timeouts and retry policies below are set at the workflow's
+activity call sites.
 
-For non-apply maintenance stages, `dryRun=true` is passed through the workflow
-payload into the owning activity. The activity returns planned stage metadata
-and records dry-run operational attempts before executing any stage
-implementation.
+| Workflow | Business activities | Key timeouts | Retry |
+| --- | --- | --- | --- |
+| `DiscoverWorkflow` | `plan_discovery_sources`, `discovery_source_family` (per family), `discovery_enrichment`, `discovery_preparation_fanout` | source/enrichment 6 h; plan/fanout 30 min; heartbeat 2 min | source & enrich: 5 s→60 s ×3 |
+| `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | stage activities 30 min; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
+| `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | each 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
+| `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
+| `ProfileImportWorkflow` | `profile_import_activity` | 10 min | 2 attempts |
+| `CompensationRefreshWorkflow` | `refresh_compensation_activity` | 20 min | 2 attempts |
 
-For apply, `dryRun` is passed into `ApplyWorkflowInput` and down to the apply
-launcher. The workflow still starts, but the launcher follows the dry-run path
-instead of submitting applications.
+A few catalog details worth calling out:
 
-### Limit
+- **`JobPipelineWorkflow` is the serial batch driver.** It runs the requested
+  stages in canonical order as activities, but hands `discover` and `apply` to
+  child workflows so a mixed request like `score → tailor → apply` still
+  preserves order while every unit runs under Temporal. After a batch `tailor`
+  succeeds it derives the approved job URLs and scopes the following `cover`
+  stage to exactly those jobs.
+- **`JobPreparationWorkflow` reorders and validates steps.** Requested steps are
+  intersected with the canonical order `("score","tailor","cover","pdf")`; an
+  unknown step is a non-retryable error. Only `score`/`tailor`/`cover` trigger
+  the spend preflight (`pdf` is deterministic rendering).
+- **`ApplyWorkflow` continuous mode uses `continue_as_new`.** In continuous mode
+  each iteration runs the launcher with an activity limit of 25; when a batch
+  applies to zero jobs it sleeps 30 s before continuing-as-new, giving a
+  run-forever poller with bounded history.
 
-`limit` is forwarded to every stage. The meaning is stage-specific:
+## Activities
 
-- Discover: global cap for observed jobs across scheduled sources. When set,
-  Discover runs sources sequentially and skips remaining sources once the cap is
-  consumed; the same value is also used by the internal detail-enrichment queue
-  drain and preparation-target derivation.
-- Score: internal/maintenance cap for jobs selected for scoring after retrieval
-  preselection.
-- Tailor: internal/maintenance cap for eligible high-fit jobs to tailor.
-- Cover: internal/maintenance cap for eligible jobs needing cover letters.
-- PDF: cap for pending PDF render jobs.
-- Apply: cap for apply attempts unless `continuous=true`, in which case the
-  apply launcher runs continuously.
+Nineteen activities are registered in `registry.py` (`ACTIVITIES`).
 
-### Workflow Ordering
+| Activity (callable) | Module | Purpose | Timeout · retry |
+| --- | --- | --- | --- |
+| `plan_discovery_sources` | `discovery/activities.py` | Plan which source families to run | 30 min · ×3 |
+| `discovery_source_family_activity` | `discovery/activities.py` | Run one source family (crawl/enumerate) | 6 h · ×3 |
+| `discovery_enrichment_activity` | `discovery/activities.py` | Drain detail enrichment + post-hygiene | 6 h · ×3 |
+| `discovery_preparation_fanout_activity` | `discovery/activities.py` | Derive targets, start prep root workflows (batches of 25) | 30 min · ×3 |
+| `enrich_activity` | `enrichment/activities.py` | Standalone/maintenance enrich stage | 30 min · ×3 |
+| `score_activity` | `scoring/activities.py` | Batch score stage | 30 min · ×3 |
+| `score_job_activity` | `scoring/activities.py` | Score one job (prep step) | 30 min · ×3 |
+| `tailor_activity` | `materials/activities.py` | Batch tailor stage | 30 min · ×3 |
+| `tailor_job_activity` | `materials/activities.py` | Tailor one job (prep step) | 30 min · ×3 |
+| `cover_activity` | `materials/activities.py` | Batch cover stage | 30 min · ×3 |
+| `cover_letter_activity` | `materials/activities.py` | Cover letter for one job (prep step) | 30 min · ×3 |
+| `render_pdf_activity` | `materials/activities.py` | Render missing PDFs (prep step) | 30 min · ×3 |
+| `derive_preparation_targets` | `pipeline/preparation.py` | Deterministic per-job target list (sync) | invoked within fan-out |
+| `apply_activity` | `apply/activities.py` | Drive the apply launcher (browser/agent) | 2 h / 1 h · live 1, dry 2 |
+| `profile_import_activity` | `profile/activities.py` | Import resume PDF → profile draft | 10 min · ×2 |
+| `refresh_compensation_activity` | `infrastructure/compensation/workflow.py` | Refresh posted comp + market estimate | 20 min · ×2 |
+| `check_spend_budget` | `llm.py` | Preflight daily-spend gate | 30 s · 1 |
+| `record_workflow_started` | `infrastructure/temporal/finalize.py` | Emit `WorkflowStarted` | 30 s · ×5 |
+| `record_workflow_outcome` | `infrastructure/temporal/finalize.py` | Emit terminal `Workflow*` | 30 s · ×5 (ABANDON on cancel) |
 
-There is one execution path for long-running work: entry points start Temporal
-workflows. The UI `run-stage` endpoint, JSON-RPC handlers, CLI commands, and
-local actions all build shared workflow specs and start the workflow on the
-JobHunter task queue. `JobPipelineWorkflow` preserves the requested canonical
-stage order and executes non-apply maintenance stages serially as activities.
-`discover` is delegated to child `DiscoverWorkflow`; `apply` is delegated to
-child `ApplyWorkflow`. The deleted in-process sequential/threaded engine is no
-longer reachable by a flag or fallback.
+### run_blocking_with_heartbeat
 
-## Discover Stage
+Most business activities call synchronous domain runners. Calling them directly
+inside an `async def` activity would block the worker's event loop for the whole
+stage — defeating heartbeats and starving every other activity on the worker.
+`infrastructure/temporal/run_in_activity.py` solves this with
+`run_blocking_with_heartbeat`, which every long-running activity uses:
 
-### Purpose And Boundary
+- It offloads the synchronous function to a **bounded, worker-owned
+  `ThreadPoolExecutor`** and emits a heartbeat every `poll_interval` (default
+  **15 s**) while waiting.
+- On `asyncio.CancelledError` (a Temporal cancel) it invokes the supplied
+  cooperative `on_cancel` hook, waits up to `cancel_wait_seconds` (default
+  **30 s**) for the thread to stop, and re-raises.
+- If the thread ignores cancellation past that grace window, it logs
+  `abandoned_thread` and records an `operational_attempt_metric`
+  (`stage="operations"`, `attempt_kind="temporal_activity_thread"`,
+  `error_class="abandoned_thread"`) so a wedged thread is observable.
 
-Discover finds postings from configured sources and creates canonical job
-records plus source observations. It owns source scheduling, source-quality
-feedback, canonical identity, idempotent source-control refresh, manual-capture
-queue entries for protected sources, dedupe against existing jobs, and the
-detail-enrichment queue drain for jobs that pass the initial title/location
-filter. After enrichment, it orchestrates durable preparation work; Scoring and
-Materials still own the score and artifact writes.
+This is why the discovery source-family and enrichment activities (and the apply
+activity) accept a `threading.Event` cancel token: the workflow-level cancel
+propagates into the running crawl/launcher cooperatively rather than being
+severed mid-write. The tiny marker activities (`plan_discovery_sources`,
+`derive_preparation_targets`, `check_spend_budget`,
+`record_workflow_started/outcome`) run inline without the thread offload.
 
-### Sequence
+### The Runtime Guard
+
+Because multiple JobHunter checkouts can point at different app dirs and DBs,
+every activity that writes calls `assert_activity_runtime`
+(`infrastructure/temporal/runtime_guard.py`) with the expected app dir and DB
+path carried in its input. A mismatch raises a **non-retryable**
+`ApplicationError(type="RuntimeIdentityMismatch")`, so an activity that landed on
+the wrong worker fails fast instead of writing to the wrong database.
+
+## Error Taxonomy → Temporal Retry
+
+Retry behavior is driven by a small error taxonomy in
+`workers/automation/src/jobhunter/domain/errors.py`. `JobHunterError` carries a
+`code` and a `retryable` flag; `to_application_error` converts it to a Temporal
+`ApplicationError(type=code, non_retryable=not retryable)`.
+
+| Error | Code | Retryable? |
+| --- | --- | --- |
+| `ConfigurationError` | `configuration` | no |
+| `AuthenticationError` | `authentication` | no |
+| `MissingInputError` | `missing_input` | no |
+| `BudgetExceededError` | `budget_exceeded` | no |
+| `TransientNetworkError` | `transient_network` | yes |
+| `BrowserTransientError` | `browser_transient` | yes |
+| `LlmTransientError` | `llm_transient` | yes |
+| `SourceUnavailableError` | `source_unavailable` | yes |
+| unclassified exception | `unclassified` | yes |
+
+Every retrying workflow lists
+`non_retryable_error_types = ["configuration", "authentication",
+"missing_input", "budget_exceeded"]` in its `RetryPolicy`. So the four
+configuration/precondition errors stop immediately, while transient failures
+retry up to the policy's attempt cap and then surface as a stage/workflow
+failure. `RuntimeIdentityMismatch` is also non-retryable.
+
+## Stage Walkthrough
+
+Each stage below covers purpose, sequence, data/events, and failure behavior.
+
+### Discover
+
+Discover finds postings from configured sources, creates canonical job records
+and source observations, drains detail enrichment for jobs that pass the initial
+title/location filter, and then fans out per-job preparation. It owns source
+scheduling, source-quality feedback, canonical identity, dedupe, protected-source
+manual-capture queue entries, and posting hygiene. Scoring and Materials still
+own their own writes.
+
+`DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
-    participant Workflow as DiscoverWorkflow
-    participant SourceActivity as source-family activity
-    participant EnrichActivity as discovery_enrichment activity
-    participant Runner as pipeline.runner
-    participant QueryPlanner as Target query planner
-    participant Scheduler as DiscoveryScheduler
-    participant JobSpy
-    participant ATS as Canonical ATS APIs
-    participant Workday
-    participant Smart as Smart Extract
-    participant Detail as Detail enrichment queue
-    participant Prep as JobPreparationWorkflow fan-out
-    participant Scoring as Scoring context
-    participant Materials as Materials context
+    participant WF as DiscoverWorkflow
+    participant Plan as plan_discovery_sources
+    participant Src as discovery_source_family (xN)
+    participant Enr as discovery_enrichment
+    participant Fan as discovery_preparation_fanout
+    participant Prep as JobPreparationWorkflow (root xM)
     participant DB as SQLite
-    participant Ops as Operations projections
 
-    Api->>Rpc: run_stage(stage="discover", limit, workers)
-    Rpc->>Workflow: start DiscoverWorkflow(discover-{tenantId})
-    Workflow->>SourceActivity: plan and run source-family activities
-    SourceActivity->>Runner: run_discovery_source_family()
-    Runner->>DB: init_db
-    Runner->>DB: refresh source-control rows idempotently
-    Runner->>QueryPlanner: compile profile target roles and locations
-    QueryPlanner-->>Runner: exact queries plus recall query filters
-    Runner->>Scheduler: plan(registry, source quality, global limit)
-    Scheduler-->>Runner: DiscoverySchedule
-
-    Runner->>JobSpy: run_discovery(cfg with exact plus recall queries)
-    JobSpy->>DB: insert jobs, broad-board observations, learned source candidates
-    Runner->>ATS: enumerate scheduled canonical sources and filter internally
-    ATS->>DB: create canonical jobs and source observations
-    Runner->>Workday: enumerate configured employers and filter internally
-    Workday->>DB: insert/update jobs and observations
-    Runner->>Smart: source-first scrape or search-only query fanout
-    Smart->>DB: insert jobs, quarantine, manual-capture queue
-    Workflow->>EnrichActivity: run discovery_enrichment
-    EnrichActivity->>Detail: run_enrichment(limit, workers)
-    Detail->>DB: persist full descriptions, apply URLs, attempts/errors
-    Workflow->>Prep: derive sorted per-job preparation targets
-    Prep->>Scoring: start prep-{idempotency_key} score step
-    Scoring->>DB: persist JobScore and score events
-    Prep->>Materials: start tailor/cover/pdf steps or suppression
-
-    Runner->>DB: DiscoveryRun*, Stage*, source progress, and operational attempt metrics
-    DB->>Ops: source-quality and dashboard projections refresh
-    Ops-->>Api: API reads show new jobs/source health
+    WF->>Plan: plan families (limit, source_ids)
+    Plan-->>WF: families, progress_total, start_count
+    loop each source family
+        WF->>Src: run family (6h, 15s heartbeat, cancel_event)
+        Src->>DB: jobs, observations, DiscoveryRun* + progress
+    end
+    WF->>Enr: drain detail enrichment (6h, 15s heartbeat)
+    Enr->>DB: descriptions, apply URLs, snapshot + JobEnriched events
+    WF->>Fan: derive targets + start prep workflows
+    Fan->>Prep: start prep-{key} in batches of 25 (USE_EXISTING)
+    Fan->>DB: TailoredArtifactsSuppressed for ineligible jobs
 ```
 
-### Components
+Component shape (`DiscoverWorkflow` orchestrates activities; the activities call
+runner functions in `pipeline/runner.py`, which drive the source adapters):
 
 ```mermaid
-classDiagram
-    class DiscoverWorkflow {
-      +discover-{tenantId}
-      +plan_discovery_sources()
-      +source-family activities
-      +discovery_enrichment()
-      +start prep children
-    }
-    class DiscoverySourceActivity {
-      +run_discovery_source_family()
-      +heartbeat DiscoveryRunProgress
-      +cooperative cancel_event
-    }
-    class DiscoveryScheduler {
-      +plan(registry, quality, global_limit)
-    }
-    class TargetQueryPlanner {
-      +build_target_role_queries(roles)
-      +query_applies_to_source(query, source)
-      +title_matches_any_query(title, queries)
-    }
-    class DiscoverySchedule {
-      +for_prefix(prefix)
-      +for_kinds(kind)
-      +budget_for_prefix(prefix)
-    }
-    class SourceRegistryEntry {
-      +source_id
-      +kind
-      +priority
-      +state
-      +adapter_config
-    }
-    class JobSpyAdapter {
-      +run_discovery(cfg, limit, run_id)
-    }
-    class AtsApiScheduler {
-      +run_scheduled_ats_sources()
-    }
-    class WorkdayAdapter {
-      +run_workday_discovery()
-    }
-    class SmartExtractAdapter {
-      +run_smart_extract()
-    }
-    class DiscoveryRunRepository {
-      +record started/completed/failed
-    }
-
-    DiscoverWorkflow --> DiscoveryScheduler
-    DiscoverWorkflow --> DiscoverySourceActivity
-    DiscoverySourceActivity --> TargetQueryPlanner
-    DiscoveryScheduler --> DiscoverySchedule
-    DiscoverySchedule --> SourceRegistryEntry
-    DiscoverySourceActivity --> JobSpyAdapter
-    DiscoverySourceActivity --> AtsApiScheduler
-    DiscoverySourceActivity --> WorkdayAdapter
-    DiscoverySourceActivity --> SmartExtractAdapter
-    DiscoverySourceActivity --> DiscoveryRunRepository
+flowchart TD
+    WF[DiscoverWorkflow] --> A1[plan_discovery_sources]
+    WF --> A2[discovery_source_family]
+    WF --> A3[discovery_enrichment]
+    WF --> A4[discovery_preparation_fanout]
+    A1 --> R[pipeline.runner: plan_discovery_source_families]
+    A2 --> RS[pipeline.runner: run_discovery_source_family]
+    A3 --> RE[pipeline.runner: run_discovery_enrichment_stage + hygiene]
+    A4 --> P[pipeline.preparation: start_discovery_preparation_workflows]
+    RS --> ADT[JobSpy / ATS / Workday / Smart Extract adapters]
+    P --> PREP[JobPreparationWorkflow root starts]
 ```
 
-### Data And Events
+Key facts about the four activities:
 
-- Reads source registry data from packaged YAML plus local
-  `source_registry_entries`.
-- Reads source-quality snapshots to schedule and budget sources.
-- Reads board/runtime discovery settings from SQLite `discovery_settings`, then
-  overlays target search from `candidate_profiles`. Target roles remain exact
-  role guidance. Target tracks, seniority floors, role areas, and
-  specializations add structured intent for deterministic recall expansion.
-  Discovery settings store normalized track values (`ic`, `management`,
-  `executive`) and normalized engineering seniority-floor values before the
-  worker expands them. Resume import may suggest those structured fields, but
-  existing user-entered profile values win.
-- Compiles target roles into two query kinds:
-  - exact queries, copied from the saved profile role text after note stripping;
-  - recall queries, generated from the same target-role intent and marked with
-    `match_mode=recall`, `generated_from=target_roles`, `target_track`, and
-    `seniority_floor`.
-- Recall query matching is a retrieval guard, not a relevance score. It enforces
-  target track and seniority before scoring: IC targets stay IC, management
-  targets stay management, executive targets stay executive, and candidates who
-  configure multiple tracks get per-track recall.
-- Applies exact-plus-recall intent to every discovery source family, but the
-  execution shape differs by source type. JobSpy is a broad-board retrieval
-  provider, so exact and recall queries are sent as external search probes.
-  Direct ATS, Workday, and source-first Smart Extract sources are known
-  boards/employers/pages, so they enumerate the source once per location and run
-  normalized query/location acceptance through the shared discovery intake
-  before any job row or delete tombstone is persisted.
-  exact-plus-recall title matching internally instead of multiplying
-  `queries x sources`. Smart Extract search-only sources still fan out by query
-  when the source has no useful browse/all-jobs page.
-- Canonical ATS adapters only emit usable postings: title, target location,
-  and a non-empty description must all be present before a posting reaches the
-  discovery write boundary. Greenhouse uses the public board API's content
-  payload so discovered rows are not created with blank descriptions.
-- Runs posting staleness and source hygiene checks before source execution:
-  verified unavailable, expired, removed, or location-incompatible postings move
-  to the closed lifecycle state, while active rows from JobSpy, direct ATS,
-  Workday, and Smart Extract are rechecked against the current title, location,
-  and description contract and soft-deleted when they no longer pass.
-- Upserts source registry control rows, source locator candidates, and
-  manual-capture queue entries for protected/manual sources. Existing
-  `imported` or `dismissed` manual-capture entries keep their status.
-- Writes `jobs`, source observations, canonical identity rows, source-learning
-  registry updates, review queue entries, quarantine entries, discovery run
-  rows, `job_events`, and source-level operational attempt metrics.
-- Emits stage events and source-level discovery events.
-- Derives deterministic per-job preparation targets after enrichment and starts
-  `JobPreparationWorkflow` runs for scoring, tailoring, cover-letter, PDF, or
-  suppression work owned by the Scoring and Materials contexts.
-- Treats JobSpy result URLs as broad-board observations and JobSpy direct URLs
-  as owner-source evidence. Runnable ATS direct URLs are promoted into
-  `source_registry_entries`; ambiguous direct URLs and ATS URLs that still need
-  adapter configuration are surfaced through source locator/manual-capture
-  review instead of being ignored.
-- Classifies JobSpy board observations as `source_role=lead_generator` and
-  root employer/ATS/API sources as `source_role=canonical_source`, so board
-  discovery metrics do not collapse into canonical employer source health.
+- **`plan_discovery_sources`** compiles the plan (which source families to run,
+  progress totals, and the starting job count) from the source registry, source
+  quality, and the global limit. Target roles from the profile become two query
+  kinds — exact queries (from saved role text) and recall queries (generated from
+  target-role intent, enforcing track and seniority before scoring).
+- **`discovery_source_family`** runs *one* source family under
+  `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
+  window (crawls legitimately run long). Each family is isolated: a JobSpy, ATS,
+  Workday, or Smart Extract failure records failure info and lets the workflow
+  see a partial result rather than failing the whole batch. With `limit > 0` the
+  cap is a **new-job budget** — rediscoveries record observations but do not
+  consume the budget, so exact-query duplicates never starve later recall queries
+  or sources.
+- **`discovery_enrichment`** drains detail enrichment (below) and then runs
+  post-discovery hygiene.
+- **`discovery_preparation_fanout`** derives targets and starts per-job
+  preparation. This is the correction most worth internalizing: **preparation
+  workflows are started as independent ROOT workflows**, in batches of 25, via
+  the Temporal client with `USE_EXISTING`. They are deliberately *not* children
+  of `DiscoverWorkflow` — child workflows default to
+  `ParentClosePolicy.TERMINATE`, which would kill preparation the instant
+  discovery finished. Before fan-out, the same activity suppresses now-ineligible
+  active artifacts via `SuppressTailoredArtifactsUseCase`.
 
-### Failure And Limits
+Source steps additionally emit `DiscoveryRunStarted` / `DiscoveryRunCompleted` /
+`DiscoveryRunFailed` for source-quality aggregation, and heartbeat a
+**`DiscoveryRunProgress` payload** (completed combinations, current
+query/location, raw/accepted/duplicate/filtered counts, source errors). That
+progress is a heartbeat payload persisted onto the `discovery_runs` aggregate —
+it is not a domain event. Discovery uses a no-overlap Temporal policy and
+preserves source order so global-limit and source-budget semantics stay stable.
 
-Each source family is isolated. A failed JobSpy, ATS, Workday, or Smart Extract
-step records failure information and lets the caller see a partial source
-result. With `limit > 0`, the stage uses sequential source execution and skips
-remaining source families once the new-job cap is consumed. All discovery source
-families treat the cap as a new-job budget: existing rediscoveries record
-observations but do not consume the remaining budget, so exact-query duplicates
-do not prevent later recall queries or sources from running. If internal
-preparation work fails after enrichment, the per-job workflow records the failed
-step and can retry or resume through Temporal without collapsing the owning
-Scoring or Materials failure into Discovery state.
+### Detail Enrichment
 
-## Internal Discovery Subphase: Detail Enrichment
-
-### Purpose And Boundary
-
-Detail enrichment turns discovered jobs into usable job records by fetching
-full descriptions, application URLs, and detail-page metadata. It owns
-detail-page fetching and extraction. It is not a top-level user-run pipeline
-stage; Discovery starts the queue drain and passes the same `workers` value to
-the enrichment runner. It does not score fit or generate materials.
-
-### Sequence
+Detail enrichment turns discovered jobs into usable records by fetching full
+descriptions, application URLs, and detail-page metadata. It is not a top-level
+user stage — `DiscoverWorkflow` runs it via `discovery_enrichment`, and
+`JobPipelineWorkflow` exposes a maintenance `enrich` activity for retries.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Discover as DiscoverWorkflow
-    participant Detail as run_enrichment
-    participant Fetcher as Detail fetchers
-    participant Extractor as JSON-LD/CSS/LLM extraction
+    participant Enr as discovery_enrichment
+    participant Run as pipeline.runner drain loop
+    participant Fetch as detail fetch + extraction
+    participant Chrome as authenticated Chrome (LinkedIn)
     participant DB as SQLite
-    participant Ops as Operations projections
 
-    Discover->>DB: discovery sources insert pending JobEnrichment rows
-    Discover->>Detail: run_enrichment(limit, workers)
-    Detail->>DB: select pending discovered jobs
-    Detail->>Fetcher: fetch posting detail pages
-    Fetcher-->>Extractor: raw HTML / page content
-    Extractor->>DB: persist full description, apply URL, attempts/errors
-    Detail->>Fetcher: for LinkedIn misses, retry with authenticated Chrome
-    Fetcher-->>DB: persist external company apply URL when captured
-    Discover->>DB: enrich stage/job events for retry visibility
-    DB->>Ops: job detail/list projections refresh
+    Enr->>Run: run_discovery_enrichment_stage(limit, workers, cancel_event)
+    Run->>DB: select jobs still MISSING enrichment (pending = absence)
+    Run->>Fetch: fetch posting detail pages
+    Fetch->>DB: full description, apply URL, attempts/errors
+    Run->>Chrome: LinkedIn misses -> authenticated pass
+    Chrome->>DB: external company apply URL (stops before submission)
+    Enr->>DB: StageCompleted/StageFailed + PostingContentSnapshotCaptured, projections refresh
 ```
 
-### Components
+Two truths correct the old diagram:
 
-```mermaid
-classDiagram
-    class DiscoverWorkflow {
-      +discovery_enrichment activity
-      +detail drain after source families
-    }
-    class EnrichmentRunner {
-      +run_enrichment(limit, workers)
-    }
-    class DetailPageFetcherPort {
-      +fetch(url)
-    }
-    class LlmPort {
-      +complete(prompt, schema)
-    }
-    class JobEnrichment {
-      +description
-      +application_url
-      +attempts
-    }
-    class EnrichmentRepository {
-      +save(enrichment)
-    }
+- **"Pending" is the absence of an enrichment row, not a queued row.** Discovery
+  does not insert placeholder `JobEnrichment` rows. The drain loop selects jobs
+  that still lack enrichment and processes up to `limit` of them; `workers` sets
+  concurrency. The activity output reports a `pending` count (how many remain).
+- **The clean-port enrichment path is not the live path.** The live drain is the
+  inline cascade in `pipeline/runner.py` plus the detail fetchers. The hexagonal
+  `EnrichJobUseCase` / `DetailPageFetcherPort` / `LlmPort` wiring exists in the
+  domain but is not what discovery calls, so it is not drawn here. The drain
+  records `Stage*` and `PostingContentSnapshot*` events, never `JobEnriched` /
+  `EnrichmentFailed` — those come from that unused use case and from the separate
+  protected-source manual-capture snapshot path.
 
-    RunDiscover --> EnrichmentRunner
-    EnrichmentRunner --> DetailPageFetcherPort
-    EnrichmentRunner --> LlmPort
-    EnrichmentRunner --> JobEnrichment
-    EnrichmentRunner --> EnrichmentRepository
-```
+For LinkedIn rows that are failed or enriched without an application URL, a
+bounded authenticated Chrome pass may click the LinkedIn apply control to
+capture an external company URL — but it **stops before any form or submission**.
+Individual detail failures are recorded per job so later runs retry without
+crashing unrelated jobs.
 
-### Data And Events
+### Preparation
 
-- Reads pending jobs from SQLite selectors.
-- Writes enriched description/application fields and canonical enrichment rows
-  where available.
-- Retries LinkedIn rows that are failed or enriched without an application URL
-  with a bounded authenticated Chrome pass. The pass may click the LinkedIn
-  apply control to capture an external company URL, but it stops before forms
-  or submission.
-- Records detail scrape timestamps and errors for retry/debug visibility.
-- Records enrich job/stage events for retry/debug visibility without exposing
-  Enrich as a top-level pipeline action.
-- Updates job list/detail projections so the UI can show richer job content.
+`JobPreparationWorkflow` is the durable bridge from Discover into the Scoring and
+Materials contexts. Discovery derives a deterministic, sorted target list after
+enrichment, then starts one preparation workflow per job with ID
+`prep-{idempotency_key}` and `USE_EXISTING`. Temporal — not a local claim loop —
+owns retry, recovery, and duplicate suppression.
 
-### Failure And Limits
+Targets are derived in `pipeline/preparation.py` from stage state:
 
-`limit` caps pending detail jobs. `workers` controls concurrent detail work.
-Individual detail failures are recorded on the job so later runs can retry or
-surface the error without crashing unrelated jobs.
-
-## Internal Discovery Preparation Work
-
-### Purpose And Boundary
-
-`JobPreparationWorkflow` is the durable bridge between the user-facing Discover
-stage and the internal Scoring and Materials bounded contexts. Discovery derives
-a deterministic target list after detail enrichment, then starts one
-`JobPreparationWorkflow` per job with workflow ID `prep-{idempotency_key}` and
-Temporal `USE_EXISTING` conflict behavior. The idempotency key is still computed
-from tenant, job, kind, target version, and source event, but Temporal now owns
-retry, recovery, and duplicate suppression instead of a local claim loop.
-
-Preparation workflows run the requested subset of:
-
-- `score`: score one enriched job with the current scoring policy.
-- `tailor`: create current-policy tailored materials for an eligible job.
-- `cover`: generate the job-scoped cover letter after tailoring succeeds.
-- `pdf`: render missing PDFs for the current approved materials.
-
-Discovery still performs the threshold/suppression recompute before fan-out so
-active materials that no longer qualify are soft-hidden by the Materials context
-without merging Scoring, Materials, and Discovery ownership.
-
-### Event Flow
+- Jobs at `pending_score` get steps `["score","tailor","cover","pdf"]` keyed to
+  the current **scoring-policy** version.
+- Jobs at `pending_tailor` (meeting `min_score`) get steps
+  `["tailor","cover","pdf"]` keyed to the current **tailoring-policy** version.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Discover as Discover runner
-    participant Temporal as Temporal
+    participant Fan as discovery_preparation_fanout
+    participant T as Temporal
     participant Prep as JobPreparationWorkflow
-    participant Scoring as Scoring context
-    participant Materials as Materials Generation context
-    participant Ops as Operations projections + SSE
+    participant Score as score_job_activity
+    participant Mat as materials activities
+    participant DB as job_events + projections
 
-    Discover->>Discover: derive sorted targets + idempotency keys
-    Discover->>Temporal: start prep-{idempotency_key} in batches of 25
-    Temporal->>Prep: run steps in order
-    Prep->>Ops: WorkflowStarted
-    Prep->>Scoring: score_job_by_url(job, current policy)
-    Scoring-->>Ops: JobScored
-
-    Discover->>Discover: recompute TailorEligibility from persisted scores
-    alt eligible and no current active artifact
-        Prep->>Materials: tailor_job_by_url(job, current policy)
-        Note over Materials: _run_analyze (canonical employer analysis, EmployerAnalyzed)<br/>then candidates -> validate -> judge -> adversarial<br/>then per-bullet provenance vs generated text + never-fabricate detector
-        Materials-->>Ops: ResumeApproved / ResumeFailed
-        opt resume approved
-            Materials-->>Ops: BulletProvenanceRecorded
-            Prep->>Materials: cover_letter_by_url(job)
-            Materials-->>Ops: CoverLetterGenerated / CoverLetterFailed
-            Prep->>Materials: RenderPdfUseCase(job)
-            Materials-->>Ops: PdfRendered
-        end
-        Prep->>Ops: WorkflowCompleted or WorkflowFailed
-    else ineligible with active artifacts
-        Discover->>Materials: SuppressTailoredArtifactsUseCase
-        Materials-->>Ops: TailoredArtifactsSuppressed
+    Fan->>T: start prep-{idempotency_key} (root, USE_EXISTING, batches of 25)
+    T->>Prep: run steps in fixed order
+    Prep->>DB: WorkflowStarted
+    opt step: score
+        Prep->>Score: score one job (current policy)
+        Score->>DB: EmployerAnalyzed, JobScored
     end
+    opt step: tailor (eligible)
+        Prep->>Mat: tailor_job (see docs/tailoring.md)
+        Mat->>DB: ResumeApproved / ResumeFailed, BulletProvenanceRecorded
+    end
+    opt step: cover
+        Prep->>Mat: cover_letter
+        Mat->>DB: CoverLetterGenerated
+    end
+    opt step: pdf
+        Prep->>Mat: render_pdf
+        Mat->>DB: PdfRendered
+    end
+    Prep->>DB: WorkflowCompleted / WorkflowFailed
 ```
 
-### Data And Events
+Behavior notes:
 
-- Workflow IDs key work by tenant, job, kind, target version, source event, and
-  idempotency key so reruns attach to an in-flight workflow instead of starting
-  duplicate side effects.
-- `target_version` is the scoring policy version for score targets and the
-  tailoring policy version for tailor/cover/pdf targets.
-- `source_event_id` ties each workflow target to the latest discovery,
-  enrichment, source, or stage fact that made the work necessary.
-- Successful `tailor` work immediately invokes the job-scoped cover step and
-  then the PDF rendering step. Cover/PDF failures are recorded on their owning
-  stages and the workflow fails under Temporal retry policy without regenerating
-  a completed earlier step on retry.
-- Viewing the Jobs page is also a pickup signal: eligible visible rows whose
-  current state is `pending` and whose current substage is `enrich`, `score`,
-  `tailor`, or `cover` can dispatch a job-scoped run from that substage without
-  resetting attempts or failure metadata. The API route is the safety boundary:
-  known-ineligible rows return `not_eligible` and do not start worker activity.
-- The Jobs toolbar `continue pending prep` action covers the backlog case that
-  page-visible pickup intentionally throttles. It sends matching active pending
-  jobs to `/v1/jobs/bulk-run-pending-preparation`; the API reuses the same
-  eligibility boundary, groups selected job URLs by preparation substage, and
-  records `StageQueued` with `source: "bulk_run_pending_preparation"`.
-- Workflow lifecycle events are part of the `/runs` read model, and the
-  underlying score/material stage events still invalidate dashboard, job detail,
-  artifact, and activity projections while Discover is still running.
-- Scoring policy changes do not silently rescore existing jobs. Current-version
-  actions use `rescore_job` or
-  `rescore_jobs_not_on_current_scoring_policy`.
-- Tailoring policy changes do not silently regenerate existing artifacts.
-  Current-version actions use `retailor_job` or `retailor_current_policy`.
-- Threshold changes are live eligibility changes, not scoring policy changes:
-  lowering the threshold can derive tailor/cover/pdf workflows from persisted
-  scores; raising it can suppress active artifacts. Neither path invokes the
-  scoring LLM.
+- Steps run in order; each retries its *current* failing step under Temporal
+  without regenerating already-durable earlier steps. A failed score does not
+  block other jobs' preparation, and a failed tailor can resume at cover/pdf.
+- Threshold changes are **live eligibility changes**, not scoring changes:
+  lowering the threshold can derive new `tailor`/`cover`/`pdf` work from
+  persisted scores; raising it suppresses active artifacts. Neither path invokes
+  the scoring LLM. Scoring-policy and tailoring-policy changes never silently
+  rescore or regenerate — that is what the explicit `rescore_*` / `retailor_*`
+  actions are for.
+- There is no local preparation reaper. Rows already claimed by a fast worker are
+  not moved backward; Temporal owns in-flight recovery.
 
-### Failure And Limits
-
-Each job preparation workflow retries its current failing step under Temporal.
-A failed score does not block unrelated preparation workflows for other jobs,
-and a failed tailoring job can resume at cover/pdf after the completed earlier
-steps are already durable. `limit` bounds target derivation so local debug runs
-can stay small.
-
-Bulk failed retry is an API-owned recovery path, not a side effect of visiting
-the Jobs page. When `runAfter: true`, the route sends the exact reset job URL
-set across JSON-RPC and selected scoring honors the requested `workers` value
-while processing that set. Rows already claimed by a fast worker are not moved
-backward to `queued`; there is no local preparation reaper for score, tailor, or
-cover because Temporal owns in-flight recovery.
-
-## Internal Preparation Context: Score
-
-### Purpose And Boundary
+### Score
 
 Score assigns applicant-side fit scores and structured reasoning to enriched
 jobs. It owns retrieval preselection, scoring criteria, LLM parsing, score
-versioning, and user-corrected score history. It does not tailor materials.
-In the product flow this is Discover subwork; explicit rescore actions are
-maintenance controls.
+versioning, and user-corrected score history. In the product flow it is Discover
+subwork; explicit rescore actions are maintenance controls.
 
-### Sequence
+The scoring path has three distinct parts, and it is worth being precise about
+which model machinery each uses:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC current-policy action
-    participant Temporal as Temporal service
-    participant Prep as JobPreparationWorkflow
-    participant Runner as _run_score
-    participant Scorer as run_scoring
-    participant Retrieval as Hybrid retrieval
-    participant Profile as Profile repository
-    participant LLM as LLMClient
-    participant Repo as Scoring repository
-    participant DB as SQLite
-    participant Ops as Operations projections
-
-    Api->>Rpc: rescore_job or rescore_jobs_not_on_current_scoring_policy
-    Rpc->>Temporal: start JobPreparationWorkflow or JobPipelineWorkflow
-    Prep->>Scorer: score_job_activity during Discover fan-out
-    Temporal->>Runner: execute score_activity for low-level maintenance
-    Runner->>Scorer: run_scoring(limit, rescore, workers)
-    Scorer->>DB: select enriched jobs needing score
-    Scorer->>Retrieval: rank candidate pool
-    Scorer->>Profile: load current profile snapshot
-    Scorer->>LLM: score selected jobs against profile/criteria
-    LLM-->>Scorer: structured fit score and reasoning
-    Scorer->>Repo: save JobScore version
-    Repo->>DB: job_scores + events
-    Runner->>DB: StageCompleted or StageFailed
-    DB->>Ops: score fields in projections refresh
-```
-
-### Components
-
-```mermaid
-classDiagram
-    class RunScore {
-      +_run_score(limit, rescore, workers)
-    }
-    class ScoringRunner {
-      +run_scoring(limit, rescore, workers)
-    }
-    class HybridRetrievalService {
-      +rank_jobs(profile, jobs)
-    }
-    class ScoreJobUseCase {
-      +execute(job, profile, criteria)
-    }
-    class LLMClient {
-      +chat(messages, schema)
-    }
-    class JobScore {
-      +fit_score
-      +fit_band
-      +criteria_json
-      +trace_json
-    }
-    class ScoringRepository {
-      +save(JobScore)
-      +load latest
-    }
-
-    RunScore --> ScoringRunner
-    ScoringRunner --> HybridRetrievalService
-    ScoringRunner --> ScoreJobUseCase
-    ScoreJobUseCase --> LLMClient
-    ScoreJobUseCase --> JobScore
-    ScoreJobUseCase --> ScoringRepository
-```
-
-### Data And Events
-
-- Reads enriched job content and profile target preferences.
-- Writes versioned `job_scores` rows with criteria and trace metadata.
-- Writes versioned `scoring_policies` rows when user corrections create
-  correction-derived calibration anchors; current behavior preserves rubric
-  weights and thresholds while making later score traces cite the new policy
-  version and anchor IDs.
-- Marks comparable latest uncorrected scores stale in `job_score_staleness`
-  when a correction creates a newer scoring policy version. Corrected score
-  versions are excluded. Successful uncorrected rescores under the newer policy
-  resolve the stale marker; the local API can also reset active stale markers
-  for explicit `jobhunter run score --rescore` processing.
-- Supports a local, non-sensitive scoring governance report for QA. The report
-  summarizes current policy version, rubric version, anchor count, unresolved
-  and resolved stale-marker counts, correction count, and correction agreement
-  signal without emitting raw job URLs, correction rationales, anchor IDs,
-  resumes, generated artifacts, or local paths.
-- Updates compact score fields where needed by queue selectors.
-- Publishes score events consumed by Pipeline and Operations.
-- Refreshes dashboard score distributions and job list score badges.
-
-### Failure And Limits
-
-`limit` applies after retrieval preselection. `rescore=true` allows jobs with
-existing scores back into the candidate pool. Parser warnings and failed LLM
-calls are recorded so score failures do not masquerade as successful low-fit
-results. Scoring prompt, model, schema, rubric, or policy changes must run the
-local scoring eval gate documented in `docs/local-reliability-qa.md`; the gate
-checks deterministic policy resolution separately from the raw LLM score and
-pins stale-score exclusion until explicit reset/rescore.
-
-## Internal Preparation Context: Tailor
-
-### Purpose And Boundary
-
-Tailor creates job-specific resume materials for high-fit jobs. It owns resume
-generation, validation mode, retry/retailor decisions, and resume artifact
-registration. It does not submit applications. In the product flow this is
-Discover subwork. First-time manual tailoring is exposed on the job detail
-tailor stage for the selected job; explicit re-tailor actions remain
-current-policy regeneration controls for jobs that already have tailored
-artifacts.
-
-### Generation And Approval Model
-
-Tailoring separates drafting from approval. One or more configured
-provider/model specs draft structured resume candidates. Each candidate is
-validated independently against the profile contract, rendered text contract,
-tailoring quality plan, and optional high-fit adversarial review.
-
-Normal and strict validation modes require a separate structured judge to return
-`PASS` at or above the configured threshold before the resume is approved.
-`lenient` mode skips the judge for low-cost local runs. Approved artifacts carry
-the selected generator, candidate summaries, judge model, judge score/verdict,
-prompt/schema versions, quality checks, and retry feedback as audit metadata.
-
-### Sequence
+1. **Retrieval preselection is BM25-only.** `domain/scoring/retrieval.py`
+   implements BM25 lexical ranking with *optional* semantic reciprocal-rank
+   fusion, but the local build's default semantic adapter is a no-op (no hosted
+   embedding service), so ranking is lexical. `limit` applies after preselection.
+2. **Employer analysis is the mandatory front-half.** Before the fit score,
+   scoring ensures a canonical employer analysis via
+   `scoring/employer_analysis.py` / `scoring/scorer.py`. This is produced by the
+   three-SDK agent ensemble (Claude Agent SDK + Codex SDK + Antigravity/Gemini,
+   synthesized by Claude) and emits `EmployerAnalyzed`. The same analysis is
+   reused by tailoring, so it is not recomputed per stage.
+3. **The fit score itself comes from the httpx LLM client.** The scoring
+   use-case calls `LlmPort.chat_json` (the httpx `LLMClient` behind the
+   adapter), which returns a structured fit score, band, criteria, and trace.
+   Deterministic policy resolution (rubric weights, thresholds, calibration
+   anchors) is applied *separately* from the raw LLM output.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC current-policy action
-    participant Prep as JobPreparationWorkflow
-    participant Runner as _run_tailor
-    participant Tailor as run_tailoring
-    participant Profile as Profile repository
-    participant Scores as Scoring data
-    participant LLM as LLMClient
-    participant Materials as Materials repository
-    participant Files as Local files
+    participant Prep as JobPreparationWorkflow / pipeline
+    participant Act as score_job_activity / score_activity
+    participant Retr as BM25 retrieval (lexical)
+    participant Ens as employer-analysis ensemble
+    participant LLM as LLMClient.chat_json (httpx)
+    participant Pol as deterministic policy resolve
     participant DB as SQLite
 
-    Api->>Rpc: tailor_job, retailor_job, or retailor_current_policy
-    Prep->>Tailor: tailor_job_activity during Discover fan-out
-    Rpc->>Prep: start JobPreparationWorkflow(steps=["tailor","cover","pdf"])
-    Runner->>Tailor: run_tailoring(...)
-    Tailor->>DB: select scored jobs meeting minScore
-    Tailor->>Profile: load resume baseline and tailoring rules
-    Tailor->>Scores: load score context/reasoning
-    Tailor->>LLM: generate structured candidates across configured generators
-    LLM-->>Tailor: structured resume candidate JSON
-    Tailor->>Tailor: validate each candidate independently
-    Tailor->>LLM: structured judge scores valid candidates
-    LLM-->>Tailor: verdict, score, criterion scores, issues
-    Tailor->>Materials: save MaterialsSet / TailoredResume
-    Tailor->>Files: write resume artifacts
-    Tailor->>DB: stage/material events
+    Prep->>Act: score (current policy)
+    Act->>Retr: preselect candidate pool
+    Act->>Ens: ensure employer analysis
+    Ens->>DB: EmployerAnalyzed
+    Act->>LLM: score job vs profile + criteria
+    LLM-->>Act: structured fit score + reasoning
+    Act->>Pol: resolve band/thresholds/anchors
+    Act->>DB: JobScored (versioned), score events
 ```
 
-### Components
+Score writes versioned `job_scores` rows (criteria + trace), can write a new
+`scoring_policies` version when user corrections create calibration anchors, and
+marks comparable uncorrected scores stale in `job_score_staleness` when a new
+policy version lands. Parser warnings and failed LLM calls are recorded so a
+failure never masquerades as a successful low-fit result. Scoring prompt/model/
+schema/rubric/policy changes must run the local scoring eval gate documented in
+[`local-reliability-qa.md`](local-reliability-qa.md).
 
-```mermaid
-classDiagram
-    class RunTailor {
-      +_run_tailor(min_score, limit, validation_mode, workers, retailor)
-    }
-    class TailoringRunner {
-      +run_tailoring(...)
-    }
-    class ProfileRepository {
-      +load default profile
-    }
-    class MaterialsSet {
-      +TailoredResume
-      +CoverLetter
-      +RenderedPdf
-    }
-    class MaterialsRepository {
-      +save(materials)
-      +list pending PDF
-    }
-    class LLMClient {
-      +chat(messages, schema)
-    }
-    class ArtifactStore {
-      +tailored_resumes directory
-    }
+### Tailor
 
-    RunTailor --> TailoringRunner
-    TailoringRunner --> ProfileRepository
-    TailoringRunner --> LLMClient
-    TailoringRunner --> MaterialsSet
-    TailoringRunner --> MaterialsRepository
-    TailoringRunner --> ArtifactStore
-```
+Tailor creates job-specific resume materials for eligible high-fit jobs. It owns
+resume generation, validation mode, retry/re-tailor decisions, and artifact
+registration; it never submits applications. In the product flow it is Discover
+subwork, with first-time manual tailoring exposed on the job detail page.
 
-### Data And Events
+The mechanism, in brief: one or more configured provider/model specs draft
+structured resume candidates; each candidate is validated independently against
+the profile contract, the rendered-text contract, and the tailoring quality
+plan; then `normal`/`strict` modes require a separate structured judge to return
+`PASS` at or above the configured threshold before approval (`lenient` skips the
+judge for low-cost local runs). Approved artifacts carry the selected generator,
+candidate summaries, judge model, judge score/verdict, prompt/schema versions,
+quality checks, and retry feedback as audit metadata; provider URLs and API keys
+are never persisted.
 
-- Reads jobs with score >= `minScore`; a per-job `tailor_job` user action can
-  override that floor only for the selected job and then continue into the
-  job-scoped cover stage.
-- Reads profile resume baseline, skills, writing style, and tailoring rules.
-- Writes tailored resume records and local artifacts under the JobHunter app
-  directory.
-- Persists safe quality metadata with the artifact/report: selected generator,
-  candidate summaries, judge model, judge score/verdict/issues, and
-  prompt/schema versions. Provider URLs, API keys, and raw credential config
-  are never stored.
-- Emits material-generation events and pipeline lifecycle events.
-- Updates artifact and job detail projections.
+Tailoring is where the fabrication gate and per-bullet claim grounding live.
+**For gate depth — the fabrication detector, claim-grounding, judge and
+adversarial personas, and repair loop — see [`tailoring.md`](tailoring.md).**
+The tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
+/ `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
+into the cover step.
 
-### Failure And Limits
+### Cover
 
-`validationMode` controls strictness of generated-material validation.
-`retailor=true` allows existing tailored materials to be regenerated. First-time
-manual tailoring uses `retailor=false` and records an audit event before worker
-dispatch so the user's intent is visible even if the worker later skips or fails.
-`workers` controls parallel tailoring work. `tailorModels` can fan out candidate
-generation across provider/model specs, and `tailorJudgeModel` selects the
-structured judge independently from apply's browser-action model. By default,
-validator-passing resumes still fail the tailor stage unless the structured
-judge returns `PASS` above the configured score threshold; `lenient` mode skips
-the judge for local low-cost runs. Failures are tracked per job/material so the
-stage can be retried without losing successful materials.
+Cover generates the job-scoped cover letter for a job that already has sufficient
+score/material context, and renders its PDF, so it outputs the artifacts Apply
+needs without a separate PDF-only stage. It reads score/job/profile/materials
+context, writes the cover-letter row plus local text and PDF files, and emits
+`CoverLetterGenerated` and `PdfRendered`. There is **no `CoverLetterFailed`
+event**: a failed cover surfaces as `StageFailed` plus the workflow's
+`WorkflowFailed` outcome. Failures are per job, so a retry continues from the
+remaining pending cover letters.
 
-## Internal Material Context: Cover
+### PDF
 
-### Purpose And Boundary
+`render_pdf` renders missing PDFs for the current approved materials. It is the
+deterministic tail of preparation (no LLM, no spend preflight) and emits
+`PdfRendered`. As a prep step it retries under the cover retry policy.
 
-Cover creates job-specific cover letters for jobs that already have sufficient
-score/material context. It owns cover-letter text generation and persistence.
-It also renders the cover-letter PDF, so the stage outputs the artifacts Apply
-needs without relying on a separate PDF-only stage. It is surfaced as Discover
-diagnostic state in the product UI rather than a primary preparation stage.
-
-### Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
-    participant Temporal as Temporal service
-    participant Runner as _run_cover
-    participant Cover as cover_letter_by_url
-    participant Profile as Profile repository
-    participant Materials as Materials repository
-    participant LLM as LLMClient
-    participant Files as Local files
-    participant DB as SQLite
-
-    Api->>Rpc: run_stage(stage="cover", minScore, limit, validationMode)
-    Rpc->>Temporal: start JobPipelineWorkflow(stages=["cover"])
-    Temporal->>Runner: execute cover_activity
-    Runner->>Cover: cover_letter_by_url(job_url)
-    Cover->>DB: select one eligible job/material set
-    Cover->>Profile: load profile and writing style
-    Cover->>Materials: load tailored resume/material context
-    Cover->>LLM: generate cover letter
-    Cover->>Materials: save CoverLetter
-    Cover->>Files: write cover letter artifact
-    Cover->>Files: render cover-letter PDF
-    Cover->>DB: cover/material/stage events
-```
-
-### Components
-
-```mermaid
-classDiagram
-    class RunCover {
-      +_run_cover(min_score, limit, validation_mode)
-    }
-    class CoverLetterRunner {
-      +cover_letter_by_url(...)
-    }
-    class ProfileRepository {
-      +load default profile
-    }
-    class MaterialsRepository {
-      +load MaterialsSet
-      +save CoverLetter
-      +save CoverLetterPdf
-    }
-    class LLMClient {
-      +chat(messages, schema)
-    }
-    class CoverLetter {
-      +content
-      +artifact_path
-    }
-    class PlaywrightHtmlPdfAdapter {
-      +render cover-letter PDF
-    }
-
-    RunCover --> CoverLetterRunner
-    CoverLetterRunner --> ProfileRepository
-    CoverLetterRunner --> MaterialsRepository
-    CoverLetterRunner --> LLMClient
-    CoverLetterRunner --> CoverLetter
-    CoverLetterRunner --> PlaywrightHtmlPdfAdapter
-```
-
-### Data And Events
-
-- Reads score, job, profile, and existing materials context.
-- Writes cover-letter material rows plus local cover-letter text and PDF files.
-- Publishes cover-letter generation and PDF-rendered events.
-- Refreshes artifact and job detail projections.
-
-### Failure And Limits
-
-`limit` caps eligible jobs. `validationMode` controls cover-letter validation.
-Failures are local to individual jobs so a retry can continue from the remaining
-pending cover letters.
-
-## Apply Stage
-
-### Purpose And Boundary
+### Apply
 
 Apply drives browser/agent automation to submit or dry-run applications. It is
-the riskiest and longest-running stage, so the batch pipeline `run_stage` route
-keeps orchestration in Temporal and `JobPipelineWorkflow` delegates the selected
-`apply` stage to child `ApplyWorkflow` instead of a synchronous runner activity.
-It owns apply-run lifecycle, browser execution, dry-run submission safety,
-cancellation, and apply artifacts/logs.
+the riskiest, longest-running stage, so it is isolated in its own workflow with a
+tighter retry policy and explicit safety controls. It owns apply-run lifecycle,
+browser execution, dry-run safety, cancellation, and apply artifacts/logs.
 
-### Sequence
+There are **two entry paths** into `ApplyWorkflow`:
+
+- **Pipeline route:** `run_stage(["apply"])` starts `JobPipelineWorkflow`, which
+  delegates to a child `ApplyWorkflow` (`{parent}-apply`).
+- **Direct per-job route:** the JSON-RPC `apply` method starts `ApplyWorkflow`
+  directly with the per-job ID `apply-{tenant}-{jobKey}`.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Web as Web UI
     participant Api as TS API
-    participant JsonRpc as SubprocessJsonRpcAdapter
-    participant Rpc as JsonRpcServer
-    participant Temporal as Temporal service
-    participant PipelineWorkflow as JobPipelineWorkflow
-    participant Workflow as ApplyWorkflow
-    participant Activity as apply_activity
-    participant Launcher as apply.launcher.main
-    participant Browser as Browser / agent automation
-    participant DB as SQLite
-    participant Ops as Apply projections / SSE
+    participant Rpc as JSON-RPC
+    participant T as Temporal
+    participant AW as ApplyWorkflow
+    participant Act as apply_activity
+    participant L as apply launcher
+    participant Br as Browser (CDP)
+    participant DB as job_events + apply_run_projections
 
-    Web->>Api: POST /v1/pipeline/actions/run-stage with apply selected
-    Api->>JsonRpc: call("run_stage", params)
-    JsonRpc->>Rpc: JSON-RPC request
-    Rpc->>Temporal: start JobPipelineWorkflow(stages=["apply"])
-    Temporal-->>Rpc: workflow handle
-    Rpc-->>Api: {runId, workflowId}
-    Api-->>Web: 202 queued
-
-    Temporal->>PipelineWorkflow: run(stages=["apply"])
-    PipelineWorkflow->>Workflow: execute child ApplyWorkflow(payload)
-    Workflow->>Activity: execute apply_activity(payload)
-    Activity->>Launcher: apply_main(limit, min_score, dry_run, headless, model, continuous)
-    Launcher->>DB: acquire apply stage lock and publish ApplyRunStarted
-    Launcher->>Browser: open/fill/submit or dry-run application
-    Browser-->>Launcher: result / error
-    Launcher->>DB: ApplyRunEventRecorded and final status
-    DB->>Ops: apply_run_projections rebuild
-    Ops-->>Web: SSE invalidates apply run and job views
+    alt pipeline route
+        Web->>Api: POST /v1/pipeline/actions/run-stage (apply)
+        Api->>Rpc: run_stage(["apply"])
+        Rpc->>T: JobPipelineWorkflow -> child ApplyWorkflow ({wf}-apply)
+    else direct per-job route
+        Web->>Api: apply action
+        Api->>Rpc: apply(jobUrl, ...)
+        Rpc->>T: ApplyWorkflow (apply-{tenant}-{jobKey})
+    end
+    T->>AW: run (approval_required, dry_run, continuous)
+    AW->>Act: check_spend_budget, then apply_activity (2h / 1h)
+    Act->>L: run_blocking_with_heartbeat(launcher, on_cancel)
+    L->>DB: BEGIN IMMEDIATE lock, ApplyRunStarted
+    L->>DB: ApplySubmitIntended (at-most-once checkpoint)
+    L->>Br: fill; submit only if approved AND not dry-run
+    Br-->>L: dry-run blocks non-local POST/PUT/PATCH via CDP
+    L->>DB: ApplicationSubmitted / DryRunCompleted / ApplicationFailed
+    opt continuous
+        AW->>AW: continue_as_new (batch of 25, 30s empty poll)
+    end
 ```
 
-### Components
+The launcher **orchestrates**; it does not fill or submit forms itself. A local
+**Claude Code CLI agent** drives the CDP-controlled Chrome through **Playwright
+MCP** and performs any form interaction. Terminal apply outcomes are
+`ApplicationSubmitted` (live submit), `DryRunCompleted` (dry-run),
+`ApplicationFailed`, or `ApplyManualSkip` (manual-ATS skip).
 
-```mermaid
-classDiagram
-    class ApplyAction {
-      +apply_action(params)
-      +WorkflowStartSpec
-    }
-    class ApplyWorkflowInput {
-      +tenant_id
-      +job_url
-      +dry_run
-      +headless
-      +model
-      +min_score
-      +workers
-      +limit
-      +continuous
-    }
-    class ApplyWorkflow {
-      +execute apply_activity
-      +retry policy
-    }
-    class ApplyActivity {
-      +apply_activity(payload)
-      +run blocking launcher with heartbeat
-    }
-    class ApplyLauncher {
-      +select eligible jobs
-      +acquire stage lock
-      +drive browser automation
-      +persist apply events
-    }
-    class ApplyRunProjection {
-      +status
-      +timeline
-      +artifact links
-    }
+**Three safety invariants, and the mechanisms that enforce them:**
 
-    ApplyAction --> ApplyWorkflowInput
-    ApplyAction --> ApplyWorkflow
-    ApplyWorkflow --> ApplyActivity
-    ApplyActivity --> ApplyLauncher
-    ApplyLauncher --> ApplyRunProjection
-```
+1. **At-most-once submission.** The launcher takes a `BEGIN IMMEDIATE` stage
+   lock, guards on stage state, and writes an `ApplySubmitIntended` checkpoint
+   before the actual submit, marking the result idempotently afterward. Combined
+   with the per-job workflow ID (`apply-{tenant}-{jobKey}` + `USE_EXISTING`,
+   one live apply per job) and the **live retry policy of exactly one attempt**,
+   a submit is never silently retried into a double application. Dry-runs, which
+   submit nothing, get two attempts.
+2. **Binding approval gate.** `approval_required` defaults to `True`. The
+   launcher requires an explicit `approve_submit` decision before it will
+   submit; without approval it stops at the review/dry-run boundary. The gate is
+   configurable but binding — it is enforced in the launcher, not merely surfaced
+   in the UI.
+3. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
+   overrides the form-submit action and uses the CDP Fetch domain to block
+   non-local `POST`/`PUT`/`PATCH` requests. So dry-run safety does not rely on
+   the agent choosing not to click submit — even a misbehaving agent cannot
+   submit through the browser.
 
-### Data And Events
+**Timeouts and retries.** The apply activity runs with a 2-hour window for a
+normal batch and a 1-hour window per batch in continuous mode; heartbeat timeout
+is 60 s. Retry is one attempt live, two attempts dry-run.
 
-- Reads eligible jobs, score/materials, posting or direct application URL data,
-  and profile facts.
-- Writes canonical apply stage state and `ApplyRunStarted`,
-  `ApplyRunEventRecorded`, `ApplicationSubmitted`, or `ApplicationFailed`
-  events.
-- Writes apply logs/artifacts where available.
-- Rebuilds `apply_run_projections` from lifecycle events.
+**Cancellation.** `cancel_run` (sync JSON-RPC) issues a Temporal cancel to the
+workflow handle (`handle.cancel()` via the default canceler) — this is a Temporal
+cancellation, not an application signal. The cancel propagates through
+`run_blocking_with_heartbeat`'s `on_cancel` hook so the launcher stops
+cooperatively; the terminal state is recorded as `WorkflowCanceled` (by finalize
+on the cancel path, or by the reconciler). The post-hoc SQLite stage-canceled
+write is the API's `cancelJobAction`.
 
-### Failure, Retry, And Cancellation
+## Spend Ceiling
 
-`ApplyWorkflow` uses an apply-specific retry policy and a two-hour activity
-timeout. Transient activity failures can retry through Temporal. Operator
-errors such as no eligible job fail fast. `cancel_run` signals the workflow
-runtime to cancel an in-flight run; the post-hoc SQLite state transition for
-marking a stage canceled is the local API's `cancelJobAction` write.
+A daily spend ceiling backstops LLM cost. The `check_spend_budget` activity
+(`llm.py`) is the preflight in every spendful workflow. It reads the budget
+status (`read_spend_budget_status`): `daily_budget_usd` defaults to **$25**
+(`read_daily_budget_usd(default=25.0)`), and a value of **0 means unlimited**. If
+today's `llm_spend` ledger already meets the ceiling, it raises
+`BudgetExceededError` (`budget_exceeded`, non-retryable), failing the run before
+any paid work. Because the preflight runs with `maximum_attempts=1`, a depleted
+budget is a clean fast failure, not a retry storm.
 
-## Operations Read-Side
+Per-call cost is written to the `llm_spend` UPSERT ledger, keyed by day, using
+per-model-family rates (`estimate_llm_cost_usd` in `llm.py`); the rates are
+coarse family buckets, and models without a listed family fall back to a
+generic rate, so the ledger is an estimate, not billing truth. The ceiling is a *preflight gate* per workflow, not a
+mid-call interrupt: a single expensive run already in flight is not aborted, but
+the next spendful workflow will not start once the day's ledger is at the cap.
 
-The UI does not read directly from stage internals. It reads projection-backed
-API endpoints owned by Operations:
+## Discovery Schedule
 
-`job_list_projections.current_stage` is a product-stage field. Projection
-builders write only `discover` or `apply` there, even when the first actionable
-internal row is `enrich`, `score`, `tailor`, or `cover`. The full internal
-stage list remains in `job_detail_projections.stages_json` for review,
-diagnostics, and repair decisions. Cover is the exception that can advance the
-product stage: when the first actionable internal row is `cover` and a tailored
-resume exists, the list projection writes `current_stage='apply'` while keeping
-`current_substage='cover'` and the cover state visible for retry or repair.
+Scheduled discovery is **off by default**. A single Temporal Schedule,
+`jobhunter-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
+it is reconciled from settings only at **worker startup**
+(`_reconcile_discovery_schedule` in `cli.py`, before `worker.run()`):
+
+- It reads `load_discovery_schedule_settings()` → `(enabled, cron)`.
+- If **disabled**, it deletes the schedule handle (idempotent) and returns.
+- If **enabled**, it creates (or updates) the schedule to start
+  `DiscoverWorkflow` (`discover-local`) on the given cron, with
+  `ScheduleOverlapPolicy.SKIP` so a slow run never overlaps the next tick.
+
+**The gotcha:** because reconciliation happens once at startup, toggling the
+schedule setting has no effect until the worker is restarted. Turning the
+schedule on or off, or changing its cron, requires bouncing the worker.
+
+## Persistence Map
+
+The worker writes to a single local SQLite database. Tables group by context;
+the append-only `job_events` log plus the projection tables are the read-model
+spine.
+
+| Group | Representative tables |
+| --- | --- |
+| Discovery | `jobs`, source observations, `source_registry_entries`, source locator / manual-capture / review queue, quarantine, `discovery_runs`, `discovery_settings`, plus target search overlaid from `candidate_profiles` |
+| Enrichment | enrichment fields / rows on jobs, posting content snapshots |
+| Scoring | `job_scores`, `scoring_policies`, `job_score_staleness`, employer analysis |
+| Materials | materials sets / tailored resumes, cover letters, rendered PDFs, `tailoring_policies` |
+| Apply | apply stage state + apply lifecycle in `job_events` (see note) |
+| Orchestration / read model | `job_events` (append-only), `operational_attempt_metrics`, `job_stage_states`, `workflow_run_projections`, `job_list_projections`, `job_detail_projections`, `dashboard_projections`, artifact projections, `apply_run_projections` |
+| Spend | `llm_spend` |
+| Runtime | worker heartbeat / runtime identity |
+
+Note: the legacy `apply_runs` / `apply_run_events` tables were dropped at boot.
+Apply lifecycle now lives entirely in `job_events` and is projected into
+`apply_run_projections`.
+
+Operational metrics are append-only rows written at pipeline boundaries (stage,
+source id, source role, adapter, attempt kind, outcome, counts, durations,
+`error_class`, `error_message`, `run_id`, `job_url` when known) rather than
+inferred from labels — so `discovery_runs.status='failed'` no longer has to carry
+unrelated failure causes.
+
+## Domain Events, Projections, and SSE
+
+The authoritative event catalog is the TypeScript `DomainEventType` union in
+`packages/domain-types/src/events/` — **68 event types**, guarded by an
+exhaustiveness assertion and by the frontend's `every-event-has-handler` parity
+test. The Python worker emits 55 of them through `create_domain_event` factories
+in `workers/automation/src/jobhunter/domain/events/`; the remaining types
+(preparation work-item, resume-template, `TailorRetailorRequested`,
+`TailoredArtifactsSuppressed`, `TailoringPolicyUpdated`,
+`CompensationFactsUpdated`) originate on other code paths. Both sides fold the
+same camelCase payloads, including the six `Workflow*` lifecycle events.
+
+Three catalog corrections, because the old doc drifted:
+
+- **There is no `CoverLetterFailed` event.** Cover success is
+  `CoverLetterGenerated`; cover failure surfaces as `StageFailed` +
+  `WorkflowFailed`.
+- **`StageQueued` is not a typed domain event.** It is not in the 68-type union.
+  The TS bulk routes tag reset/queued rows with a `StageQueued` marker string
+  (`source: "bulk_retry_failed"` / `"bulk_run_pending_preparation"`), but it is
+  not folded like a domain event.
+- **`DiscoveryRunProgress` is not a domain event.** It is the heartbeat progress
+  payload persisted onto the `discovery_runs` aggregate; the typed discovery-run
+  events are `DiscoveryRunStarted` / `Completed` / `Failed`.
+
+The read path is projection-backed, and there are **two projection builders**:
+the Python `ProjectionBuilder` (in the worker, bus-subscribed and also refreshed
+explicitly by finalize/reconciler) and the TypeScript `refreshProjections` (in
+the API). Both rebuild the same projection tables from the same events.
 
 ```mermaid
 flowchart LR
-    Events["job_events<br/>domain + lifecycle facts"]
-    Metrics["operational_attempt_metrics<br/>stage/source/apply facts"]
-    StageRows["job_stage_states"]
-    Aggregates["aggregate tables<br/>jobs, scores, materials, apply events"]
-    Builder["ProjectionBuilder / refreshProjections"]
-    JobList["job_list_projections"]
-    Dashboard["dashboard_projections"]
-    Detail["job_detail_projections"]
-    Artifacts["artifact projections"]
-    ApplyRuns["apply_run_projections"]
+    Events["job_events (append-only)"]
+    Metrics["operational_attempt_metrics"]
+    Stages["job_stage_states"]
+    Agg["aggregate tables"]
+    PB["ProjectionBuilder (Python worker)"]
+    RP["refreshProjections (TS API)"]
+    Proj["projection tables<br/>job_list / job_detail / dashboard /<br/>artifacts / apply_run / workflow_run"]
     Api["TS API read endpoints"]
-    SSE["GET /v1/events/stream"]
-    UI["React views + TanStack Query"]
+    SSE["GET /v1/events/stream (250ms poll)"]
+    UI["React + TanStack Query"]
 
-    Events --> Builder
-    Metrics --> Builder
-    StageRows --> Builder
-    Aggregates --> Builder
-    Builder --> JobList
-    Builder --> Dashboard
-    Builder --> Detail
-    Builder --> Artifacts
-    Builder --> ApplyRuns
-    JobList --> Api
-    Dashboard --> Api
-    Detail --> Api
-    Artifacts --> Api
-    ApplyRuns --> Api
+    Events --> PB
+    Events --> RP
+    Metrics --> PB
+    Stages --> PB
+    Agg --> PB
+    PB --> Proj
+    RP --> Proj
+    Proj --> Api
     Events --> SSE
     Api --> UI
     SSE --> UI
 ```
 
-This separation is why a stage can complete before every UI card visibly
-changes: the write path records durable facts first, then projection refresh and
-SSE invalidation make those facts visible to the frontend.
+`job_list_projections.current_stage` is a *product-stage* field: builders write
+only `discover` or `apply` there (the full internal stage list stays in
+`job_detail_projections.stages_json`), with the `cover`→`apply` advance described
+earlier. Note that `GET /v1/events/stream` is a **250 ms poller** over new
+`job_events` rows, not a push stream — which is why a stage can complete a beat
+before the UI card visibly changes: durable facts are recorded first, then
+projections refresh and the next SSE tick invalidates the query cache. The SSE
+contract is specified in [`local-ts-api.md`](local-ts-api.md).
 
-Operational metrics are append-only rows written at pipeline boundaries rather
-than inferred from dashboard labels or free-form event messages. Rows include
-`stage`, `source_id`, source role, adapter, attempt kind, outcome,
-operational/scrape/retryable flags, counts, durations, `error_class`,
-`error_message`, `run_id`, and `job_url` when known. Discovery, enrichment,
-scoring, tailoring, per-job preparation workflows, cover generation, apply dry-runs,
-and orphan cleanup all record structured attempts so
-`discovery_runs.status='failed'` no longer has to carry unrelated failure
-causes by itself.
+## Failure Behavior Summary
+
+- **Transient failures retry; preconditions fail fast.** Retryable errors retry
+  up to each activity's attempt cap; `configuration`/`authentication`/
+  `missing_input`/`budget_exceeded` never retry.
+- **Discovery isolates sources.** One failed source family yields a partial
+  result; the workflow fails only if a family fails after retries, and it fails
+  with the source error, not a swallowed one.
+- **Preparation isolates jobs.** A failed step fails only that job's workflow and
+  resumes at the failed step; other jobs are unaffected.
+- **Apply fails safe.** At-most-once + one live attempt + the CDP dry-run guard
+  mean a failed or canceled apply never double-submits; cancellation is
+  cooperative and terminalizes as `WorkflowCanceled`.
+- **Nothing stays "running" forever.** Finalize records the terminal outcome on
+  every normal/cancel path; the describe-based reconciler backstops killed
+  workers, timeouts, and dev-server history loss.
 
 ## Source Files
 
-Primary implementation files:
+Primary implementation files (repo-relative):
 
-- `apps/api/src/server.ts`: `/v1/pipeline/actions/run-stage`,
-  `/v1/jobs/bulk-retry-failed`.
-- `apps/api/src/local-actions.ts`: maps UI commands to JSON-RPC methods and
-  interprets results.
-- `apps/api/src/json-rpc-adapter.ts`: long-lived subprocess JSON-RPC adapter.
-- `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`: JSON-RPC
-  method registry.
-- `workers/automation/src/jobhunter/actions.py`: local action wrapper for
-  `run_stage` and `profile_import`.
-- `workers/automation/src/jobhunter/pipeline/runner.py`: non-apply stage
-  orchestration.
-- `workers/automation/src/jobhunter/pipeline/workflow.py`: non-apply Temporal
-  workflow path.
-- `workers/automation/src/jobhunter/apply/workflow.py`: apply workflow.
-- `workers/automation/src/jobhunter/apply/activities.py`: apply activity.
-- `workers/automation/src/jobhunter/apply/launcher.py`: apply browser/agent
-  launcher.
-- `apps/api/src/projections.ts` and
-  `workers/automation/src/jobhunter/infrastructure/projections/`: Operations
-  read-side projection builders.
+- `apps/api/src/server.ts` — `/v1/pipeline/actions/run-stage`, the bulk job
+  routes, and `GET /v1/events/stream`.
+- `apps/api/src/local-actions.ts` — maps UI commands to JSON-RPC methods.
+- `apps/api/src/json-rpc-adapter.ts` — long-lived subprocess JSON-RPC adapter.
+- `apps/api/src/projections.ts` — TS projection builder (`refreshProjections`).
+- `packages/domain-types/src/events/` — the 68-type `DomainEventType` union.
+- `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py` — JSON-RPC
+  method registry (workflow vs sync modes).
+- `workers/automation/src/jobhunter/workflow_specs.py` — `run_stage` / `apply`
+  workflow selection and deterministic IDs.
+- `workers/automation/src/jobhunter/infrastructure/temporal/registry.py` — the
+  six workflows and nineteen activities.
+- `workers/automation/src/jobhunter/infrastructure/temporal/finalize.py` — the
+  workflow envelope (`record_workflow_started` / `record_workflow_outcome`).
+- `workers/automation/src/jobhunter/infrastructure/temporal/run_in_activity.py`
+  — `run_blocking_with_heartbeat`.
+- `workers/automation/src/jobhunter/infrastructure/temporal/runtime_guard.py` —
+  `assert_activity_runtime`.
+- `workers/automation/src/jobhunter/discovery/workflow.py`,
+  `.../discovery/activities.py` — `DiscoverWorkflow` and its four activities.
+- `workers/automation/src/jobhunter/pipeline/workflow.py` — `JobPipelineWorkflow`.
+- `workers/automation/src/jobhunter/pipeline/preparation.py` — target derivation
+  and root preparation fan-out.
+- `workers/automation/src/jobhunter/preparation/workflow.py` —
+  `JobPreparationWorkflow`.
+- `workers/automation/src/jobhunter/apply/workflow.py`,
+  `.../apply/activities.py`, `.../apply/launcher.py` — apply workflow, activity,
+  and browser/agent launcher (safety invariants).
+- `workers/automation/src/jobhunter/scoring/` and `.../domain/scoring/` — scoring
+  runner, employer-analysis ensemble, BM25 retrieval, `chat_json` scoring.
+- `workers/automation/src/jobhunter/llm.py` — httpx `LLMClient`,
+  `check_spend_budget`, and the `llm_spend` ledger.
+- `workers/automation/src/jobhunter/domain/errors.py` — the error taxonomy.
+- `workers/automation/src/jobhunter/cli.py` — `worker`, `rpc`, the worker
+  heartbeat/reconciler loop, and `_reconcile_discovery_schedule`.
+- `workers/automation/src/jobhunter/infrastructure/projections/` — Python
+  projection builders.

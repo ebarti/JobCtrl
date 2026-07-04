@@ -2,8 +2,8 @@
 
 This document is the canonical architecture reference for JobHunter. The domain
 model that this implementation realises is defined in
-[`docs/ddd-target.md`](ddd-target.md). Project history lives under `docs/plans/`
-and `docs/delivered.md`.
+[`docs/ddd-target.md`](ddd-target.md). Project history lives under
+`docs/plans/`.
 
 For a stage-by-stage execution view of the job pipeline, including sequence
 diagrams, component diagrams, call paths, persistence, events, and failure
@@ -14,8 +14,12 @@ behavior, see [`docs/job-pipeline-architecture.md`](job-pipeline-architecture.md
 JobHunter is a local-first job-search automation system. The product surface is
 a local web UI and API; the automation engine remains Python because the
 existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
-flows live there. The supported runtime shape has three components: local
-TypeScript API, local TypeScript UI, and Python automation worker.
+flows live there. The supported runtime shape has four long-lived local
+processes — the Temporal dev server, the local TypeScript API, the Vite web
+app, and the Python Temporal worker (`jobhunter worker`) — plus an ephemeral
+`jobhunter rpc` subprocess the API spawns for JSON-RPC dispatch. Work-starting
+commands, from the CLI and the API alike, start Temporal workflows; the
+long-lived worker executes them.
 
 The codebase is organised around the **eight bounded contexts** defined in
 `docs/ddd-target.md` §3:
@@ -49,13 +53,16 @@ flowchart LR
     Projections["TS projection refresher\n(apps/api/src/projections.ts)"]
     JsonRpc["SubprocessJsonRpcAdapter\n(apps/api/src/json-rpc-adapter.ts)"]
   end
-  subgraph Py["Python worker"]
-    Cli["jobhunter CLI"]
+  subgraph Py["Python automation"]
     RpcSrv["jobhunter rpc\n(JsonRpcServer, infra/rpc/server.py)"]
+    Cli["jobhunter CLI"]
+    Worker["jobhunter worker\n(Temporal worker, queue jobhunter-default)"]
+    Workflows["Workflows + activities\n(Discover / JobPipeline / JobPreparation /\nApply / ProfileImport / CompensationRefresh)"]
     Bus["InProcessEventBus\n(infra/events/in_process_bus.py)"]
     Repos["Per-aggregate repositories"]
     Builder["ProjectionBuilder\n(infra/projections/projection_builder.py)"]
   end
+  Temporal["Temporal dev server\n(gRPC 127.0.0.1:7233, UI :8233)"]
   Db["SQLite\n~/.jobhunter/jobhunter.db"]
   Files["Local artifact files"]
   Boards["Job boards / ATSes"]
@@ -67,16 +74,20 @@ flowchart LR
   Api --> JsonRpc
   Projections --> Db
   JsonRpc -- "JSON-RPC 2.0\n(stdin/stdout)" --> RpcSrv
-  RpcSrv --> Cli
-  Cli --> Repos
+  RpcSrv -- "workflow-mode methods\nstart workflows" --> Temporal
+  RpcSrv -- "analyze_job / cancel_run\n(sync, inline)" --> Repos
+  Cli -- "work-starting commands\nstart + await workflows" --> Temporal
+  Temporal -- "task queue" --> Worker
+  Worker --> Workflows
+  Workflows --> Repos
   Repos --> Db
   Repos --> Bus
   Bus --> Builder
   Builder --> Db
   Repos --> Files
-  Cli --> Boards
-  Cli --> LLM
-  Cli --> Browser
+  Workflows --> Boards
+  Workflows --> LLM
+  Workflows --> Browser
 ```
 
 ## Bounded Context Composition
@@ -449,8 +460,12 @@ creation and read/write helpers for:
 Apply-review approval is modeled as a recorded decision, not as an automatic
 worker dispatch. Live apply claims require the latest decision for the job to
 be `approve_submit` by default (`applyApprovalRequired: true`); the check runs
-inside the Python launcher's atomic claim transaction, so a direct API or RPC
-call cannot bypass the gate. Dry-run claims bypass this approval gate. Manual
+inside the Python launcher's atomic claim transaction, so while the gate is
+on, no API or RPC dispatch path can submit without a committed
+`approve_submit` decision. The gate itself is a runtime setting
+(`applyApprovalRequired`, default on); a caller-supplied override can disable
+it for a run, which is why the Preferences form shows a persistent warning
+when it is off. Dry-run claims bypass this approval gate. Manual
 outcome notes are stored only in the local outcome table.
 
 Apply has an at-most-once checkpoint before autonomous submission:
@@ -501,6 +516,7 @@ tables that back every read-model endpoint:
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
+| `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TS API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
@@ -582,7 +598,7 @@ target sections; the target doc is the canonical detail.
 | Component primitives | shadcn/ui (Radix-based, copied + owned in `shared/ui/`) | §4.7 |
 | Router | TanStack Router (file-based via `@tanstack/router-vite-plugin`) with route-level Zod search-param schemas | §4.3 |
 | Server state | TanStack Query v5 with per-context query-key factories, `tenant`-first keys, central registry in `contexts/operations/queryKeys.ts` | §4.1, §4.4.1 |
-| Tables | TanStack Table v8; column models live with the consuming view; cell renderers are imported from contexts | §3.10, §11 |
+| Tables | Shared filterable data grid (`shared/ui/filterable-data-grid.tsx`); column models (`DataGridColumn<T>[]`) live with the consuming view; cell renderers are imported from contexts; `@tanstack/react-table` supplies selection/sorting types only | §3.10, §11 |
 | Forms | TanStack Form + Zod `safeParse` | §4.6 |
 | Client state | Zustand (`shared/stores/`) — UI prefs, toast queue, command palette, profile-import wizard draft (`persist` middleware where durability matters) | §4.9, §4.10 |
 | Test runner | Vitest + React Testing Library + MSW for unit / hook / component | §10.2, §10.3 |
@@ -621,8 +637,10 @@ truth per fact; components consume state through hooks (never raw stores or the
 | `pipeline/` | `useRunPipelineStagesMutation`, `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageTriggerPanel>`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
 | `operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
 
-`views/dashboard/`, `views/jobs/`, and `views/artifacts/` are **composers, not
-contexts** (`docs/frontend-target.md` §3.10). They import hooks from
+The eight view folders (`views/dashboard/`, `views/jobs/`, `views/artifacts/`,
+`views/apply-review/`, `views/pipelines/`, `views/runs/`, `views/discovery/`,
+and `views/debug/`) are **composers, not contexts**
+(`docs/frontend-target.md` §3.10). They import hooks from
 `contexts/operations/` and components / mutations from aggregate contexts;
 they own layout and view-local ephemeral UI (e.g., bulk-selection sets) and
 nothing else. View → context dependency is one-way; views never depend on
@@ -748,14 +766,33 @@ Current responsibilities:
 - pagination, filtering, and global sorting
 - read-model projection refresh on every request
 
-Simple state-transition writes (`resetJobStage`, `markJobApplied`,
-`markJobSkipped`, `cancelJobAction`, `softDeleteJob`, `restoreJob`) execute
-inline in the TS process against shared `@jobhunter/domain-types` value
-objects. Complex commands (`apply`, `profile_import`, `refresh_compensation`,
-batched stage runs)
-travel through `SubprocessJsonRpcAdapter` to the long-lived
-`jobhunter rpc` worker, where Python-native handlers start Temporal workflows
-and return workflow handles.
+Simple state-transition writes (`resetJobStage`, `retryFailedJobs`,
+`markJobApplied`, `markJobSkipped`, `cancelJobAction`, `correctScore`,
+soft delete/restore, hide/unhide, permanent delete, and settings writes)
+execute inline in the TS process against shared `@jobhunter/domain-types`
+value objects; the full cancel action additionally fires `cancel_run` over
+JSON-RPC to signal the Temporal workflow. Complex commands travel through
+`SubprocessJsonRpcAdapter` to the long-lived `jobhunter rpc` worker. The
+JSON-RPC surface is eleven methods: nine workflow-mode methods whose handlers
+return a workflow spec that the RPC server starts on Temporal (`run_stage`,
+`rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
+`retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
+`profile_import`), plus the synchronous `analyze_job` (inline three-SDK
+employer analysis) and `cancel_run` (cooperative Temporal cancellation). The
+per-job maintenance methods `rescore_job`, `tailor_job`, and `retailor_job`
+start `JobPreparationWorkflow` runs directly. Workflow-mode dispatch returns
+`{runId, workflowId, firstExecutionRunId}`; callers can pass `awaitResult`
+to block on the workflow result (profile import uses this).
+
+Worker-backed action routes are gated by worker readiness: `GET /v1/health`
+reports the worker heartbeat (`healthy` / `missing` / `stale` after 45 s /
+`mismatched` app dir or database) plus LLM spend health (`ok` /
+`over_budget` against the configured `dailyBudgetUsd`), and mutation routes
+return `503 worker_runtime_unavailable` until a healthy heartbeat exists.
+Request hardening beyond the loopback bind: a Host-header allowlist rejects
+non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
+mutating requests with a non-loopback `Origin`/`Referer` are rejected with
+`403 cross_site_request`.
 
 ### Python Automation Engine
 
@@ -809,7 +846,9 @@ split lives under `workers/automation/src/jobhunter/infrastructure/temporal/`:
 The user-facing `discover` stage starts `DiscoverWorkflow` directly. That
 workflow plans source families, runs one source-family activity per planned
 family, drains detail enrichment in one activity, then fans out per-job
-`JobPreparationWorkflow` children. Other internal preparation stages (`enrich`,
+`JobPreparationWorkflow` runs as independent **root** workflows (batches of 25,
+`USE_EXISTING`) — deliberately not children, so finishing discovery cannot
+terminate in-flight preparation. Other internal preparation stages (`enrich`,
 `score`, `tailor`, `cover`) still ship as Temporal **Activities** under the
 owning bounded context's package — e.g. `jobhunter/scoring/activities.py`,
 `jobhunter/materials/activities.py`. Activities are thin adapters: they defer
@@ -841,9 +880,14 @@ Workflow and activity retry policies are stage-specific:
 | `score` | 3 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
-| `ApplyWorkflow` | 1 live / 2 dry-run | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+| `ApplyWorkflow` | 1 live / 2 dry-run | 1s | 60s | _none set_ — apply safety comes from the at-most-once claim and submit-intent parking, not error-type filtering |
 | `ProfileImportWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `CompensationRefreshWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
+
+`JobPreparationWorkflow` reuses the `score`, `tailor`, and `cover` policies
+above for its per-job steps; its `pdf` step uses the cover policy (3 attempts,
+10s → 120s). The `check_spend_budget` preflight activity runs with a single
+attempt so a budget stop is immediate.
 
 The runner still records `StageStarted`, `StageCompleted`, `StageFailed`,
 operational metrics, and OTel spans through `_run_stage_observed`; the change
@@ -864,7 +908,7 @@ Production workflows live alongside the activities:
   Workday, and Smart Extract source-family activities, preserves the legacy
   source ordering for limit/budget semantics, emits real activity heartbeats
   from `DiscoveryRunProgress`, then runs discovery enrichment and starts
-  preparation children in batches of 25. Source-family failures are attributed
+  preparation root workflows in batches of 25. Source-family failures are attributed
   to concrete source ids for source-quality quarantine and fail the workflow
   after the remaining planned source families complete.
 - `ApplyWorkflow` (`jobhunter/apply/workflow.py`) — single-activity,
@@ -992,6 +1036,12 @@ These sources emit spans:
 | Discover source steps (`jobspy`, `workday`, `smartextract`) | `pipeline.source.discover.<source>` | `span` |
 | Scheduled discovery runs | `discovery.run` | `span` |
 | Source-quality projection rebuilds | `operations.source_quality.aggregate` | `span` |
+| Discovery adapter fetches | `discovery.adapter.fetch` | `span` |
+| Discovery canonical-identity resolution | `discovery.canonicalize` | `span` |
+| Discovery duplicate matching | `discovery.dedupe` | `span` |
+| Source locator validation | `discovery.source.validate` | `span` |
+| Enrichment content acquisition | `enrichment.content.acquire` | `span` |
+| Enrichment active-state verification | `enrichment.active.verify` | `span` |
 
 Pipeline stages and Discover source steps also emit short
 `langfuse.observation.type=event` observations for their
@@ -1004,7 +1054,10 @@ switch to sequential source execution when a cap is present, and skip remaining
 sources after the cap is reached.
 
 The employer-analysis ensemble is the first capability on the **agent-SDK**
-standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). Those
+standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). The
+legs currently run `claude-opus-4-8` (the Claude draft and synthesizer, and
+also the resume voice pass), `gpt-5.5` (Codex), and `gemini-3.5-flash`
+(Antigravity). Those
 SDKs consume the existing local session credentials (Claude Code session, reused
 Codex login, and `GEMINI_API_KEY`/`GOOGLE_API_KEY` for the Antigravity leg) —
 they introduce no new key management. The analysis run is visible through its
@@ -1133,11 +1186,12 @@ tries to submit.
    `job_materials_artifacts`.
 7. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
    `job_events` rows and rebuild affected projection rows from canonical
-   aggregate state. The Python builder owns `apply_run_projections`;
-   the TS API reads it directly.
+   aggregate state. The Python builder owns `apply_run_projections` and
+   `workflow_run_projections`; the TS API reads them directly.
 8. The UI reads from the projection tables via the TS read-model — no joins.
-   The Workflow Runs view at `/runs` reads
-   `apply_run_projections` via `GET /v1/workflow-runs` and deep-links each
+   The Workflow Runs view at `/runs` reads the unified
+   `workflow_run_projections` via `GET /v1/workflow-runs` (apply rows are
+   enriched with job context from `apply_run_projections`) and deep-links each
    row to the local Temporal Web UI (`http://127.0.0.1:8233`).
 9. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions. JSON-RPC worker subprocesses inherit
@@ -1150,9 +1204,11 @@ Python CLI:
 
 ```bash
 uv --project workers/automation run jobhunter doctor
+uv --project workers/automation run jobhunter worker   # long-lived Temporal worker
 uv --project workers/automation run jobhunter run
 uv --project workers/automation run jobhunter action score --limit 5
-uv --project workers/automation run jobhunter rpc      # long-lived JSON-RPC server
+uv --project workers/automation run jobhunter backup
+uv --project workers/automation run jobhunter rpc      # JSON-RPC server (spawned by the API)
 ```
 
 TypeScript API and web UI:
@@ -1165,8 +1221,8 @@ pnpm web:dev
 Verification:
 
 ```bash
-pnpm -r check
-pnpm -r test
+pnpm check
+pnpm test
 uv --project workers/automation run --extra dev pytest -q
 uv --project workers/automation run --extra dev ruff check .
 uv --project workers/automation run python scripts/check-domain-type-parity.py

@@ -7,8 +7,11 @@ checks decide whether the result becomes an approved artifact.
 Tailoring is owned by the Materials bounded context. The main implementation is
 in `workers/automation/src/jobhunter/domain/materials/use_cases.py`, supported
 by deterministic quality checks in `quality.py`, content validation and assembly
-in `services.py`, profile helpers in `resume_profile.py`, and provenance
-construction in `provenance_builder.py`.
+in `services.py`, profile helpers in `resume_profile.py`, provenance
+construction in `provenance_builder.py`, the requirement coverage graph in
+`requirement_coverage.py`, the fabrication detectors in
+`fabrication_detector.py`, claim grounding in `claim_grounding.py`, and the
+rendered-text keyword coverage audit in `coverage_audit.py`.
 
 ## Short Version
 
@@ -48,6 +51,7 @@ sequenceDiagram
     participant Validator as Validators
     participant Judge as Judge/adversarial review
     participant Voice as Optional voice pass
+    participant Gate as Fabrication gate
     participant Prov as Provenance builder
     participant Repo as Materials repository
 
@@ -62,6 +66,8 @@ sequenceDiagram
     Tailor->>Judge: structured judge if validation_mode is not lenient
     Judge-->>Tailor: PASS/FAIL, score, issues, repairs
     Tailor->>Voice: optional rewrite of selected payload
+    Tailor->>Gate: deterministic never-fabricate + prose skill/tool gate
+    Gate-->>Tailor: pass, or hard reject / repair-loop avoid_note
     Tailor->>Prov: build provenance and coverage for final rendered text
     Tailor->>Repo: save approved/rejected MaterialsSet and artifact metadata
 ```
@@ -250,9 +256,13 @@ For each attempt:
 6. Judge each valid candidate unless `validation_mode` is `lenient`.
 7. Optionally run adversarial review for high-fit jobs.
 8. Select the best clean approved candidate by judge score.
-9. If only warning-bearing approved candidates exist, retry while retry budget
-   remains, then accept the best residual warning candidate only when allowed by
-   the loop logic.
+9. Run the deterministic fabrication gate (never-fabricate detector + prose
+   skill/tool gate) on the selected candidate; a hard finding re-enters the
+   loop as an `avoid_note` while retry budget remains and fails closed
+   otherwise.
+10. If only warning-bearing approved candidates exist, retry while retry budget
+    remains, then accept the best residual warning candidate only when allowed
+    by the loop logic.
 
 The retry loop is separate from the durable preparation work-item retry budget.
 The inner loop improves one tailoring run. The durable work item controls how
@@ -291,7 +301,8 @@ profile contract:
   category.
 - LLM self-talk phrases are rejected.
 - Watchlisted fabricated skills are rejected unless they are present in the
-  allowed profile skills.
+  allowed profile skills (the later fabrication gate additionally scans ALL
+  prose skills/tools against the profile vocabulary and evidence corpus).
 - Banned words are warnings in normal mode, errors in strict mode, and ignored
   in lenient mode.
 
@@ -364,6 +375,15 @@ prioritized fixes and uncovered requirements. Deterministic validators still
 own fact safety: scoring can request revision, but it cannot approve unsupported
 claims.
 
+Coverage-bearing claims are grounded against the shipped rendered text before
+they count: a claim binds to a shipped line (location + text binding, honoring
+the same bullet's pre-voice text for voice-reworded lines), claimed-only
+requirements with no shipped line fail the gate with explicit shipped-resume
+fixes feeding the revision loop, and the shipped artifact persists a
+lifecycle-labeled post-voice grounded fit record
+(`post_generation_fit_final`). Apply Review labels the gate's coverage basis
+(`grounded_shipped_text_v1` vs `judge_claimed_legacy`) instead of hiding it.
+
 ### 7. Structured Judge
 
 `build_judge_prompt()` asks a separate judge model whether the tailored resume is
@@ -392,7 +412,11 @@ In `lenient` mode, the structured judge is skipped.
 
 ### 8. Adversarial Review
 
-High-fit jobs can run an additional adversarial review after the judge approves.
+High-fit jobs (fit at or above the adversarial threshold of 0.8, i.e. 8/10)
+run an additional adversarial review after the judge approves. Six personas
+challenge the resume — `ats_parser`, `skeptical_recruiter`,
+`hiring_manager_domain_expert`, `evidence_auditor`, `anti_ai_voice_critic`,
+and `interview_defensibility_critic` — each with its own rubric.
 If it finds blockers, the candidate becomes rejected and its blockers/repair
 instructions feed the retry loop.
 
@@ -402,6 +426,32 @@ If a `VoicePort` is injected, the selected candidate can be rewritten for voice
 after selection but before final provenance and coverage. The voice pass is kept
 only when deterministic voice proxies improve and grounding re-validates. If it
 introduces fabrication or regresses grounding, the pre-voice candidate ships.
+
+### 10. Deterministic Fabrication Gate
+
+A final deterministic gate runs on validation- and judge-approved candidates
+and is re-confirmed after the voice pass, immediately before provenance and
+persistence:
+
+- The never-fabricate detector scans numeric/date/title/employer tokens in the
+  shipped prose against the profile evidence corpus. SKILLS section rows are
+  grounded against the declared skill items themselves, so a declared
+  versioned skill (`Java 17`, `OAuth 2.0`) is not flagged as a fabricated
+  number, while a skills numeric absent from every declared item still fails.
+- The prose skill/tool gate hard-rejects any job-target skill/tool keyword
+  woven into experience bullets or the executive summary that grounds in
+  neither the profile skill vocabulary nor the evidence corpus. The gate is
+  scoped to named technologies with word-form-tolerant grounding, so
+  profile-backed tools, corpus-grounded concept terms, and ordinary English
+  words never false-fire.
+
+A hard finding with retry budget remaining re-enters the attempt loop as an
+`avoid_note` (recorded as per-candidate `failed_fabrication_gate` repair-loop
+history). When every candidate trips the gate, the run fails closed: the
+resume is NOT approved and the prior accepted generation is preserved. The
+cover-letter body runs the same never-fabricate and prose skill/tool gates
+before acceptance; a fabricated letter is rejected while the aggregate stays
+`resume_approved`, with the failure kept as `fabrication_audit` history.
 
 ## Persistence And Audit Data
 
@@ -427,7 +477,9 @@ Approved resume metadata includes:
 - candidate summaries,
 - judge result,
 - voice pass result,
-- keyword coverage read model.
+- keyword coverage read model (computed by the coverage audit against the
+  actual rendered resume text; a keyword counts as covered only when a
+  provenance-backed grounded bullet demonstrates it).
 
 Requirement-led audit data exposed to Apply Review is bounded and safe. It can
 show covered requirements, uncovered requirements, unused achievement IDs,
@@ -476,6 +528,8 @@ artifact or provenance rows.
 | Structured judge | LLM | Independent pass/fail quality and safety gate |
 | Adversarial review | LLM | Optional high-fit challenge review |
 | Voice pass | LLM plus deterministic gate | Optional, only retained if grounded and improved |
+| Fabrication + skill gate | Deterministic | Never-fabricate token scan plus prose skill/tool allowlist gate; hard reject with repair-loop feedback |
+| Claim grounding | Deterministic | Binds coverage-bearing claims to shipped rendered lines before they count |
 | Provenance and coverage rows | Deterministic | Built from final generated text, profile evidence, and employer analysis |
 
 ## Current Constraints
@@ -543,6 +597,11 @@ did not approve or scored below the configured threshold.
 `failed_adversarial_review` means the structured judge approved, but the
 adversarial review found blockers.
 
+`failed_fabrication_gate` means the deterministic fabrication gate rejected the
+candidate — a fabricated numeric/date/title/employer token or an ungrounded
+job-target skill/tool in the prose. The finding is kept as per-candidate
+repair-loop history.
+
 `exhausted_retries` means the inner tailoring loop could not produce an
 acceptable candidate within its retry budget. The durable preparation queue has
 its own retry budget outside this inner loop.
@@ -585,3 +644,11 @@ changes should also exercise the API/web path that displays the audit data.
 - `ContentValidator`: JSON and rendered resume validation.
 - `ResumeAssembler`: JSON payload to final resume text.
 - `build_bullet_provenance()`: final text to provenance rows.
+- `fabrication_detector.py`: never-fabricate token scan and the prose
+  skill/tool allowlist gate.
+- `claim_grounding.py`: grounds coverage-bearing claims in shipped rendered
+  lines for the post-generation fit gate.
+- `coverage_audit.py` (`compute_keyword_coverage`): honest keyword coverage
+  against the rendered resume text.
+- `requirement_coverage.py`: requirement-achievement coverage graph and the
+  constrained planner.
