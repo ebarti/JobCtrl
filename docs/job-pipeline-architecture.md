@@ -691,7 +691,7 @@ sequenceDiagram
     Act->>L: run_blocking_with_heartbeat(launcher, on_cancel)
     L->>DB: BEGIN IMMEDIATE lock, ApplyRunStarted
     L->>DB: ApplySubmitIntended (at-most-once checkpoint)
-    L->>Br: fill; submit only if approved AND not dry-run
+    L->>Br: fill, then submit only if approved AND not dry-run
     Br-->>L: dry-run blocks non-local POST/PUT/PATCH via CDP
     L->>DB: ApplicationSubmitted / DryRunCompleted / ApplicationFailed
     opt continuous
