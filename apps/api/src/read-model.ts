@@ -5084,7 +5084,10 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
             foldedRunId: runId,
             foldedFinishedAt: finishedAt,
             eventRunId,
-            eventOccurredAt: eventStartedAt,
+            // Parity with Python _starts_new_execution: the wall-clock
+            // fallback compares the event's occurredAt (record time), never
+            // payload.startedAt.
+            eventOccurredAt: event.occurredAt,
           }));
       if (reopens) {
         status = "in_progress";
