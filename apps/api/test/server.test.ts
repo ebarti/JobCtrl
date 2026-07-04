@@ -1043,6 +1043,69 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("finalizes an unlinked discover progress card from the tenant's discover workflow", async () => {
+    // The incident's frozen card: the Temporal-path smartextract completion
+    // event carries only the per-source discovery run id — no workflowId — so
+    // the workflow-status linkage must fall back to the deterministic
+    // discover-<tenant> id instead of leaving "running 67%" on a failed run.
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "info",
+        "Discovery source smartextract ok",
+        "2026-07-04T13:35:06.648Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          source: "smartextract",
+          runId: "discovery:smartextract:57cfde27c40b43fb97dfa21b3cb7fbbc",
+          progress: {
+            completed: 4,
+            total: 6,
+            percent: 67,
+            currentStep: "Smart extract",
+            status: "running",
+            message: "Smart extract complete",
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "source_unavailable",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(summary.statusCode, summary.body).toBe(200);
+      const discover = summary
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "failed",
+        percent: 67,
+        completed: 4,
+        currentStep: "Smart extract",
+      });
+      expect(discover.message).toContain("Workflow failed");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("preserves partial terminal pipeline progress from durable event payloads", async () => {
     const db = new Database(options.dbPath);
     try {

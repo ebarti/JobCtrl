@@ -4529,10 +4529,16 @@ function progressWithWorkflowStatus(
   workflowRunStatus: Map<string, PipelineWorkflowRunStatus>,
 ): DashboardSummary["progress"][number] {
   const workflowId = progress.workflowId || progress.runId;
-  if (!workflowId) {
-    return progress;
+  let workflow = workflowId ? workflowRunStatus.get(workflowId) : undefined;
+  if (!workflow && progress.stage === "discover") {
+    // Discover progress events emitted on the Temporal path may carry only a
+    // per-source discovery run id (`discovery:<family>:<hex>`), never the
+    // owning workflow id — which is deterministic per tenant. Without this
+    // fallback the discover card can keep reporting a stale mid-crawl
+    // percentage (the incident's frozen "running 67%") after the workflow
+    // itself terminalized.
+    workflow = workflowRunStatus.get(`discover-${DEFAULT_TENANT}`);
   }
-  const workflow = workflowRunStatus.get(workflowId);
   if (!workflow) {
     return progress;
   }
