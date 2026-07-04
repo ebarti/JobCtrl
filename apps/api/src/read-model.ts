@@ -5027,6 +5027,34 @@ function loadWorkflowRunLifecycleFolds(db: SqliteDatabase): Map<string, Workflow
   return folds;
 }
 
+function workflowLifecycleRunId(payload: Record<string, unknown>): string | null {
+  return nullableString(payload.temporalRunId ?? payload.temporal_run_id);
+}
+
+/**
+ * Mirror of the Python writer's `_starts_new_execution` guard: a
+ * `WorkflowStarted` reopens a terminalized fold only when it belongs to a NEW
+ * Temporal execution. When both sides carry a run id, a differing id is
+ * authoritative (so a late-replayed duplicate start for the SAME run can never
+ * un-terminalize it); with run ids absent, fall back to wall-clock ordering.
+ */
+function startsNewWorkflowExecution(args: {
+  foldedRunId: string | null;
+  foldedFinishedAt: string | null;
+  eventRunId: string | null;
+  eventOccurredAt: string | null;
+}): boolean {
+  if (args.eventRunId && args.foldedRunId) {
+    return args.eventRunId !== args.foldedRunId;
+  }
+  const started = args.eventOccurredAt ? Date.parse(args.eventOccurredAt) : Number.NaN;
+  const finished = args.foldedFinishedAt ? Date.parse(args.foldedFinishedAt) : Number.NaN;
+  if (Number.isNaN(started) || Number.isNaN(finished)) {
+    return false;
+  }
+  return started > finished;
+}
+
 function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): WorkflowLifecycleFold {
   let phase: "none" | "in_progress" | "terminal" = "none";
   let status: WorkflowRunStatus = "in_progress";
@@ -5036,19 +5064,35 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
   let startedAt: string | null = null;
   let finishedAt: string | null = null;
   let durationMs: number | null = null;
+  let runId: string | null = null;
 
   for (const event of events) {
     const payload = event.payload;
     if (event.eventType === "WorkflowStarted") {
-      if (phase !== "in_progress") {
+      const eventRunId = workflowLifecycleRunId(payload);
+      const eventStartedAt = nullableString(payload.startedAt) ?? event.occurredAt;
+      const reopens =
+        phase === "none" ||
+        (phase === "terminal" &&
+          startsNewWorkflowExecution({
+            foldedRunId: runId,
+            foldedFinishedAt: finishedAt,
+            eventRunId,
+            eventOccurredAt: eventStartedAt,
+          }));
+      if (reopens) {
         status = "in_progress";
         errorCode = null;
         errorMessage = null;
         retryable = false;
         finishedAt = null;
         durationMs = null;
-        startedAt = nullableString(payload.startedAt) ?? event.occurredAt ?? startedAt;
+        startedAt = eventStartedAt ?? startedAt;
+        runId = eventRunId;
         phase = "in_progress";
+      } else if (phase === "in_progress" && !runId && eventRunId) {
+        // A duplicate start for the open run may carry the id the first lacked.
+        runId = eventRunId;
       }
       continue;
     }
@@ -5063,6 +5107,7 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     errorCode = nullableString(payload.errorCode) ?? errorCode;
     errorMessage = nullableString(payload.errorMessage ?? payload.message) ?? errorMessage;
     retryable = "retryable" in payload ? Boolean(payload.retryable) : retryable;
+    runId = workflowLifecycleRunId(payload) ?? runId;
   }
   return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
 }

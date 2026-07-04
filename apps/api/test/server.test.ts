@@ -4557,6 +4557,43 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("ignores a late duplicate start for an already-terminalized execution", async () => {
+    // A finalize-activity retry can append a second `WorkflowStarted` AFTER the
+    // run's terminal event, with a later occurredAt. Same temporal run id means
+    // it is NOT a new execution, so the failed verdict must survive — run-id
+    // equality outranks wall-clock ordering in the reopen guard.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: "2026-07-04T14:09:10.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: "2026-07-04T14:09:10.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("keeps the first terminal verdict within a single execution (reconciler describe race)", async () => {
     // Regression guard for the M-1 backstop: a reconciler `describe` that
     // observes the closed run and emits COMPLETED after the real WorkflowFailed

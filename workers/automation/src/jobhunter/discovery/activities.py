@@ -83,6 +83,8 @@ class DiscoveryPreparationFanoutInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    progress_completed: int = 0
+    progress_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -237,9 +239,17 @@ async def discovery_preparation_fanout_activity(
         expected_db_path=payload.expected_db_path,
     )
 
-    try:
-        stats = await run_blocking_with_heartbeat(
-            lambda: start_discovery_preparation_workflows(
+    def _run_fanout() -> dict[str, Any]:
+        _record_preparation_progress(
+            "StageStarted",
+            "info",
+            "Discovery preparation started",
+            progress_message="Preparation started",
+            completed=payload.progress_completed,
+            total=payload.progress_total,
+        )
+        try:
+            fanout_stats = start_discovery_preparation_workflows(
                 min_score=payload.min_score,
                 limit=payload.limit,
                 workers=payload.workers,
@@ -249,7 +259,31 @@ async def discovery_preparation_fanout_activity(
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
-            ),
+            )
+        except Exception as exc:
+            _record_preparation_progress(
+                "StageFailed",
+                "error",
+                f"Discovery preparation failed: {exc}",
+                progress_message="Preparation failed",
+                completed=payload.progress_completed + 1,
+                total=payload.progress_total,
+                status="failed",
+            )
+            raise
+        _record_preparation_progress(
+            "StageCompleted",
+            "info",
+            "Discovery preparation complete",
+            progress_message="Preparation complete",
+            completed=payload.progress_completed + 1,
+            total=payload.progress_total,
+        )
+        return fanout_stats
+
+    try:
+        stats = await run_blocking_with_heartbeat(
+            _run_fanout,
             starting_message="discovery preparation fan-out starting",
             progress_message="discovery preparation fan-out still running",
             activity_name="discover:preparation",
@@ -265,6 +299,45 @@ async def discovery_preparation_fanout_activity(
         started=started,
         queued=queued,
         targets=int(stats.get("targets") or 0),
+    )
+
+
+def _record_preparation_progress(
+    event_type: str,
+    level: str,
+    message: str,
+    *,
+    progress_message: str,
+    completed: int,
+    total: int,
+    status: str = "running",
+) -> None:
+    """Emit the Preparation step's discover progress on the Temporal path.
+
+    Mirrors the legacy ``finish_discovery`` event shapes exactly so the
+    dashboard progress reducer needs no changes. Without this step the
+    progress bar of a successful discover run would freeze one step short of
+    100% — the same frozen-progress family as the incident's stale 67%.
+    """
+    if total <= 0:
+        return
+    from jobhunter.pipeline.runner import (
+        _discovery_progress_payload,
+        _record_pipeline_event,
+    )
+
+    _record_pipeline_event(
+        "discover",
+        event_type,
+        level,
+        message,
+        _discovery_progress_payload(
+            completed=completed,
+            total=total,
+            current_step="Preparation",
+            status=status,
+            message=progress_message,
+        ),
     )
 
 
@@ -298,6 +371,12 @@ def _stage_failure_error(stage: str, result: dict[str, Any]) -> ApplicationError
         message = f"{stage} failed: {error_class}: {error_message}"
     elif error_message:
         message = f"{stage} failed: {error_message}"
+    elif error_class:
+        message = f"{stage} failed: {error_class} (status: {status})"
+    elif status.lower() == "failed":
+        # Never render the bare status when it is the word "failed" — that is
+        # exactly the "failed: failed" collapse this helper exists to prevent.
+        message = f"{stage} failed with no recorded error detail"
     else:
         message = f"{stage} failed: {status}"
     error_type = str(result.get("error_code") or "stage_failed")

@@ -220,7 +220,11 @@ class DiscoverWorkflow:
         preparation_started = 0
         preparation_error: ActivityError | None = None
         try:
-            preparation_started = await _start_preparation_workflows(payload)
+            preparation_started = await _start_preparation_workflows(
+                payload,
+                progress_completed=len(plan.families) + 1,
+                progress_total=plan.progress_total,
+            )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
                 raise CancelledError() from exc
@@ -260,7 +264,12 @@ class DiscoverWorkflow:
         )
 
 
-async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
+async def _start_preparation_workflows(
+    payload: DiscoverWorkflowInput,
+    *,
+    progress_completed: int = 0,
+    progress_total: int = 0,
+) -> int:
     result = await workflow.execute_activity(
         discovery_preparation_fanout_activity,
         DiscoveryPreparationFanoutInput(
@@ -275,6 +284,8 @@ async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
         ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

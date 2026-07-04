@@ -20,6 +20,7 @@ from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import activities
 from jobhunter.discovery.activities import (
     DiscoveryEnrichmentActivityInput,
+    DiscoveryPreparationFanoutInput,
     DiscoverySourceActivityInput,
     _is_success_status,
     _stage_failure_error,
@@ -580,3 +581,134 @@ def test_stage_progress_silent_without_total(monkeypatch: pytest.MonkeyPatch) ->
     runner.run_discovery_enrichment_stage(progress_completed=0, progress_total=0)
 
     assert events == []
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: message fallback corners + Preparation progress step
+# ---------------------------------------------------------------------------
+
+
+def test_stage_failure_error_with_class_only_never_collapses() -> None:
+    err = _stage_failure_error(
+        "discover:enrichment", {"status": "failed", "error_class": "ValueError"}
+    )
+    assert "ValueError" in err.message
+    assert "failed: failed" not in err.message
+
+
+def test_stage_failure_error_bare_failed_status_never_collapses() -> None:
+    err = _stage_failure_error("discover:enrichment", {"status": "failed"})
+    assert "failed: failed" not in err.message
+    assert "no recorded error detail" in err.message
+
+
+def test_record_preparation_progress_emits_legacy_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _capture_pipeline_events(monkeypatch)
+
+    activities._record_preparation_progress(
+        "StageCompleted",
+        "info",
+        "Discovery preparation complete",
+        progress_message="Preparation complete",
+        completed=6,
+        total=6,
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert event["event_type"] == "StageCompleted"
+    progress = event["payload"]["progress"]
+    assert progress["completed"] == 6
+    assert progress["total"] == 6
+    assert progress["percent"] == 100
+    assert progress["currentStep"] == "Preparation"
+    assert progress["message"] == "Preparation complete"
+
+
+def test_record_preparation_progress_silent_without_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _capture_pipeline_events(monkeypatch)
+
+    activities._record_preparation_progress(
+        "StageStarted",
+        "info",
+        "Discovery preparation started",
+        progress_message="Preparation started",
+        completed=0,
+        total=0,
+    )
+
+    assert events == []
+
+
+def _fanout_activity_env(monkeypatch: pytest.MonkeyPatch, *, fail: bool) -> list[tuple]:
+    """Stub the fanout activity's collaborators; return the progress-call log."""
+    calls: list[tuple] = []
+
+    async def fake_run_blocking(fn, **_kwargs):
+        return fn()
+
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+
+    def fake_start_fanout(**_kwargs):
+        if fail:
+            raise RuntimeError("fanout exploded")
+        return {"started": {"job_preparation": 1}, "queued": {}, "targets": 1}
+
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_discovery_preparation_workflows",
+        fake_start_fanout,
+    )
+
+    def record(event_type, level, message, *, progress_message, completed, total, status="running"):
+        calls.append((event_type, completed, total, status))
+
+    monkeypatch.setattr(activities, "_record_preparation_progress", record)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_fanout_activity_emits_preparation_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fanout_activity_env(monkeypatch, fail=False)
+
+    await activities.discovery_preparation_fanout_activity(
+        DiscoveryPreparationFanoutInput(
+            tenant_id="local", progress_completed=5, progress_total=6
+        )
+    )
+
+    assert calls == [
+        ("StageStarted", 5, 6, "running"),
+        ("StageCompleted", 6, 6, "running"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fanout_activity_emits_failed_preparation_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fanout_activity_env(monkeypatch, fail=True)
+
+    with pytest.raises(ApplicationError):
+        await activities.discovery_preparation_fanout_activity(
+            DiscoveryPreparationFanoutInput(
+                tenant_id="local", progress_completed=5, progress_total=6
+            )
+        )
+
+    assert calls == [
+        ("StageStarted", 5, 6, "running"),
+        ("StageFailed", 6, 6, "failed"),
+    ]
