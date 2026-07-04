@@ -44,8 +44,9 @@ Two knobs that look like Temporal concurrency but are not:
 - The Pipelines page's **Workers** field flows into the discovery payload and
   controls per-source scraping parallelism inside a source activity (the
   JobSpy worker count), not Temporal activity slots.
-- Search-combination execution inside one source family is sequential today;
-  parallelising it is a named follow-up, not current behavior.
+- Search-combination execution inside one source family is sequential today
+  (a plain loop in `jobspy.py`); parallelising it is a filed
+  [backlog item](../../backlog.md), not current behavior.
 
 ## Where Fan-out Happens (And Why)
 

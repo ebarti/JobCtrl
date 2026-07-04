@@ -72,6 +72,13 @@ frontend adapters remain deferred until the local product is solid.
 
 ### Worker Reliability
 
+- Parallelize search-combination execution inside a discovery source family.
+  `jobspy.py` runs the planned search combinations of one family in a plain
+  sequential loop; family-level activities stay sequential by design
+  (isolation), so the untapped parallelism is inside a family. Named as a
+  follow-up in PR #250's root-cause analysis alongside making projection
+  refresh non-critical to workflow execution.
+
 - Record `score_report` artifacts. PR 7 of the Temporal stack wired
   `state.record_job_artifact` into `apply.launcher.mark_result` so the
   per-worker agent log (`LOG_DIR/worker-{worker_id}.log`) lands in
