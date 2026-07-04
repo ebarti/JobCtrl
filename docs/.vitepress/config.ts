@@ -46,10 +46,17 @@ export default withMermaid(
       "developer/README.md": "developer/index.md",
     },
     vite: {
-      // The workspace-wide esbuild override (security pin) cannot lower some
-      // mermaid syntax to Vite 5's default legacy browser targets; a modern
-      // floor keeps that transform a no-op for this developer-facing site.
+      // The workspace-wide esbuild override (security pin) refuses to lower
+      // destructuring to Vite 5's default legacy browser targets; a modern
+      // floor keeps those transforms no-ops for this developer-facing site.
+      // Applies to both the production build and dev-server pre-bundling.
       build: { target: "es2022" },
+      optimizeDeps: {
+        esbuildOptions: { target: "es2022" },
+        // mermaid's CJS deps must be pre-bundled for dev; under pnpm's strict
+        // layout they only resolve through mermaid, not from the repo root.
+        include: ["mermaid > dayjs", "mermaid > @braintree/sanitize-url"],
+      },
     },
     markdown: {
       config(md) {
