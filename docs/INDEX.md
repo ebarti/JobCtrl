@@ -22,7 +22,10 @@
 - [`user/normal-flows.md`](user/normal-flows.md): expected product flows from
   setup through review and apply.
 - [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
-  generated artifacts, automation consent, and open-source sharing guidance.
+  generated artifacts, and open-source sharing guidance.
+- [`user/security.md`](user/security.md): security model, what leaves the
+  machine, consent/control gates, credential storage, and the apply-agent
+  threat model.
 - [`user/screenshots.md`](user/screenshots.md): public screenshot generation
   command and covered UI surfaces.
 
@@ -30,6 +33,9 @@
 
 - [`developer/README.md`](developer/README.md): contributor entry point and
   architecture/QA reading path.
+- [`developer/security.md`](developer/security.md): trust boundary and threat
+  model, locality enforcement, apply-path containment, secret/data hygiene, the
+  `release_check.py` gate, and hosted-future security seams.
 - [`developer/screenshot-playbook.md`](developer/screenshot-playbook.md):
   repeatable synthetic screenshot refresh workflow.
 - [`architecture.md`](architecture.md): runtime boundaries and repository

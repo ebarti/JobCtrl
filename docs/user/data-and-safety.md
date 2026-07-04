@@ -48,38 +48,22 @@ Review configuration before running large pipelines.
 
 ## Auto-Apply Safety
 
-Apply automation can submit applications. JobHunter separates dry-run review
-from real submission:
+Apply automation can submit real applications, so it is guarded by consent
+gates: dry-run first, an explicit approval before any live submission, a
+browser-layer dry-run guard, at-most-once submission, and a daily spend
+ceiling. The apply agent also reads untrusted job pages, so prompt injection is
+a real exposure. The full gate model, the apply agent's automation posture, and
+the credential/prompt-interpolation disclosure live in [Security](security.md).
 
-- dry-run apply should be used first;
-- submit approval is an explicit action: with the default
-  `applyApprovalRequired: true`, a live submission is claimed only when the
-  latest Apply Review decision is `approve_submit` — otherwise the claim
-  transaction rolls back and the browser never launches;
-- submission is at-most-once: claiming excludes running, succeeded, and
-  needs-verification runs, and a crash after submit intent parks the run as
-  `needs_verification` instead of blindly retrying;
-- dry-run installs a browser-layer CDP guard that blocks non-loopback
-  POST/PUT/PATCH requests and form submits;
-- web approval facts do not submit by themselves;
-- manual outcomes can be recorded without browser automation;
+Two guarantees stay here because they are about your local artifacts:
+
+- manual outcomes can be recorded without browser automation, and web approval
+  facts do not submit by themselves;
 - failed refreshes or invalid edited drafts must not destroy current accepted
   materials.
 
 Never run auto-apply against broad targets until you have verified profile data,
 materials, field mapping, account state, and site-specific behavior.
-
-Know the automation posture before enabling live runs: the apply agent is a
-local Claude Code CLI subprocess launched with
-`--permission-mode bypassPermissions`, driving a real Chrome through
-Playwright with no per-action permission prompts (Gmail write tools are
-blocked). The generated apply prompt interpolates real data the agent needs to
-fill forms — the CAPTCHA key when configured, account passwords for login
-fields when the profile provides them, and default eligibility attestations
-(18+: yes, felony: no) — and the agent reads untrusted page content live, so
-prompt-injection exposure is real. Review dry-run transcripts, keep targets
-narrow, and check the attestations match your actual situation before any
-live submission.
 
 ## Scoring Safety
 

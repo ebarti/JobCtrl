@@ -13,6 +13,8 @@ directory is for contributors who need to change behavior safely.
 4. [Job pipeline architecture](../job-pipeline-architecture.md) for the
    workflow-by-workflow execution view with sequence and component diagrams.
 5. [Local reliability QA](../local-reliability-qa.md) for regression ownership.
+6. [Security](security.md) for the trust boundary, apply-path containment, and
+   secret/data hygiene rules.
 
 ## Current Runtime Shape
 
