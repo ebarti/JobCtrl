@@ -5,6 +5,20 @@ deterministic, versioned scoring policy over structured evidence. Execution-leve
 detail lives in the [Stage Walkthrough](pipeline/stages.md); the domain model is in
 [Tactical Design](domain-model/tactical.md).
 
+
+```mermaid
+flowchart LR
+    D["Discovery-normalized postings"] --> R["Hybrid lexical retrieval (retrieval.py)"]
+    E["EmbeddingIndexPort (optional, DisabledEmbeddingIndex locally)"] -.-> R
+    R -->|"top-N pool"| S["Scorer LLM call"]
+    P["scoring_policies (versioned rubric + calibration anchors)"] --> S
+    PROF["Profile snapshot + preferences"] --> S
+    S --> ROW["job_scores row: FitScore 1-10, fit_band, blockers, criteria_json, trace_json"]
+    ROW --> UI["Local API + jobs drawer"]
+    UI -->|"user correction"| C["ScoreCorrected event"]
+    C -->|"new score version + calibration anchor"| P
+```
+
 ## Retrieval Before Scoring
 
 The Scoring context owns a local hybrid retrieval service under

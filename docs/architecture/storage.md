@@ -3,6 +3,56 @@
 Everything durable lives on the user's machine: one SQLite database plus
 generated files under the local workspace directory.
 
+## Schema At A Glance
+
+The job pipeline core — one row in `jobs` (keyed by posting URL) accumulates
+per-stage state, events, evidence, generations, and feedback:
+
+```mermaid
+erDiagram
+    jobs {
+        text url PK
+        text title
+        text company
+        text salary
+        text location
+        text site
+        text discovered_at
+    }
+    jobs ||--o{ job_stage_states : "per-stage durable state"
+    jobs ||--o{ job_events : "append-only event log"
+    jobs ||--o| job_enrichments : "detail enrichment"
+    jobs ||--o{ job_source_observations : "provenance"
+    jobs ||--o| job_canonical_identities : "content identity"
+    jobs ||--o{ job_duplicate_links : "dedup evidence"
+    jobs ||--o{ job_scores : "versioned scores"
+    scoring_policies ||--o{ job_scores : "policy version"
+    jobs ||--o{ job_requirement_fit_reports : "requirement ledger"
+    job_requirement_fit_reports ||--o{ job_requirement_fit_items : "per-requirement fit"
+    jobs ||--o{ job_employer_analysis : "canonical analysis"
+    job_employer_analysis ||--o{ job_employer_analysis_sub_analyses : "ensemble parts"
+    jobs ||--o{ job_materials : "tailoring generations"
+    job_materials ||--o{ job_materials_artifacts : "generated files"
+    job_materials ||--o{ job_bullet_provenance : "per-bullet provenance"
+    job_materials ||--o{ job_material_layout_boxes : "render layout"
+    jobs ||--o{ job_artifacts : "registered artifacts"
+    jobs ||--o{ application_review_decisions : "apply approvals"
+    jobs ||--o{ application_outcomes : "reviewed outcomes"
+    jobs ||--o{ application_email_evidence : "linked Gmail evidence"
+    application_email_evidence ||--o{ application_outcome_suggestions : "classifier suggestions"
+```
+
+The remaining tables group by owner:
+
+| Owner | Tables |
+| --- | --- |
+| Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
+| Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
+| Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
+| Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `artifact_list_projections`, `event_watermarks` |
+| Discovery & preparation | `discovery_runs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `jobhunter_deleted_jobs` |
+
 SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
 rendering settings/template text, run visibility, apply-review decisions,
@@ -47,6 +97,23 @@ tables into `job_list_projections.compensation_summary_json`,
 projection builders own the same JSON shape. The list/detail API deserializes
 those projection columns only; it does not parse raw salary text on read.
 `JobSummary.salary` remains the compatibility raw string.
+
+## Files And Registration Flow
+
+```mermaid
+flowchart LR
+    subgraph FS["Local filesystem (workspace dir)"]
+        DB[("jobhunter.db + -wal/-shm")]
+        ART["artifacts: resumes, cover letters, PDFs, imported PDFs"]
+        LOGS["logs incl. per-worker agent log"]
+    end
+    GEN["Materials / Apply stages"] -->|write files| ART
+    GEN -->|"register rows (job_artifacts, job_materials_artifacts)"| DB
+    APPLY["Apply launcher"] -->|"apply_log row in the same tx as the terminal event"| DB
+    APPLY -->|write| LOGS
+    DB -->|"artifact_list_projections"| API["TypeScript API"]
+    API --> WEB["Web app artifact views"]
+```
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

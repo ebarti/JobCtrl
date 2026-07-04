@@ -3,6 +3,30 @@
 How submitted applications feed outcomes back into the product, and how domain
 events project into the read model the API and web app serve.
 
+
+```mermaid
+flowchart LR
+    W["Workflows + activities"] -->|append| EV[("job_events")]
+    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list")]
+    PT --> API["TypeScript API reads"]
+    EV --> SSE["GET /v1/events/stream (SSE)"]
+    SSE --> IR["Invalidation router"]
+    IR -->|"invalidate / patch query keys"| TQ["TanStack Query cache"]
+    API --> TQ
+    TQ --> UI["Views"]
+```
+
+```mermaid
+flowchart LR
+    RD["application_review_decisions (approve_submit)"] --> CLAIM["Atomic apply claim (Python launcher)"]
+    CLAIM --> INTENT["ApplySubmitIntended checkpoint"]
+    INTENT --> SUBMIT["Live submission"]
+    SUBMIT --> OUT["application_outcomes"]
+    GM["Bounded Gmail scan (feedback.py)"] --> EVID["application_email_evidence"]
+    EVID --> SUG["application_outcome_suggestions"]
+    SUG -->|"user accepts / declines"| OUT
+```
+
 ## Apply Review And Outcome Feedback
 
 The Apply Automation context has a local feedback foundation in the TypeScript
