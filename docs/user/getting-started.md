@@ -92,6 +92,11 @@ Keep the terminal open while using the app. The launcher prints the web URL; it
 normally uses `http://127.0.0.1:5173/`, but Vite can move to another port when
 5173 is busy.
 
+Opening the printed URL lands on the operations dashboard.
+
+![JobHunter dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
+*The dashboard summarizes pipeline progress, job counts, source health, and recent apply runs.*
+
 Inspect the stack from another terminal:
 
 ```bash

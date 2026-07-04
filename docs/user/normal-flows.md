@@ -25,6 +25,9 @@ settings, and tailoring controls.
 Profile and settings forms autosave after a short delay. Explicit Save buttons
 use the same API mutation path.
 
+![JobHunter Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
+*The Profile page collects personal information, resume baseline, experience, skills, and voluntary EEO fields alongside the baseline resume editor.*
+
 ## 2. Configure Discovery
 
 Use the Discovery page to set:
@@ -38,6 +41,9 @@ Use the Discovery page to set:
 Target locations are validated before they can drive discovery. Discovery uses
 exact and recall role queries, then filters and scores results downstream.
 
+![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
+*The Discovery page configures target search, seniority floors, locations and work models, minimum fit score, job boards, and the source registry.*
+
 ## 3. Run Discover
 
 From the UI, use the Pipelines page and run `Discover`. From the CLI:
@@ -45,6 +51,9 @@ From the UI, use the Pipelines page and run `Discover`. From the CLI:
 ```bash
 uv --project workers/automation run jobhunter run discover
 ```
+
+![JobHunter Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
+*The Pipelines page starts a Discover run with limit, worker count, and a dry-run toggle.*
 
 Per-stage commands (`jobhunter enrich`, `score`, `tailor`, `cover`) and the
 single-job path (`jobhunter job <url> --dry-run`) start the same Temporal
@@ -68,6 +77,9 @@ The Jobs view supports filters, sorting, pagination, deep links, deleted/hidden
 views, fit-score ranges, stage state, source provenance, compensation evidence,
 and job detail drawers.
 
+![JobHunter Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
+*The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
+
 Use the job detail drawer to inspect:
 
 - score, confidence, blockers, gaps, and score policy metadata;
@@ -76,6 +88,9 @@ Use the job detail drawer to inspect:
 - source and enrichment evidence;
 - generated artifacts;
 - apply readiness and blockers.
+
+![JobHunter job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
+*The job detail drawer shows the audit triage: ranking, requirement fit, matched and transferable requirements, keywords, and compensation evidence.*
 
 Failed preparation work can be retried per job or in bulk without automatically
 starting apply automation.
@@ -94,6 +109,9 @@ active only after validation and approval.
 Apply Review loads the generated HTML/CSS resume into a Plate editor. The editor
 keeps the final PDF link, source pins, risk labels, JobHunter comments, line
 anchors, and draft state together.
+
+![JobHunter Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
+*Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobHunter line comments, and approve or dry-run controls.*
 
 Typical review actions:
 
@@ -136,3 +154,6 @@ Useful UI views:
 - Artifacts for generated files.
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
+
+![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
+*The Runs page lists workflow runs with status, mode, timing, and a link into the Temporal web UI.*

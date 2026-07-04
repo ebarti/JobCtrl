@@ -73,6 +73,9 @@ SQLite. A scraping proxy, when needed, is part of those SQLite discovery
 settings (`host:port:user:pass` form); there is no `PROXY` environment
 variable.
 
+![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
+*Target roles, locations, seniority floors, work models, and source controls are edited on the Discovery page and stored in SQLite.*
+
 Discovery scheduling is also a SQLite-backed setting: `scheduling_enabled`
 defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker
 startup reconciles the local Temporal schedule — creating it (with `SKIP`
