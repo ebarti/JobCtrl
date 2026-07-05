@@ -7,6 +7,13 @@
 > each item's Definition of Done actually holds, and assembles the publication
 > go/no-go gate. Where this plan and the spec disagree on WHAT an item must do,
 > the spec wins; this plan only governs HOW we confirm the spec is done.
+>
+> **Status update (2026-07-05, after authoring):** the W1–W2 implementation
+> was subsequently delivered directly from the spec and is merging to `main`.
+> Any per-item status recorded in this document (e.g. "not-started") is the
+> authoring-time baseline at `a488e4e9`, now historical. The close-out run
+> MUST regenerate the full inventory against current `main` using §1's
+> method — do not trust any status written here.
 
 ---
 
