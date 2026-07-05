@@ -10,6 +10,7 @@ const REPO_URL = "https://github.com/ebarti/JobHunter";
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set([
   "docs/backlog.md",
+  "docs/claims-ledger.md",
   "docs/delivered.md",
   "docs/README.md",
 ]);
@@ -171,7 +172,7 @@ export default withMermaid(
     title: "JobHunter",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
-    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md", "README.md"],
+    srcExclude: ["plans/**", "incidents/**", "backlog.md", "claims-ledger.md", "delivered.md", "README.md"],
     cleanUrls: true,
     lastUpdated: true,
     rewrites: PAGE_REWRITES,
