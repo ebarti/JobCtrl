@@ -5,6 +5,7 @@ import type {
   ApplyReviewQueueItem,
   ResumeCommentThread,
   ResumeReviewDraft,
+  ResumeReviewDraftRenderResponse,
 } from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +20,7 @@ import {
   useSeedResumeReviewCommentThreadsMutation,
 } from "../../contexts/apply/hooks/useApplyReviewMutations.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
+import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
 import {
   ArtifactGroundingRiskPanel,
   ResumePlateEditor,
@@ -49,6 +51,10 @@ type MaterialStatus = {
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
+type ArtifactComparisonDraftTarget = {
+  readonly artifactId: string;
+  readonly riskLabels: readonly string[];
+};
 
 const SCORE_DIMENSIONS: ReadonlyArray<[ScoreDimensionKey, string]> = [
   ["technicalFit", "Technical fit"],
@@ -786,11 +792,13 @@ function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineT
 
 function ResumeLineReview({
   item,
+  onComparisonTargetChange,
   onDraftGateChange,
   selectedLine,
   onSelectLine,
 }: {
   readonly item: ApplyReviewQueueItem;
+  readonly onComparisonTargetChange?: (target: ArtifactComparisonDraftTarget | null) => void;
   readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
   readonly selectedLine: PdfAuditLineSelection | null;
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
@@ -815,8 +823,10 @@ function ResumeLineReview({
     saveDraftRevision.data?.draft.jobKey === item.jobKey ? saveDraftRevision.data.draft : null;
   const seededDraft =
     seedCommentThreads.data?.draft.jobKey === item.jobKey ? seedCommentThreads.data.draft : null;
+  const renderedDraftResult =
+    renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data : null;
   const renderedDraft =
-    renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data.draft : null;
+    renderedDraftResult?.draft ?? null;
   const baseDraft = useMemo(
     () => selectLatestResumeReviewDraft([renderedDraft, seededDraft, savedDraft, createdDraft, queriedDraft]),
     [createdDraft, queriedDraft, renderedDraft, savedDraft, seededDraft],
@@ -843,6 +853,14 @@ function ResumeLineReview({
     });
     return result.ok;
   }, [draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
+  const comparisonTarget = useMemo(
+    () => comparisonDraftTarget(renderedDraftResult, draft),
+    [draft, renderedDraftResult],
+  );
+
+  useEffect(() => {
+    onComparisonTargetChange?.(comparisonTarget);
+  }, [comparisonTarget, onComparisonTargetChange]);
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -950,6 +968,31 @@ function mergeDraftThread(
   return { ...draft, commentThreads };
 }
 
+function comparisonDraftTarget(
+  renderResult: ResumeReviewDraftRenderResponse | null,
+  draft: ResumeReviewDraft | null,
+): ArtifactComparisonDraftTarget | null {
+  if (!renderResult?.ok) {
+    return null;
+  }
+  return {
+    artifactId: renderResult.artifacts.resumeText.artifactId,
+    riskLabels: uniqueRiskLabels(draft?.commentThreads ?? []),
+  };
+}
+
+function uniqueRiskLabels(commentThreads: readonly ResumeCommentThread[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const thread of commentThreads) {
+    const label = thread.riskLabel?.trim();
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    result.push(label);
+  }
+  return result;
+}
+
 function selectLatestResumeReviewDraft(
   drafts: ReadonlyArray<ResumeReviewDraft | null>,
 ): ResumeReviewDraft | null {
@@ -966,9 +1009,11 @@ function resumeReviewDraftRank(draft: ResumeReviewDraft): number {
 
 function ResumeReviewSurface({
   item,
+  onComparisonTargetChange,
   onDraftGateChange,
 }: {
   readonly item: ApplyReviewQueueItem;
+  readonly onComparisonTargetChange: (target: ArtifactComparisonDraftTarget | null) => void;
   readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
 }) {
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
@@ -982,6 +1027,7 @@ function ResumeReviewSurface({
       <div className="apply-review-resume-main">
         <ResumeLineReview
           item={item}
+          onComparisonTargetChange={onComparisonTargetChange}
           onDraftGateChange={onDraftGateChange}
           selectedLine={selectedLine}
           onSelectLine={setSelectedLine}
@@ -1000,6 +1046,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
   const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
+  const [comparisonDraft, setComparisonDraft] = useState<ArtifactComparisonDraftTarget | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
     dirty: false,
@@ -1023,8 +1070,17 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         : next,
     );
   }, []);
+  const handleComparisonTargetChange = useCallback((next: ArtifactComparisonDraftTarget | null) => {
+    setComparisonDraft((previous) =>
+      previous?.artifactId === next?.artifactId &&
+      (previous?.riskLabels ?? []).join("\u0000") === (next?.riskLabels ?? []).join("\u0000")
+        ? previous
+        : next,
+    );
+  }, []);
   useEffect(() => {
     setDetailJobKey(null);
+    setComparisonDraft(null);
     setDraftGate({
       draftId: null,
       dirty: false,
@@ -1152,8 +1208,20 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
+            <ArtifactComparison
+              emptyRightMessage="Render a saved draft to compare it with the accepted artifact."
+              leftArtifactId={resumeAuditArtifactId}
+              leftLabel="Accepted"
+              rightArtifactId={comparisonDraft?.artifactId ?? null}
+              rightLabel="Rendered draft"
+              rightRiskLabels={comparisonDraft?.riskLabels ?? []}
+            />
             <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
-            <ResumeReviewSurface item={item} onDraftGateChange={handleDraftGateChange} />
+            <ResumeReviewSurface
+              item={item}
+              onComparisonTargetChange={handleComparisonTargetChange}
+              onDraftGateChange={handleDraftGateChange}
+            />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

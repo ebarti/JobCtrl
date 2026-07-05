@@ -2423,6 +2423,51 @@ export interface ArtifactDetail {
   tailoringExplanation: ArtifactTailoringExplanation | null;
 }
 
+export type ArtifactComparisonCoverageState =
+  | "recorded"
+  | "left_not_recorded"
+  | "right_not_recorded"
+  | "not_recorded";
+
+export interface CoverageDelta {
+  coverageRecorded: boolean;
+  state: ArtifactComparisonCoverageState;
+  computedAgainst: string | null;
+  newlyCovered: string[];
+  coverageLost: string[];
+  stillMissing: string[];
+}
+
+export interface ArtifactComparisonSide {
+  artifactId: string;
+  label: string;
+  title: string;
+  status: string;
+  templateId: string | null;
+  templateName: string | null;
+  coverageRecorded: boolean;
+  coverageCounts: BulletCoverageAudit["counts"] | null;
+  riskLabels: string[];
+  validation: {
+    passed: boolean | null;
+    errorCount: number;
+    warningCount: number;
+  };
+  judge: {
+    passed: boolean | null;
+    verdict: string | null;
+    score: number | null;
+    minScore: number | null;
+    issueCount: number;
+  };
+}
+
+export interface ArtifactComparison {
+  left: ArtifactComparisonSide;
+  right: ArtifactComparisonSide;
+  coverageDelta: CoverageDelta;
+}
+
 export interface ResumeLayoutBox {
   semanticId: string;
   pageNumber: number;

@@ -2,9 +2,13 @@ import { http, HttpResponse } from "msw";
 
 import {
   makeArtifactDetail,
+  makeArtifactTailoringExplanation,
   makeActivityPage,
   sampleApplicationOutcomes,
   sampleApplyReviewQueue,
+  sampleAcceptedResumeArtifact,
+  sampleDraftResumeArtifact,
+  makeCoverageAudit,
   makeArtifactsPage,
   makeJobDetail,
   makeJobsPage,
@@ -147,6 +151,45 @@ const sampleCompensationSourcePolicy = {
     },
   ],
 };
+
+function makeStoryArtifactDetail(artifactId: string) {
+  if (artifactId === sampleAcceptedResumeArtifact.artifactId) {
+    return makeArtifactDetail(
+      sampleAcceptedResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["platform reliability", "typescript"],
+          missing: ["incident response", "kubernetes"],
+        }),
+      ),
+    );
+  }
+  if (artifactId === sampleDraftResumeArtifact.artifactId) {
+    return makeArtifactDetail(
+      sampleDraftResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["platform reliability", "incident response"],
+          missing: ["kubernetes", "typescript"],
+        }),
+        {
+          quality: {
+            passed: true,
+            errors: [],
+            warnings: ["Residual wording warning recorded on the rendered draft."],
+            notes: [],
+            metricClaims: [],
+            repeatedKeywords: [],
+          },
+        },
+      ),
+    );
+  }
+  return makeArtifactDetail({
+    ...makeArtifactsPage().items[0]!,
+    artifactId,
+  });
+}
 
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
@@ -614,14 +657,11 @@ export const handlers = [
     }),
   ),
 
-  http.get("*/v1/artifacts", () => HttpResponse.json(makeArtifactsPage())),
+  http.get("*/v1/artifacts", () =>
+    HttpResponse.json(makeArtifactsPage([sampleDraftResumeArtifact, sampleAcceptedResumeArtifact])),
+  ),
   http.get("*/v1/artifacts/:artifactId", ({ params }) =>
-    HttpResponse.json(
-      makeArtifactDetail({
-        ...makeArtifactsPage().items[0]!,
-        artifactId: String(params["artifactId"]),
-      }),
-    ),
+    HttpResponse.json(makeStoryArtifactDetail(String(params["artifactId"]))),
   ),
   http.post("*/v1/artifacts/:artifactId/open", ({ params }) =>
     HttpResponse.json({

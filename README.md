@@ -205,7 +205,8 @@ sqlite3 ~/.jobhunter/jobhunter.db \
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
 5. Generate or inspect materials for promising jobs.
-6. Use Apply Review to edit/approve the resume and review comments.
+6. Use Apply Review to edit/approve the resume, review comments, and compare a
+   rendered draft against the accepted artifact before approval.
 7. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the
    backend claim can proceed.

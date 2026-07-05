@@ -146,6 +146,8 @@ Typical review actions:
 - reply to JobHunter line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;
+- compare the accepted artifact with the rendered draft using stored coverage,
+  validation, judge, template, and risk-label rows;
 - approve only after the edited draft is saved, valid, and rendered.
 
 Failed validation stays as audit history and does not hide the last accepted
@@ -193,7 +195,7 @@ Useful web app views:
   count-only.
 - Jobs for triage and per-job actions.
 - Runs for workflow history.
-- Artifacts for generated files.
+- Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
 
