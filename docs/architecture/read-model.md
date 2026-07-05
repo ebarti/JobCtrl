@@ -9,7 +9,7 @@ or how domain events become the read model behind every list and detail view.
 ```mermaid
 flowchart LR
     W["Workflows + activities"] -->|append| EV[("job_events")]
-    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list")]
+    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list / evidence_usage")]
     PT --> API["TypeScript API reads"]
     EV --> SSE["GET /v1/events/stream (SSE)"]
     SSE --> IR["Invalidation router"]
@@ -127,6 +127,7 @@ tables that back every read-model endpoint:
 | `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source and score band, from `application_outcomes`). |
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
+| `evidence_usage_projections` | Career evidence map rows that invert profile achievement/skill evidence into resume-bullet usage, requirement-fit usage, generation-time skill coverage, and missing/blocked/transferable gaps. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
 | `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
@@ -139,6 +140,14 @@ projections from canonical aggregate state, and advance the watermark in the
 same transaction. Both processes write to the same tables; SQLite handles the
 concurrent advances. Request paths read precomputed projections instead of
 assembling stage state with per-request joins.
+
+The evidence-usage projection is read-only and derives from existing canonical
+profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does
+not create a new generation pipeline: resume usage still comes from the
+Materials provenance/audit tables, and requirement gaps still come from the
+Scoring requirement-fit rows. Older local databases that lack newer optional
+profile metadata columns project conservative defaults instead of failing
+unrelated read paths.
 
 The outcome-conversion projection materialises integer funnel counts only (both
 builders must agree — the cross-runtime parity fixture asserts the

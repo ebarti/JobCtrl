@@ -99,6 +99,181 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
     ]
 
 
+def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fit(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = "https://example.com/evidence-map"
+    _seed_job(conn, job_url)
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_experience_entries (
+            tenant_id, profile_id, entry_id, position_index, date_range,
+            title, company, location
+        ) VALUES ('local', 'default', 'exp-platform', 0, '2024-2025',
+                  'Senior Engineer', 'Acme', 'Remote')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_achievement_evidence (
+            tenant_id, profile_id, entry_id, evidence_index, evidence_id,
+            source_text, scope, action, tools_json, metrics_json, outcome,
+            seniority_signal, evidence_strength, claim_confidence,
+            user_confirmed, tags_json
+        ) VALUES (
+            'local', 'default', 'exp-platform', 0, 'ev_platform',
+            'Led a platform migration that reduced latency by 40%.',
+            'Platform migration', 'Led migration', '["Python", "Postgres"]',
+            '["40% latency reduction"]', 'Reduced latency', '',
+            'verified', 0.95, 1, '["migration"]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_skill_categories (
+            tenant_id, profile_id, category_id, position_index, label
+        ) VALUES ('local', 'default', 'backend', 0, 'Backend')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_skill_items (
+            tenant_id, profile_id, category_id, item_index, item_text
+        ) VALUES ('local', 'default', 'backend', 0, 'Python')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at
+        ) VALUES (?, 1, 'local', 'complete',
+                  '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
+        """,
+        (job_url,),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved',
+                  '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
+        """,
+        (job_url,),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_bullet_provenance (
+            job_url, generation, bullet_id, tenant_id, artifact_id, section,
+            source_id, evidence_ids_json, requirement_ids_json,
+            matched_keywords_json, transform_type, control, rationale,
+            generated_text, position, created_at, coverage_json
+        ) VALUES (
+            ?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1',
+            'experience', 'exp-platform', '["ev_platform"]',
+            '["req-platform"]', '["latency"]', 'reframe',
+            'rephrase_allowed', 'Used profile evidence.',
+            'Led migration and reduced latency 40%.', 0,
+            '2026-07-05T12:10:00Z',
+            '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
+        )
+        """,
+        (job_url,),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_reports (
+            job_url, score_version, tenant_id, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (
+            ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+            '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
+            '2026-07-05T12:20:00Z'
+        )
+        """,
+        (job_url,),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_items (
+            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            tier, weight, job_evidence_span, fit_json, contribution_json,
+            tailoring_json, artifact_coverage_json, position
+        ) VALUES (
+            ?, 2, 'local', 'req-platform', 'Own platform migrations',
+            'must_have', 0.8, 'platform migrations',
+            '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
+            '{}', '{}',
+            '{"state":"covered","source":"tailored_resume_bullet_provenance","bullet_count":1,"examples":["Led migration"]}',
+            0
+        )
+        """,
+        (job_url,),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_items (
+            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            tier, weight, job_evidence_span, fit_json, contribution_json,
+            tailoring_json, artifact_coverage_json, position
+        ) VALUES (
+            ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+            'must_have', 0.7, 'Kubernetes clusters',
+            '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
+            '{}', '{}',
+            '{"state":"missing_from_profile","source":"tailored_resume_bullet_provenance","bullet_count":0,"examples":[]}',
+            1
+        )
+        """,
+        (job_url,),
+    )
+    record_job_event(conn, job_url, "score", "JobScored")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    entry_row = conn.execute(
+        """
+        SELECT payload_json
+          FROM evidence_usage_projections
+         WHERE tenant_id = 'local'
+           AND projection_kind = 'entry'
+           AND evidence_id = 'ev_platform'
+        """
+    ).fetchone()
+    assert entry_row is not None
+    entry = json.loads(entry_row["payload_json"])
+    assert entry["resumeUsages"][0]["artifactId"] == "artifact-resume-1"
+    assert entry["resumeUsages"][0]["bulletId"] == "experience:exp-platform#0"
+    assert entry["requirementUsages"][0]["requirementId"] == "req-platform"
+    assert entry["freshness"]["evidenceDateRange"] == "2024-2025"
+    assert entry["freshness"]["lastUsedAt"] == "2026-07-05T12:10:00Z"
+
+    gap_rows = conn.execute(
+        """
+        SELECT payload_json
+          FROM evidence_usage_projections
+         WHERE tenant_id = 'local' AND projection_kind = 'gap'
+         ORDER BY projection_id
+        """
+    ).fetchall()
+    gaps = [json.loads(row["payload_json"]) for row in gap_rows]
+    assert any(
+        gap["kind"] == "missing_requirement"
+        and gap["requirementId"] == "req-kubernetes"
+        and gap["jobRefs"][0]["jobKey"] == job_url
+        for gap in gaps
+    )
+    assert any(
+        gap["kind"] == "missing_skill"
+        and gap["demandedSkill"] == "Kubernetes"
+        and gap["jobRefs"][0]["artifactId"] == "artifact-resume-1"
+        for gap in gaps
+    )
+
+
 def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connection) -> None:
     conn.execute(
         """

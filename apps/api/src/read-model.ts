@@ -30,6 +30,9 @@ import type {
   DashboardConversionFunnel,
   DashboardSettings,
   DashboardSummary,
+  EvidenceGap,
+  EvidenceMapEntry,
+  EvidenceMapResponse,
   EmployerAnalysis,
   JobCompensationAudit,
   JobCompensationSummary,
@@ -277,6 +280,13 @@ interface SourceQualityProjectionRow extends Record<string, unknown> {
   last_run_id: string | null;
   last_error_class: string | null;
   updated_at: string | null;
+}
+
+interface EvidenceUsageProjectionRow extends Record<string, unknown> {
+  projection_kind: "entry" | "gap";
+  projection_id: string;
+  payload_json: string;
+  last_updated_at: string;
 }
 
 interface OperationalMetricRow extends Record<string, unknown> {
@@ -652,6 +662,39 @@ export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutat
     .map((row) => rowToJobSummary(row, db))
     .filter((job) => filterJob(job, query, normalizedQuery))
     .map((job) => job.jobKey);
+}
+
+export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
+  refreshProjections(db, DEFAULT_TENANT);
+  if (!tableExists(db, "evidence_usage_projections")) {
+    return { ok: true, entries: [], gaps: [], generatedAt: new Date(0).toISOString() };
+  }
+  const rows = allRows<EvidenceUsageProjectionRow>(
+    db,
+    `SELECT projection_kind, projection_id, payload_json, last_updated_at
+       FROM evidence_usage_projections
+      WHERE tenant_id = ?
+      ORDER BY projection_kind, LOWER(projection_id)`,
+    [DEFAULT_TENANT],
+  );
+  const entries: EvidenceMapEntry[] = [];
+  const gaps: EvidenceGap[] = [];
+  let generatedAt = new Date(0).toISOString();
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    if (!payload) {
+      continue;
+    }
+    if (row.last_updated_at && row.last_updated_at > generatedAt) {
+      generatedAt = row.last_updated_at;
+    }
+    if (row.projection_kind === "entry") {
+      entries.push(payload as unknown as EvidenceMapEntry);
+    } else if (row.projection_kind === "gap") {
+      gaps.push(payload as unknown as EvidenceGap);
+    }
+  }
+  return { ok: true, entries, gaps, generatedAt };
 }
 
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {

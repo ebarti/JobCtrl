@@ -2316,6 +2316,269 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects the career evidence map from profile evidence, provenance, and requirement fit", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE candidate_profile_experience_entries (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          position_index INTEGER NOT NULL,
+          date_range TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '',
+          company TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (tenant_id, profile_id, entry_id)
+        );
+        CREATE TABLE candidate_profile_achievement_evidence (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          evidence_index INTEGER NOT NULL,
+          evidence_id TEXT NOT NULL DEFAULT '',
+          source_text TEXT NOT NULL DEFAULT '',
+          scope TEXT NOT NULL DEFAULT '',
+          action TEXT NOT NULL DEFAULT '',
+          tools_json TEXT NOT NULL DEFAULT '[]',
+          metrics_json TEXT NOT NULL DEFAULT '[]',
+          outcome TEXT NOT NULL DEFAULT '',
+          seniority_signal TEXT NOT NULL DEFAULT '',
+          evidence_strength TEXT NOT NULL DEFAULT 'supported',
+          claim_confidence REAL NOT NULL DEFAULT 0,
+          user_confirmed INTEGER NOT NULL DEFAULT 0,
+          tags_json TEXT NOT NULL DEFAULT '[]',
+          PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
+        );
+        CREATE TABLE candidate_profile_skill_categories (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          category_id TEXT NOT NULL,
+          position_index INTEGER NOT NULL,
+          label TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (tenant_id, profile_id, category_id)
+        );
+        CREATE TABLE candidate_profile_skill_items (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          category_id TEXT NOT NULL,
+          item_index INTEGER NOT NULL,
+          item_text TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+        );
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        CREATE TABLE job_bullet_provenance (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          bullet_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          artifact_id TEXT NOT NULL,
+          section TEXT NOT NULL,
+          source_id TEXT,
+          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+          requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+          matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+          transform_type TEXT NOT NULL,
+          control TEXT NOT NULL,
+          rationale TEXT NOT NULL DEFAULT '',
+          generated_text TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          coverage_json TEXT,
+          voice_json TEXT,
+          PRIMARY KEY (job_url, generation, bullet_id)
+        );
+        CREATE TABLE job_requirement_fit_reports (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          employer_analysis_generation INTEGER NOT NULL,
+          profile_snapshot_version INTEGER NOT NULL,
+          scoring_policy_version INTEGER NOT NULL,
+          formula_version TEXT NOT NULL,
+          resolved_fit_score INTEGER,
+          fit_band TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          summary_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, score_version, tenant_id)
+        );
+        CREATE TABLE job_requirement_fit_items (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          requirement_id TEXT NOT NULL,
+          requirement_text TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          weight REAL NOT NULL,
+          job_evidence_span TEXT NOT NULL,
+          fit_json TEXT NOT NULL,
+          contribution_json TEXT NOT NULL,
+          tailoring_json TEXT NOT NULL,
+          artifact_coverage_json TEXT,
+          position INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+        );
+      `);
+      db.prepare(
+        `INSERT INTO candidate_profile_experience_entries
+         (tenant_id, profile_id, entry_id, position_index, date_range, title, company, location)
+         VALUES ('local', 'default', 'exp-platform', 0, '2024-2025', 'Senior Engineer', 'Acme', 'Remote')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_achievement_evidence (
+          tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
+          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          evidence_strength, claim_confidence, user_confirmed, tags_json
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+      ).run(
+        "Led a platform migration that reduced latency by 40%.",
+        "Platform migration",
+        "Led migration",
+        JSON.stringify(["Python", "Postgres"]),
+        JSON.stringify(["40% latency reduction"]),
+        "Reduced latency",
+        JSON.stringify(["migration"]),
+      );
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_categories
+         (tenant_id, profile_id, category_id, position_index, label)
+         VALUES ('local', 'default', 'backend', 0, 'Backend')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_items
+         (tenant_id, profile_id, category_id, item_index, item_text)
+         VALUES ('local', 'default', 'backend', 0, 'Python')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO job_materials
+         (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+      ).run(jobUrl);
+      db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved', '/tmp/resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+      ).run(jobUrl, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }));
+      db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+          control, rationale, generated_text, position, created_at, coverage_json
+        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1', 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', 'Led migration and reduced latency 40%.', 0, '2026-07-05T12:10:00Z', ?)`,
+      ).run(
+        jobUrl,
+        JSON.stringify(["ev_platform"]),
+        JSON.stringify(["req-platform"]),
+        JSON.stringify(["latency"]),
+        JSON.stringify({ covered: ["Python"], declared: [], missing: ["Kubernetes"] }),
+      );
+      db.prepare(
+        `INSERT INTO job_requirement_fit_reports (
+          job_url, score_version, tenant_id, employer_analysis_generation,
+          profile_snapshot_version, scoring_policy_version, formula_version,
+          resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+      ).run(jobUrl, JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }));
+      const insertFitItem = db.prepare(
+        `INSERT INTO job_requirement_fit_items (
+          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tier, weight, job_evidence_span, fit_json, contribution_json,
+          tailoring_json, artifact_coverage_json, position
+        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+      );
+      insertFitItem.run(
+        jobUrl,
+        "req-platform",
+        "Own platform migrations",
+        0.8,
+        "platform migrations",
+        JSON.stringify({ kind: "matched", evidence_ids: ["ev_platform"], strength: "direct" }),
+        JSON.stringify({ state: "covered", source: "tailored_resume_bullet_provenance", bullet_count: 1, examples: ["Led migration"] }),
+        0,
+      );
+      insertFitItem.run(
+        jobUrl,
+        "req-kubernetes",
+        "Run Kubernetes clusters",
+        0.7,
+        "Kubernetes clusters",
+        JSON.stringify({ kind: "missing", reason: "No Kubernetes profile evidence." }),
+        JSON.stringify({ state: "missing_from_profile", source: "tailored_resume_bullet_provenance", bullet_count: 0, examples: [] }),
+        1,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(response.statusCode, response.body).toBe(200);
+        const body = response.json();
+        const evidenceEntry = body.entries.find((entry: { evidenceId: string }) => entry.evidenceId === "ev_platform");
+        expect(evidenceEntry).toBeTruthy();
+        expect(evidenceEntry.resumeUsages).toMatchObject([
+          { jobKey: jobUrl, artifactId: "artifact-resume-1", bulletId: "experience:exp-platform#0" },
+        ]);
+        expect(evidenceEntry.requirementUsages).toMatchObject([
+          { jobKey: jobUrl, scoreVersion: 2, requirementId: "req-platform", requirementFitKind: "matched" },
+        ]);
+        expect(evidenceEntry.freshness).toMatchObject({
+          evidenceDateRange: "2024-2025",
+          evidenceStrength: "verified",
+          userConfirmed: true,
+          lastUsedAt: "2026-07-05T12:10:00Z",
+        });
+        expect(body.gaps).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "missing_requirement",
+              requirementId: "req-kubernetes",
+              jobRefs: [expect.objectContaining({ jobKey: jobUrl, scoreVersion: 2 })],
+            }),
+            expect.objectContaining({
+              kind: "missing_skill",
+              demandedSkill: "Kubernetes",
+              jobRefs: [expect.objectContaining({ jobKey: jobUrl, artifactId: "artifact-resume-1" })],
+            }),
+          ]),
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("serves canonical per-bullet provenance from projection rows (TS↔Python parity)", async () => {
     // AUDIT-02-style cross-runtime parity for Phase 2: seed the canonical
     // ``job_bullet_provenance`` rows exactly as the Python repository writes

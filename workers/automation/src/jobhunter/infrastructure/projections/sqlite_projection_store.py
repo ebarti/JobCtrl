@@ -43,6 +43,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "dashboard_projections",
     "job_detail_projections",
     "artifact_list_projections",
+    "evidence_usage_projections",
     "apply_run_projections",
     "workflow_run_projections",
     "source_quality_stats",
@@ -206,6 +207,34 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_artifact_list_projections_job
         ON artifact_list_projections(tenant_id, job_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS evidence_usage_projections (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            projection_kind        TEXT NOT NULL CHECK(projection_kind IN ('entry', 'gap')),
+            projection_id          TEXT NOT NULL,
+            evidence_id            TEXT,
+            skill_id               TEXT,
+            requirement_id         TEXT,
+            title                  TEXT NOT NULL DEFAULT '',
+            payload_json           TEXT NOT NULL,
+            last_updated_at        TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, projection_kind, projection_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_evidence
+        ON evidence_usage_projections(tenant_id, evidence_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_skill
+        ON evidence_usage_projections(tenant_id, skill_id)
         """
     )
     conn.execute(
@@ -669,6 +698,39 @@ class SqliteProjectionStore:
         )
         for projection in projections:
             self.upsert_artifact(projection)
+
+    def replace_evidence_usage_rows(
+        self,
+        tenant_id: str,
+        rows: Iterable[dict[str, object]],
+    ) -> None:
+        """Idempotently replace the tenant-wide Career Evidence Map projection."""
+
+        self._conn.execute(
+            "DELETE FROM evidence_usage_projections WHERE tenant_id = ?",
+            (tenant_id,),
+        )
+        insert = self._conn.execute
+        for row in rows:
+            insert(
+                """
+                INSERT INTO evidence_usage_projections (
+                    tenant_id, projection_kind, projection_id, evidence_id,
+                    skill_id, requirement_id, title, payload_json, last_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    str(row["projection_kind"]),
+                    str(row["projection_id"]),
+                    row.get("evidence_id"),
+                    row.get("skill_id"),
+                    row.get("requirement_id"),
+                    str(row.get("title") or ""),
+                    str(row["payload_json"]),
+                    str(row.get("last_updated_at") or ""),
+                ),
+            )
 
     def upsert_apply_run(self, projection: ApplyRunProjection) -> None:
         self._conn.execute(

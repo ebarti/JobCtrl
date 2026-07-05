@@ -524,6 +524,22 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       coverage_audit_json    TEXT,
       voice_pass_json        TEXT
     );
+    CREATE TABLE IF NOT EXISTS evidence_usage_projections (
+      tenant_id              TEXT NOT NULL DEFAULT 'local',
+      projection_kind        TEXT NOT NULL CHECK(projection_kind IN ('entry', 'gap')),
+      projection_id          TEXT NOT NULL,
+      evidence_id            TEXT,
+      skill_id               TEXT,
+      requirement_id         TEXT,
+      title                  TEXT NOT NULL DEFAULT '',
+      payload_json           TEXT NOT NULL,
+      last_updated_at        TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, projection_kind, projection_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_evidence
+      ON evidence_usage_projections(tenant_id, evidence_id);
+    CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_skill
+      ON evidence_usage_projections(tenant_id, skill_id);
     CREATE TABLE IF NOT EXISTS apply_run_projections (
       run_id                 TEXT PRIMARY KEY,
       tenant_id              TEXT NOT NULL DEFAULT 'local',
@@ -724,6 +740,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
+  let evidenceUsageDirty = projectionSchemaChanged;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {
     const rows = allRows<{ event_id: number; job_url: string | null; event_type: string }>(
@@ -738,7 +755,15 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (SOURCE_QUALITY_EVENT_TYPES.has(String(row.event_type))) {
         sourceQualityDirty = true;
       }
+      evidenceUsageDirty = true;
     }
+  }
+  const evidenceProjectionCount =
+    getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM evidence_usage_projections WHERE tenant_id = ?", [
+      tenantId,
+    ])?.c ?? 0;
+  if (evidenceProjectionCount === 0) {
+    evidenceUsageDirty = true;
   }
 
   // First-run backfill: if the projection table is empty, force a full
@@ -794,6 +819,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   if (
     dirtyJobs.size === 0 &&
     !sourceQualityDirty &&
+    !evidenceUsageDirty &&
     (sourceQualityExists > 0 || !sourceQualityHistory) &&
     maxEventId === watermark
   ) {
@@ -814,6 +840,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     // ``loadLatestApplyRun`` / ``recentApplyRuns`` and no longer
     // materialises the table itself.
     rebuildDashboardProjection(db, tenantId);
+  }
+  if (evidenceUsageDirty || dirtyJobs.size > 0) {
+    rebuildEvidenceUsageProjection(db, tenantId);
   }
 
   if (maxEventId > watermark) {
@@ -936,7 +965,9 @@ interface RequirementFitItemRow extends Record<string, unknown> {
 }
 
 interface BulletProvenanceRow extends Record<string, unknown> {
+  job_url: string;
   artifact_id: string;
+  generation: number;
   bullet_id: string;
   section: string;
   source_id: string | null;
@@ -948,6 +979,66 @@ interface BulletProvenanceRow extends Record<string, unknown> {
   rationale: string | null;
   generated_text: string;
   position: number;
+  created_at: string;
+}
+
+interface EvidenceMapEntryPayload {
+  entryId: string;
+  kind: "achievement_evidence" | "skill";
+  evidenceId: string | null;
+  skillId: string | null;
+  title: string;
+  story: {
+    scope: string;
+    action: string;
+    outcome: string;
+    metrics: string[];
+  } | null;
+  skills: string[];
+  tags: string[];
+  freshness: {
+    evidenceDateRange: string | null;
+    evidenceStrength: string | null;
+    userConfirmed: boolean;
+    claimConfidence: number | null;
+    lastUsedAt: string | null;
+  };
+  resumeUsages: EvidenceUsagePayload[];
+  requirementUsages: EvidenceUsagePayload[];
+  coverageUsages: EvidenceUsagePayload[];
+  gaps: EvidenceGapPayload[];
+}
+
+interface EvidenceUsagePayload {
+  kind: "resume_bullet" | "requirement_fit" | "skill_coverage";
+  jobKey: string;
+  jobTitle: string | null;
+  employer: string | null;
+  artifactId: string | null;
+  bulletId: string | null;
+  generation: number | null;
+  generatedTextPreview: string | null;
+  scoreVersion: number | null;
+  requirementId: string | null;
+  requirementText: string | null;
+  requirementFitKind: string | null;
+  artifactCoverageState: string | null;
+  keyword: string | null;
+  coverageState: "covered" | "declared" | "missing" | null;
+  occurredAt: string | null;
+}
+
+interface EvidenceGapPayload {
+  gapId: string;
+  kind: "missing_requirement" | "blocked_requirement" | "transferable_requirement" | "missing_skill";
+  requirementId: string | null;
+  requirementText: string;
+  demandedSkill: string | null;
+  tier: string | null;
+  weight: number | null;
+  fitKind: string | null;
+  reason: string;
+  jobRefs: EvidenceUsagePayload[];
 }
 
 /**
@@ -1243,6 +1334,464 @@ function loadProvenanceAuxByArtifact(
   if (row.coverage_json && row.coverage_json.trim()) coverage.set(row.artifact_id, row.coverage_json);
   if (row.voice_json && row.voice_json.trim()) voice.set(row.artifact_id, row.voice_json);
   return { coverage, voice };
+}
+
+function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): void {
+  const now = new Date().toISOString();
+  const entries = new Map<string, EvidenceMapEntryPayload>();
+  const gaps = new Map<string, EvidenceGapPayload>();
+
+  loadProfileEvidenceEntries(db, tenantId, entries);
+  const skillEntriesByName = loadProfileSkillEntries(db, tenantId, entries);
+  attachResumeUsages(db, tenantId, entries);
+  attachRequirementUsagesAndGaps(db, tenantId, entries, gaps);
+  attachSkillCoverageUsagesAndGaps(db, tenantId, entries, skillEntriesByName, gaps);
+
+  const insert = db.prepare(
+    `INSERT INTO evidence_usage_projections (
+       tenant_id, projection_kind, projection_id, evidence_id, skill_id,
+       requirement_id, title, payload_json, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  db.prepare("DELETE FROM evidence_usage_projections WHERE tenant_id = ?").run(tenantId);
+  for (const entry of [...entries.values()].sort((a, b) => a.title.localeCompare(b.title))) {
+    insert.run(
+      tenantId,
+      "entry",
+      entry.entryId,
+      entry.evidenceId,
+      entry.skillId,
+      null,
+      entry.title,
+      JSON.stringify(entry),
+      now,
+    );
+  }
+  for (const gap of [...gaps.values()].sort((a, b) => a.requirementText.localeCompare(b.requirementText))) {
+    insert.run(
+      tenantId,
+      "gap",
+      gap.gapId,
+      null,
+      null,
+      gap.requirementId,
+      gap.requirementText,
+      JSON.stringify(gap),
+      now,
+    );
+  }
+}
+
+function loadProfileEvidenceEntries(
+  db: SqliteDatabase,
+  tenantId: string,
+  entries: Map<string, EvidenceMapEntryPayload>,
+): void {
+  if (!tableExists(db, "candidate_profile_achievement_evidence")) return;
+  const evidenceStrengthExpr = columnOrLiteral(
+    db,
+    "candidate_profile_achievement_evidence",
+    "evidence_strength",
+    "'supported'",
+    "evidence",
+  );
+  const claimConfidenceExpr = columnOrLiteral(
+    db,
+    "candidate_profile_achievement_evidence",
+    "claim_confidence",
+    "0",
+    "evidence",
+  );
+  const userConfirmedExpr = columnOrLiteral(
+    db,
+    "candidate_profile_achievement_evidence",
+    "user_confirmed",
+    "0",
+    "evidence",
+  );
+  const tagsJsonExpr = columnOrLiteral(
+    db,
+    "candidate_profile_achievement_evidence",
+    "tags_json",
+    "'[]'",
+    "evidence",
+  );
+  const hasExperience =
+    tableExists(db, "candidate_profile_experience_entries") &&
+    hasColumn(db, "candidate_profile_experience_entries", "date_range");
+  const rows = allRows<{
+    entry_id: string;
+    evidence_id: string;
+    source_text: string;
+    scope: string;
+    action: string;
+    tools_json: string;
+    metrics_json: string;
+    outcome: string;
+    evidence_strength: string;
+    claim_confidence: number | null;
+    user_confirmed: number | string | null;
+    tags_json: string;
+    date_range: string | null;
+  }>(
+    db,
+    hasExperience
+      ? `SELECT evidence.entry_id, evidence.evidence_id, evidence.source_text,
+                evidence.scope, evidence.action, evidence.tools_json,
+                evidence.metrics_json, evidence.outcome, ${evidenceStrengthExpr} AS evidence_strength,
+                ${claimConfidenceExpr} AS claim_confidence, ${userConfirmedExpr} AS user_confirmed,
+                ${tagsJsonExpr} AS tags_json,
+                experience.date_range
+           FROM candidate_profile_achievement_evidence AS evidence
+           LEFT JOIN candidate_profile_experience_entries AS experience
+             ON experience.tenant_id = evidence.tenant_id
+            AND experience.profile_id = evidence.profile_id
+            AND experience.entry_id = evidence.entry_id
+          WHERE evidence.tenant_id = ? AND evidence.profile_id = ?
+            AND TRIM(evidence.evidence_id) != ''
+          ORDER BY evidence.entry_id, evidence.evidence_index`
+      : `SELECT evidence.entry_id, evidence.evidence_id, evidence.source_text,
+                evidence.scope, evidence.action, evidence.tools_json,
+                evidence.metrics_json, evidence.outcome, ${evidenceStrengthExpr} AS evidence_strength,
+                ${claimConfidenceExpr} AS claim_confidence, ${userConfirmedExpr} AS user_confirmed,
+                ${tagsJsonExpr} AS tags_json,
+                NULL AS date_range
+           FROM candidate_profile_achievement_evidence AS evidence
+          WHERE evidence.tenant_id = ? AND evidence.profile_id = ?
+            AND TRIM(evidence.evidence_id) != ''
+          ORDER BY evidence.entry_id, evidence.evidence_index`,
+    [tenantId, "default"],
+  );
+  for (const row of rows) {
+    const evidenceId = stringField(row.evidence_id).trim();
+    if (!evidenceId) continue;
+    const title = previewText(row.action || row.scope || row.outcome || row.source_text || evidenceId, 140);
+    entries.set(evidenceId, {
+      entryId: evidenceId,
+      kind: "achievement_evidence",
+      evidenceId,
+      skillId: null,
+      title,
+      story: {
+        scope: stringField(row.scope),
+        action: stringField(row.action),
+        outcome: stringField(row.outcome),
+        metrics: parseStringList(parseJsonArray(row.metrics_json)),
+      },
+      skills: parseStringList(parseJsonArray(row.tools_json)),
+      tags: parseStringList(parseJsonArray(row.tags_json)),
+      freshness: {
+        evidenceDateRange: nullableString(row.date_range),
+        evidenceStrength: nullableString(row.evidence_strength),
+        userConfirmed: Number(row.user_confirmed ?? 0) === 1,
+        claimConfidence: nullableNumber(row.claim_confidence),
+        lastUsedAt: null,
+      },
+      resumeUsages: [],
+      requirementUsages: [],
+      coverageUsages: [],
+      gaps: [],
+    });
+  }
+}
+
+function loadProfileSkillEntries(
+  db: SqliteDatabase,
+  tenantId: string,
+  entries: Map<string, EvidenceMapEntryPayload>,
+): Map<string, EvidenceMapEntryPayload[]> {
+  const byName = new Map<string, EvidenceMapEntryPayload[]>();
+  if (!tableExists(db, "candidate_profile_skill_items")) return byName;
+  const hasCategories = tableExists(db, "candidate_profile_skill_categories");
+  const rows = allRows<{ category_id: string; item_index: number; item_text: string; label: string }>(
+    db,
+    hasCategories
+      ? `SELECT skills.category_id, skills.item_index, skills.item_text,
+                COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label
+           FROM candidate_profile_skill_items AS skills
+           LEFT JOIN candidate_profile_skill_categories AS categories
+             ON categories.tenant_id = skills.tenant_id
+            AND categories.profile_id = skills.profile_id
+            AND categories.category_id = skills.category_id
+          WHERE skills.tenant_id = ? AND skills.profile_id = ?
+            AND TRIM(skills.item_text) != ''
+          ORDER BY categories.position_index, skills.item_index`
+      : `SELECT category_id, item_index, item_text, category_id AS label
+           FROM candidate_profile_skill_items
+          WHERE tenant_id = ? AND profile_id = ?
+            AND TRIM(item_text) != ''
+          ORDER BY category_id, item_index`,
+    [tenantId, "default"],
+  );
+  for (const row of rows) {
+    const skillText = stringField(row.item_text).trim();
+    if (!skillText) continue;
+    const skillId = `skill:${row.category_id}:${row.item_index}`;
+    const entry: EvidenceMapEntryPayload = {
+      entryId: skillId,
+      kind: "skill",
+      evidenceId: null,
+      skillId,
+      title: skillText,
+      story: null,
+      skills: [skillText],
+      tags: [stringField(row.label)].filter(Boolean),
+      freshness: {
+        evidenceDateRange: null,
+        evidenceStrength: "declared",
+        userConfirmed: true,
+        claimConfidence: null,
+        lastUsedAt: null,
+      },
+      resumeUsages: [],
+      requirementUsages: [],
+      coverageUsages: [],
+      gaps: [],
+    };
+    entries.set(skillId, entry);
+    const key = skillText.toLowerCase();
+    const existing = byName.get(key) ?? [];
+    existing.push(entry);
+    byName.set(key, existing);
+  }
+  return byName;
+}
+
+function attachResumeUsages(
+  db: SqliteDatabase,
+  tenantId: string,
+  entries: Map<string, EvidenceMapEntryPayload>,
+): void {
+  if (!tableExists(db, "job_bullet_provenance")) return;
+  const jobMetadata = jobMetadataJoinSql(db, "provenance.job_url");
+  const rows = allRows<BulletProvenanceRow & { job_title: string | null; employer: string | null }>(
+    db,
+    `SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
+            provenance.bullet_id, provenance.section, provenance.source_id,
+            provenance.evidence_ids_json, provenance.requirement_ids_json,
+            provenance.matched_keywords_json, provenance.transform_type,
+            provenance.control, provenance.rationale, provenance.generated_text,
+            provenance.position, provenance.created_at,
+            ${jobMetadata.selectSql}
+       FROM job_bullet_provenance AS provenance
+       ${jobMetadata.joinSql}
+      WHERE provenance.tenant_id = ?
+        AND provenance.generation = (
+          SELECT MAX(latest.generation)
+            FROM job_bullet_provenance AS latest
+           WHERE latest.tenant_id = provenance.tenant_id
+             AND latest.job_url = provenance.job_url
+        )
+      ORDER BY provenance.job_url, provenance.position, provenance.bullet_id`,
+    [tenantId],
+  );
+  for (const row of rows) {
+    const usage: EvidenceUsagePayload = {
+      kind: "resume_bullet",
+      jobKey: row.job_url,
+      jobTitle: nullableString(row.job_title),
+      employer: nullableString(row.employer),
+      artifactId: row.artifact_id,
+      bulletId: row.bullet_id,
+      generation: Number(row.generation),
+      generatedTextPreview: previewText(row.generated_text, 240),
+      scoreVersion: null,
+      requirementId: null,
+      requirementText: null,
+      requirementFitKind: null,
+      artifactCoverageState: null,
+      keyword: null,
+      coverageState: null,
+      occurredAt: nullableString(row.created_at),
+    };
+    for (const evidenceId of parseStringList(parseJsonArray(row.evidence_ids_json))) {
+      const entry = entries.get(evidenceId);
+      if (!entry) continue;
+      entry.resumeUsages.push(usage);
+      if (!entry.freshness.lastUsedAt || (usage.occurredAt && usage.occurredAt > entry.freshness.lastUsedAt)) {
+        entry.freshness.lastUsedAt = usage.occurredAt;
+      }
+    }
+  }
+}
+
+function attachRequirementUsagesAndGaps(
+  db: SqliteDatabase,
+  tenantId: string,
+  entries: Map<string, EvidenceMapEntryPayload>,
+  gaps: Map<string, EvidenceGapPayload>,
+): void {
+  if (!tableExists(db, "job_requirement_fit_reports") || !tableExists(db, "job_requirement_fit_items")) return;
+  const jobMetadata = jobMetadataJoinSql(db, "items.job_url");
+  const rows = allRows<RequirementFitItemRow & {
+    job_url: string;
+    score_version: number;
+    job_title: string | null;
+    employer: string | null;
+  }>(
+    db,
+    `SELECT items.job_url, items.score_version, items.requirement_id,
+            items.requirement_text, items.tier, items.weight, items.job_evidence_span,
+            items.fit_json, items.contribution_json, items.tailoring_json,
+            items.artifact_coverage_json,
+            ${jobMetadata.selectSql}
+       FROM job_requirement_fit_items AS items
+       ${jobMetadata.joinSql}
+      WHERE items.tenant_id = ?
+        AND items.score_version = (
+          SELECT MAX(report.score_version)
+            FROM job_requirement_fit_reports AS report
+           WHERE report.tenant_id = items.tenant_id
+             AND report.job_url = items.job_url
+        )
+      ORDER BY items.job_url, items.position, items.requirement_id`,
+    [tenantId],
+  );
+  for (const row of rows) {
+    const fit = requirementFitStatusToReadModel(parseJsonObject(row.fit_json));
+    const fitKind = stringField(fit.kind || "not_assessed");
+    const coverage = row.artifact_coverage_json
+      ? requirementArtifactCoverageToReadModel(parseJsonObject(row.artifact_coverage_json))
+      : null;
+    const usage: EvidenceUsagePayload = {
+      kind: "requirement_fit",
+      jobKey: row.job_url,
+      jobTitle: nullableString(row.job_title),
+      employer: nullableString(row.employer),
+      artifactId: null,
+      bulletId: null,
+      generation: null,
+      generatedTextPreview: null,
+      scoreVersion: Number(row.score_version),
+      requirementId: row.requirement_id,
+      requirementText: row.requirement_text,
+      requirementFitKind: fitKind,
+      artifactCoverageState: coverage ? stringField(coverage.state) : null,
+      keyword: null,
+      coverageState: null,
+      occurredAt: null,
+    };
+    for (const evidenceId of parseStringList(fit.evidenceIds)) {
+      const entry = entries.get(evidenceId);
+      if (entry) entry.requirementUsages.push(usage);
+    }
+    if (fitKind === "missing" || fitKind === "blocked" || fitKind === "transferable") {
+      const kind =
+        fitKind === "blocked"
+          ? "blocked_requirement"
+          : fitKind === "transferable"
+            ? "transferable_requirement"
+            : "missing_requirement";
+      const reason =
+        stringField(fit.reason) || stringField(fit.blocker) || stringField(fit.gap) || "Recorded requirement gap.";
+      const gap: EvidenceGapPayload = {
+        gapId: `${row.job_url}#${row.requirement_id}`,
+        kind,
+        requirementId: row.requirement_id,
+        requirementText: row.requirement_text,
+        demandedSkill: null,
+        tier: row.tier,
+        weight: nullableNumber(row.weight),
+        fitKind,
+        reason,
+        jobRefs: [usage],
+      };
+      gaps.set(gap.gapId, gap);
+    }
+  }
+}
+
+function attachSkillCoverageUsagesAndGaps(
+  db: SqliteDatabase,
+  tenantId: string,
+  entries: Map<string, EvidenceMapEntryPayload>,
+  skillEntriesByName: Map<string, EvidenceMapEntryPayload[]>,
+  gaps: Map<string, EvidenceGapPayload>,
+): void {
+  if (!tableExists(db, "artifact_list_projections")) return;
+  const rows = allRows<{
+    job_id: string;
+    job_title: string;
+    job_employer: string;
+    artifact_id: string;
+    generation: number | null;
+    coverage_audit_json: string | null;
+    created_at: string | null;
+  }>(
+    db,
+    `SELECT job_id, job_title, job_employer, artifact_id, generation,
+            coverage_audit_json, created_at
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND coverage_audit_json IS NOT NULL
+        AND TRIM(coverage_audit_json) != ''`,
+    [tenantId],
+  );
+  for (const row of rows) {
+    const coverage = parseJsonObject(row.coverage_audit_json);
+    for (const state of ["covered", "declared"] as const) {
+      for (const keyword of parseStringList(coverage[state])) {
+        const skillEntries = skillEntriesByName.get(keyword.toLowerCase()) ?? [];
+        for (const entry of skillEntries) {
+          entry.coverageUsages.push({
+            kind: "skill_coverage",
+            jobKey: row.job_id,
+            jobTitle: nullableString(row.job_title),
+            employer: nullableString(row.job_employer),
+            artifactId: row.artifact_id,
+            bulletId: null,
+            generation: nullableNumber(row.generation),
+            generatedTextPreview: null,
+            scoreVersion: null,
+            requirementId: null,
+            requirementText: null,
+            requirementFitKind: null,
+            artifactCoverageState: null,
+            keyword,
+            coverageState: state,
+            occurredAt: nullableString(row.created_at),
+          });
+        }
+      }
+    }
+    for (const keyword of parseStringList(coverage.missing)) {
+      const gap: EvidenceGapPayload = {
+        gapId: `${row.job_id}#skill#${keyword.toLowerCase()}`,
+        kind: "missing_skill",
+        requirementId: null,
+        requirementText: keyword,
+        demandedSkill: keyword,
+        tier: null,
+        weight: null,
+        fitKind: null,
+        reason: "The generated coverage audit recorded this demanded skill as missing from shipped materials.",
+        jobRefs: [
+          {
+            kind: "skill_coverage",
+            jobKey: row.job_id,
+            jobTitle: nullableString(row.job_title),
+            employer: nullableString(row.job_employer),
+            artifactId: row.artifact_id,
+            bulletId: null,
+            generation: nullableNumber(row.generation),
+            generatedTextPreview: null,
+            scoreVersion: null,
+            requirementId: null,
+            requirementText: null,
+            requirementFitKind: null,
+            artifactCoverageState: null,
+            keyword,
+            coverageState: "missing",
+            occurredAt: nullableString(row.created_at),
+          },
+        ],
+      };
+      gaps.set(gap.gapId, gap);
+      for (const entry of skillEntriesByName.get(keyword.toLowerCase()) ?? []) {
+        entry.gaps.push(gap);
+      }
+    }
+  }
 }
 
 function parseAnalysisAgreement(value: string | null): {
@@ -3046,6 +3595,38 @@ function hasColumn(db: SqliteDatabase, tableName: string, columnName: string): b
   return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).some(
     (row) => row.name === columnName,
   );
+}
+
+function columnOrLiteral(
+  db: SqliteDatabase,
+  tableName: string,
+  columnName: string,
+  fallbackSql: string,
+  alias: string,
+): string {
+  return hasColumn(db, tableName, columnName) ? `${alias}.${columnName}` : fallbackSql;
+}
+
+function jobMetadataJoinSql(
+  db: SqliteDatabase,
+  jobUrlExpression: string,
+): { selectSql: string; joinSql: string } {
+  if (!tableExists(db, "jobs")) {
+    return { selectSql: "NULL AS job_title, NULL AS employer", joinSql: "" };
+  }
+  const titleSql = columnOrLiteral(db, "jobs", "title", "NULL", "jobs");
+  const employerParts = [
+    hasColumn(db, "jobs", "company") ? "NULLIF(jobs.company, '')" : null,
+    hasColumn(db, "jobs", "site") ? "jobs.site" : null,
+  ].filter((part): part is string => Boolean(part));
+  const employerSql =
+    employerParts.length > 1
+      ? `COALESCE(${employerParts.join(", ")})`
+      : employerParts[0] ?? "NULL";
+  return {
+    selectSql: `${titleSql} AS job_title, ${employerSql} AS employer`,
+    joinSql: `LEFT JOIN jobs ON jobs.url = ${jobUrlExpression}`,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
