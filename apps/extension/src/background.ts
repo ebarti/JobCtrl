@@ -1,7 +1,8 @@
 import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobhunter/contracts";
 
+import { detectSupportedAts } from "./ats";
 import { getBrowserApi, type BrowserApi, type BrowserTab } from "./browser";
-import { checkLocalApiReady, LocalApiError, postExtensionCapture } from "./local-api";
+import { checkLocalApiReady, getExtensionAutofillProfile, LocalApiError, postExtensionCapture } from "./local-api";
 import { clearCaptureQueue, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
 
 const TOKEN_STORAGE_KEY = "jobhunterExtensionCapabilityToken";
@@ -10,12 +11,14 @@ type BackgroundMessage =
   | { type: "captureCurrentTab" }
   | { type: "clearQueue" }
   | { type: "getStatus" }
+  | { type: "reviewAutofill" }
   | { type: "saveToken"; token: string };
 
 type BackgroundResponse =
   | { ok: true; status: "captured"; jobKey: string | null; queueSize: number }
   | { ok: true; status: "queued"; queueSize: number; message: string }
   | { ok: true; status: "ready"; paired: boolean; apiReady: boolean; queueSize: number }
+  | { ok: true; status: "review_opened"; suggestions: number; missing: number }
   | { ok: true; status: "token_saved" }
   | { ok: false; error: string; message: string };
 
@@ -46,6 +49,8 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
       ]);
       return { ok: true, status: "ready", paired: Boolean(token), apiReady, queueSize: queue.length };
     }
+    case "reviewAutofill":
+      return reviewAutofill(browser);
     case "saveToken": {
       const token = message.token.trim();
       if (!token) {
@@ -55,6 +60,38 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
       await clearCaptureQueue(browser.storage.local);
       return { ok: true, status: "token_saved" };
     }
+  }
+}
+
+async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> {
+  const token = await readToken(browser);
+  if (!token) {
+    return { ok: false, error: "not_paired", message: "Pair the extension with JobHunter before autofill." };
+  }
+  const tab = await activeTab(browser);
+  if (!tab.id || !detectSupportedAts(tab.url)) {
+    return { ok: false, error: "unsupported_ats", message: "Open a supported ATS application form first." };
+  }
+  try {
+    const profile = await getExtensionAutofillProfile(token);
+    const response = await browser.tabs.sendMessage<BackgroundResponse>(tab.id, {
+      type: "jobhunter.autofill.review",
+      profile,
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof LocalApiError && (error.status === 401 || error.status === 403)) {
+      return {
+        ok: false,
+        error: "pairing_token_rejected",
+        message: "JobHunter rejected the pairing token. Copy a fresh token from Settings.",
+      };
+    }
+    return {
+      ok: false,
+      error: "autofill_unavailable",
+      message: error instanceof Error ? error.message : "Unable to open autofill review on this page.",
+    };
   }
 }
 
@@ -147,6 +184,7 @@ function isBackgroundMessage(value: unknown): value is BackgroundMessage {
     candidate.type === "captureCurrentTab" ||
     candidate.type === "clearQueue" ||
     candidate.type === "getStatus" ||
+    candidate.type === "reviewAutofill" ||
     (candidate.type === "saveToken" && typeof candidate.token === "string")
   );
 }

@@ -652,6 +652,75 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("serves a token-gated autofill profile without sensitive profile fields", async () => {
+    const app = buildApp(options);
+    try {
+      const profile = {
+        ...validProfileFixture("Jordan Candidate"),
+        personal: {
+          full_name: "Jordan Candidate",
+          email: "jordan@example.com",
+          phone: "+1 555 0100",
+          linkedin_url: "https://linkedin.com/in/jordan",
+          password: "must-not-leave-profile",
+        },
+        work_authorization: {
+          legally_authorized_to_work: "Yes",
+          require_sponsorship: "No",
+          work_permit_type: "Citizen",
+        },
+        availability: {
+          earliest_start_date: "2026-08-01",
+          available_for_full_time: "Yes",
+          available_for_contract: "No",
+        },
+        compensation: {
+          salary_expectation: "150000",
+          salary_currency: "USD",
+        },
+      };
+      const save = await app.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        headers: {
+          origin: "http://127.0.0.1:5173",
+          "sec-fetch-site": "same-site",
+        },
+        payload: { profile },
+      });
+      expect(save.statusCode, save.body).toBe(200);
+
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/extension/autofill/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      const body = response.json() as { profileVersion: number; fields: Array<{ path: string; value: string }> };
+      expect(body.profileVersion).toBeGreaterThan(0);
+      expect(body.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "personal.email", value: "jordan@example.com" }),
+          expect.objectContaining({ path: "personal.phone", value: "+1 555 0100" }),
+          expect.objectContaining({ path: "work_authorization.legally_authorized_to_work", value: "Yes" }),
+          expect.objectContaining({ path: "compensation.salary_expectation", value: "150000" }),
+        ]),
+      );
+      expect(JSON.stringify(body)).not.toContain("must-not-leave-profile");
+      expect(body.fields.some((field) => field.path === "personal.password")).toBe(false);
+      expect(body.fields.some((field) => field.path.startsWith("resume."))).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
     const dispatch = vi.fn(
       async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({ status: "queued" }),

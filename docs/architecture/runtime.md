@@ -264,7 +264,10 @@ loopback posture. The browser-extension capture route seeds
 `manual_capture_queue` with extension provenance and then delegates to the
 same worker-backed manual-capture importer used by the web app, so discovery
 dedupe, snapshots, quarantine, and projections remain owned by the existing
-Job Discovery pipeline.
+Job Discovery pipeline. Deterministic browser-extension autofill reads a
+separate sanitized profile DTO from the Candidate Profile read path; it does
+not expose profile passwords, resume content, generated artifacts, or apply
+submission authority.
 
 ## Python Automation Engine
 

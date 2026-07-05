@@ -30,6 +30,7 @@ export interface BrowserRuntime {
 
 export interface BrowserTabs {
   query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<BrowserTab[]>;
+  sendMessage<TResponse = unknown>(tabId: number, message: unknown): Promise<TResponse>;
 }
 
 export interface BrowserScripting {

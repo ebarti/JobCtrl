@@ -886,6 +886,11 @@ event-history cap.
   imported row return the original `ManualCaptureImportResponse`; replays of a
   dismissed row return a terminal 2xx no-op so the extension can clear local
   retry state without reopening the dismissed capture.
+- `GET /v1/extension/autofill/profile` returns the deterministic autofill
+  field list for the extension. The response includes `profileVersion` and
+  whitelisted `fields[]` with `path`, `label`, `value`, and profile source
+  metadata. It intentionally excludes profile password, resume content,
+  generated materials, and free-text answer drafts.
 
 ## Related Packages
 

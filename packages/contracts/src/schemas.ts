@@ -2991,6 +2991,23 @@ export const ExtensionAuthStatusResponseSchema = z
   .strict();
 export type ExtensionAuthStatusResponse = z.infer<typeof ExtensionAuthStatusResponseSchema>;
 
+export interface ExtensionAutofillProfileField {
+  path: string;
+  label: string;
+  value: string;
+  source: {
+    kind: "profile";
+    path: string;
+    label: string;
+  };
+}
+
+export interface ExtensionAutofillProfileResponse {
+  ok: true;
+  profileVersion: number | null;
+  fields: ExtensionAutofillProfileField[];
+}
+
 export const COMPENSATION_SOURCE_TYPES = [
   "posted_salary",
   "public_wage_baseline",

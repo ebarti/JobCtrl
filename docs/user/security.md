@@ -85,6 +85,12 @@ manual-capture importer used by the web app. If the local stack is down, the
 extension keeps a bounded local queue in browser extension storage. It does not
 send captures to third-party services and it has no submit/apply action.
 
+In deterministic autofill mode, the extension reads only a whitelisted profile
+field list from `/v1/extension/autofill/profile`; password and resume content
+are excluded. Content scripts are limited to supported ATS hosts and show a
+review panel before filling accepted values. The extension code does not call
+form submit, `requestSubmit`, or an apply route.
+
 ## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive
