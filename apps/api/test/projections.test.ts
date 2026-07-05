@@ -489,6 +489,148 @@ function insertCompensationRows(dbPath: string): void {
   db.close();
 }
 
+// Source tables the career evidence map reads, plus the soft-delete/hidden
+// lifecycle tables owned by the TS write-model. Mirrors the inline schema of
+// the evidence-map projection test so the deleted/hidden regression fixture can
+// seed canonical rows.
+function createEvidenceMapSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE candidate_profile_experience_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      date_range TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      company TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, entry_id)
+    );
+    CREATE TABLE candidate_profile_achievement_evidence (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      evidence_index INTEGER NOT NULL,
+      evidence_id TEXT NOT NULL DEFAULT '',
+      source_text TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      tools_json TEXT NOT NULL DEFAULT '[]',
+      metrics_json TEXT NOT NULL DEFAULT '[]',
+      outcome TEXT NOT NULL DEFAULT '',
+      seniority_signal TEXT NOT NULL DEFAULT '',
+      evidence_strength TEXT NOT NULL DEFAULT 'supported',
+      claim_confidence REAL NOT NULL DEFAULT 0,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
+    );
+    CREATE TABLE candidate_profile_skill_categories (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, category_id)
+    );
+    CREATE TABLE candidate_profile_skill_items (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      item_index INTEGER NOT NULL,
+      item_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+    );
+    CREATE TABLE job_materials (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE job_materials_artifacts (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_type TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      path TEXT NOT NULL,
+      render_format TEXT NOT NULL,
+      size_bytes INTEGER,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      superseded_at TEXT,
+      PRIMARY KEY (job_url, generation, artifact_type)
+    );
+    CREATE TABLE job_bullet_provenance (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      bullet_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      source_id TEXT,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL,
+      control TEXT NOT NULL,
+      rationale TEXT NOT NULL DEFAULT '',
+      generated_text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      coverage_json TEXT,
+      voice_json TEXT,
+      PRIMARY KEY (job_url, generation, bullet_id)
+    );
+    CREATE TABLE job_requirement_fit_reports (
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      employer_analysis_generation INTEGER NOT NULL,
+      profile_snapshot_version INTEGER NOT NULL,
+      scoring_policy_version INTEGER NOT NULL,
+      formula_version TEXT NOT NULL,
+      resolved_fit_score INTEGER,
+      fit_band TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, score_version, tenant_id)
+    );
+    CREATE TABLE job_requirement_fit_items (
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      requirement_id TEXT NOT NULL,
+      requirement_text TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      weight REAL NOT NULL,
+      job_evidence_span TEXT NOT NULL,
+      fit_json TEXT NOT NULL,
+      contribution_json TEXT NOT NULL,
+      tailoring_json TEXT NOT NULL,
+      artifact_coverage_json TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+    );
+    CREATE TABLE jobhunter_deleted_jobs (
+      job_url TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      reason TEXT,
+      restored_at TEXT
+    );
+    CREATE TABLE jobhunter_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT
+    );
+  `);
+}
+
 describe("projection schema upgrades", () => {
   it("adds workflow-run projection columns to existing legacy tables", () => {
     const { dbPath, cleanup } = withTempDb();
@@ -2571,6 +2713,216 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             }),
           ]),
         );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("excludes soft-deleted and hidden jobs from the career evidence map", async () => {
+    // Regression for the R5 evidence-usage index: soft delete only writes a
+    // jobhunter_deleted_jobs tombstone (and hide only writes jobhunter_hidden_jobs),
+    // leaving the job_bullet_provenance / job_requirement_fit_items /
+    // artifact_list_projections rows in place. Those rows must not re-surface a
+    // removed job's title, employer, generated-text preview, usages, or gaps.
+    const { dbPath, cleanup } = withTempDb();
+    const activeUrl = "https://example.com/jobs/active-role";
+    const deletedUrl = "https://example.com/jobs/deleted-role";
+    const hiddenUrl = "https://example.com/jobs/hidden-role";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      createEvidenceMapSchema(db);
+      // Shared profile evidence + skill that every job's tailoring references.
+      db.prepare(
+        `INSERT INTO candidate_profile_experience_entries
+         (tenant_id, profile_id, entry_id, position_index, date_range, title, company, location)
+         VALUES ('local', 'default', 'exp-platform', 0, '2024-2025', 'Senior Engineer', 'Acme', 'Remote')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_achievement_evidence (
+          tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
+          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          evidence_strength, claim_confidence, user_confirmed, tags_json
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+      ).run(
+        "Led a platform migration that reduced latency by 40%.",
+        "Platform migration",
+        "Led migration",
+        JSON.stringify(["Python", "Postgres"]),
+        JSON.stringify(["40% latency reduction"]),
+        "Reduced latency",
+        JSON.stringify(["migration"]),
+      );
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_categories
+         (tenant_id, profile_id, category_id, position_index, label)
+         VALUES ('local', 'default', 'backend', 0, 'Backend')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_items
+         (tenant_id, profile_id, category_id, item_index, item_text)
+         VALUES ('local', 'default', 'backend', 0, 'Python')`,
+      ).run();
+
+      const insertJob = db.prepare("INSERT INTO jobs (url, title, company, site) VALUES (?, ?, ?, ?)");
+      const insertMaterials = db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+      );
+      const insertArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+      );
+      const insertProvenance = db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+          control, rationale, generated_text, position, created_at, coverage_json
+        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', ?, 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', ?, 0, ?, ?)`,
+      );
+      const insertReport = db.prepare(
+        `INSERT INTO job_requirement_fit_reports (
+          job_url, score_version, tenant_id, employer_analysis_generation,
+          profile_snapshot_version, scoring_policy_version, formula_version,
+          resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+      );
+      const insertFitItem = db.prepare(
+        `INSERT INTO job_requirement_fit_items (
+          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tier, weight, job_evidence_span, fit_json, contribution_json,
+          tailoring_json, artifact_coverage_json, position
+        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+      );
+
+      const seedJobEvidence = (
+        jobUrl: string,
+        opts: { title: string; company: string; artifactId: string; generatedText: string; createdAt: string },
+      ): void => {
+        insertJob.run(jobUrl, opts.title, opts.company, "example.com");
+        insertMaterials.run(jobUrl);
+        insertArtifact.run(
+          jobUrl,
+          opts.artifactId,
+          `/tmp/${opts.artifactId}.txt`,
+          JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }),
+        );
+        insertProvenance.run(
+          jobUrl,
+          opts.artifactId,
+          JSON.stringify(["ev_platform"]),
+          JSON.stringify(["req-platform"]),
+          JSON.stringify(["latency"]),
+          opts.generatedText,
+          opts.createdAt,
+          JSON.stringify({ covered: ["Python"], declared: [], missing: ["Kubernetes"] }),
+        );
+        insertReport.run(
+          jobUrl,
+          JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }),
+        );
+        insertFitItem.run(
+          jobUrl,
+          "req-platform",
+          "Own platform migrations",
+          0.8,
+          "platform migrations",
+          JSON.stringify({ kind: "matched", evidence_ids: ["ev_platform"], strength: "direct" }),
+          JSON.stringify({ state: "covered", source: "tailored_resume_bullet_provenance", bullet_count: 1, examples: ["Led migration"] }),
+          0,
+        );
+        insertFitItem.run(
+          jobUrl,
+          "req-kubernetes",
+          "Run Kubernetes clusters",
+          0.7,
+          "Kubernetes clusters",
+          JSON.stringify({ kind: "missing", reason: "No Kubernetes profile evidence." }),
+          JSON.stringify({ state: "missing_from_profile", source: "tailored_resume_bullet_provenance", bullet_count: 0, examples: [] }),
+          1,
+        );
+      };
+
+      seedJobEvidence(activeUrl, {
+        title: "Active Platform Role",
+        company: "ActiveCorp",
+        artifactId: "artifact-active",
+        generatedText: "ACTIVE-bullet reduced latency 40%.",
+        createdAt: "2026-07-05T12:10:00Z",
+      });
+      seedJobEvidence(deletedUrl, {
+        title: "Deleted Platform Role",
+        company: "DeletedCorp",
+        artifactId: "artifact-deleted",
+        generatedText: "DELETED-bullet should never surface.",
+        createdAt: "2026-07-04T12:10:00Z",
+      });
+      seedJobEvidence(hiddenUrl, {
+        title: "Hidden Platform Role",
+        company: "HiddenCorp",
+        artifactId: "artifact-hidden",
+        generatedText: "HIDDEN-bullet should never surface.",
+        createdAt: "2026-07-03T12:10:00Z",
+      });
+
+      db.prepare(
+        `INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+         VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)`,
+      ).run(deletedUrl);
+      db.prepare(
+        `INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+         VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
+      ).run(hiddenUrl);
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(response.statusCode, response.body).toBe(200);
+        const body = response.json();
+
+        const referencedJobKeys = new Set<string>();
+        for (const entry of body.entries as Array<{
+          resumeUsages: Array<{ jobKey: string }>;
+          requirementUsages: Array<{ jobKey: string }>;
+          coverageUsages: Array<{ jobKey: string }>;
+        }>) {
+          for (const usage of [...entry.resumeUsages, ...entry.requirementUsages, ...entry.coverageUsages]) {
+            referencedJobKeys.add(usage.jobKey);
+          }
+        }
+        for (const gap of body.gaps as Array<{ jobRefs: Array<{ jobKey: string }> }>) {
+          for (const ref of gap.jobRefs) referencedJobKeys.add(ref.jobKey);
+        }
+
+        // The live job still populates the map (positive control) ...
+        expect(referencedJobKeys.has(activeUrl)).toBe(true);
+        // ... while the soft-deleted and hidden jobs are fully excluded.
+        expect(referencedJobKeys.has(deletedUrl)).toBe(false);
+        expect(referencedJobKeys.has(hiddenUrl)).toBe(false);
+
+        // No removed job's title, employer, or generated-text preview may leak
+        // through any evidence field.
+        const serialized = JSON.stringify(body);
+        for (const leaked of [
+          "Deleted Platform Role",
+          "DeletedCorp",
+          "DELETED-bullet",
+          "Hidden Platform Role",
+          "HiddenCorp",
+          "HIDDEN-bullet",
+        ]) {
+          expect(serialized).not.toContain(leaked);
+        }
+        expect(serialized).toContain("ACTIVE-bullet");
       } finally {
         await app.close();
       }

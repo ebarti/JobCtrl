@@ -1564,6 +1564,7 @@ function attachResumeUsages(
 ): void {
   if (!tableExists(db, "job_bullet_provenance")) return;
   const jobMetadata = jobMetadataJoinSql(db, "provenance.job_url");
+  const lifecycle = jobLifecycleExclusionSql(db, "provenance.job_url");
   const rows = allRows<BulletProvenanceRow & { job_title: string | null; employer: string | null }>(
     db,
     `SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
@@ -1574,8 +1575,8 @@ function attachResumeUsages(
             provenance.position, provenance.created_at,
             ${jobMetadata.selectSql}
        FROM job_bullet_provenance AS provenance
-       ${jobMetadata.joinSql}
-      WHERE provenance.tenant_id = ?
+       ${jobMetadata.joinSql}${lifecycle.joinSql}
+      WHERE provenance.tenant_id = ?${lifecycle.whereSql}
         AND provenance.generation = (
           SELECT MAX(latest.generation)
             FROM job_bullet_provenance AS latest
@@ -1623,6 +1624,7 @@ function attachRequirementUsagesAndGaps(
 ): void {
   if (!tableExists(db, "job_requirement_fit_reports") || !tableExists(db, "job_requirement_fit_items")) return;
   const jobMetadata = jobMetadataJoinSql(db, "items.job_url");
+  const lifecycle = jobLifecycleExclusionSql(db, "items.job_url");
   const rows = allRows<RequirementFitItemRow & {
     job_url: string;
     score_version: number;
@@ -1636,8 +1638,8 @@ function attachRequirementUsagesAndGaps(
             items.artifact_coverage_json,
             ${jobMetadata.selectSql}
        FROM job_requirement_fit_items AS items
-       ${jobMetadata.joinSql}
-      WHERE items.tenant_id = ?
+       ${jobMetadata.joinSql}${lifecycle.joinSql}
+      WHERE items.tenant_id = ?${lifecycle.whereSql}
         AND items.score_version = (
           SELECT MAX(report.score_version)
             FROM job_requirement_fit_reports AS report
@@ -1709,6 +1711,7 @@ function attachSkillCoverageUsagesAndGaps(
   gaps: Map<string, EvidenceGapPayload>,
 ): void {
   if (!tableExists(db, "artifact_list_projections")) return;
+  const lifecycle = jobLifecycleExclusionSql(db, "job_id");
   const rows = allRows<{
     job_id: string;
     job_title: string;
@@ -1721,8 +1724,8 @@ function attachSkillCoverageUsagesAndGaps(
     db,
     `SELECT job_id, job_title, job_employer, artifact_id, generation,
             coverage_audit_json, created_at
-       FROM artifact_list_projections
-      WHERE tenant_id = ?
+       FROM artifact_list_projections${lifecycle.joinSql}
+      WHERE tenant_id = ?${lifecycle.whereSql}
         AND coverage_audit_json IS NOT NULL
         AND TRIM(coverage_audit_json) != ''`,
     [tenantId],
@@ -3626,6 +3629,34 @@ function jobMetadataJoinSql(
   return {
     selectSql: `${titleSql} AS job_title, ${employerSql} AS employer`,
     joinSql: `LEFT JOIN jobs ON jobs.url = ${jobUrlExpression}`,
+  };
+}
+
+// Anti-join fragments that exclude soft-deleted and hidden jobs from a
+// tenant-wide read, mirroring rebuildDashboardProjection. Guarded by
+// tableExists so callers work on databases where the TS write-model has not
+// created the lifecycle tables yet.
+function jobLifecycleExclusionSql(
+  db: SqliteDatabase,
+  jobUrlExpression: string,
+): { joinSql: string; whereSql: string } {
+  const joins: string[] = [];
+  const wheres: string[] = [];
+  if (tableExists(db, "jobhunter_deleted_jobs")) {
+    joins.push(
+      `LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ${jobUrlExpression} AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`,
+    );
+    wheres.push("d.job_url IS NULL");
+  }
+  if (tableExists(db, "jobhunter_hidden_jobs")) {
+    joins.push(
+      `LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = ${jobUrlExpression} AND h.unhidden_at IS NULL`,
+    );
+    wheres.push("h.job_url IS NULL");
+  }
+  return {
+    joinSql: joins.length ? ` ${joins.join(" ")}` : "",
+    whereSql: wheres.length ? ` AND ${wheres.join(" AND ")}` : "",
   };
 }
 

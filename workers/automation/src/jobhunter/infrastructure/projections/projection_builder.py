@@ -1042,6 +1042,7 @@ class ProjectionBuilder:
         if not _table_exists(self._conn, "job_bullet_provenance"):
             return
         job_metadata = _job_metadata_join_sql(self._conn, "provenance.job_url")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.job_url")
         rows = self._conn.execute(
             f"""
             SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
@@ -1049,8 +1050,8 @@ class ProjectionBuilder:
                    provenance.evidence_ids_json,
                    {job_metadata['select_sql']}
               FROM job_bullet_provenance AS provenance
-              {job_metadata['join_sql']}
-             WHERE provenance.tenant_id = ?
+              {job_metadata['join_sql']}{lifecycle['join_sql']}
+             WHERE provenance.tenant_id = ?{lifecycle['where_sql']}
                AND provenance.generation = (
                  SELECT MAX(latest.generation)
                    FROM job_bullet_provenance AS latest
@@ -1102,6 +1103,7 @@ class ProjectionBuilder:
         ):
             return
         job_metadata = _job_metadata_join_sql(self._conn, "items.job_url")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "items.job_url")
         rows = self._conn.execute(
             f"""
             SELECT items.job_url, items.score_version, items.requirement_id,
@@ -1109,8 +1111,8 @@ class ProjectionBuilder:
                    items.fit_json, items.artifact_coverage_json,
                    {job_metadata['select_sql']}
               FROM job_requirement_fit_items AS items
-              {job_metadata['join_sql']}
-             WHERE items.tenant_id = ?
+              {job_metadata['join_sql']}{lifecycle['join_sql']}
+             WHERE items.tenant_id = ?{lifecycle['where_sql']}
                AND items.score_version = (
                  SELECT MAX(report.score_version)
                    FROM job_requirement_fit_reports AS report
@@ -1185,12 +1187,13 @@ class ProjectionBuilder:
     ) -> None:
         if not _table_exists(self._conn, "artifact_list_projections"):
             return
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "job_id")
         rows = self._conn.execute(
-            """
+            f"""
             SELECT job_id, job_title, job_employer, artifact_id, generation,
                    coverage_audit_json, created_at
-              FROM artifact_list_projections
-             WHERE tenant_id = ?
+              FROM artifact_list_projections{lifecycle['join_sql']}
+             WHERE tenant_id = ?{lifecycle['where_sql']}
                AND coverage_audit_json IS NOT NULL
                AND TRIM(coverage_audit_json) != ''
             """,
@@ -2646,6 +2649,35 @@ def _job_metadata_join_sql(conn: sqlite3.Connection, job_url_expression: str) ->
     return {
         "select_sql": f"{title_sql} AS job_title, {employer_sql} AS employer",
         "join_sql": f"LEFT JOIN jobs ON jobs.url = {job_url_expression}",
+    }
+
+
+def _job_lifecycle_exclusion_sql(
+    conn: sqlite3.Connection, job_url_expression: str
+) -> dict[str, str]:
+    """Anti-join fragments excluding soft-deleted and hidden jobs from a
+    tenant-wide read, mirroring the TS ``jobLifecycleExclusionSql``. Guarded by
+    ``_table_exists`` so it excludes nothing on a DB where the TS write-model has
+    not created the lifecycle tables yet.
+    """
+    joins: list[str] = []
+    wheres: list[str] = []
+    if _table_exists(conn, "jobhunter_deleted_jobs"):
+        joins.append(
+            "LEFT JOIN jobhunter_deleted_jobs d "
+            f"ON d.job_url = {job_url_expression} "
+            "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+        )
+        wheres.append("d.job_url IS NULL")
+    if _table_exists(conn, "jobhunter_hidden_jobs"):
+        joins.append(
+            "LEFT JOIN jobhunter_hidden_jobs h "
+            f"ON h.job_url = {job_url_expression} AND h.unhidden_at IS NULL"
+        )
+        wheres.append("h.job_url IS NULL")
+    return {
+        "join_sql": (" " + " ".join(joins)) if joins else "",
+        "where_sql": (" AND " + " AND ".join(wheres)) if wheres else "",
     }
 
 
