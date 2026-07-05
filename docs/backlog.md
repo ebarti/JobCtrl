@@ -33,6 +33,12 @@ frontend adapters remain deferred until the local product is solid.
 
 ## Release Hardening Follow-Ups
 
+- Close the OSS remediation no-go items before any public visibility flip:
+  finish the remaining W1 apply/runtime safety sequence, the W2.2 doctor
+  capability notices, W2.4 per-lane spend attribution and defaults, and W2.6
+  Tier-2 auth-chain checks. The drive-to-done plan keeps volatile status in PR
+  descriptions; this durable backlog entry records that the release gate is not
+  satisfied until those items and owner checkpoints are closed.
 - Add a shared schema-contract check for database tables initialized by both
   the TypeScript API and Python worker so cross-runtime table ownership cannot
   drift silently.
