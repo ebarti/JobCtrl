@@ -1,8 +1,14 @@
 # OSS Release — Drive-to-Done and Completion Verification Plan
 
+> **Closeout status (2026-07-05 R1):** #274 executed this plan's inventory
+> method against current `main` and found **NO-GO**, not release-ready. W1.2–W1.8,
+> W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints remain
+> open. This plan is archived as executed, not as proof that the release gate
+> passed.
+>
 > **Anchors verified against main @ `a488e4e9853dde292badc74a88c7de24160edc52`.**
 > **Type:** thin drive-to-done overlay. It does not re-specify anything.
-> **Source of truth for every work item:** `docs/plans/2026-07-03-oss-release-remediation-spec.md`
+> **Source of truth for every work item:** `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md`
 > (the "spec"). This plan tracks that spec to completion against `main`, proves
 > each item's Definition of Done actually holds, and assembles the publication
 > go/no-go gate. Where this plan and the spec disagree on WHAT an item must do,
