@@ -40,6 +40,8 @@ export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "al
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
+const STAGE_OR_ALL = [...STAGES, "all"] as const;
+const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 
 export const JOB_SORT_FIELDS = [
   "discovered_at",
@@ -74,6 +76,89 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
+export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export type TableId = z.infer<typeof TableIdSchema>;
+
+export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);
+export type SavedTableViewDensity = z.infer<typeof SavedTableViewDensitySchema>;
+
+export const SavedTableViewTextFilterSchema = z
+  .object({
+    operator: z.enum(["contains", "does_not_contain"]).default("contains").catch("contains"),
+    text: z.string().default("").catch(""),
+    selectedValues: z.array(z.string()).default([]).catch([]),
+  })
+  .strict();
+export type SavedTableViewTextFilter = z.infer<typeof SavedTableViewTextFilterSchema>;
+
+export const SavedTableViewGridFiltersSchema = z.record(
+  z.string(),
+  SavedTableViewTextFilterSchema.optional(),
+);
+export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
+
+export const SavedTableViewUrlFiltersSchema = z
+  .object({
+    q: z.string().optional().catch(undefined),
+    stage: z.enum(STAGE_OR_ALL).optional().catch(undefined),
+    state: z.enum(STATE_OR_ALL).optional().catch(undefined),
+    applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
+    deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+  })
+  .strict();
+export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
+
+export const SavedTableViewSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    tableId: TableIdSchema,
+    name: z.string().trim().min(1).max(80),
+    builtIn: z.boolean(),
+    columns: z
+      .object({
+        order: z.array(z.string()).default([]).catch([]),
+        hidden: z.array(z.string()).default([]).catch([]),
+        widths: z.record(z.string(), z.coerce.number().int().min(24).max(2000)).default({}).catch({}),
+      })
+      .strict(),
+    density: SavedTableViewDensitySchema.nullable(),
+    sort: z
+      .object({
+        columnId: z.string(),
+        direction: z.enum(["asc", "desc"]),
+      })
+      .strict(),
+    urlFilters: SavedTableViewUrlFiltersSchema.default({}),
+    gridFilters: SavedTableViewGridFiltersSchema.default({}),
+    grouping: z
+      .object({
+        columnId: z.string(),
+      })
+      .strict()
+      .nullable(),
+    colorRules: z
+      .array(
+        z
+          .object({
+            columnId: z.string(),
+            predicate: z
+              .object({
+                op: z.enum(["eq", "neq", "gte", "lte", "contains"]),
+                value: z.union([z.string(), z.number()]),
+              })
+              .strict(),
+            tone: z.enum(["success", "warning", "danger", "info"]),
+          })
+          .strict(),
+      )
+      .default([]),
+    schemaVersion: z.number().int().min(1),
+  })
+  .strict();
+export type SavedTableView = z.infer<typeof SavedTableViewSchema>;
 
 const optionalText = z
   .string()

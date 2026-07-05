@@ -179,6 +179,7 @@ apps/web/
 │   │   │   ├── form.tsx                    # TanStack Form bindings
 │   │   │   ├── table.tsx                   # native table primitives
 │   │   │   ├── filterable-data-grid.tsx     # custom FilterableDataGrid — the table engine (DataGridColumn<T>)
+│   │   │   ├── saved-table-views-control.tsx # shared table-view switcher + save/rename/delete/columns UI
 │   │   │   ├── data-table.tsx               # shadcn wrapper over @tanstack/react-table — unused by any view
 │   │   │   └── copyable-command.tsx        # `<CopyableCommand command={...} />` — preserves the "copyable CLI commands" affordance per docs/decisions.md (2026-05-03)
 │   │   ├── layout/
@@ -217,6 +218,7 @@ apps/web/
 │   │   │       └── StaticFeatureFlagAdapter.ts
 │   │   ├── stores/
 │   │   │   ├── ui-preferences.ts           # Zustand+persist → jh:ui-preferences (theme, density)
+│   │   │   ├── saved-table-views.ts        # Zustand+persist → jh:saved-table-views (table templates + presentation)
 │   │   │   ├── toasts.ts                   # Zustand
 │   │   │   └── command-palette.ts          # Zustand (open/close + search)
 │   │   ├── hooks/

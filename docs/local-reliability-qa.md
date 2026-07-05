@@ -111,6 +111,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | A cover letter ships to the employer with a fabricated metric/date/title/employer or a job-target skill/tool the profile cannot back, because its only gate is structural (banned words, dashes, word count, salutation/closing). The cover-letter body must run the same deterministic grounding gates the resume uses (never-fabricate detector + prose skill/tool gate) before acceptance, hard-reject a fabrication (letter REJECTED, aggregate stays `resume_approved`, failure kept as `fabrication_audit` history), and never false-reject legitimate content (the `Dear` salutation, the target company/role, declared skills, evidence tools, real profile numbers, or JD concept keywords in varied word forms such as scalability/reliability/observability — the skill gate is scoped to named technologies with word-form-tolerant grounding) | `workers/automation/tests/test_materials_use_cases.py` |
 | Profile PDF import corrupts defaults or drops tailoring claim/evidence controls | `workers/automation/tests/test_profile_import.py`; `workers/automation/tests/test_profile_aggregate.py`; `workers/automation/tests/test_sqlite_profile_repository.py`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
 | API list filtering/sorting/pagination or shared data-grid filtering/sorting/pagination/column resizing regresses | `apps/api/test/server.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx` |
+| Saved Jobs table views stop treating URL filters/sort as the active source of truth, lose migration safety for renamed/removed columns, or fail to restore column visibility/order/widths and table density after a reload | `apps/web/src/shared/stores/saved-table-views.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx`; browser smoke on `/jobs` |
 | Dashboard KPI drilldowns stop matching their Jobs list filters | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/KpiGrid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Apply-run drawers show roadmap placeholder copy instead of persisted timeline events | `apps/api/test/server.test.ts`; `apps/web/src/contexts/apply/components/ApplyRunTimeline.test.tsx` |
 | Activity events overload Dashboard or stop being inspectable from the Debug tab | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/DashboardView.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx`; `apps/web/src/views/debug/DebugView.test.tsx` |
@@ -178,6 +179,27 @@ synthetic dimensions, deterministic policy outputs, aggregate anchor/stale
 counts, and correction agreement. Do not add raw job URLs, correction
 rationales, anchors, resumes, or local paths to eval reports or committed
 fixtures.
+
+### Saved Views Smoke
+
+For Jobs table saved-view changes, run the targeted web fixtures and one browser
+smoke on `/jobs`:
+
+```bash
+pnpm --dir apps/web exec vitest run src/shared/stores/saved-table-views.test.ts src/shared/ui/filterable-data-grid.test.tsx src/views/jobs/JobsView.test.tsx
+```
+
+Manual smoke:
+
+1. Open `/jobs` with at least one Discover-stage and one Apply-stage synthetic
+   job.
+2. Filter the Stage column to `apply`, hide one non-critical column, reorder a
+   column, resize a column, and set the table density to `compact`.
+3. Save the current template as a named view, switch to `Default`, then switch
+   back to the named view.
+4. Reload the page and confirm the named template restores column visibility,
+   order, widths, density, and the URL-backed stage filter/sort.
+5. Rename the view, delete it, and confirm the table falls back to `Default`.
 
 ### Resume Tailoring Quality Eval Gate
 

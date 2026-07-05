@@ -29,6 +29,7 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
+import { useSavedTableViewsStore } from "../../shared/stores/saved-table-views.js";
 import { JobsView } from "./JobsView.js";
 
 const SEARCH =
@@ -61,6 +62,8 @@ const originalConfirm = globalThis.window?.confirm;
 
 beforeEach(() => {
   useStageTriggerStore.getState().reset();
+  useSavedTableViewsStore.getState().reset();
+  window.localStorage.removeItem("jh:saved-table-views");
   Object.defineProperty(window, "confirm", {
     configurable: true,
     writable: true,
@@ -70,6 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   useStageTriggerStore.getState().reset();
+  useSavedTableViewsStore.getState().reset();
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -266,6 +270,67 @@ describe("<JobsView> bulk delete integration", () => {
     expect(await screen.findByText(appliedJob.title)).toBeInTheDocument();
     expect(jobs).toHaveBeenCalledWith(
       expect.objectContaining({ applyStatus: "applied" }),
+    );
+  });
+
+  it("saves and reapplies Jobs table views through URL-backed filters", async () => {
+    const user = userEvent.setup();
+    const discoverJob = jobWithStage("job-discover-view", "Discovery view job", "discover");
+    const applyJob = jobWithStage("job-apply-view", "Apply view job", "apply");
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.stage === "apply" ? [applyJob] : [discoverJob, applyJob]),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(discoverJob.title)).toBeInTheDocument();
+    expect(screen.getByText(applyJob.title)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "apply" })),
+    );
+    expect(router.state.location.search).toMatchObject({ stage: "apply" });
+
+    await user.click(screen.getByRole("button", { name: "Configure table columns" }));
+    const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
+    await user.click(within(columnsDialog).getByRole("checkbox", { name: "Company" }));
+    await user.click(within(columnsDialog).getByRole("button", { name: "Compact" }));
+    await user.click(within(columnsDialog).getByRole("button", { name: /close/i }));
+    expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Apply compact");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.selectOptions(viewSelect, "default");
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ stage: "all" }),
+    );
+    expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+    expect(router.state.location.search).toMatchObject({ stage: "all" });
+    expect(screen.getByRole("columnheader", { name: /Company/ })).toBeInTheDocument();
+
+    await user.selectOptions(
+      viewSelect,
+      screen.getByRole("option", { name: "Apply compact" }),
+    );
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "apply" })),
+    );
+    expect(router.state.location.search).toMatchObject({ stage: "apply" });
+    expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
+    expect(document.querySelector(".filterable-data-grid")).toHaveAttribute(
+      "data-density",
+      "compact",
     );
   });
 

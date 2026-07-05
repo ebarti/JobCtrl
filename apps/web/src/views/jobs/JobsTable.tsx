@@ -1,5 +1,5 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import type {
   JobSummary,
@@ -7,6 +7,9 @@ import type {
 } from "../../contexts/operations/types.js";
 import {
   FilterableDataGrid,
+  type DataGridColumn,
+  type DataGridColumnWidthsState,
+  type DataGridDensity,
   type DataGridFilterState,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
@@ -32,6 +35,12 @@ export interface JobsTableProps {
   filters?: DataGridFilterState;
   onFiltersChange?: (next: DataGridFilterState) => void;
   onVisiblePageRowsChange?: (rows: readonly JobSummary[]) => void;
+  columnOrder?: readonly string[];
+  hiddenColumnIds?: readonly string[];
+  columnWidths?: DataGridColumnWidthsState;
+  onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
+  density?: DataGridDensity | null;
+  toolbarActions?: (columns: Array<DataGridColumn<JobSummary>>) => ReactNode;
 }
 
 export function JobsTable({
@@ -50,6 +59,12 @@ export function JobsTable({
   filters = EMPTY_FILTERS,
   onFiltersChange = noopFiltersChange,
   onVisiblePageRowsChange = noopVisiblePageRowsChange,
+  columnOrder,
+  hiddenColumnIds = [],
+  columnWidths,
+  onColumnWidthsChange,
+  density,
+  toolbarActions,
 }: JobsTableProps) {
   const [selectionAnchorJobKey, setSelectionAnchorJobKey] = useState<
     string | null
@@ -89,6 +104,15 @@ export function JobsTable({
   const handleSortChange = (next: DataGridSortState) => {
     onSortingChange([{ id: next.columnId, desc: next.direction === "desc" }]);
   };
+  const columnVisibility = useMemo(
+    () =>
+      Object.fromEntries(hiddenColumnIds.map((columnId) => [columnId, false])),
+    [hiddenColumnIds],
+  );
+  const renderedToolbarActions = useMemo(
+    () => toolbarActions?.(columns),
+    [columns, toolbarActions],
+  );
 
   return (
     <FilterableDataGrid<JobSummary>
@@ -105,6 +129,12 @@ export function JobsTable({
       manualSorting
       filters={filters}
       onFiltersChange={onFiltersChange}
+      columnVisibility={columnVisibility}
+      toolbarActions={renderedToolbarActions}
+      {...(columnOrder ? { columnOrder } : {})}
+      {...(columnWidths ? { columnWidths } : {})}
+      {...(onColumnWidthsChange ? { onColumnWidthsChange } : {})}
+      {...(density !== undefined ? { density } : {})}
       tableClassName="jobs-data-grid-table"
       rowAriaSelected={(row) =>
         allMatchingSelected || Boolean(rowSelection[row.jobKey])
