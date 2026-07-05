@@ -50,6 +50,8 @@ class DiscoverWorkflowResult:
     families_completed: list[str] = field(default_factory=list)
     families_failed: list[str] = field(default_factory=list)
     preparation_started: int = 0
+    enrichment_status: str = "ok"
+    enrichment_site_errors: dict[str, Any] = field(default_factory=dict)
     failure: str | None = None
     error_code: str | None = None
 
@@ -195,8 +197,10 @@ class DiscoverWorkflow:
         # family failed.
         enrichment_failure: str | None = None
         enrichment_error_code: str | None = None
+        enrichment_status = "ok"
+        enrichment_site_errors: dict[str, Any] = {}
         try:
-            await workflow.execute_activity(
+            enrichment_result = await workflow.execute_activity(
                 discovery_enrichment_activity,
                 DiscoveryEnrichmentActivityInput(
                     tenant_id=payload.tenant_id,
@@ -211,6 +215,8 @@ class DiscoverWorkflow:
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
                 retry_policy=_ENRICH_RETRY,
             )
+            enrichment_status = enrichment_result.status
+            enrichment_site_errors = dict(enrichment_result.site_errors)
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
                 raise CancelledError() from exc
@@ -236,6 +242,8 @@ class DiscoverWorkflow:
                 families_completed=completed,
                 families_failed=failed,
                 preparation_started=preparation_started,
+                enrichment_status=enrichment_status,
+                enrichment_site_errors=enrichment_site_errors,
                 failure="; ".join(failures),
                 error_code="discovery_source_failed",
             )
@@ -252,6 +260,8 @@ class DiscoverWorkflow:
                 families_completed=completed,
                 families_failed=failed,
                 preparation_started=preparation_started,
+                enrichment_status=enrichment_status,
+                enrichment_site_errors=enrichment_site_errors,
                 failure=message,
                 error_code=enrichment_error_code or "discovery_enrichment_failed",
             )
@@ -261,6 +271,8 @@ class DiscoverWorkflow:
             families_completed=completed,
             families_failed=failed,
             preparation_started=preparation_started,
+            enrichment_status=enrichment_status,
+            enrichment_site_errors=enrichment_site_errors,
         )
 
 

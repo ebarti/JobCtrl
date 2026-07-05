@@ -183,6 +183,19 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
 
 
+@activity.defn(name="discovery_enrichment")
+async def _partial_discovery_enrichment(
+    payload: DiscoveryEnrichmentActivityInput,
+) -> DiscoveryEnrichmentActivityOutput:
+    _EVENTS.append(("enrichment", payload.limit))
+    return DiscoveryEnrichmentActivityOutput(
+        status="partial",
+        passes=1,
+        pending=0,
+        site_errors={"indeed": {"error_class": "RuntimeError", "error_message": "boom"}},
+    )
+
+
 @activity.defn(name="discovery_preparation_fanout")
 async def _discovery_preparation_fanout(
     payload: DiscoveryPreparationFanoutInput,
@@ -340,6 +353,54 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
     assert result.preparation_started == 1
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+def _partial_enrichment_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _discovery_source_family,
+        _partial_discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_preserves_partial_enrichment_site_errors() -> None:
+    _reset_state()
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-partial-enrichment-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_partial_enrichment_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            result = await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"discover-partial-enrichment-{uuid.uuid4()}",
+                task_queue=queue,
+            )
+
+    assert result.enrichment_status == "partial"
+    assert result.enrichment_site_errors == {
+        "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
+    }
+    assert result.preparation_started == 1
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 

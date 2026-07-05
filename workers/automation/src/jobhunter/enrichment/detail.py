@@ -574,6 +574,8 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
     try:
         from jobhunter.state import record_job_event, set_stage_state, utc_now
 
+        finished_at = utc_now()
+        _record_enrich_aggregate_failure(conn, url, message, finished_at=finished_at)
         set_stage_state(
             conn,
             url,
@@ -582,7 +584,7 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
             error_code="ENRICH_INTERNAL_ERROR",
             error_message=message,
             retryable=True,
-            finished_at=utc_now(),
+            finished_at=finished_at,
             validate_transition=False,
         )
         record_job_event(
@@ -601,6 +603,42 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
         conn.commit()
     except Exception:
         log.exception("Failed to record enrichment job failure for %s", url)
+
+
+def _record_enrich_aggregate_failure(
+    conn: sqlite3.Connection,
+    url: str,
+    message: str,
+    *,
+    finished_at: str,
+) -> None:
+    """Persist the canonical failed JobEnrichment attempt for an isolated crash."""
+    repo = SqliteEnrichmentRepository(conn)
+    existing = repo.load(LOCAL_TENANT, JobId(url))
+    if existing is not None and existing.is_enriched:
+        # Do not destroy an accepted enrichment artifact from a later audit-only
+        # failure path. The stage event below still preserves the crash.
+        return
+
+    error = EnrichmentError(
+        code="ENRICH_INTERNAL_ERROR",
+        message=message,
+        retryable=True,
+    )
+    aggregate = existing or JobEnrichment.empty(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        updated_at=finished_at,
+    )
+    running = (
+        aggregate
+        if aggregate.is_running
+        else aggregate.start_attempt(
+            extraction_tier=ExtractionTier.LLM_ASSISTED,
+            started_at=finished_at,
+        )
+    )
+    repo.save(running.fail_attempt(error=error, finished_at=finished_at))
 
 
 def scrape_site_batch(

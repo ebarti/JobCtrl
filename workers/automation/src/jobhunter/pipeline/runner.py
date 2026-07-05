@@ -1608,17 +1608,31 @@ def run_discovery_enrichment_stage(
     if emit_progress:
         status = str(final.get("status") or "ok")
         if status in ("ok", "partial") or status.startswith("skipped"):
+            site_errors = dict(final.get("site_errors") or {})
+            progress_status = "partial" if status == "partial" else "running"
+            message = (
+                "Detail enrichment partially complete"
+                if status == "partial"
+                else "Detail enrichment complete"
+            )
+            payload = _discovery_progress_payload(
+                completed=progress_completed + 1,
+                total=progress_total,
+                current_step="Detail enrichment",
+                status=progress_status,
+                message=message,
+            )
+            if site_errors:
+                payload["siteErrors"] = site_errors
+                payload["errorMessage"] = (
+                    final.get("error_message") or "One or more enrichment sites failed."
+                )
             _record_pipeline_event(
                 "discover",
                 "StageCompleted",
-                "info",
-                "Discovery detail enrichment complete",
-                _discovery_progress_payload(
-                    completed=progress_completed + 1,
-                    total=progress_total,
-                    current_step="Detail enrichment",
-                    message="Detail enrichment complete",
-                ),
+                "warn" if status == "partial" else "info",
+                message,
+                payload,
             )
         else:
             error_class = final.get("error_class")

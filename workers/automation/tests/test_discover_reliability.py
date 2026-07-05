@@ -403,6 +403,20 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert bad_state["state"] == "failed"
         assert bad_state["error_code"] == "ENRICH_INTERNAL_ERROR"
 
+        bad_enrichment = conn.execute(
+            """
+            SELECT current_status, attempts_json
+            FROM job_enrichments
+            WHERE job_url = ?
+            """,
+            (bad_url,),
+        ).fetchone()
+        assert bad_enrichment["current_status"] == "failed"
+        attempts = json.loads(bad_enrichment["attempts_json"])
+        assert attempts[-1]["status"] == "failed"
+        assert attempts[-1]["error"]["code"] == "ENRICH_INTERNAL_ERROR"
+        assert "boom parsing page" in attempts[-1]["error"]["message"]
+
         bad_event = conn.execute(
             """
             SELECT payload_json
@@ -542,6 +556,36 @@ def test_stage_progress_emits_started_and_completed(monkeypatch: pytest.MonkeyPa
     assert started_progress["currentStep"] == "Detail enrichment"
     completed_progress = events[1]["payload"]["progress"]
     assert completed_progress["completed"] == 5
+
+
+def test_stage_progress_emits_partial_site_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = _capture_pipeline_events(monkeypatch)
+
+    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None):
+        result.update(
+            {
+                "status": "partial",
+                "passes": 1,
+                "pending": 0,
+                "site_errors": {
+                    "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
+                },
+            }
+        )
+
+    monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", fake_until_idle)
+
+    runner.run_discovery_enrichment_stage(progress_completed=4, progress_total=6)
+
+    assert [e["event_type"] for e in events] == ["StageStarted", "StageCompleted"]
+    completed = events[1]
+    assert completed["level"] == "warn"
+    assert completed["message"] == "Detail enrichment partially complete"
+    assert completed["payload"]["siteErrors"] == {
+        "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
+    }
+    assert completed["payload"]["progress"]["status"] == "partial"
+    assert completed["payload"]["progress"]["completed"] == 5
 
 
 def test_stage_progress_emits_failed_with_real_cause(monkeypatch: pytest.MonkeyPatch) -> None:

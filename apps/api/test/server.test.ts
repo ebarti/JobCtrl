@@ -1149,6 +1149,87 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("preserves partial discover warnings after the workflow succeeds", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "warn",
+        "Detail enrichment partially complete",
+        "2026-07-04T14:06:43.000+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          workflowId: "discover-local",
+          progress: {
+            completed: 5,
+            total: 6,
+            percent: 83,
+            currentStep: "Detail enrichment",
+            status: "partial",
+            message: "Detail enrichment partially complete",
+          },
+          siteErrors: {
+            indeed: {
+              error_class: "RuntimeError",
+              error_message: "BrowserType.launch: Executable doesn't exist",
+            },
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "succeeded",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: DISCOVER_NEW_START,
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        startedAt: DISCOVER_NEW_START,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowCompleted",
+        occurredAt: "2026-07-04T14:09:00.000+00:00",
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        status: "succeeded",
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      const discover = response
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "partial",
+        workflowId: "discover-local",
+        percent: 100,
+        completed: 6,
+        total: 6,
+        currentStep: "Detail enrichment",
+        message: "Detail enrichment partially complete",
+        updatedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns local-day dashboard deltas for active jobs and applications", async () => {
     const now = new Date().toISOString();
     const db = new Database(options.dbPath);

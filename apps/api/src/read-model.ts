@@ -4552,12 +4552,14 @@ function progressWithWorkflowStatus(
   const message = workflow.errorMessage
     ? `Workflow ${workflow.status}: ${workflow.errorMessage}`
     : `Workflow ${workflow.status}`;
+  const workflowSucceeded = status === "succeeded";
+  const preservePartialWarning = workflowSucceeded && progress.status === "partial";
   return {
     ...progress,
-    status,
-    percent: status === "succeeded" ? 100 : progress.percent,
-    completed: status === "succeeded" ? progress.total : progress.completed,
-    message,
+    status: preservePartialWarning ? "partial" : status,
+    percent: workflowSucceeded ? 100 : progress.percent,
+    completed: workflowSucceeded ? progress.total : progress.completed,
+    message: preservePartialWarning ? progress.message || message : message,
     updatedAt: workflow.finishedAt ?? progress.updatedAt,
   };
 }
