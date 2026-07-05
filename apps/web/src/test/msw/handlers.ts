@@ -13,6 +13,7 @@ import {
   sampleCredentialsResponse,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
+  sampleEvidenceMapResponse,
   sampleHealthResponse,
   sampleProfileResponse,
   sampleResumeTemplateListResponse,
@@ -150,6 +151,7 @@ const sampleCompensationSourcePolicy = {
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),

@@ -185,6 +185,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   job(jobKey: string) {
     return this.client.job(jobKey);
   }
+  evidenceMap() {
+    return this.client.evidenceMap();
+  }
   deleteJob(jobKey: string, body: Parameters<JobHunterApiClient["deleteJob"]>[1] = {}) {
     return this.client.deleteJob(jobKey, body);
   }

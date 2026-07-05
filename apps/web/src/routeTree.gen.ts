@@ -15,6 +15,7 @@ import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
 import { Route as DiscoveryRouteImport } from "./routes/discovery";
 import { Route as DebugRouteImport } from "./routes/debug";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
@@ -66,6 +67,11 @@ const PipelinesRoute = PipelinesRouteImport.update({
 const JobsRoute = JobsRouteImport.update({
   id: "/jobs",
   path: "/jobs",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const EvidenceMapRoute = EvidenceMapRouteImport.update({
+  id: "/evidence-map",
+  path: "/evidence-map",
   getParentRoute: () => rootRouteImport,
 } as any);
 const DiscoveryRoute = DiscoveryRouteImport.update({
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -215,6 +222,7 @@ export interface FileRoutesByTo {
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -242,6 +250,7 @@ export interface FileRoutesById {
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -303,6 +313,7 @@ export interface FileRouteTypes {
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/pipelines"
     | "/preferences"
     | "/activity/$eventId"
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -360,6 +372,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute;
   DebugRoute: typeof DebugRoute;
   DiscoveryRoute: typeof DiscoveryRoute;
+  EvidenceMapRoute: typeof EvidenceMapRoute;
   JobsRoute: typeof JobsRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
@@ -412,6 +425,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs";
       fullPath: "/jobs";
       preLoaderRoute: typeof JobsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/evidence-map": {
+      id: "/evidence-map";
+      path: "/evidence-map";
+      fullPath: "/evidence-map";
+      preLoaderRoute: typeof EvidenceMapRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/discovery": {
@@ -671,6 +691,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   DebugRoute: DebugRoute,
   DiscoveryRoute: DiscoveryRoute,
+  EvidenceMapRoute: EvidenceMapRoute,
   JobsRoute: JobsRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,

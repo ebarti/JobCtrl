@@ -284,9 +284,9 @@ destructive profile/database actions, or worker-backed jobs for visual QA.
 | Layer | Files | Purpose |
 | --- | --- | --- |
 | Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
-| Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 9 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery` and `useWorkflowRunsListQuery`, using typed test files in Vitest's typecheck runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 12 specs in `apps/web/e2e/tests/` — 11 flow specs (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
-| A11y suites (Vitest + `axe-core` + `jest-axe`) | 12 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, command, and inspector components (`EmployerAnalysisPanel`, `BulletProvenanceList`) — fails on critical/serious violations (target §10.7). |
+| Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 10 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery`, `useWorkflowRunsListQuery`, and `useEvidenceMapQuery`, using typed test files in Vitest's typecheck runner (cf. target §10.6). |
+| End-to-end (Playwright headless) | 13 specs in `apps/web/e2e/tests/` — 12 flow specs (`dashboard`, `dry-run`, `evidence-map`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
+| A11y suites (Vitest + `axe-core` + `jest-axe`) | 13 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, command, and inspector components (`EmployerAnalysisPanel`, `BulletProvenanceList`, `EvidenceMapView`) — fails on critical/serious violations (target §10.7). |
 
 ### Scoring Policy Feedback Smoke
 
@@ -331,6 +331,18 @@ material regeneration.
 Do not run apply submission, mailbox scanning,
 material regeneration, destructive profile/database actions, or worker-backed
 jobs for this smoke.
+
+### Evidence Map Smoke
+
+For UI/API changes around the Evidence map, open `/evidence-map` against the
+synthetic QA workspace and verify profile achievements and declared skills are
+listed with their resume-bullet usage, requirement-fit usage, coverage history,
+and gaps. From a job detail drawer, use the Evidence map handoff and verify the
+route opens with a job filter, the clear-filter link restores the full map, and
+usage links navigate to the owning `/artifacts/$artifactId` or `/jobs/$jobId`
+detail route. This smoke is read-only; do not run discovery, scoring, tailoring,
+cover, apply automation, mailbox scanning, material generation, destructive
+profile/database actions, or worker-backed jobs for it.
 
 ### Apply Review Smoke
 

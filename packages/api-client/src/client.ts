@@ -34,6 +34,7 @@ import type {
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  EvidenceMapResponse,
   GenerateMaterialsRequest,
   GmailOutcomeScanRequest,
   GmailOutcomeScanResponse,
@@ -430,6 +431,10 @@ export class JobHunterApiClient {
 
   job(jobKey: string): Promise<JobDetail> {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}`);
+  }
+
+  evidenceMap(): Promise<EvidenceMapResponse> {
+    return this.get("/v1/evidence-map");
   }
 
   deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {

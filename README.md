@@ -21,6 +21,8 @@ because it can drive browser automation and submit applications.
 - Score jobs as an applicant-side triage aid with auditable evidence.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Review and edit generated resumes in Apply Review before approval.
+- Inspect the evidence map to see which profile achievements and skills are
+  reused in generated materials, requirement-fit decisions, and recorded gaps.
 - Edit resume PDF style templates in Preferences, choose a default template, and
   override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
@@ -204,12 +206,15 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
-5. Generate or inspect materials for promising jobs.
-6. Use Apply Review to edit/approve the resume and review comments.
-7. Run apply dry-runs before approving any real browser submission; the default
+5. Open Evidence from the main nav, Profile, or a job detail drawer to inspect
+   which profile evidence backs generated materials and requirement-fit gaps.
+6. Generate or inspect materials for promising jobs.
+7. Use Apply Review to edit/approve the resume and review comments.
+8. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the
    backend claim can proceed.
-8. Track progress in Dashboard, Jobs, Runs, Artifacts, Apply Review, and Debug.
+9. Track progress in Dashboard, Jobs, Runs, Artifacts, Evidence, Apply Review,
+   and Debug.
 
 See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
 expected state transitions.

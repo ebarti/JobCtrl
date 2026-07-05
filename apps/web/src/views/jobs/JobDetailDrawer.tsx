@@ -120,6 +120,14 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 >
                   Open Apply Review
                 </Link>
+                <Link
+                  aria-label={`Open evidence map for ${detail.job.title}`}
+                  className="tab"
+                  search={{ q: "", entry: "", job: detail.job.jobKey }}
+                  to="/evidence-map"
+                >
+                  Evidence map
+                </Link>
               </div>
               <JobAuditTriage detail={detail} />
               <CompensationAuditSection

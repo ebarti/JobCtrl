@@ -34,6 +34,7 @@ import type {
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  EvidenceMapResponse,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -242,6 +243,7 @@ export interface ApiClientPort {
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;
+  evidenceMap(): Promise<EvidenceMapResponse>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;

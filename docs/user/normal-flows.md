@@ -122,7 +122,16 @@ Use the job detail drawer to inspect:
 Failed preparation work can be retried per job or in bulk without automatically
 starting apply automation.
 
-## 5. Generate And Inspect Materials
+## 5. Inspect The Evidence Map
+
+Open Evidence from the main navigation, the Profile page, or a job detail
+drawer. The Evidence map shows the canonical profile achievements and declared
+skills currently reused by generated resume bullets, requirement-fit decisions,
+keyword coverage, and recorded gaps. Links in the usage lists return to the
+owning artifact or job detail so you can audit the source before editing profile
+evidence or re-running materials.
+
+## 6. Generate And Inspect Materials
 
 Eligible jobs receive tailored resumes and cover letters during Discover. You can
 also generate materials for a single job from the job detail drawer.
@@ -131,7 +140,7 @@ Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
 
-## 6. Review And Edit The Resume
+## 7. Review And Edit The Resume
 
 Apply Review opens the generated resume in an in-browser editor. The editor keeps
 the final PDF link, the source behind each line, risk flags, JobHunter's line
@@ -151,7 +160,7 @@ Typical review actions:
 Failed validation stays as audit history and does not hide the last accepted
 artifact.
 
-## 7. Rehearse With A Dry Run
+## 8. Rehearse With A Dry Run
 
 Apply automation can submit real applications, so start with dry runs:
 
@@ -171,7 +180,7 @@ Apply Review, and requires full dry-run evidence unless you explicitly accept a
 listed partial dry-run with its blocked channels. The full approval model is on
 the [Security](security.md) page.
 
-## 8. Inspect Progress
+## 9. Inspect Progress
 
 Useful command-line checks:
 
@@ -189,6 +198,7 @@ Useful web app views:
 - Dashboard for high-level counts and source health.
 - Jobs for triage and per-job actions.
 - Runs for workflow history.
+- Evidence for profile-evidence reuse, generated-material usage, and gaps.
 - Artifacts for generated files.
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.

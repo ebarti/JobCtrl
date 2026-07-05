@@ -6,6 +6,7 @@ import { applyReviewKeys } from "./applyReviewKeys.js";
 import { activityKeys } from "./activityKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
+import { evidenceMapKeys } from "./evidenceMapKeys.js";
 import { healthKeys } from "./healthKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
@@ -37,6 +38,23 @@ describe("operations queryKeys", () => {
       LOCAL_TENANT,
       "dashboard",
       "summary",
+    ]);
+  });
+
+  it("scopes evidence-map keys under tenant + evidence-map prefix", () => {
+    expect(evidenceMapKeys.list(LOCAL_TENANT)).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "evidence-map",
+      "list",
+      "current",
+    ]);
+    expect(evidenceMapKeys.detail(LOCAL_TENANT, "ev-platform")).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "evidence-map",
+      "detail",
+      "ev-platform",
     ]);
   });
 
