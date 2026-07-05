@@ -2562,18 +2562,53 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
          VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
       ).run(jobUrl);
+      db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 2, 'local', 'complete', '2026-06-09T12:00:00+00:00', '2026-06-09T12:10:00+00:00')`,
+      ).run(jobUrl);
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
           job_url, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
       );
-      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
-      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "tailored_resume",
+        "resume-1",
+        "/tmp/resume.txt",
+        "text",
+        10,
+        completeMetadata,
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "resume_pdf",
+        "resume-pdf-1",
+        "/tmp/resume.pdf",
+        "pdf",
+        20,
+        "{}",
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        2,
+        "tailored_resume",
+        "resume-2",
+        "/tmp/resume-v2.txt",
+        "text",
+        12,
+        completeMetadata,
+        "2026-06-09T12:05:00+00:00",
+      );
 
       // The set-level coverage + voice, denormalised onto every row (the Python
       // repo writes the SAME value on each row of the generation).
-      const coverageJson = JSON.stringify({
+      const coverageJsonGen1 = JSON.stringify({
         computed_against: "rendered_text",
         planned: ["latency", "terraform", "python"],
         covered: ["latency"],
@@ -2582,6 +2617,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         covered_by: { latency: "experience:acme_swe#0" },
         declared_by: { terraform: "skills:cloud#0" },
         counts: { planned: 3, covered: 1, declared: 1, missing: 1 },
+      });
+      const coverageJsonGen2 = JSON.stringify({
+        computed_against: "rendered_text",
+        planned: ["latency", "incident response", "python"],
+        covered: ["latency", "incident response"],
+        declared: [],
+        missing: ["python"],
+        covered_by: {
+          latency: "experience:acme_swe#0",
+          "incident response": "experience:incident#0",
+        },
+        declared_by: {},
+        counts: { planned: 3, covered: 2, declared: 0, missing: 1 },
       });
       const voiceJson = JSON.stringify({
         ran: true,
@@ -2597,13 +2645,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           evidence_ids_json, requirement_ids_json, matched_keywords_json,
           transform_type, control, rationale, generated_text, position, created_at,
           coverage_json, voice_json
-        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00', ?, ?)`,
+        ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertProvenance.run(
-        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        jobUrl, 1, "experience:acme_swe#0", "resume-1", "experience", "acme_swe",
         JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
         "voice", "rephrase_allowed", "Voiced bullet.",
-        "Owned the API and cut latency 40%.", 0, coverageJson, voiceJson,
+        "Owned the API and cut latency 40%.", 0, "2026-06-08T12:10:00+00:00", coverageJsonGen1, voiceJson,
+      );
+      insertProvenance.run(
+        jobUrl, 2, "experience:incident#0", "resume-2", "experience", "incident_response",
+        JSON.stringify(["ev_incident"]), JSON.stringify(["req_incident"]), JSON.stringify(["incident response"]),
+        "voice", "rephrase_allowed", "Voiced bullet.",
+        "Owned incident response drills.", 0, "2026-06-09T12:10:00+00:00", coverageJsonGen2, voiceJson,
       );
       db.close();
 
@@ -2633,11 +2687,22 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         // The voiced bullet is served with transformType "voice".
         expect(explanation.bulletProvenance[0].transformType).toBe("voice");
 
-        // The PDF artifact resolves coverage + voice from the sibling text row.
+        // Historical and current text artifacts each keep their own generation's
+        // canonical coverage row.
+        const resume2Res = await app.inject({ method: "GET", url: "/v1/artifacts/resume-2" });
+        expect(resume2Res.statusCode, resume2Res.body).toBe(200);
+        const resume2Explanation = resume2Res.json().tailoringExplanation;
+        expect(resume2Explanation.coverageAudit?.covered).toEqual(["latency", "incident response"]);
+        expect(resume2Explanation.coverageAudit?.declared).toEqual([]);
+        expect(resume2Explanation.coverageAudit?.missing).toEqual(["python"]);
+
+        // The PDF artifact resolves coverage + voice from its same-generation
+        // sibling text row, not the newer generation.
         const pdfRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-pdf-1" });
         expect(pdfRes.statusCode, pdfRes.body).toBe(200);
         const pdfExplanation = pdfRes.json().tailoringExplanation;
         expect(pdfExplanation.coverageAudit?.covered).toEqual(["latency"]);
+        expect(pdfExplanation.coverageAudit?.declared).toEqual(["terraform"]);
         expect(pdfExplanation.voicePass?.accepted).toBe(true);
       } finally {
         await app.close();

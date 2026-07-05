@@ -81,6 +81,7 @@ function artifactDetail(artifactId: string) {
       makeArtifactTailoringExplanation(
         makeCoverageAudit({
           covered: ["platform reliability", "typescript"],
+          declared: ["terraform", "gcp"],
           missing: ["incident response", "kubernetes"],
         }),
       ),
@@ -91,8 +92,9 @@ function artifactDetail(artifactId: string) {
       draftArtifact,
       makeArtifactTailoringExplanation(
         makeCoverageAudit({
-          covered: ["platform reliability", "incident response"],
-          missing: ["kubernetes", "typescript"],
+          covered: ["platform reliability", "incident response", "terraform"],
+          declared: ["kubernetes", "gcp"],
+          missing: ["typescript"],
         }),
       ),
     );
@@ -193,6 +195,9 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(comparison).toContainText("incident response");
   await expect(comparison).toContainText("lost");
   await expect(comparison).toContainText("typescript");
+  await expect(comparison).toContainText("+declared");
+  await expect(comparison).toContainText("declared lost");
+  await expect(comparison).toContainText("gcp");
   await expect(comparison).toContainText("claim risk");
   await expect(page.getByRole("region", { name: "Tailored resume preview" })).toBeVisible();
 });
@@ -209,4 +214,7 @@ test("artifacts drawer compares same-job generated artifacts", async ({ page }) 
   await expect(comparison).toContainText("incident response");
   await expect(comparison).toContainText("lost");
   await expect(comparison).toContainText("typescript");
+  await expect(comparison).toContainText("+declared");
+  await expect(comparison).toContainText("declared lost");
+  await expect(comparison).toContainText("gcp");
 });

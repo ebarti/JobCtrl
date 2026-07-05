@@ -2435,6 +2435,9 @@ export interface CoverageDelta {
   computedAgainst: string | null;
   newlyCovered: string[];
   coverageLost: string[];
+  newlyDeclared: string[];
+  declaredLost: string[];
+  stillDeclared: string[];
   stillMissing: string[];
 }
 

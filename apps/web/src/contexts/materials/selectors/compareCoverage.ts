@@ -79,6 +79,9 @@ function coverageDelta(
       computedAgainst: null,
       newlyCovered: [],
       coverageLost: [],
+      newlyDeclared: [],
+      declaredLost: [],
+      stillDeclared: [],
       stillMissing: [],
     };
   }
@@ -89,6 +92,9 @@ function coverageDelta(
     computedAgainst: computedAgainstLabel(left, right),
     newlyCovered: difference(right.covered, left.covered),
     coverageLost: difference(left.covered, right.covered),
+    newlyDeclared: difference(right.declared, left.declared),
+    declaredLost: difference(left.declared, right.declared),
+    stillDeclared: intersection(right.declared, left.declared),
     stillMissing: intersection(right.missing, left.missing),
   };
 }

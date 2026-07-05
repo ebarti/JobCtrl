@@ -140,6 +140,9 @@ function CoverageDeltaPanel({ delta }: { readonly delta: CoverageDelta }) {
       <div className="artifact-comparison-delta-grid">
         <TagGroup label="+covered" values={delta.newlyCovered} tone="ok" empty="none recorded" />
         <TagGroup label="lost" values={delta.coverageLost} tone="warn" empty="none recorded" />
+        <TagGroup label="+declared" values={delta.newlyDeclared} tone="muted" empty="none recorded" />
+        <TagGroup label="declared lost" values={delta.declaredLost} tone="warn" empty="none recorded" />
+        <TagGroup label="declared" values={delta.stillDeclared} tone="muted" empty="none recorded" />
         <TagGroup label="missing" values={delta.stillMissing} tone="muted" empty="none recorded" />
       </div>
     </section>
@@ -179,7 +182,10 @@ function coverageCountLabel(side: ArtifactComparisonSide): string {
   if (!side.coverageRecorded || !side.coverageCounts) {
     return "coverage not recorded";
   }
-  return `${side.coverageCounts.covered}/${side.coverageCounts.planned} covered; ${side.coverageCounts.missing} missing`;
+  const declared = side.coverageCounts.declared
+    ? `; ${side.coverageCounts.declared} declared`
+    : "";
+  return `${side.coverageCounts.covered}/${side.coverageCounts.planned} covered${declared}; ${side.coverageCounts.missing} missing`;
 }
 
 function validationLabel(side: ArtifactComparisonSide): string {

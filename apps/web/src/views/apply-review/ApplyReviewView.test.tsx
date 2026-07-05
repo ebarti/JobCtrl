@@ -1571,29 +1571,48 @@ describe("<ApplyReviewView>", () => {
       }),
       commentThreads: [makeResumeCommentThread("draft-job-2")],
     };
-    const renderResumeReviewDraft = vi.fn(async () => ({
-      ok: true as const,
-      draft: {
-        ...draft,
-        state: "rendered" as const,
-      },
-      validation: { passed: true, errors: [], warnings: [] },
-      artifacts: {
-        resumeText: {
-          artifactId: draftArtifact.artifactId,
-          artifactType: "tailored_resume" as const,
-          generation: 3,
-          renderFormat: "text" as const,
+    let renderCompleted = false;
+    const renderResumeReviewDraft = vi.fn(async () => {
+      renderCompleted = true;
+      return {
+        ok: true as const,
+        draft: {
+          ...draft,
+          state: "rendered" as const,
         },
-        resumePdf: {
-          artifactId: "resume-review-pdf",
-          artifactType: "resume_pdf" as const,
-          generation: 3,
-          renderFormat: "html_pdf" as const,
+        validation: { passed: true, errors: [], warnings: [] },
+        artifacts: {
+          resumeText: {
+            artifactId: draftArtifact.artifactId,
+            artifactType: "tailored_resume" as const,
+            generation: 3,
+            renderFormat: "text" as const,
+          },
+          resumePdf: {
+            artifactId: "resume-review-pdf",
+            artifactType: "resume_pdf" as const,
+            generation: 3,
+            renderFormat: "html_pdf" as const,
+          },
         },
-      },
-      layoutBoxCount: 3,
-    }));
+        layoutBoxCount: 3,
+      };
+    });
+    const refreshedQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item) =>
+        item.jobKey === jobKey
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeTextArtifactId: draftArtifact.artifactId,
+              },
+            }
+          : item,
+      ),
+    };
+    const applyReviewQueue = vi.fn(async () => (renderCompleted ? refreshedQueue : sampleApplyReviewQueue));
     const artifact = vi.fn(async (artifactId: string) => {
       if (artifactId === acceptedArtifact.artifactId) {
         return makeArtifactDetail(
@@ -1601,6 +1620,7 @@ describe("<ApplyReviewView>", () => {
           makeArtifactTailoringExplanation(
             makeCoverageAudit({
               covered: ["platform reliability", "typescript"],
+              declared: ["terraform", "gcp"],
               missing: ["incident response", "kubernetes"],
             }),
           ),
@@ -1611,8 +1631,9 @@ describe("<ApplyReviewView>", () => {
           draftArtifact,
           makeArtifactTailoringExplanation(
             makeCoverageAudit({
-              covered: ["platform reliability", "incident response"],
-              missing: ["kubernetes", "typescript"],
+              covered: ["platform reliability", "incident response", "terraform"],
+              declared: ["kubernetes", "gcp"],
+              missing: ["typescript"],
             }),
           ),
         );
@@ -1623,7 +1644,7 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
-          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          applyReviewQueue,
           artifact,
           createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
           renderResumeReviewDraft,
@@ -1642,12 +1663,18 @@ describe("<ApplyReviewView>", () => {
     const renderButton = await screen.findByRole("button", { name: "render replacement" });
     await waitFor(() => expect(renderButton).not.toBeDisabled());
     await userEvent.click(renderButton);
+    await waitFor(() => expect(applyReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2));
 
     const comparison = within(await screen.findByRole("region", { name: "Artifact comparison" }));
+    expect(await comparison.findByText("Accepted resume")).toBeInTheDocument();
+    expect(comparison.getByText("Rendered draft resume")).toBeInTheDocument();
     expect(await comparison.findByText("+covered")).toBeInTheDocument();
     expect(comparison.getByText("incident response")).toBeInTheDocument();
     expect(comparison.getByText("lost")).toBeInTheDocument();
     expect(comparison.getByText("typescript")).toBeInTheDocument();
+    expect(comparison.getByText("+declared")).toBeInTheDocument();
+    expect(comparison.getByText("declared lost")).toBeInTheDocument();
+    expect(comparison.getByText("gcp")).toBeInTheDocument();
     expect(comparison.getByText("claim risk")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
   });

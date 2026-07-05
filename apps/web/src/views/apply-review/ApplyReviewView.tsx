@@ -52,6 +52,7 @@ type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
 type ArtifactComparisonDraftTarget = {
+  readonly acceptedArtifactId: string | null;
   readonly artifactId: string;
   readonly riskLabels: readonly string[];
 };
@@ -810,6 +811,7 @@ function ResumeLineReview({
   const replyToComment = useReplyToResumeReviewCommentMutation();
   const renderDraft = useRenderResumeReviewDraftMutation();
   const requestedDraftKey = useRef<string | null>(null);
+  const renderBaselineArtifactId = useRef<string | null>(null);
   const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
@@ -844,6 +846,7 @@ function ResumeLineReview({
   const renderDraftAsync = renderDraft.mutateAsync;
   const handleRenderDraft = useCallback(async () => {
     if (!draft?.currentRevisionId) return false;
+    renderBaselineArtifactId.current = auditArtifactId;
     const result = await renderDraftAsync({
       draftId: draft.draftId,
       jobId: item.jobKey,
@@ -852,15 +855,23 @@ function ResumeLineReview({
       },
     });
     return result.ok;
-  }, [draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
+  }, [auditArtifactId, draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
   const comparisonTarget = useMemo(
-    () => comparisonDraftTarget(renderedDraftResult, draft),
-    [draft, renderedDraftResult],
+    () =>
+      comparisonDraftTarget(
+        renderedDraftResult,
+        draft,
+        renderBaselineArtifactId.current ?? auditArtifactId,
+      ),
+    [auditArtifactId, draft, renderedDraftResult],
   );
 
   useEffect(() => {
     onComparisonTargetChange?.(comparisonTarget);
   }, [comparisonTarget, onComparisonTargetChange]);
+  useEffect(() => {
+    renderBaselineArtifactId.current = null;
+  }, [item.jobKey]);
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -971,11 +982,13 @@ function mergeDraftThread(
 function comparisonDraftTarget(
   renderResult: ResumeReviewDraftRenderResponse | null,
   draft: ResumeReviewDraft | null,
+  acceptedArtifactId: string | null,
 ): ArtifactComparisonDraftTarget | null {
   if (!renderResult?.ok) {
     return null;
   }
   return {
+    acceptedArtifactId,
     artifactId: renderResult.artifacts.resumeText.artifactId,
     riskLabels: uniqueRiskLabels(draft?.commentThreads ?? []),
   };
@@ -1072,6 +1085,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   }, []);
   const handleComparisonTargetChange = useCallback((next: ArtifactComparisonDraftTarget | null) => {
     setComparisonDraft((previous) =>
+      previous?.acceptedArtifactId === next?.acceptedArtifactId &&
       previous?.artifactId === next?.artifactId &&
       (previous?.riskLabels ?? []).join("\u0000") === (next?.riskLabels ?? []).join("\u0000")
         ? previous
@@ -1210,7 +1224,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
             <ArtifactComparison
               emptyRightMessage="Render a saved draft to compare it with the accepted artifact."
-              leftArtifactId={resumeAuditArtifactId}
+              leftArtifactId={comparisonDraft ? comparisonDraft.acceptedArtifactId : resumeAuditArtifactId}
               leftLabel="Accepted"
               rightArtifactId={comparisonDraft?.artifactId ?? null}
               rightLabel="Rendered draft"

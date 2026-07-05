@@ -280,7 +280,8 @@ The read model serves tailoring audit data from canonical projection rows.
   at read time.
 - **Artifact comparison.** Apply Review and Artifacts compose a Materials-owned
   comparison component over existing artifact detail reads. Its pure selector
-  compares only stored `ArtifactTailoringExplanation.coverageAudit` buckets,
+  compares only stored `ArtifactTailoringExplanation.coverageAudit` buckets
+  (`covered`, `declared`, and `missing`),
   template metadata, validation/judge fields, and recorded resume-review
   `riskLabel` values. If either side has no coverage audit, the read model stays
   `coverage not recorded`; it does not convert absent rows into zero coverage.

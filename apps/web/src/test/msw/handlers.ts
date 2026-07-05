@@ -159,6 +159,7 @@ function makeStoryArtifactDetail(artifactId: string) {
       makeArtifactTailoringExplanation(
         makeCoverageAudit({
           covered: ["platform reliability", "typescript"],
+          declared: ["terraform", "gcp"],
           missing: ["incident response", "kubernetes"],
         }),
       ),
@@ -169,8 +170,9 @@ function makeStoryArtifactDetail(artifactId: string) {
       sampleDraftResumeArtifact,
       makeArtifactTailoringExplanation(
         makeCoverageAudit({
-          covered: ["platform reliability", "incident response"],
-          missing: ["kubernetes", "typescript"],
+          covered: ["platform reliability", "incident response", "terraform"],
+          declared: ["kubernetes", "gcp"],
+          missing: ["typescript"],
         }),
         {
           quality: {

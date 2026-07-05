@@ -76,7 +76,7 @@ from jobhunter.infrastructure.projections.source_quality import (
 
 @dataclass(frozen=True)
 class _ProvenanceProjection:
-    """The latest generation's provenance + coverage + voice read shapes per artifact.
+    """Provenance + coverage + voice read shapes per artifact.
 
     Each maps ``artifact_id -> serialised JSON`` so the artifact projection can
     attach the canonical Phase-2 (provenance) and Phase-3 (coverage + voice) read
@@ -1185,16 +1185,17 @@ class ProjectionBuilder:
         return json.dumps(record.to_read_model(), ensure_ascii=False)
 
     def _load_bullet_provenance_by_artifact(self, job_url: str) -> "_ProvenanceProjection":
-        """Project the latest provenance + coverage + voice read shapes, keyed by artifact.
+        """Project provenance + coverage + voice read shapes, keyed by artifact.
 
         The single owner of the provenance/coverage/voice read shapes (Phase 2 +
-        Phase 3): it loads the latest ``BulletProvenanceSet`` generation from
-        canonical rows and serialises ``to_read_model()`` (per-bullet provenance),
-        ``coverage_to_read_model()`` (generation-time keyword coverage, GROUND-06),
-        and ``voice_to_read_model()`` (the voice-pass audit, VOICE-02) to JSON, each
-        mapped to the ``artifact_id`` it explains so the artifact projection carries
-        them directly. Returns empty mappings when no provenance exists (the common
-        case before tailoring, or for PDF artifacts).
+        Phase 3): it loads each ``BulletProvenanceSet`` generation from canonical
+        rows and serialises ``to_read_model()`` (per-bullet provenance),
+        ``coverage_to_read_model()`` (generation-time keyword coverage,
+        GROUND-06), and ``voice_to_read_model()`` (the voice-pass audit, VOICE-02)
+        to JSON, each mapped to the ``artifact_id`` it explains so historical
+        artifact detail reads keep their generation's rows. Returns empty mappings
+        when no provenance exists (the common case before tailoring, or for PDF
+        artifacts).
         """
         from jobhunter.infrastructure.materials.bullet_provenance_repository import (
             SqliteBulletProvenanceRepository,
@@ -1202,27 +1203,51 @@ class ProjectionBuilder:
 
         empty = _ProvenanceProjection(provenance={}, coverage={}, voice={})
         try:
-            record = SqliteBulletProvenanceRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
-            )
+            generation_rows = self._conn.execute(
+                """
+                SELECT DISTINCT generation
+                FROM job_bullet_provenance
+                WHERE job_url = ? AND tenant_id = ?
+                ORDER BY generation
+                """,
+                (job_url, str(self._tenant_id)),
+            ).fetchall()
         except sqlite3.OperationalError:
             return empty
-        if record is None or record.is_empty:
+        if not generation_rows:
             return empty
-        coverage = record.coverage_to_read_model()
-        voice = record.voice_to_read_model()
+        repository = SqliteBulletProvenanceRepository(self._conn)
+        provenance: dict[str, str] = {}
+        coverage_by_artifact: dict[str, str] = {}
+        voice_by_artifact: dict[str, str] = {}
+        for row in generation_rows:
+            record = repository.load(
+                self._tenant_id,
+                JobId(job_url),
+                generation=int(row["generation"]),
+            )
+            if record is None or record.is_empty:
+                continue
+            provenance[record.artifact_id] = json.dumps(
+                record.to_read_model(),
+                ensure_ascii=False,
+            )
+            coverage = record.coverage_to_read_model()
+            if coverage is not None:
+                coverage_by_artifact[record.artifact_id] = json.dumps(
+                    coverage,
+                    ensure_ascii=False,
+                )
+            voice = record.voice_to_read_model()
+            if voice is not None:
+                voice_by_artifact[record.artifact_id] = json.dumps(
+                    voice,
+                    ensure_ascii=False,
+                )
         return _ProvenanceProjection(
-            provenance={record.artifact_id: json.dumps(record.to_read_model(), ensure_ascii=False)},
-            coverage=(
-                {record.artifact_id: json.dumps(coverage, ensure_ascii=False)}
-                if coverage is not None
-                else {}
-            ),
-            voice=(
-                {record.artifact_id: json.dumps(voice, ensure_ascii=False)}
-                if voice is not None
-                else {}
-            ),
+            provenance=provenance,
+            coverage=coverage_by_artifact,
+            voice=voice_by_artifact,
         )
 
     def _load_enrichment(self, job_url: str) -> dict:

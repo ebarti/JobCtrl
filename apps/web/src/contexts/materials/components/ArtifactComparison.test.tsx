@@ -52,6 +52,7 @@ describe("<ArtifactComparison>", () => {
           makeArtifactTailoringExplanation(
             makeCoverageAudit({
               covered: ["platform reliability", "typescript"],
+              declared: ["terraform", "gcp"],
               missing: ["incident response", "kubernetes"],
             }),
           ),
@@ -60,8 +61,9 @@ describe("<ArtifactComparison>", () => {
           sampleDraftResumeArtifact,
           makeArtifactTailoringExplanation(
             makeCoverageAudit({
-              covered: ["platform reliability", "incident response"],
-              missing: ["kubernetes", "typescript"],
+              covered: ["platform reliability", "incident response", "terraform"],
+              declared: ["gcp", "kubernetes"],
+              missing: ["typescript"],
             }),
             {
               judge: {
@@ -86,10 +88,16 @@ describe("<ArtifactComparison>", () => {
     expect(screen.getByText("Compact")).toBeInTheDocument();
     expect(screen.getByText("+covered")).toBeInTheDocument();
     expect(screen.getByText("incident response")).toBeInTheDocument();
+    expect(screen.getByText("2/6 covered; 2 declared; 2 missing")).toBeInTheDocument();
+    expect(screen.getByText("3/6 covered; 2 declared; 1 missing")).toBeInTheDocument();
     expect(screen.getByText("lost")).toBeInTheDocument();
     expect(screen.getByText("typescript")).toBeInTheDocument();
-    expect(screen.getByText("missing")).toBeInTheDocument();
+    expect(screen.getByText("+declared")).toBeInTheDocument();
     expect(screen.getByText("kubernetes")).toBeInTheDocument();
+    expect(screen.getByText("declared lost")).toBeInTheDocument();
+    expect(screen.getByText("declared")).toBeInTheDocument();
+    expect(screen.getByText("gcp")).toBeInTheDocument();
+    expect(screen.getByText("missing")).toBeInTheDocument();
     expect(screen.getByText("claim risk")).toBeInTheDocument();
     expect(screen.getByText("REVIEW; score 72% / minimum 82%; 1 issues")).toBeInTheDocument();
   });

@@ -41,6 +41,44 @@ describe("compareArtifactCoverage", () => {
     });
   });
 
+  it("keeps declared-only coverage in its own comparison bucket", () => {
+    const accepted = makeArtifactDetail(
+      sampleAcceptedResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["typescript"],
+          declared: ["terraform", "gcp"],
+          missing: ["incident response", "kubernetes"],
+        }),
+      ),
+    );
+    const draft = makeArtifactDetail(
+      sampleDraftResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["incident response", "terraform"],
+          declared: ["kubernetes", "gcp"],
+          missing: ["typescript"],
+        }),
+      ),
+    );
+
+    const comparison = compareArtifactCoverage(accepted, draft);
+
+    expect(comparison.coverageDelta).toMatchObject({
+      coverageRecorded: true,
+      state: "recorded",
+      newlyCovered: ["incident response", "terraform"],
+      coverageLost: ["typescript"],
+      newlyDeclared: ["kubernetes"],
+      declaredLost: ["terraform"],
+      stillDeclared: ["gcp"],
+      stillMissing: [],
+    });
+    expect(comparison.left.coverageCounts).toMatchObject({ declared: 2 });
+    expect(comparison.right.coverageCounts).toMatchObject({ declared: 2 });
+  });
+
   it("keeps coverage absent instead of treating missing coverage rows as zero coverage", () => {
     const accepted = makeArtifactDetail(
       sampleAcceptedResumeArtifact,
@@ -61,6 +99,9 @@ describe("compareArtifactCoverage", () => {
       computedAgainst: null,
       newlyCovered: [],
       coverageLost: [],
+      newlyDeclared: [],
+      declaredLost: [],
+      stillDeclared: [],
       stillMissing: [],
     });
   });
