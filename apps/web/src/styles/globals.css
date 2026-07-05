@@ -345,6 +345,48 @@ textarea:focus-visible {
   padding: 14px 16px;
 }
 
+.runtime-summary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px 16px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.runtime-summary h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.runtime-summary p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.runtime-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.runtime-summary div {
+  min-width: 0;
+}
+
+.runtime-summary dt {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.runtime-summary dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .field-grid.one {
   grid-template-columns: 1fr;
 }
@@ -5982,6 +6024,8 @@ textarea:focus-visible {
   .dashboard-grid,
   .discovery-control-grid,
   .field-grid,
+  .runtime-summary,
+  .runtime-summary dl,
   .stage-trigger-grid,
   .target-preferences-grid,
   .config-form,

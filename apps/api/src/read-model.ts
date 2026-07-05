@@ -4433,6 +4433,7 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
   if (!tableExists(db, "job_events")) {
     return [];
   }
+  const workflowRunStatus = loadPipelineWorkflowRunStatus(db);
   const rows = allRows<{
     stage: string | null;
     event_type: string | null;
@@ -4479,10 +4480,108 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
     }
     const progress = parseProgressPayload(payload, { ...row, stage });
     if (progress) {
-      byStage.set(stage, progress);
+      byStage.set(stage, progressWithWorkflowStatus(progress, workflowRunStatus));
     }
   }
   return [...byStage.values()];
+}
+
+interface PipelineWorkflowRunStatus {
+  status: string;
+  errorMessage: string | null;
+  finishedAt: string | null;
+}
+
+function loadPipelineWorkflowRunStatus(db: SqliteDatabase): Map<string, PipelineWorkflowRunStatus> {
+  if (!tableExists(db, "workflow_run_projections")) {
+    return new Map();
+  }
+  const rows = allRows<{
+    workflow_id: string;
+    status: string;
+    error_message: string | null;
+    finished_at: string | null;
+  }>(
+    db,
+    `SELECT workflow_id, status, error_message, finished_at
+       FROM workflow_run_projections
+      WHERE tenant_id = ?`,
+    [DEFAULT_TENANT],
+  );
+  return new Map(
+    rows.map((row) => [
+      row.workflow_id,
+      {
+        status: normalizeWorkflowRunStatus(row.status),
+        errorMessage: nullableString(row.error_message),
+        finishedAt: nullableString(row.finished_at),
+      },
+    ]),
+  );
+}
+
+function progressWithWorkflowStatus(
+  progress: DashboardSummary["progress"][number],
+  workflowRunStatus: Map<string, PipelineWorkflowRunStatus>,
+): DashboardSummary["progress"][number] {
+  const workflowId = progress.workflowId || progress.runId;
+  if (!workflowId) {
+    return progress;
+  }
+  const workflow = workflowRunStatus.get(workflowId);
+  if (!workflow) {
+    return progress;
+  }
+  const status = pipelineProgressStatusForWorkflow(workflow.status);
+  if (!status) {
+    return progress;
+  }
+  if (progressIsNewerThanTerminal(progress.updatedAt, workflow.finishedAt)) {
+    return progress;
+  }
+  const message = workflow.errorMessage
+    ? `Workflow ${workflow.status}: ${workflow.errorMessage}`
+    : `Workflow ${workflow.status}`;
+  return {
+    ...progress,
+    status,
+    percent: status === "succeeded" ? 100 : progress.percent,
+    completed: status === "succeeded" ? progress.total : progress.completed,
+    message,
+    updatedAt: workflow.finishedAt ?? progress.updatedAt,
+  };
+}
+
+// Workflow ids are reused across executions (discover-{tenant}, apply-{jobKey})
+// and workflow_run_projections keeps the prior execution's terminal state until
+// the new run's WorkflowStarted folds in. Stage activity recorded after
+// finished_at can only belong to a newer live execution, so a stale terminal
+// must not override it.
+function progressIsNewerThanTerminal(
+  progressUpdatedAt: string | null | undefined,
+  workflowFinishedAt: string | null,
+): boolean {
+  if (!progressUpdatedAt || !workflowFinishedAt) {
+    return false;
+  }
+  const progressMs = Date.parse(progressUpdatedAt);
+  const finishedMs = Date.parse(workflowFinishedAt);
+  if (Number.isNaN(progressMs) || Number.isNaN(finishedMs)) {
+    return false;
+  }
+  return progressMs > finishedMs;
+}
+
+function pipelineProgressStatusForWorkflow(
+  status: string,
+): DashboardSummary["progress"][number]["status"] | null {
+  if (status === "starting" || status === "in_progress") {
+    return null;
+  }
+  if (status === "succeeded" || status === "dry_run_complete") {
+    return "succeeded";
+  }
+  return "failed";
 }
 
 const COMPLETE_STAGE_MESSAGES = new Set(["stage ok", "stage partial", "stage skipped"]);

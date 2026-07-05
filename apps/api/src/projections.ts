@@ -44,6 +44,13 @@ const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "DiscoveryFeedbackRecorded",
 ]);
 const COMPENSATION_PROJECTION_VERSION = 1;
+const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
+  ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
+  ["error_code", "TEXT"],
+  ["error_message", "TEXT"],
+  ["retryable", "INTEGER NOT NULL DEFAULT 0"],
+  ["temporal_run_id", "TEXT"],
+];
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -649,6 +656,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "dashboard_projections", "outcome_conversion_json", "TEXT NOT NULL DEFAULT '{}'") ||
     schemaChanged;
+  for (const [columnName, definition] of WORKFLOW_RUN_PROJECTION_COLUMNS) {
+    schemaChanged = ensureProjectionColumn(db, "workflow_run_projections", columnName, definition) || schemaChanged;
+  }
   return schemaChanged;
 }
 
@@ -658,14 +668,23 @@ function ensureProjectionColumn(
   columnName: string,
   definition: string,
 ): boolean {
-  const columns = new Set(
-    allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name),
-  );
-  if (!columns.has(columnName)) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
-    return true;
+  const existingColumns = () =>
+    new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name));
+  if (existingColumns().has(columnName)) {
+    return false;
   }
-  return false;
+  try {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  } catch (error) {
+    // The TS API and the Python worker both run this upgrade at startup against
+    // the same SQLite file; the loser of the check-then-ALTER race must treat
+    // "duplicate column" as an upgrade that already happened, not a failure.
+    if (existingColumns().has(columnName)) {
+      return true;
+    }
+    throw error;
+  }
+  return true;
 }
 
 /** Read the watermark; returns 0 when missing. */

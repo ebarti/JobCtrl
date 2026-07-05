@@ -55,6 +55,8 @@ export const sampleHealthResponse: ApiHealthResponse = {
       taskQueue: "jobhunter-default",
       startedAt: "2026-05-20T10:00:00.000Z",
       lastSeenAt: "2026-05-20T10:00:10.000Z",
+      maxConcurrentActivities: 4,
+      activityExecutorMaxWorkers: 6,
     },
   },
 };

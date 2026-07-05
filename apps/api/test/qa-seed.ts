@@ -283,7 +283,9 @@ export function seedQaDatabase(dbPath: string): void {
       db_path TEXT NOT NULL,
       task_queue TEXT NOT NULL,
       started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      last_seen_at TEXT NOT NULL,
+      max_concurrent_activities INTEGER,
+      activity_executor_max_workers INTEGER
     );
     CREATE TABLE job_scores (
       job_url TEXT,
@@ -1065,8 +1067,9 @@ function insertScore(db: Database.Database, jobUrl: string, fitScore: number): v
 function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
   db.prepare(
     `INSERT INTO worker_runtime_heartbeats
-      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
+       max_concurrent_activities, activity_executor_max_workers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "qa-worker-1",
     "temporal-worker",
@@ -1077,6 +1080,8 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
     "jobhunter-default",
     new Date().toISOString(),
     new Date().toISOString(),
+    4,
+    6,
   );
 }
 

@@ -31,6 +31,7 @@ from jobhunter.domain.events.workflow import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.infrastructure.projections.sqlite_projection_store import _ensure_column
 from jobhunter.state import record_job_event
 
 
@@ -63,6 +64,35 @@ def _row_value(row, key, default=None):
     return value if value is not None else default
 
 
+def _replace_workflow_projection_schema_with_legacy_shape(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute("DROP TABLE workflow_run_projections")
+    conn.execute(
+        """
+        CREATE TABLE workflow_run_projections (
+            workflow_id            TEXT PRIMARY KEY,
+            run_id                 TEXT NOT NULL DEFAULT '',
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            workflow_type          TEXT NOT NULL DEFAULT 'pipeline',
+            job_id                 TEXT NOT NULL DEFAULT '',
+            title                  TEXT NOT NULL DEFAULT '',
+            company                TEXT NOT NULL DEFAULT '',
+            status                 TEXT NOT NULL DEFAULT 'starting',
+            result                 TEXT,
+            dry_run                INTEGER NOT NULL DEFAULT 0,
+            model                  TEXT,
+            started_at             TEXT,
+            finished_at            TEXT,
+            duration_ms            INTEGER,
+            stages_json            TEXT NOT NULL DEFAULT '[]',
+            events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.commit()
+
+
 def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     _record(
         conn,
@@ -78,6 +108,18 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
         ),
     )
     conn.commit()
+    last_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(projection_name) DO UPDATE SET
+            last_event_id = excluded.last_event_id,
+            updated_at = excluded.updated_at
+        """,
+        ("operations_projections", last_event_id, "2026-07-04T08:36:17Z"),
+    )
+    conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -91,6 +133,57 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "temporal_run_id") == "temporal-1"
     assert json.loads(_row_value(row, "input_summary_json", "{}")) == {
         "stages": ["discover"]
+    }
+
+
+def test_legacy_workflow_projection_schema_is_migrated_before_fold(
+    conn: sqlite3.Connection,
+) -> None:
+    """Existing local DBs may have the old workflow projection table shape.
+
+    The finalize activity records a WorkflowStarted event, then immediately
+    refreshes projections. If the table is not upgraded before the refresh, the
+    activity fails and Temporal retries forever before source discovery starts.
+    """
+    _replace_workflow_projection_schema_with_legacy_shape(conn)
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="discover-local",
+                workflow_type="DiscoverWorkflow",
+                input_summary={"limit": 1000, "workers": 10},
+                started_at="2026-07-04T07:57:11+00:00",
+                temporal_run_id="temporal-discover",
+            ),
+        ),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(workflow_run_projections)")
+    }
+    assert {
+        "input_summary_json",
+        "error_code",
+        "error_message",
+        "retryable",
+        "temporal_run_id",
+    }.issubset(columns)
+    row = conn.execute(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
+        ("discover-local",),
+    ).fetchone()
+    assert row is not None
+    assert _row_value(row, "status") == "in_progress"
+    assert _row_value(row, "workflow_type") == "DiscoverWorkflow"
+    assert _row_value(row, "temporal_run_id") == "temporal-discover"
+    assert json.loads(_row_value(row, "input_summary_json", "{}")) == {
+        "limit": 1000,
+        "workers": 10,
     }
 
 
@@ -321,3 +414,52 @@ def test_timeline_collected_and_rebuild_deterministic(conn: sqlite3.Connection) 
         "WorkflowStarted",
         "WorkflowCompleted",
     ]
+
+
+class _StaleCheckCursor:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list:
+        return self._rows
+
+
+class _StaleCheckConnection:
+    """Reproduces the cross-process check-then-ALTER race on the shared SQLite
+    file: the first ``PRAGMA table_info`` check reports the column missing
+    while the other process has already added it, so the ALTER fails with
+    "duplicate column"."""
+
+    def __init__(self, real: sqlite3.Connection, table: str, column: str) -> None:
+        self._real = real
+        self._table = table
+        self._column = column
+        self._stale_check_pending = True
+
+    def execute(self, sql: str, *args):
+        is_column_check = sql.strip().startswith(f"PRAGMA table_info({self._table})")
+        if self._stale_check_pending and is_column_check:
+            self._stale_check_pending = False
+            rows = self._real.execute(sql, *args).fetchall()
+            return _StaleCheckCursor([row for row in rows if row[1] != self._column])
+        return self._real.execute(sql, *args)
+
+
+def test_ensure_column_tolerates_concurrent_column_add(
+    conn: sqlite3.Connection,
+) -> None:
+    """The TS API and the Python worker both upgrade the schema at startup;
+    the loser of the ALTER race must not fail initialization."""
+    racing = _StaleCheckConnection(
+        conn, "workflow_run_projections", "input_summary_json"
+    )
+
+    assert (
+        _ensure_column(
+            racing,
+            "workflow_run_projections",
+            "input_summary_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        is True
+    )
