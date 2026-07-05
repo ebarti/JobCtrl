@@ -140,7 +140,24 @@ Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
 
-## 7. Review And Edit The Resume
+## 7. Generate Interview Prep
+
+From a job detail drawer, use "generate interview prep" when you want stored
+pre-interview notes for that job. Prep is generated only after you ask for it and
+uses JobHunter's grounded data: profile evidence, requirement fit, accepted
+materials, employer analysis, and evidence-map usage.
+
+The drawer shows the latest accepted prep as themes, STAR-story drafts, gap
+drills, and company notes. Each item keeps its evidence IDs, requirement IDs, and
+profile source snippets visible, with evidence links back into the Evidence map.
+Regeneration keeps the last accepted prep visible until a replacement is
+accepted.
+
+Interview prep is not live interview assistance. JobHunter does not provide
+in-session answers, transcript upload, microphone input, websocket streaming, or
+real-time interview participation.
+
+## 8. Review And Edit The Resume
 
 Apply Review opens the generated resume in an in-browser editor. The editor keeps
 the final PDF link, the source behind each line, risk flags, JobHunter's line
@@ -160,7 +177,7 @@ Typical review actions:
 Failed validation stays as audit history and does not hide the last accepted
 artifact.
 
-## 8. Rehearse With A Dry Run
+## 9. Rehearse With A Dry Run
 
 Apply automation can submit real applications, so start with dry runs:
 
@@ -180,7 +197,7 @@ Apply Review, and requires full dry-run evidence unless you explicitly accept a
 listed partial dry-run with its blocked channels. The full approval model is on
 the [Security](security.md) page.
 
-## 9. Inspect Progress
+## 10. Inspect Progress
 
 Useful command-line checks:
 

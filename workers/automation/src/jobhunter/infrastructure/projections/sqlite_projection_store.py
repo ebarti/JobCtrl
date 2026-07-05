@@ -70,6 +70,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_correction_json", "TEXT"),
     ("job_detail_projections", "employer_analysis_json", "TEXT"),
     ("job_detail_projections", "requirement_fit_report_json", "TEXT"),
+    ("job_detail_projections", "interview_prep_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
     ("artifact_list_projections", "layout_boxes_json", "TEXT"),
     ("artifact_list_projections", "bullet_provenance_json", "TEXT"),
@@ -176,6 +177,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             stages_json            TEXT NOT NULL DEFAULT '[]',
             employer_analysis_json TEXT,
             requirement_fit_report_json TEXT,
+            interview_prep_json    TEXT,
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
         )
@@ -581,8 +583,9 @@ class SqliteProjectionStore:
                 score_reasoning, score_version, scored_at,
                 score_criteria_json, score_trace_json, score_correction_json,
                 stages_json, employer_analysis_json, requirement_fit_report_json,
+                interview_prep_json,
                 last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 description_preview    = excluded.description_preview,
                 compensation_summary_json = excluded.compensation_summary_json,
@@ -598,6 +601,7 @@ class SqliteProjectionStore:
                 stages_json            = excluded.stages_json,
                 employer_analysis_json = excluded.employer_analysis_json,
                 requirement_fit_report_json = excluded.requirement_fit_report_json,
+                interview_prep_json    = excluded.interview_prep_json,
                 last_updated_at        = excluded.last_updated_at
             """,
             (
@@ -636,6 +640,7 @@ class SqliteProjectionStore:
                 ),
                 projection.employer_analysis_json,
                 projection.requirement_fit_report_json,
+                projection.interview_prep_json,
                 projection.last_updated_at,
             ),
         )

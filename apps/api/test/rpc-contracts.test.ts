@@ -9,6 +9,7 @@ import {
   CancelRunParamsSchema,
   CancelRunResultSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
+  GenerateInterviewPrepRequestSchema,
   GenerateInterviewPrepParamsSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
@@ -173,10 +174,21 @@ describe("preparation RPC contracts", () => {
     expect(() => GenerateInterviewPrepParamsSchema.parse({ jobUrl: "" })).toThrow();
   });
 
+  it("parses the REST generate-interview-prep request body", () => {
+    expect(GenerateInterviewPrepRequestSchema.parse({})).toEqual({});
+    expect(GenerateInterviewPrepRequestSchema.parse({ llmModel: "gpt-test" })).toEqual({
+      llmModel: "gpt-test",
+    });
+    expect(() => GenerateInterviewPrepRequestSchema.parse({ llmModel: "" })).toThrow();
+  });
+
   it("keeps interview prep off live-assistance contract names", () => {
     const exposedNames = [
       RpcMethods.GenerateInterviewPrep,
+      "generate_interview_prep",
+      "/v1/jobs/:jobKey/actions/generate-interview-prep",
       ...Object.keys(GenerateInterviewPrepParamsSchema.shape),
+      ...Object.keys(GenerateInterviewPrepRequestSchema.shape),
     ];
     const forbidden = /(live|in[_-]?session|stream|transcript|microphone|websocket|real[_-]?time)/i;
     expect(exposedNames.filter((name) => forbidden.test(name))).toEqual([]);

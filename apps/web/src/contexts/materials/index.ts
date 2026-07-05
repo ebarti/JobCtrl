@@ -1,6 +1,7 @@
 export { materialsKeys } from "./queryKeys.js";
 
 export { useGenerateMaterialsMutation } from "./hooks/useGenerateMaterialsMutation.js";
+export { useGenerateInterviewPrepMutation } from "./hooks/useGenerateInterviewPrepMutation.js";
 export { useOpenArtifactMutation } from "./hooks/useOpenArtifactMutation.js";
 export {
   useRetailorCurrentPolicyMutation,
@@ -35,6 +36,14 @@ export {
   GenerateMaterialsButton,
   type GenerateMaterialsButtonProps,
 } from "./components/GenerateMaterialsButton.js";
+export {
+  GenerateInterviewPrepButton,
+  type GenerateInterviewPrepButtonProps,
+} from "./components/GenerateInterviewPrepButton.js";
+export {
+  InterviewPrepPanel,
+  type InterviewPrepPanelProps,
+} from "./components/InterviewPrepPanel.js";
 export {
   OpenArtifactButton,
   type OpenArtifactButtonProps,

@@ -8,6 +8,7 @@ import type {
   CredentialsResponse,
   DashboardSummary,
   EvidenceMapResponse,
+  InterviewPrep,
   JobAuditEntry,
   JobCompensationAudit,
   JobCompensationSummary,
@@ -788,6 +789,37 @@ export const sampleJobAuditHistory: JobAuditEntry[] = [
   },
 ];
 
+export const sampleInterviewPrep: InterviewPrep = {
+  jobKey: sampleJob.jobKey,
+  generation: 1,
+  status: "accepted",
+  generatedAt: "2026-05-03T09:30:00Z",
+  model: "gpt-test",
+  gateAudit: {
+    status: "passed",
+    fabricationFindings: [],
+    groundingFindings: [],
+    judgeVerdict: "grounded",
+    warnings: [],
+  },
+  items: [
+    {
+      itemId: "prep-star-1",
+      kind: "star_draft",
+      title: "Platform reliability story",
+      generatedText: "Use the API latency reduction story to discuss reliability ownership.",
+      evidenceIds: ["ev-api-latency"],
+      requirementIds: ["req-platform"],
+      sourceText: ["Reduced API latency by 30% using Python services."],
+      transformType: "grounded_prep",
+      control: "never_fabricate",
+      groundingAudit: ["Evidence ev-api-latency supports the story."],
+      warnings: [],
+      position: 0,
+    },
+  ],
+};
+
 export function makeJobDetail(
   job: JobSummary = sampleJob,
   overrides: Partial<Omit<JobDetail, "ok" | "job">> = {},
@@ -838,6 +870,7 @@ export function makeJobDetail(
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
     employerAnalysis: overrides.employerAnalysis ?? null,
     requirementFitReport: overrides.requirementFitReport ?? null,
+    interviewPrep: overrides.interviewPrep ?? null,
     compensationAudit: overrides.compensationAudit ?? null,
   };
 }

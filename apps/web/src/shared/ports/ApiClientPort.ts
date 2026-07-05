@@ -35,6 +35,7 @@ import type {
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
   EvidenceMapResponse,
+  GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -297,6 +298,7 @@ export interface ApiClientPort {
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
+  generateInterviewPrep(jobKey: string, body?: Partial<GenerateInterviewPrepRequest>): Promise<ActionRunResponse>;
   applyJob(jobKey: string, body?: Partial<ApplyJobRequest>): Promise<ActionRunResponse>;
   cancelJobAction(jobKey: string, body?: CancelJobActionRequest): Promise<ActionRunResponse>;
   markApplied(jobKey: string, body?: MarkJobActionRequest): Promise<ActionRunResponse>;

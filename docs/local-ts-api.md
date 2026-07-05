@@ -372,6 +372,14 @@ projection concern: supported parsed currencies are converted to EUR/year;
 unsupported or missing currencies leave the normalized min/max empty instead of
 guessing.
 
+`GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, sourced from
+`job_detail_projections.interview_prep_json`. The value is `null` until the user
+explicitly generates prep for that job. When present, it is the latest accepted
+stored prep generation with item text, item kind, evidence IDs, requirement IDs,
+joined profile source snippets, gate/judge summary, and accepted-residual
+warnings. It does not expose raw prompts, full profile JSON, or full job
+descriptions.
+
 `GET /v1/jobs/:jobKey/compensation/market` returns the read-only
 inspection contract for canonical company-role reported compensation estimate
 rows. The endpoint reads `job_market_compensation_estimates` only; it does not
@@ -714,7 +722,9 @@ Other per-job action routes: `POST /v1/jobs/:jobKey/actions/apply` dispatches
 the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
 `POST /v1/jobs/:jobKey/actions/generate-materials` dispatches the tailor →
 cover preparation stages for one job and returns `202` when the worker is
-ready; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
+ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
+explicit `generate_interview_prep` workflow action for one job and returns `202`
+when queued; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
 cancellation of that job's in-flight work; and
 `POST /v1/jobs/:jobKey/actions/mark-applied` /
 `POST /v1/jobs/:jobKey/actions/mark-skipped` record manual pipeline outcomes

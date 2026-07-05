@@ -39,6 +39,7 @@ import type {
   JobDeletedFilter,
   JobAuditEntry,
   JobDetail,
+  InterviewPrep,
   JobListQuery,
   JobSummary,
   PaginatedResponse,
@@ -178,6 +179,7 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   stages_json: string;
   employer_analysis_json: string | null;
   requirement_fit_report_json: string | null;
+  interview_prep_json: string | null;
   last_updated_at: string | null;
 }
 
@@ -741,6 +743,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
     requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
 }
@@ -792,6 +795,15 @@ function parseRequirementFitReport(value: string | null): RequirementFitReport |
   if (!value) return null;
   try {
     return JSON.parse(value) as RequirementFitReport;
+  } catch {
+    return null;
+  }
+}
+
+function parseInterviewPrep(value: string | null): InterviewPrep | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as InterviewPrep;
   } catch {
     return null;
   }

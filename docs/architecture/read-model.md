@@ -125,7 +125,7 @@ tables that back every read-model endpoint:
 |------------------------------|-------------------------------------------------------------------|
 | `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, materials presence, apply status. |
 | `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source and score band, from `application_outcomes`). |
-| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
+| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, employer/requirement audit JSON, latest accepted interview prep, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `evidence_usage_projections` | Career evidence map rows that invert profile achievement/skill evidence into resume-bullet usage, requirement-fit usage, generation-time skill coverage, and missing/blocked/transferable gaps. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |

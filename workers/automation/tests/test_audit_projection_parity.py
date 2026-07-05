@@ -38,6 +38,7 @@ from jobhunter.database import (
     close_connection,
     ensure_bullet_provenance_tables,
     ensure_employer_analysis_tables,
+    ensure_interview_prep_tables,
     ensure_materials_tables,
     init_db,
 )
@@ -61,6 +62,7 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
     ensure_employer_analysis_tables(connection)
     ensure_materials_tables(connection)
     ensure_bullet_provenance_tables(connection)
+    ensure_interview_prep_tables(connection)
     job = fixture["job"]
     connection.execute(
         """
@@ -256,6 +258,56 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 bullet["voice_json"],
             ),
         )
+    for prep in rows["jobInterviewPrep"]:
+        conn.execute(
+            """
+            INSERT INTO job_interview_prep (
+                job_url, generation, tenant_id, status, model, generated_at,
+                gate_status, fabrication_findings_json, grounding_findings_json,
+                judge_verdict, warnings_json, failure_reason
+            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_url,
+                prep["generation"],
+                prep["status"],
+                prep["model"],
+                prep["generated_at"],
+                prep["gate_status"],
+                prep["fabrication_findings_json"],
+                prep["grounding_findings_json"],
+                prep["judge_verdict"],
+                prep["warnings_json"],
+                prep["failure_reason"],
+            ),
+        )
+    for item in rows["jobInterviewPrepItems"]:
+        conn.execute(
+            """
+            INSERT INTO job_interview_prep_items (
+                job_url, generation, item_id, tenant_id, kind, title,
+                generated_text, evidence_ids_json, requirement_ids_json,
+                source_text_json, transform_type, control, grounding_audit_json,
+                warnings_json, position
+            ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_url,
+                item["generation"],
+                item["item_id"],
+                item["kind"],
+                item["title"],
+                item["generated_text"],
+                item["evidence_ids_json"],
+                item["requirement_ids_json"],
+                item["source_text_json"],
+                item["transform_type"],
+                item["control"],
+                item["grounding_audit_json"],
+                item["warnings_json"],
+                item["position"],
+            ),
+        )
     # A job_events row marks the job dirty so the builder rebuilds its projection.
     conn.execute(
         """
@@ -449,11 +501,19 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     expected = fixture["expected"]
 
     detail = conn.execute(
-        "SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?",
+        """
+        SELECT employer_analysis_json, interview_prep_json
+        FROM job_detail_projections
+        WHERE job_id = ?
+        """,
         (job_url,),
     ).fetchone()
     assert detail is not None
     assert json.loads(detail["employer_analysis_json"]) == expected["employerAnalysisJson"]
+    prep = json.loads(detail["interview_prep_json"])
+    assert prep == expected["interviewPrepJson"]
+    assert "prompt" not in json.dumps(prep)
+    assert "full_description" not in json.dumps(prep)
 
     # The text resume row carries the per-bullet provenance + coverage + voice.
     text_row = conn.execute(

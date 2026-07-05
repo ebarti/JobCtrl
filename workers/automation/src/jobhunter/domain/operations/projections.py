@@ -162,6 +162,10 @@ class JobDetailProjection:
     # ``RequirementFitReport.to_read_model()``), or None when this job has not
     # been scored with requirement-level assessments yet.
     requirement_fit_report_json: str | None = None
+    # Interview-prep read shape (JSON of the latest accepted
+    # ``InterviewPrep.to_read_model()``), or None when the user has not
+    # explicitly generated prep for this job yet.
+    interview_prep_json: str | None = None
 
 
 @dataclass(frozen=True)

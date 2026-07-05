@@ -6148,6 +6148,61 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches explicit interview prep generation without running pipeline stages", async () => {
+    const dispatch = vi.fn(async (_command: unknown, _context: unknown) => ({
+      status: "queued",
+      actionId: "act-prep",
+      runId: "run-prep",
+      workflowId: "workflow-prep",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: { llmModel: "gpt-test" },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "generate_interview_prep",
+      status: "queued",
+      jobKey: "https://example.com/jobs/ready",
+      workflowId: "workflow-prep",
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "generate_interview_prep",
+        jobKey: "https://example.com/jobs/ready",
+        llmModel: "gpt-test",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch.mock.calls[0]?.[0]).not.toMatchObject({ action: "run_stage" });
+
+    await app.close();
+  });
+
+  it("rejects interview prep generation for missing jobs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/missing");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "job_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("rejects per-job material generation for missing jobs", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });

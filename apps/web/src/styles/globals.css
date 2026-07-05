@@ -4029,6 +4029,91 @@ textarea:focus-visible {
   grid-column: 1 / -1;
 }
 
+.interview-prep-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.interview-prep-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.interview-prep-heading h3 {
+  margin: 0;
+}
+
+.interview-prep-gate,
+.interview-prep-items {
+  display: grid;
+  gap: 10px;
+}
+
+.interview-prep-gate {
+  grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
+  align-items: center;
+}
+
+.interview-prep-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.interview-prep-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.interview-prep-item h4,
+.interview-prep-item p,
+.interview-prep-sources ul,
+.interview-prep-warning-group ul {
+  margin: 0;
+}
+
+.interview-prep-provenance {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.interview-prep-provenance dt {
+  color: var(--muted-foreground);
+}
+
+.interview-prep-provenance dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.interview-prep-sources summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+
+.interview-prep-sources ul,
+.interview-prep-warning-group ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+}
+
+.interview-prep-warning-group {
+  display: grid;
+  gap: 8px;
+}
+
 @media (min-width: 1180px) {
   .job-detail-drawer-main {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -33,6 +33,7 @@ import {
   DiscoverySettingsUpdateRequestSchema,
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
+  GenerateInterviewPrepRequestSchema,
   GmailOutcomeScanRequestSchema,
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
@@ -1291,6 +1292,45 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (dispatch.workflowId) {
         recordPipelineWorkflowStarted(options.dbPath, primaryStage, dispatch.workflowId, dispatch.runId);
       }
+      void reply.code(dispatch.status === "queued" ? 202 : 200);
+      return buildActionResponse(command, dispatch);
+    });
+  });
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/generate-interview-prep", async (request, reply) => {
+    const body = parseBody(reply, GenerateInterviewPrepRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+      if (!jobUrl) {
+        return { ok: false, error: "job_not_found" };
+      }
+      refreshProjections(db);
+      const command: ActionCommandPayload = {
+        action: "generate_interview_prep",
+        jobKey: jobUrl,
+      };
+      if (body.llmModel) {
+        command.llmModel = body.llmModel;
+      }
+      insertJobEvent(db, {
+        jobUrl,
+        stage: "tailor",
+        eventType: "InterviewPrepRequested",
+        level: "info",
+        message: "Interview preparation requested by user",
+        payload: {
+          tenantId: "local",
+          jobId: jobUrl,
+        },
+      });
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
       void reply.code(dispatch.status === "queued" ? 202 : 200);
       return buildActionResponse(command, dispatch);
     });

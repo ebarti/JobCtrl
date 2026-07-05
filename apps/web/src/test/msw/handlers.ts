@@ -562,6 +562,9 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/actions/generate-materials", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_materials")),
   ),
+  http.post("*/v1/jobs/:jobKey/actions/generate-interview-prep", ({ params }) =>
+    HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_interview_prep")),
+  ),
   http.post("*/v1/jobs/:jobKey/actions/tailor", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "tailor_job")),
   ),

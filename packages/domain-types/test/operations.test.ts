@@ -64,6 +64,7 @@ describe("Operations projection types", () => {
       scoredAt: listProjection.scoredAt,
       stages: [],
       requirementFitReport: null,
+      interviewPrep: null,
       lastUpdatedAt: listProjection.lastUpdatedAt,
     };
 

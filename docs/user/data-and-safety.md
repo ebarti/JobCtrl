@@ -57,7 +57,8 @@ letters.
 
 Depending on configuration, JobHunter can call:
 
-- LLM providers for scoring, employer analysis, tailoring, and cover letters;
+- LLM providers for scoring, employer analysis, tailoring, cover letters, and
+  stored interview prep;
 - job boards, ATS APIs, or public posting pages for discovery and enrichment;
 - Gmail read-only APIs for verification-code or outcome feedback flows. The
   current connector does not request `gmail.send`; granting or wiring that scope
@@ -98,6 +99,10 @@ These boundaries are the operator's responsibility:
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
+- **Interview prep:** JobHunter can generate stored pre-interview notes for a
+  job from grounded profile/job/material evidence. It is not a live interview
+  assistant and has no transcript upload, microphone input, streaming,
+  websocket, in-session state, or real-time answer surface.
 
 ## Auto-Apply Safety
 
