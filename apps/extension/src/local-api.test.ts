@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { normalizeLoopbackBaseUrl, postExtensionCapture } from "./local-api";
+import { getExtensionAutofillProfile, normalizeLoopbackBaseUrl, postExtensionCapture } from "./local-api";
 
 describe("extension local API client", () => {
   it("posts captures only to the loopback extension endpoint with the bearer token", async () => {
@@ -40,5 +40,21 @@ describe("extension local API client", () => {
 
   it("rejects non-loopback API origins", () => {
     expect(() => normalizeLoopbackBaseUrl("https://api.example.com")).toThrow(/loopback/);
+  });
+
+  it("reads the whitelisted autofill profile with the bearer token", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, profileVersion: 3, fields: [] }), { status: 200 }));
+
+    await getExtensionAutofillProfile("token-2", { fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/extension/autofill/profile",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          authorization: "Bearer token-2",
+        }),
+      }),
+    );
   });
 });

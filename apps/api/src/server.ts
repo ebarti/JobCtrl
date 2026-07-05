@@ -68,6 +68,7 @@ import {
   SettingsUpdateRequestSchema,
   type ExtensionCapabilityTokenResponse,
   type ExtensionAuthStatusResponse,
+  type ExtensionAutofillProfileResponse,
   type ExtensionCaptureIngestRequest,
   type ManualCaptureImportRequest,
   SourceLocatorDecisionSchema,
@@ -186,6 +187,7 @@ import {
 import {
   ProfileInputError,
   parseProfileUpdateProfile,
+  readExtensionAutofillProfile,
   readProfileConfig,
   writeProfileConfig,
 } from "./profile-store.js";
@@ -379,6 +381,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
   app.post("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
+
+  app.get(
+    "/v1/extension/autofill/profile",
+    async (_request, reply): Promise<ExtensionAutofillProfileResponse | { ok: false; error: string; message: string }> =>
+      withDb(reply, options.dbPath, (db) => readExtensionAutofillProfile(db)),
+  );
 
   app.post("/v1/extension/captures", async (request, reply) => {
     const body = parseBody(reply, ExtensionCaptureIngestSchema, request.body ?? {});

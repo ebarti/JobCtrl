@@ -156,9 +156,10 @@ pnpm extension:build
 
 Then load `dist/extension/` as an unpacked Chrome/Chromium extension, open
 JobHunter Settings, copy the browser-extension pairing token into the extension
-popup, and click **Save job** on an http(s) job page. The extension talks only
-to the local API and reuses the Manual capture import path. It cannot submit
-applications.
+popup, and click **Save job** on an http(s) job page. On supported ATS
+application pages, **Review autofill** opens deterministic profile-backed
+suggestions that you accept before fields are filled. The extension talks only
+to the local API. It cannot submit applications.
 
 ## 5. Use A Disposable Workspace For Testing
 

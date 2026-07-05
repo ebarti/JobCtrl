@@ -1,5 +1,6 @@
 import {
   ExtensionCaptureIngestSchema,
+  type ExtensionAutofillProfileResponse,
   type ExtensionCaptureIngestRequest,
   type ExtensionCaptureIngestResponse,
 } from "@jobhunter/contracts";
@@ -71,6 +72,33 @@ export async function postExtensionCapture(
     throw new LocalApiError(`Local JobHunter API rejected capture: ${response.status}.`, response.status);
   }
   return (await response.json()) as ExtensionCaptureIngestResponse;
+}
+
+export async function getExtensionAutofillProfile(
+  token: string,
+  options: LocalApiOptions = {},
+): Promise<ExtensionAutofillProfileResponse> {
+  const bearer = token.trim();
+  if (!bearer) {
+    throw new LocalApiError("Missing extension capability token.");
+  }
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = normalizeLoopbackBaseUrl(options.baseUrl);
+  const response = await fetchWithTimeout(
+    fetchImpl,
+    `${baseUrl}/v1/extension/autofill/profile`,
+    {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${bearer}`,
+      },
+    },
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    throw new LocalApiError(`Local JobHunter API rejected autofill profile: ${response.status}.`, response.status);
+  }
+  return (await response.json()) as ExtensionAutofillProfileResponse;
 }
 
 export function normalizeLoopbackBaseUrl(baseUrl: string = LOOPBACK_API_ORIGINS[0]): LoopbackApiOrigin {

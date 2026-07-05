@@ -135,10 +135,10 @@ only non-browser activities).
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
 
-### Browser Extension Capture
+### Browser Extension Capture And Autofill
 
-The optional Manifest V3 browser extension is a local capture surface. Build it
-with:
+The optional Manifest V3 browser extension is a local capture and assist
+surface. Build it with:
 
 ```bash
 pnpm extension:build
@@ -146,13 +146,19 @@ pnpm extension:build
 
 Load `dist/extension/` as an unpacked extension in Chrome/Chromium developer
 mode, then open JobHunter Settings and copy the browser-extension pairing token
-into the extension popup. Clicking **Save job** captures the active http(s) page
-URL and visible text, posts it over loopback to `/v1/extension/captures`, and
-reuses the existing manual-capture importer so dedupe, snapshots, quarantine,
-and source provenance remain identical to other user-mediated captures. If the
-local stack is down, the extension stores a bounded local queue in extension
-storage and retries after the next successful save. The extension has no
-submission path.
+into the extension popup.
+
+Clicking **Save job** captures the active http(s) page URL and visible text,
+posts it over loopback to `/v1/extension/captures`, and reuses the existing
+manual-capture importer so dedupe, snapshots, quarantine, and source provenance
+remain identical to other user-mediated captures. If the local stack is down,
+the extension stores a bounded local queue in extension storage and retries
+after the next successful save.
+
+On supported ATS application pages, **Review autofill** fetches a whitelisted
+profile snapshot over loopback and shows deterministic field suggestions with
+their profile source. You choose which values to fill. The extension does not
+generate free-text answers and has no submission path.
 
 Commands that start work (`jobhunter run`, per-stage commands, `jobhunter
 apply`, `jobhunter action profile_import`, and `jobhunter

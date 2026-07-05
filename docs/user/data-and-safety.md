@@ -102,6 +102,10 @@ These boundaries are the operator's responsibility:
   captures contain page URLs and visible posting text, expire under the
   extension's bounded local policy, and are cleared when you save a new pairing
   token.
+- **Browser-extension autofill:** supported ATS pages receive only the
+  whitelisted profile fields needed for deterministic suggestions. Profile
+  passwords, resume bullets, generated materials, and free-text answer drafts
+  are not sent to the extension autofill route.
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
