@@ -8,6 +8,7 @@
 const MAX_SCALE = 8; // upper wheel/zoom bound
 const HARD_MIN_SCALE = 0.25; // lower wheel/zoom bound (relaxed for huge diagrams)
 const FIT_PADDING = 48; // px of breathing room around the fitted content
+const READABLE_START_WIDTH = 760; // px; mobile opens large enough to read labels
 const ZOOM_STEP = 1.4; // toolbar-button / keyboard zoom multiplier
 const WHEEL_SENSITIVITY = 0.0015; // deltaY -> scale factor
 const DRAG_THRESHOLD = 4; // px of travel before a press counts as a pan
@@ -268,6 +269,7 @@ function openLightbox(trigger: Trigger): void {
     el.type = "button";
     el.className = "jh-lightbox__btn";
     el.setAttribute("aria-label", label);
+    el.title = label;
     el.textContent = glyph;
     return el;
   };
@@ -277,7 +279,11 @@ function openLightbox(trigger: Trigger): void {
   const closeBtn = button("Close", "×"); // multiplication sign
   toolbar.append(zoomOutBtn, zoomInBtn, resetBtn, closeBtn);
 
-  overlay.append(stage, toolbar);
+  const hint = document.createElement("p");
+  hint.className = "jh-lightbox__hint";
+  hint.textContent = "Drag to pan. Use + / - or the mouse wheel to zoom. Esc closes.";
+
+  overlay.append(stage, hint, toolbar);
   document.body.appendChild(overlay);
   document.documentElement.classList.add("jh-lightbox-open");
 
@@ -304,12 +310,24 @@ function openLightbox(trigger: Trigger): void {
     content.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
   };
 
-  const centerAt = (nextScale: number): void => {
+  const centerAt = (nextScale: number, preferReadableTop = false): void => {
     const st = stageSize();
     scale = nextScale;
     tx = (st.w - size.w * scale) / 2;
-    ty = (st.h - size.h * scale) / 2;
+    ty =
+      preferReadableTop && size.h * scale > st.h - FIT_PADDING
+        ? FIT_PADDING / 2
+        : (st.h - size.h * scale) / 2;
     apply();
+  };
+
+  const initialScale = (): number => {
+    const st = stageSize();
+    const readableScale = Math.min(1, READABLE_START_WIDTH / size.w);
+    if (st.w < 640 || trigger.kind === "svg") {
+      return Math.max(fitScale(), readableScale);
+    }
+    return fitScale();
   };
 
   // Zoom to `nextScale` while keeping the content point under (cx, cy) fixed.
@@ -481,7 +499,8 @@ function openLightbox(trigger: Trigger): void {
   document.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("resize", onResize);
 
-  // Initial state: fit to viewport, centered, focus moved into the dialog.
-  reset();
+  // Initial state: mobile opens at a readable scale; the reset control fits the
+  // whole asset when the user wants the complete map again.
+  centerAt(initialScale(), true);
   overlay.focus();
 }

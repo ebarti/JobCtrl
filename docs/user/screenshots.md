@@ -1,9 +1,17 @@
+---
+pageClass: jh-user-guide-page jh-visual-doc jh-product-tour-page
+aside: false
+---
+
 # Product Tour
 
 This is a screen-by-screen tour of JobHunter, in the order you actually use it:
 set up your profile, configure discovery, run the pipeline, then review and
 apply. Every image below is generated from synthetic sample data, so nothing
 here is a real person, a real resume, or a real job.
+
+Click or tap any screenshot to zoom. On small screens, swipe the screenshot
+sideways first when you want to inspect the actual controls.
 
 ## Set Up Your Profile
 

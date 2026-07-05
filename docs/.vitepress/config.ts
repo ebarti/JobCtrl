@@ -47,7 +47,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Product Tour", link: "/user/screenshots" },
       { text: "Daily Workflow", link: "/user/normal-flows" },
       { text: "Configuration", link: "/user/configuration" },
-      { text: "Data & Safety", link: "/user/data-and-safety" },
+      { text: "Data, Privacy & Safety", link: "/user/data-and-safety" },
       { text: "Security", link: "/user/security" },
     ],
   },
@@ -209,7 +209,17 @@ export default withMermaid(
       ],
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
-      search: { provider: "local" },
+      search: {
+        provider: "local",
+        options: {
+          miniSearch: {
+            searchOptions: {
+              boost: { title: 4, titles: 2, text: 1 },
+              prefix: true,
+            },
+          },
+        },
+      },
       outline: { level: [2, 3] },
     },
     // Diagram styling lives in the theme layer: docs/.vitepress/theme

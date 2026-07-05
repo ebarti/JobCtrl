@@ -1,4 +1,5 @@
 ---
+pageClass: jh-user-guide-page
 next: false
 ---
 
@@ -14,7 +15,15 @@ and the honest limits of running everything locally.
 
 This page owns JobHunter's threat model and safety gates. For the full inventory
 of what is stored locally and how to share bug reports safely, see
-[Data & Safety](data-and-safety.md).
+[Data, Privacy & Safety](data-and-safety.md).
+
+## Privacy Quick Answer
+
+Local-first means JobHunter stores your database, browser state, generated
+resumes, cover letters, logs, and credentials on your own computer. It does not
+mean every character stays local forever: LLM providers, the apply agent,
+Gmail, Google Maps, CAPTCHA solving, and Langfuse receive data only when you
+configure and run the specific step that needs them.
 
 ## What Leaves Your Machine
 

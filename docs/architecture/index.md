@@ -1,3 +1,8 @@
+---
+pageClass: jh-visual-doc jh-wide-diagram-page
+aside: false
+---
+
 # System Architecture
 
 JobHunter is a local-first system: a TypeScript API and a web app (the web app

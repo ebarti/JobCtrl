@@ -5,6 +5,9 @@ hero:
   name: JobHunter
   text: Local-first, AI-assisted job application pipeline
   tagline: Discover jobs, score fit against your real profile, generate audited tailored materials, and apply behind explicit approval gates — all on your own machine.
+  image:
+    src: /assets/screenshots/dashboard.png
+    alt: JobHunter dashboard showing pipeline progress, job counts, and apply runs
   actions:
     - theme: brand
       text: Product Tour

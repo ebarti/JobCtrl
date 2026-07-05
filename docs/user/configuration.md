@@ -1,3 +1,7 @@
+---
+pageClass: jh-user-guide-page
+---
+
 # Configuration
 
 Most people never need this page. JobHunter ships with working defaults, and the

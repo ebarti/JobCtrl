@@ -4,6 +4,7 @@ import DefaultTheme from "vitepress/theme";
 import MermaidRenderer from "./MermaidRenderer.vue";
 import { setupAriaCurrent } from "./aria-current";
 import { setupLightbox } from "./lightbox";
+import { setupSearchA11y } from "./search-a11y";
 import "./custom.css";
 
 // Extend the stock VitePress theme with a dependency-free click-to-expand
@@ -21,6 +22,7 @@ export default {
     if (inBrowser) {
       setupLightbox();
       setupAriaCurrent(router);
+      setupSearchA11y();
     }
   },
 } satisfies Theme;

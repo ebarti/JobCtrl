@@ -1,10 +1,22 @@
-# Data & Safety
+---
+pageClass: jh-user-guide-page
+---
+
+# Data, Privacy & Safety
 
 The short version: your job-search data stays on your machine. Your profile,
 jobs, generated resumes and cover letters, logs, and browser state all live in a
 folder under your home directory, and nothing leaves your computer unless you run
 a step that needs an external service. This page lists what is stored locally,
 what can leave, and which actions to treat with care.
+
+## Privacy Quick Answer
+
+JobHunter has no hosted backend and no account system. Your database and files
+stay local by default. Privacy-sensitive content can still leave your machine
+when you deliberately run steps that need outside services: LLM calls, job-board
+fetches, Gmail read-only lookups, Google Maps autocomplete, CAPTCHA solving, or
+Langfuse telemetry when configured.
 
 ## Local Data
 

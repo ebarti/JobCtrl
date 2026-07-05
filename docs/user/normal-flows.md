@@ -1,3 +1,8 @@
+---
+pageClass: jh-user-guide-page jh-visual-doc jh-daily-workflow-page
+aside: false
+---
+
 # Daily Workflow
 
 This is your daily loop with JobHunter: set up once, then repeat Discover →

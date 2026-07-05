@@ -1,3 +1,7 @@
+---
+pageClass: jh-user-guide-page
+---
+
 # Getting Started
 
 JobHunter runs entirely on your own computer. This guide takes you from an
@@ -7,8 +11,8 @@ developer-shaped even though daily use is not. It is local-first: your data
 stays on your machine unless you explicitly configure an external provider.
 
 ::: tip Want to see the product first?
-The [Product Tour](screenshots.md) walks through every screen with annotated
-screenshots — no install required.
+The [Product Tour](screenshots.md) walks through every screen with captioned,
+zoomable screenshots — no install required.
 :::
 
 ## What You'll Have When You're Done
