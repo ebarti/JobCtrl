@@ -569,6 +569,12 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
   and (optionally) adding a separate canonical "fit band" breakdown from
   `job_requirement_fit_reports.fit_band`. *Owner: one vocabulary or both, and the
   visible label.*
+  **Decision 2026-07-05:** expose **both** vocabularies as separate analytics
+  dimensions. Keep the existing parity-guarded `SCORE_BAND_ORDER` breakdown under
+  a `scoreBand` / "score band" label, and add a separate canonical
+  `fitBand` / "fit band" breakdown sourced from
+  `job_requirement_fit_reports.fit_band`. Do not merge, rename, or coerce one
+  vocabulary into the other.
 - **D3 — Role family.** Net-new: no per-job role family is persisted. Recommend
   **defer** (non-goal for v1); if wanted, derive from title via the existing
   `role_title_matcher` / `ROLE_FAMILY_MARKERS` and persist a `role_family` on the
