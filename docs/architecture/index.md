@@ -26,7 +26,7 @@ flowchart TD
   end
   Temporal["⏱️ Temporal dev server<br/>(gRPC :7233, UI :8233)"]
   Db[("SQLite<br/>~/.jobhunter/jobhunter.db")]
-  Files[/"Artifact files<br/>resumes · covers · PDFs"/]
+  Files[("Artifact files<br/>resumes · covers · PDFs")]
   subgraph Ext["🌍 Outside world"]
     Boards(["Job boards / ATSes"])
     LLM(["LLM providers"])
