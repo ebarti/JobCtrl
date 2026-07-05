@@ -3,8 +3,25 @@
 Query keys, mutation/invalidation patterns, forms, tables, and stores per
 context. Part of the [Frontend Architecture](index.md) reference.
 
+**Read this if** you are writing code inside a context and need the house style
+for a query, mutation, route, form, table, or store.
+
 This section defines the common patterns each context follows: query
 keys, route shapes, hook conventions, primitives, forms.
+
+**The patterns at a glance:**
+
+- [§4.1 Query-Key Convention](#_4-1-query-key-convention) — one tenant-first key factory per context.
+- [§4.2 Hook Conventions](#_4-2-hook-conventions) — components call context hooks, never the API client or `QueryClient` directly.
+- [§4.3 Route Shapes](#_4-3-route-shapes-tanstack-router-file-based) — file-based TanStack Router with Zod-typed search params.
+- [§4.4 Per-Context Tactical Spec](#_4-4-per-context-tactical-spec) — the routes / queries / mutations / components table for each of the eight contexts.
+- [§4.5 View Composition](#_4-5-view-composition) — how views assemble context pieces and bind the shared data grid.
+- [§4.6 Forms Convention](#_4-6-forms-convention-tanstack-form) — TanStack Form + Zod, one schema for both the form and the request body.
+- [§4.7 Component Primitives](#_4-7-component-primitives-shadcn-ui) — shadcn/ui (Radix + Tailwind), copied into `shared/ui/` and owned.
+- [§4.8 Styling](#_4-8-styling-—-tailwind-css) — Tailwind CSS 4, CSS-first tokens, `data-theme` dark mode.
+- [§4.9 Cross-Cutting Client State](#_4-9-cross-cutting-client-state-zustand-vs-context) — React context for stable identities, Zustand for everything mutable.
+- [§4.10 Theme & Density](#_4-10-theme-density-resolved-§6-question-6) — a single persisted Zustand store as the source of truth.
+- [§4.11 Error Handling](#_4-11-error-handling-resolves-§6-question-11) — global toast, per-mutation `onError`, and route error boundaries.
 
 ### 4.1 Query-Key Convention
 

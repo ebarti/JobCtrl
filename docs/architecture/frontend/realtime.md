@@ -1,7 +1,39 @@
 # 7. Realtime — SSE Consumer Architecture
 
-The SSE event stream, the invalidation router, and how realtime cache fan-out
-works. Part of the [Frontend Architecture](index.md) reference.
+The Server-Sent Events (SSE) event stream, the invalidation router, and how
+realtime cache fan-out works. Part of the [Frontend Architecture](index.md)
+reference.
+
+**Read this if** you need to understand how a backend change reaches the screen
+without a manual refresh — or you are adding a new event type.
+
+**SSE** is a one-way channel: the browser opens a long-lived HTTP connection and
+the server pushes named events down it. The web app never sends messages back on
+this channel — it only listens, then refreshes the affected parts of the query
+cache. At a glance:
+
+```mermaid
+flowchart LR
+  W["Python worker"] --> DB[("SQLite<br/>job_events")]
+  DB --> API["apps/api<br/>SSE endpoint"]
+  API --> ES["EventSource<br/>(browser)"]
+  ES --> IR["Invalidation<br/>router"]
+  IR --> QC["Query cache"]
+  QC --> UI["React views<br/>refetch + re-render"]
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  class W py
+  class API ts
+  class ES,IR,UI ui
+  class DB,QC store
+```
+
+The worker records an event, the endpoint streams it, the router turns it into
+the right cache invalidations, and the views re-fetch. §7.6 shows this same path
+as a detailed sequence diagram.
 
 The backend records `JobEvent` rows in `job_events`
 (`workers/automation`'s `EventPublisher` + `apps/api/src/projections.ts`)

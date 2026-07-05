@@ -3,6 +3,18 @@
 The persistence boundary (§7) and the consistency, concurrency, and failure
 rules (§8). Part of the [Domain Model](index.md) reference.
 
+Two ideas hold this page together. First, **domain types are not database rows**:
+each aggregate has one repository that translates between the in-memory domain
+shape and the SQLite tables, so the schema can change without touching domain
+logic (§7). Second, **one aggregate changes per transaction**, and everything
+downstream — other aggregates, read-model projections — catches up through
+domain events; idempotent handlers and crash-recovery rules keep that eventual
+consistency safe when a step fails partway (§8).
+
+**Read this if** you are adding a table or repository, changing a stage-state
+transition, or reasoning about what the system does when a step crashes
+mid-flight.
+
 ## 7. Persistence Boundary
 
 ### 7.1 Repositories Per Aggregate
@@ -168,8 +180,9 @@ been deleted; there is no in-process pipeline runner.
 - **Saga compensation** (e.g. browser-worker cleanup after apply failure) uses
   Temporal's activity/compensation mechanics rather than a hand-rolled manager.
 
-For the full execution model, sequence diagrams, and failure behaviour see
-`docs/architecture.md` and `docs/job-pipeline-architecture.md`.
+For the full execution model, sequence diagrams, and failure behaviour see the
+[System Architecture overview](../index.md) and the
+[Job Pipeline section](../pipeline/index.md).
 
 ### 8.5 Stage State Machine
 

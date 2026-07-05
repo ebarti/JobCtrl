@@ -1,23 +1,35 @@
-# Domain Model (DDD)
+# Backend Domain Model (DDD)
 
-The canonical DDD + hexagonal architecture the implementation realises (see
+This section is the backend's design documentation: which parts of the system
+own which data, how those parts talk to each other, and where a future hosted
+deployment would split them apart. It is the canonical Domain-Driven Design
+(DDD) + Hexagonal Architecture the implementation realises (see
 `docs/plans/implemented/2026-05-06-ddd-migration.md` for the delivery record).
-Section numbering (§1–§11) is preserved across the subpages because code
-comments cite it:
 
-- [3. Strategic Design — Bounded Contexts](strategic.md)
-- [4. Tactical Design](tactical.md)
-- [5. Hexagonal Architecture — Ports & Adapters](ports.md)
-- [6. Cross-Context Integration](integration.md)
-- [7–8. Persistence, Consistency & Failure Modes](persistence.md)
-- [9. Cloud Deployment Architecture](cloud.md)
-- [10–11. Risks & Glossary](reference.md)
+Three terms recur on every page. A **bounded context** is a self-contained
+slice of the backend with its own vocabulary and data; an **aggregate** is the
+cluster of data one context keeps consistent as a single unit; a **port** is an
+interface the domain uses to reach the outside world (databases, browsers,
+LLMs) without depending on it. The [glossary](reference.md#_11-glossary) defines
+these and every other term used across the section.
+
+Section numbering (§1–§11) is preserved across the subpages because
+`packages/domain-types` comments and `AGENTS.md` cite it. Read the pages in
+sidebar order — each answers one question:
+
+- [Strategic design](strategic.md) — what are the eight bounded contexts, and how do they relate?
+- [Tactical design](tactical.md) — inside each context, what are the aggregates, domain events, and invariants?
+- [Ports & adapters](ports.md) — which interfaces does the domain depend on, and what implements them today?
+- [Cross-context integration](integration.md) — how do contexts coordinate, through domain events and the JSON-RPC bridge?
+- [Persistence & failure modes](persistence.md) — where does data live, and how does it stay consistent when a step fails?
+- [Cloud deployment](cloud.md) — what changes when JobHunter runs multi-tenant in the cloud?
+- [Risks & glossary](reference.md) — what are the open risks, and what does each domain term mean?
 
 ## 1. Purpose & Non-Goals
 
 ### Purpose
 
-This document defines the **canonical domain architecture** for JobHunter,
+This section defines the **canonical domain architecture** for JobHunter,
 modeled with Domain-Driven Design (DDD) and Hexagonal Architecture (Ports &
 Adapters). It is the authoritative reference for:
 
@@ -32,25 +44,26 @@ Every modeling choice includes rationale so a senior engineer joining the team
 can re-derive the decision independently.
 
 > **Status — realised, not aspirational.** The DDD + hexagonal domain model in
-> this document is implemented in the codebase; the migration that landed it is
+> this section is implemented in the codebase; the migration that landed it is
 > recorded in `docs/plans/implemented/2026-05-06-ddd-migration.md`. Read this as
 > a description of the **current** architecture with named hosted seams, not a
 > future target. One seam has since crossed from "hosted-future" to "local-now":
 > **Temporal is the local orchestrator today** — workflows and activities run
-> against a local `temporal server start-dev`, not a cloud-only engine (see
-> `docs/architecture.md` and `docs/job-pipeline-architecture.md`). The remaining
+> against a local `temporal server start-dev`, not a cloud-only engine (see the
+> [System Architecture overview](../index.md) and the
+> [Job Pipeline section](../pipeline/index.md)). The remaining
 > hosted seams named in Section 9 (Postgres, S3, SQS FIFO, Auth0/Cognito,
 > Browserbase, Secrets Manager) are still named-not-built.
 
 **Cloud deployment is a hard requirement.** Local-first mode is a validation
-gate, not the end state. Every decision in this document is designed
+gate, not the end state. Every decision in this section is designed
 to ship to a hosted multi-tenant cloud deployment. Section 9 remains the target
 for those not-yet-built seams; it is no longer accurate for Temporal, which is
 already the local execution engine.
 
 ### Non-Goals
 
-- **Project history.** This document does not prescribe file moves, PR
+- **Project history.** This section does not prescribe file moves, PR
   sequences, or rollout phases. Plan records live under `docs/plans/`.
 - **Implementation code.** Pseudocode sketches appear where they aid clarity; no
   production code is included.

@@ -1,8 +1,22 @@
-# Data And Safety
+---
+pageClass: jh-user-guide-page
+---
 
-JobHunter is designed for local-first use because job-search data is sensitive.
-This page summarizes what is stored, what can leave the machine, and which
-actions require extra care.
+# Data, Privacy & Safety
+
+The short version: your job-search data stays on your machine. Your profile,
+jobs, generated resumes and cover letters, logs, and browser state all live in a
+folder under your home directory, and nothing leaves your computer unless you run
+a step that needs an external service. This page lists what is stored locally,
+what can leave, and which actions to treat with care.
+
+## Privacy Quick Answer
+
+JobHunter has no hosted backend and no account system. Your database and files
+stay local by default. Privacy-sensitive content can still leave your machine
+when you deliberately run steps that need outside services: LLM calls, job-board
+fetches, Gmail read-only lookups, Google Maps autocomplete, CAPTCHA solving, or
+Langfuse telemetry when configured.
 
 ## Local Data
 
@@ -32,7 +46,11 @@ Common files and directories:
 The development launcher also writes PIDs and process logs under the repo's
 `.dev/` directory — treat those logs as sensitive too.
 
-Do not commit any of those files or copied variants of them.
+::: warning Never commit your local data
+Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those
+files. They hold your database, provider keys, and generated resumes and cover
+letters.
+:::
 
 ## External Services
 
@@ -48,12 +66,13 @@ Review configuration before running large pipelines.
 
 ## Auto-Apply Safety
 
-Apply automation can submit real applications, so it is guarded by consent
-gates: dry-run first, an explicit approval before any live submission, a
-browser-layer dry-run guard, at-most-once submission, and a daily spend
-ceiling. The apply agent also reads untrusted job pages, so prompt injection is
-a real exposure. The full gate model, the apply agent's automation posture, and
-the credential/prompt-interpolation disclosure live in [Security](security.md).
+Apply automation can submit real applications, so it is guarded by approval
+gates: a rehearsal dry run (recommended before approving anything), an explicit
+approval before any live submission, a browser-level guard during dry runs, no
+application submitted twice, and a daily spend ceiling. The apply agent also reads untrusted job pages, so prompt
+injection is a real exposure. The full gate model, the apply agent's automation
+posture, and how credentials appear in the apply prompt live in
+[Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 
@@ -62,8 +81,11 @@ Two guarantees stay here because they are about your local artifacts:
 - failed refreshes or invalid edited drafts must not destroy current accepted
   materials.
 
-Never run auto-apply against broad targets until you have verified profile data,
-materials, field mapping, account state, and site-specific behavior.
+::: warning Applying is irreversible
+Never run auto-apply against broad targets until you have verified your profile
+data, materials, field mapping, account state, and site-specific behavior. Once
+an application is submitted, you cannot undo it.
+:::
 
 ## Scoring Safety
 
@@ -79,7 +101,7 @@ LLM usage is metered locally. A daily budget (`dailyBudgetUsd`, default `25`;
 preflight runs before the heavy activity and stops the workflow with a
 non-retryable budget error once the estimated daily spend reaches the
 ceiling. Current spend versus budget is visible on `GET /v1/health` and in
-the UI health surface.
+the web app's health surface.
 
 ## Telemetry
 

@@ -3,6 +3,12 @@
 The eight bounded contexts, their ubiquitous language, and the relationships
 between them. Part of the [Domain Model](index.md) reference.
 
+A **bounded context** is a slice of the backend with its own vocabulary and its
+own data, where a term like "Job" carries one precise meaning. Drawing these
+boundaries explicitly is what stops one context's assumptions from leaking into
+another. This page names the eight contexts, says what each owns (and does not
+own), and maps how they hand work to one another.
+
 ### Context Map
 
 ```mermaid
@@ -68,7 +74,19 @@ graph TB
     SECRETS -.->|"Credential fetch"| JD
     SECRETS -.->|"Credential fetch"| JE
     SECRETS -.->|"Credential fetch"| AA
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+    class JD,JE,SC,MG,AA,CP,PO,PREP,CMP py
+    class OPS store
+    class IAM,BILL,AUDIT,SECRETS ext
 ```
+
+Notice how the five **Core Domain** contexts each publish a Published-Language
+event to Pipeline Orchestration, which in turn commands them and forwards
+progress to Operations; the platform contexts at the bottom (Identity, Billing,
+Audit, Secrets) are cloud-only seams that do not exist in local-first mode.
 
 ### 3.1 Job Discovery
 

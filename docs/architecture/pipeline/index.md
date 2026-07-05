@@ -1,34 +1,41 @@
 # Job Pipeline
 
-The pipeline executes as Temporal-native workflows — one durable workflow per
-stage family, activities per side effect. This page holds the product shape,
-execution surfaces, and the workflow catalog:
+"The pipeline" is the life of one job posting inside JobHunter: from the moment
+discovery finds a posting, through enrichment, scoring, and tailored resume and
+cover-letter generation, to a supervised apply and the feedback that comes back.
+This overview page holds the product stage shape, the execution surfaces that
+start work, and the full workflow catalog; the pages below drill into how that
+work runs, each answering the next question a newcomer asks:
 
-- [Workflow Envelope, Activities & Retries](envelope.md) — the universal envelope, activity inventory, and error taxonomy
-- [Concurrency & Fan-out](concurrency.md) — worker capacity, where fan-out happens, and what bounds throughput
-- [Stage Walkthrough](stages.md) — Discover → Enrich → Prepare → Score → Tailor → Cover → PDF → Apply, with sequence diagrams
-- [Operations, Persistence & Events](operations.md) — spend ceiling, discovery schedule, persistence map, events/SSE, failure behavior
+- [Stage Walkthrough](stages.md) — what does each stage do, from Discover to
+  Apply, and what does it persist?
+- [Envelope & Activities](envelope.md) — what contract does every workflow obey,
+  and how do activities, retries, and the error taxonomy work?
+- [Concurrency & Fan-out](concurrency.md) — how much runs at once, and what
+  bounds throughput?
+- [Operations & Events](operations.md) — how do spend, the discovery schedule,
+  persistence, events, and failures behave day to day?
 
-This document explains how JobHunter's job pipeline executes today. It is the
-deep-dive companion to [`architecture.md`](../index.md): that file names the
-runtime boundaries and system topology (TypeScript app/API, Python worker,
-Temporal, SQLite, SSE), while this document follows the work itself — from a
-button click or CLI command, through the JSON-RPC boundary, into Temporal
-workflows and Python activities, and back out through persistence, events, and
-projections to the UI.
+Under the hood, every long-running unit of work is a **Temporal (the workflow
+engine) workflow** — one durable workflow per stage family, with activities for
+each side effect. There is no in-process pipeline engine and no flag that falls
+back to one: the old sequential/threaded runner was deleted. If work takes
+longer than an HTTP request, it runs on the Python worker under Temporal.
 
-The canonical domain model is [`ddd-target.md`](../domain-model/index.md). Resume tailoring
-has its own deep-dive in [`tailoring.md`](../tailoring.md); this file summarizes the
-tailor stage and points there for gate depth.
+This section is the deep-dive companion to the
+[System Architecture](../index.md) overview: that page names the runtime
+boundaries and system topology — the web app, the TypeScript API, the Python
+worker, Temporal, SQLite, and the Server-Sent Events (SSE) stream — while these
+pages follow the work through them, from a button click or CLI command, across
+the JSON-RPC boundary, into workflows and Python activities, and back out through
+persistence, events, and projections to the web app. The canonical domain model
+is the [Domain Model (DDD)](../domain-model/index.md) section; resume tailoring
+has its own deep-dive in [Resume Tailoring Logic](../tailoring.md), and this
+section summarizes the Tailor stage and points there for gate depth.
 
-Read the shared-model sections first (product shape, execution surfaces, the
-universal workflow envelope, the workflow catalog, activities, and the error
-taxonomy). The stage walkthrough then follows each phase end to end.
-
-Every long-running unit of work in JobHunter is a **Temporal workflow**. There
-is no in-process pipeline engine and no flag that falls back to one — the old
-sequential/threaded runner was deleted. If work takes longer than an HTTP
-request, it runs on the worker under Temporal.
+**Read this if** you are changing pipeline behavior, debugging a stuck or
+duplicated run, or need to know exactly where a stage persists and how the web
+app learns a stage finished.
 
 ## Product Shape: Discover → Apply
 
@@ -65,7 +72,7 @@ which workflow is selected.
 
 | Surface | Entry point | What it starts |
 | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API dispatches JSON-RPC `run_stage`. A `discover`-only request starts `DiscoverWorkflow`; anything else starts `JobPipelineWorkflow` (which delegates `discover` and `apply` to child workflows). |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | The TypeScript API dispatches JSON-RPC `run_stage`. A `discover`-only request starts `DiscoverWorkflow`; anything else starts `JobPipelineWorkflow` (which delegates `discover` and `apply` to child workflows). |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
 | Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |
@@ -74,7 +81,7 @@ which workflow is selected.
 
 ### Entry Points → JSON-RPC → Workflow Selection
 
-The TS API never runs pipeline logic itself. It maps UI/CLI intent to a JSON-RPC
+The TypeScript API never runs pipeline logic itself. It maps UI/CLI intent to a JSON-RPC
 method over a long-lived `jobhunter rpc` subprocess (stdin/stdout, one JSON
 envelope per line). The method registry in
 `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py` marks each
@@ -121,7 +128,7 @@ sequenceDiagram
     autonumber
     participant User
     participant Web as Web UI
-    participant Api as TS API (Fastify)
+    participant Api as TypeScript API (Fastify)
     participant Rpc as jobhunter rpc (JSON-RPC)
     participant T as Temporal
     participant WF as Workflow (worker)

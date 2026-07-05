@@ -1,14 +1,17 @@
 # Concurrency & Fan-out
 
 Where parallelism actually lives in the pipeline, what bounds it, and which
-knobs are real. The short version: one worker process executes every activity,
-its slot count is the only Temporal-level concurrency control, and workflows
-fan out for isolation rather than for parallel speed-up.
+knobs are real. The short version: a single Python worker executes every
+activity, its slot count is the only Temporal (the workflow engine) concurrency
+control, and workflows fan out for isolation rather than for parallel speed-up.
+
+**Read this if** you are tuning worker capacity, wondering why two stages are not
+running in parallel, or hunting a throughput bottleneck.
 
 ```mermaid
 flowchart LR
     CLI["CLI / API / schedule"] -->|start workflows| TQ["Task queue jobhunter-default"]
-    TQ --> W["JobHunter worker process"]
+    TQ --> W["Python worker process"]
     subgraph W2["Worker capacity"]
         SLOTS["Activity slots: JOBHUNTER_MAX_CONCURRENT_ACTIVITIES (default 4)"]
         EXEC["ThreadPoolExecutor: slots + 2 threads"]
@@ -18,6 +21,11 @@ flowchart LR
     W --> P["JobPipelineWorkflow: stages in order, child workflows for discover / apply"]
     W --> A["ApplyWorkflow: single-flight per job id"]
     BUDGET["check_spend_budget preflight"] -.->|blocks over-budget starts| D & P & A
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+    class CLI,W,SLOTS,EXEC,D,P,A,BUDGET py
+    class TQ infra
 ```
 
 ## The Worker's Capacity Model
@@ -78,4 +86,4 @@ Two knobs that look like Temporal concurrency but are not:
 | Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
 
 Data-flow context — where each stage persists and how results reach the UI —
-lives in [Operations, Persistence & Events](operations.md).
+lives in [Operations & Events](operations.md).

@@ -4,6 +4,10 @@ The hosted-future seams: what changes when JobHunter runs multi-tenant in the
 cloud, and the fitness functions that guard the path. Part of the
 [Domain Model](index.md) reference.
 
+**Read this if** you want to know which parts of the system are built for the
+cloud today, which are named-but-not-built seams, and the concrete trigger that
+tells the team when to swap a local adapter for its hosted equivalent.
+
 Cloud deployment is a **hard requirement**, not a future aspiration. The
 local-first phase validates the product; this section defines the target
 deployment model that ships to production.
@@ -179,7 +183,7 @@ cloud" (circular), but measurable conditions.
 |---|---|---|---|
 | SQLite with WAL mode | AWS RDS Postgres 16 + pgbouncer | Concurrent active users > 1 **OR** DB size > 10 GB **OR** multi-process writes required | SQLite's single-writer lock is the hard limit. 10 GB is a practical performance ceiling for WAL mode with full-text queries. |
 | In-process synchronous event bus | Transactional outbox + SQS FIFO | Multi-process deployment (> 1 API instance **OR** > 1 worker instance) | In-process dispatch cannot cross process boundaries. The outbox pattern is the minimum viable distributed event bus. |
-| Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC to a Python worker service | TS API and worker deployed as separate services **OR** worker fleet > 1 machine | Only the JSON-RPC *transport* changes (subprocess stdio → HTTP POST); the message shapes are identical. Durable workflow execution is already provided locally by Temporal. |
+| Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC to a Python worker service | TypeScript API and worker deployed as separate services **OR** worker fleet > 1 machine | Only the JSON-RPC *transport* changes (subprocess stdio → HTTP POST); the message shapes are identical. Durable workflow execution is already provided locally by Temporal. |
 | Local Chrome on CDP ports | Browserbase managed sessions | **Any** cloud deployment | Chrome requires elevated container privileges or `--no-sandbox` (security risk). Browserbase eliminates this entirely. This is a day-1 cloud blocker, not a gradual migration. |
 | SQLite Candidate Profile tables | Postgres `profiles` + child profile tables | Multi-tenant deployment **OR** concurrent profile editors | Local SQLite has a single-writer limit; hosted profile editing needs tenant-scoped concurrency control. |
 | `LocalFilesystemAdapter` (tailored resumes, PDFs) | S3 with tenant-prefixed keys | Multi-node deployment (no shared filesystem) **OR** artifact size > 1 GB per tenant | Local filesystem doesn't span nodes. |

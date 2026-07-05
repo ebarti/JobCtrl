@@ -1,6 +1,198 @@
 /* Theme customisations for the JobHunter docs site.
-   Owns: click-to-expand lightbox styling + affordance, and letting inline
-   mermaid diagrams use the full content width. */
+   Owns: product-doc polish, click-to-expand lightbox styling + affordance,
+   and letting visual explanations stay readable across breakpoints. */
+
+:root {
+  --jh-doc-surface: color-mix(in oklab, var(--vp-c-bg-soft), var(--vp-c-bg) 32%);
+  --jh-doc-frame: color-mix(in oklab, var(--vp-c-divider), var(--vp-c-brand-1) 18%);
+}
+
+/* --------------------------------------------------------------------------
+   Homepage: make the first impression product-led, not a blank docs shell.
+   -------------------------------------------------------------------------- */
+.VPHome .VPHero {
+  padding-bottom: 32px;
+}
+
+.VPHome .VPHero.has-image .container {
+  align-items: center;
+  gap: 40px;
+}
+
+.VPHome .VPHero .name,
+.VPHome .VPHero .text {
+  text-wrap: balance;
+  letter-spacing: 0;
+}
+
+.VPHome .VPHero .tagline {
+  text-wrap: pretty;
+}
+
+.VPHome .VPHero .image {
+  margin: 28px 0 0;
+  order: 2;
+}
+
+.VPHome .VPHero .main {
+  order: 1;
+}
+
+.VPHome .VPHero .image-container {
+  width: min(100%, 720px);
+  height: auto;
+  aspect-ratio: 1.44;
+  transform: none;
+}
+
+.VPHome .VPHero .image-bg {
+  display: none;
+}
+
+.VPHome .VPHero .image-src {
+  position: static !important;
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  height: auto !important;
+  border: 1px solid var(--jh-doc-frame);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.16);
+  transform: none !important;
+}
+
+.VPHome .VPFeature {
+  border-radius: 8px;
+}
+
+@media (min-width: 960px) {
+  .VPHome .VPHero {
+    padding-top: calc(var(--vp-nav-height) + var(--vp-layout-top-height, 0px) + 56px);
+  }
+
+  .VPHome .VPHero.has-image .main {
+    max-width: 540px;
+  }
+
+  .VPHome .VPHero .image {
+    margin: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .VPHome .VPHero {
+    padding-bottom: 24px;
+  }
+
+  .VPHome .VPHero .image-container {
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Audience-specific navigation: user-guide pages should not look like a
+   developer reference manual. Hide by stable destination links rather than
+   sidebar position so group insertions/reordering cannot hide the wrong set.
+   -------------------------------------------------------------------------- */
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/developer/"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/architecture/"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/local-ts-api"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/requirements"]) {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Visual documentation pages: keep prose readable while letting screenshots
+   and diagrams use the available page width.
+   -------------------------------------------------------------------------- */
+.Layout.jh-visual-doc:not(.jh-outline-page) .VPDoc .aside {
+  display: none;
+}
+
+.Layout.jh-visual-doc .VPDoc .content {
+  max-width: 1100px;
+}
+
+.Layout.jh-visual-doc .VPDoc .content-container {
+  max-width: 100%;
+}
+
+.Layout.jh-visual-doc .vp-doc > :not(p:has(> img:only-child)):not(.mermaid),
+.Layout.jh-visual-doc .vp-doc > div > :not(p:has(> img:only-child)):not(.mermaid) {
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.vp-doc p {
+  text-wrap: pretty;
+}
+
+.vp-doc p:has(> img:only-child) {
+  position: relative;
+  margin: 28px auto 18px;
+  padding: 8px;
+  max-width: min(1040px, 100%);
+  overflow: auto hidden;
+  border: 1px solid var(--jh-doc-frame);
+  border-radius: 8px;
+  background: var(--jh-doc-surface);
+  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.08);
+  scrollbar-color: var(--vp-c-divider) transparent;
+}
+
+@media (min-width: 768px) {
+  .Layout.jh-visual-doc .vp-doc p:has(> img:only-child) {
+    width: min(960px, calc(100vw - var(--vp-sidebar-width) - 112px));
+    max-width: none;
+  }
+}
+
+.vp-doc p:has(> img:only-child)::after,
+.vp-doc .mermaid[data-jh-zoomable]::after {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--vp-c-bg), transparent 8%);
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  content: "Click to zoom";
+  pointer-events: none;
+}
+
+.vp-doc p:has(> img:only-child) > img {
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  border-radius: 6px;
+}
+
+@media (max-width: 767px) {
+  .vp-doc p:has(> img:only-child) {
+    margin-inline: 0;
+    padding: 6px;
+    box-shadow:
+      inset -18px 0 18px -20px rgba(15, 23, 42, 0.55),
+      0 14px 42px rgba(15, 23, 42, 0.08);
+  }
+
+  .Layout.jh-product-tour-page .vp-doc p:has(> img:only-child) > img,
+  .Layout.jh-daily-workflow-page .vp-doc p:has(> img:only-child) > img {
+    width: max(100%, min(760px, 220vw));
+  }
+
+  .vp-doc p:has(> img:only-child)::after,
+  .vp-doc .mermaid[data-jh-zoomable]::after {
+    content: "Tap to zoom";
+  }
+}
 
 /* --------------------------------------------------------------------------
    Inline mermaid: render as large as possible before zooming.
@@ -10,15 +202,45 @@
    The text column width itself is untouched.
    -------------------------------------------------------------------------- */
 .vp-doc .mermaid {
+  position: relative;
   display: flex;
   justify-content: center;
-  margin: 20px 0;
+  margin: 28px auto;
+  padding: 8px;
+  border: 1px solid var(--jh-doc-frame);
+  background: var(--jh-doc-surface);
+  max-width: min(1040px, 100%);
+  overflow: auto hidden;
 }
 
 .vp-doc .mermaid svg {
   width: 100% !important;
   max-width: 100% !important;
   height: auto !important;
+}
+
+@media (max-width: 767px) {
+  .vp-doc .mermaid {
+    justify-content: flex-start;
+    box-shadow: inset -18px 0 18px -20px rgba(15, 23, 42, 0.55);
+  }
+
+  .vp-doc .mermaid svg {
+    width: 760px !important;
+    min-width: 760px !important;
+    max-width: none !important;
+  }
+}
+
+/* Mermaid measures htmlLabels in a detached container where VitePress's
+   .vp-doc paragraph margins/line-height do not apply, then the label renders
+   inside .vp-doc where they do — the delta clips the last line of tall
+   multi-line nodes. Pin label typography to what the measurement saw. */
+.vp-doc .mermaid p,
+.vp-doc .mermaid .nodeLabel,
+.vp-doc .mermaid .edgeLabel {
+  margin: 0;
+  line-height: 1.35;
 }
 
 /* --------------------------------------------------------------------------
@@ -41,6 +263,11 @@
 
 .vp-doc .mermaid:hover {
   outline-color: var(--vp-c-brand-1);
+  box-shadow: 0 0 0 4px var(--vp-c-brand-soft);
+}
+
+.vp-doc p:has(> img:only-child):hover {
+  outline: 1px solid var(--vp-c-brand-1);
   box-shadow: 0 0 0 4px var(--vp-c-brand-soft);
 }
 
@@ -103,6 +330,25 @@
   background: var(--vp-c-bg);
 }
 
+.jh-lightbox__hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  z-index: 2;
+  margin: 0;
+  padding: 6px 10px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+}
+
 /* --------------------------------------------------------------------------
    Toolbar
    -------------------------------------------------------------------------- */
@@ -151,5 +397,44 @@
   .vp-doc .mermaid,
   .jh-lightbox__btn {
     transition: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Dense reference tables: mobile should scroll a readable table, not crush six
+   columns into word fragments.
+   -------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .vp-doc table {
+    display: block;
+    overflow-x: auto;
+    width: 100%;
+    max-width: 100%;
+    box-shadow: inset -18px 0 18px -20px rgba(15, 23, 42, 0.55);
+    scrollbar-color: var(--vp-c-divider) transparent;
+  }
+
+  .vp-doc table :is(th, td) {
+    min-width: 9rem;
+    vertical-align: top;
+  }
+
+  .vp-doc table :is(th, td):first-child {
+    min-width: 5rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Site-wide notice: VitePress hides its footer on sidebar pages by default,
+   but these docs carry the same copyright/license notice everywhere.
+   -------------------------------------------------------------------------- */
+.Layout .VPFooter.has-sidebar {
+  display: block !important;
+  margin-left: var(--vp-sidebar-width);
+}
+
+@media (max-width: 959px) {
+  .Layout .VPFooter.has-sidebar {
+    margin-left: 0;
   }
 }

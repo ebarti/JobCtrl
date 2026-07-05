@@ -1,11 +1,82 @@
-# Decisions
+# Decisions (ADRs)
 
-This file records architectural decisions. Keep entries short, dated, and
-append-only unless a decision is superseded.
+This is JobHunter's log of Architecture Decision Records (ADRs): short, dated,
+append-only notes on why the codebase is shaped the way it is. Once written, an
+entry stays verbatim — a reversed decision earns a new entry that supersedes the
+old one, and later refinements are appended inline as dated amendments.
 
-For the full inventory of every plan and spec that produced these decisions —
-tracked plans and the untracked private planning corpus — see the Historical
-Spec Ledger in `plans/README.md`.
+**Read this if** you are about to make an architectural change and want to know
+what was already decided, when, and why — or you are reviewing a change against
+prior decisions.
+
+The index below groups the records by area; the records themselves follow in
+chronological order. For the full inventory of every plan and spec that produced
+these decisions — tracked plans and the untracked private planning corpus — see
+the Historical Spec Ledger in `plans/README.md`.
+
+## Index
+
+**Product strategy & repository shape**
+
+- [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
+- [TypeScript Product API, Python Workers](#_2026-05-01-typescript-product-api-python-workers) · 2026-05-01
+- [pnpm Workspace With Python Automation Worker](#_2026-05-04-pnpm-workspace-with-python-automation-worker) · 2026-05-04
+
+**Local API & runtime**
+
+- [Fastify For The Local API](#_2026-05-02-fastify-for-the-local-api) · 2026-05-02
+- [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
+- [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
+- [Copyable Commands Stay, Buttons Use Structured Actions](#_2026-05-03-copyable-commands-stay-buttons-use-structured-actions) · 2026-05-03
+
+**Backend domain model (DDD + hexagonal)**
+
+- [DDD + Hexagonal Architecture Adopted](#_2026-05-06-ddd-hexagonal-architecture-adopted) · 2026-05-06
+- [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
+- [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
+- [JSON-RPC 2.0 for the TS API ↔ Python Worker](#_2026-05-06-json-rpc-2-0-for-the-ts-api-↔-python-worker) · 2026-05-06
+
+**Frontend architecture**
+
+- [React With Vite For The Frontend](#_2026-05-02-react-with-vite-for-the-frontend) · 2026-05-02
+- [TanStack Family Adopted For The Frontend](#_2026-05-06-tanstack-family-adopted-for-the-frontend) · 2026-05-06
+- [Frontend Hexagonal Ports With Local + Hosted Adapters Named](#_2026-05-06-frontend-hexagonal-ports-with-local-hosted-adapters-named) · 2026-05-06
+- [SSE Realtime Via `GET /v1/events/stream` + Invalidation Router](#_2026-05-06-sse-realtime-via-get-v1-events-stream-invalidation-router) · 2026-05-06
+- [View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror](#_2026-05-06-view-vs-context-dichotomy-1-1-backend-bounded-context-mirror) · 2026-05-06
+
+**Orchestration & workflow reliability (Temporal)**
+
+- [Collapse `apply_runs` into the Temporal workflow run](#_2026-05-07-collapse-apply-runs-into-the-temporal-workflow-run) · 2026-05-07
+- [Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs](#_2026-07-03-temporal-loop-closure-—-finalize-activities-describe-reconciler-deterministic-workflow-ids) · 2026-07-03
+- [DiscoverWorkflow And Default-Off Temporal Schedules](#_2026-07-03-discoverworkflow-and-default-off-temporal-schedules) · 2026-07-03
+- [One Temporal Execution Path For Long-Running Work](#_2026-07-03-one-temporal-execution-path-for-long-running-work) · 2026-07-03
+- [Heavy Sync RPC Handlers Become Workflows](#_2026-07-03-heavy-sync-rpc-handlers-become-workflows) · 2026-07-03
+- [Classified Errors Drive Temporal Retry; Bounded Attempts](#_2026-07-03-classified-errors-drive-temporal-retry-bounded-attempts) · 2026-07-03
+- [Per-Job JobPreparationWorkflow Replaces The Preparation Queue](#_2026-07-03-per-job-jobpreparationworkflow-replaces-the-preparation-queue) · 2026-07-03
+
+**Scoring, materials & tailoring**
+
+- [Resume Tailoring Quality Is A Product System, Not Prompt Wording](#_2026-06-03-resume-tailoring-quality-is-a-product-system-not-prompt-wording) · 2026-06-03
+- [Employer Analysis Via A 3-SDK Agent Ensemble](#_2026-06-09-employer-analysis-via-a-3-sdk-agent-ensemble) · 2026-06-09
+- [Generated-Materials Audit Is Served From Canonical Provenance Rows](#_2026-06-09-generated-materials-audit-is-served-from-canonical-provenance-rows) · 2026-06-09
+- [Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit](#_2026-06-15-requirement-fit-ledger-—-scores-resolve-from-weighted-requirement-fit) · 2026-06-15
+- [HTML/CSS Resume Rendering Replaces LaTeX](#_2026-06-24-html-css-resume-rendering-replaces-latex) · 2026-06-24
+- [Requirement-Led Resume Tailoring](#_2026-06-30-requirement-led-resume-tailoring) · 2026-06-30
+
+**Discovery & compensation**
+
+- [Compensation Is Warning-Only Evidence From Reported Company-Role Observations](#_2026-06-20-compensation-is-warning-only-evidence-from-reported-company-role-observations) · 2026-06-20
+- [Cross-Source Deduplication By Content Identity](#_2026-07-02-cross-source-deduplication-by-content-identity) · 2026-07-02
+
+**Apply safety & outcomes**
+
+- [Application-Outcome Feedback Loop With Bounded Gmail Ingestion](#_2026-06-01-application-outcome-feedback-loop-with-bounded-gmail-ingestion) · 2026-06-01
+- [At-Most-Once Apply With Binding Approval Gate](#_2026-07-03-at-most-once-apply-with-binding-approval-gate) · 2026-07-03
+
+**Data durability & spend**
+
+- [SQLite Backup Command + Schema-Version Guard](#_2026-07-02-sqlite-backup-command-schema-version-guard) · 2026-07-02
+- [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
 ## 2026-05-01: Local-First Before SaaS Hardening
 

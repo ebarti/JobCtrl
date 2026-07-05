@@ -3,16 +3,39 @@
 The canonical frontend architecture the `apps/web` implementation realises (see
 `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`). Section
 numbering (§1–§15) is preserved across the subpages because conventions and
-reviews cite it:
+reviews cite it.
 
-- [3. Strategic Design — Frontend Bounded Contexts](contexts.md)
-- [4. Tactical Design — Per-Context Patterns](patterns.md)
-- [5–6. State Architecture & Frontend Ports](state-and-ports.md)
-- [7. Realtime — SSE Consumer Architecture](realtime.md)
-- [8–9. Cross-Context Integration & Evolution Paths](integration.md)
-- [10. Testing Strategy](testing.md)
-- [11. Folder Structure](structure.md)
-- [12–15. Risks, Glossary & Resolutions](reference.md)
+Three ideas carry the whole design:
+
+- **Three layers of state.** Every value lives in exactly one home — the server
+  cache, the URL, or a small client-side store — so there is never ambiguity
+  about where a piece of state belongs (§2.1).
+- **Eight contexts, mirrored from the backend.** The web app is divided into the
+  same eight bounded contexts the backend uses, one-for-one, so a feature and
+  the backend contract behind it share a single vocabulary (§2.2).
+- **Views compose; contexts own.** The pages you see (the dashboard, the jobs
+  table) are *views* that only arrange the pieces; the *contexts* own the data,
+  hooks, and behaviour — and the two never blur (§3.10).
+
+**Reading path.** Read top to bottom for the first pass; each page answers one
+question:
+
+1. **[Bounded Contexts](contexts.md)** (§3) — What are the eight contexts, and
+   how do views compose them into pages?
+2. **[Folder Structure](structure.md)** (§11) — Where does each file live under
+   `apps/web/src`?
+3. **[Context Patterns](patterns.md)** (§4) — How do I write a query, mutation,
+   form, or table inside a context?
+4. **[State & Ports](state-and-ports.md)** (§5–6) — Which layer owns a value,
+   and how does feature code reach the network without touching it directly?
+5. **[Realtime (SSE)](realtime.md)** (§7) — How do live backend events refresh
+   the screen?
+6. **[Integration & Evolution](integration.md)** (§8–9) — How does a change in
+   one context fan out to the others, and what is the cloud-mode path?
+7. **[Testing](testing.md)** (§10) — What do I test, and at which layer of the
+   pyramid?
+8. **[Risks & Glossary](reference.md)** (§12–15) — What can go wrong, and what
+   does a given term mean?
 
 ## 1. Purpose & Non-Goals
 
@@ -20,7 +43,7 @@ reviews cite it:
 
 This document defines the **canonical architecture** for the
 JobHunter web frontend (`apps/web`). It is the architectural twin of
-[`docs/ddd-target.md`](../domain-model/index.md) — where the backend doc models bounded
+[backend domain model](../domain-model/index.md) — where the backend models bounded
 contexts, aggregates, ports, and adapters for the Python worker and the TS
 API, this doc models the React/TypeScript single-page application that sits
 in front of them.
@@ -149,6 +172,13 @@ graph TB
 
     LS["localStorage"] -.->|"hydrate / persist"| TH
     TN -.->|"tenant prefix"| QC
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class BE ts
+    class SP,PP,RT,TH,TN,TS,UI,BR ui
+    class QC,PJ,PR,DS,LS store
 ```
 
 **Rules:**
@@ -175,7 +205,7 @@ syntactically obvious in code review.
 
 The frontend folder structure, ubiquitous language, and query-key
 factories **mirror the backend's eight bounded contexts** defined in
-`docs/ddd-target.md` §3 — one frontend folder per backend context, no
+backend domain model [§3](../domain-model/strategic.md) — one frontend folder per backend context, no
 substitutions, no inventions:
 
 | Backend context | Frontend folder | Hooks / components owned by the context | View surfaces (composers) where it appears |
@@ -200,7 +230,7 @@ are Discovery, Enrichment, Scoring, Materials, Apply, Pipeline, and
 Operations — every one of which already exists as its own folder. The
 backend's `JobListView`, `JobDetailView`, `ArtifactListView`, and
 `DashboardSummary` are **projections of the Operations context** per
-`ddd-target.md` §3.8 — they are read shapes that flow through
+backend domain model [§3.8](../domain-model/strategic.md) — they are read shapes that flow through
 `contexts/operations/`; promoting them to "frontend bounded contexts"
 would be an ontological category error.
 
@@ -235,7 +265,7 @@ fan-out.
 
 ### 2.3 Evolutionary Architecture (Frontend Edition)
 
-The same meta-principle that governs the backend (`docs/ddd-target.md` §2)
+The same meta-principle that governs the backend (see the backend domain model [§2](../domain-model/index.md))
 governs the frontend: **cloud-mode adapters are named-not-built; local-mode
 stays simple but every choice has a clear seam.**
 
@@ -256,7 +286,7 @@ stays simple but every choice has a clear seam.**
 
 The Python and TypeScript domain layers already follow data-orientation:
 immutable values, discriminated unions for state, pure functions for
-transforms (`docs/ddd-target.md` §2). The frontend extends the same
+transforms (backend domain model [§2](../domain-model/index.md)). The frontend extends the same
 discipline:
 
 - **Immutable values over mutable objects.** Every projection type

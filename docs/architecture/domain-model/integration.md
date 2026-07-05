@@ -3,6 +3,39 @@
 How contexts coordinate — domain events, the in-process publisher, and the
 projection strategy. Part of the [Domain Model](index.md) reference.
 
+Two mechanisms do all the coordinating. Inside the Python worker, contexts
+publish **domain events** to a synchronous in-process event bus, and Operations
+turns those events into read-model projections (§6.3, §6.6). Across the process
+boundary, the TypeScript API reaches the worker through the **JSON-RPC bridge**
+— a subprocess locally, HTTP in the cloud — and long-running commands start
+Temporal workflows whose results come back as more domain events (§6.5).
+
+```mermaid
+flowchart LR
+    subgraph "Python worker process"
+        Ctx["Bounded contexts"] -->|"domain events"| Bus["InProcessEventBus (sync)"]
+        Bus --> Proj["Operations projections"]
+    end
+    Api["TypeScript API"] -->|"JSON-RPC bridge (subprocess / HTTP)"| Ctx
+    Ctx -->|"workflow dispatch"| Temporal["Temporal workflows"]
+    Temporal -->|"result domain events"| Bus
+
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class Ctx,Bus py
+    class Api ts
+    class Temporal infra
+    class Proj store
+```
+
+The JSON-RPC bridge is the only cross-process hop; everything downstream of it —
+events, projections, and workflow results — flows through the worker.
+
+**Read this if** you are adding a domain event, wiring a projection, or changing
+how the TypeScript API and Python worker talk.
+
 ### 6.1 Integration Backbone
 
 The integration backbone uses **domain events** as the primary mechanism for
@@ -28,6 +61,11 @@ graph LR
         EB -->|"events"| PO
         EB -->|"events"| OPS["Operations"]
     end
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class PO,JE,SC,MG,AA,JD,EB py
+    class OPS store
 ```
 
 ### 6.2 Event vs Command vs Request/Response
@@ -144,7 +182,7 @@ transport is an adapter concern behind the JSON-RPC transport adapter.
    can travel over subprocess stdin/stdout, HTTP POST, WebSocket, or gRPC
    with a JSON-RPC payload.
 3. **Cloud-ready without protocol change.** In hosted mode, the same JSON-RPC
-   messages flow over HTTP between the TS API service and the Python worker
+   messages flow over HTTP between the TypeScript API service and the Python worker
    service. Only the transport adapter changes — the application protocol,
    message schemas, and handler logic are identical.
 
@@ -152,9 +190,9 @@ transport is an adapter concern behind the JSON-RPC transport adapter.
 
 | Environment | Transport Adapter | How it works |
 |---|---|---|
-| **Local-first** | `SubprocessJsonRpcAdapter` | TS API spawns `uv run jobhunter rpc` subprocess. Request written to stdin as JSON-RPC. Response read from stdout. Existing `local-actions.ts` pattern, formalized. |
-| **Cloud** | `HttpJsonRpcAdapter` | TS API sends HTTP POST to Python worker service endpoint (`POST /rpc`). Same JSON-RPC body. Worker service is a FastAPI/Starlette app exposing the same handlers. |
-| **Cloud (async)** | `HttpJsonRpcAdapter` to Python workflow starter | For long-running stages, the TS API sends the same JSON-RPC command to the Python worker service. The Python handler builds a workflow spec, starts Temporal behind its port, and returns the workflow handle. |
+| **Local-first** | `SubprocessJsonRpcAdapter` | TypeScript API spawns `uv run jobhunter rpc` subprocess. Request written to stdin as JSON-RPC. Response read from stdout. Existing `local-actions.ts` pattern, formalized. |
+| **Cloud** | `HttpJsonRpcAdapter` | TypeScript API sends HTTP POST to Python worker service endpoint (`POST /rpc`). Same JSON-RPC body. Worker service is a FastAPI/Starlette app exposing the same handlers. |
+| **Cloud (async)** | `HttpJsonRpcAdapter` to Python workflow starter | For long-running stages, the TypeScript API sends the same JSON-RPC command to the Python worker service. The Python handler builds a workflow spec, starts Temporal behind its port, and returns the workflow handle. |
 
 **Protocol shape (unchanged across transports):**
 
@@ -199,7 +237,7 @@ The earlier `fire_and_forget` mode was deleted (see the JSON-RPC decision in
 `docs/decisions.md`); `workflow` dispatch replaced it. The Python `JsonRpcServer`
 starts the Temporal workflow through an injected `WorkflowStarter` and returns
 the workflow handle; cooperative cancellation is a `cancel_run` method that
-signals the in-flight workflow. The TS API does not enqueue Temporal work
+signals the in-flight workflow. The TypeScript API does not enqueue Temporal work
 directly — Temporal stays behind the Python worker. (The CLI `--stream` flag is
 now a no-op: Temporal owns scheduling.)
 
@@ -213,7 +251,7 @@ passes it to all repository and event publisher calls.
 In cloud mode, calls use `HttpJsonRpcAdapter` (same JSON-RPC body over HTTP
 POST) to reach the Python worker service. Temporal stays behind a Python port:
 the Python handler builds and starts the workflow, then returns the workflow
-handle through JSON-RPC. The TS API does not enqueue Temporal work directly.
+handle through JSON-RPC. The TypeScript API does not enqueue Temporal work directly.
 **Evolution trigger:** multi-process deployment requiring durable workflow
 orchestration (see Section 9.4).
 
@@ -234,10 +272,10 @@ The Operations context builds its projections by:
 
 1. **Subscribing to domain events** from all processing contexts.
 2. **Updating denormalized views** in the read-model store.
-3. **Serving queries** through the TS API's Fastify routes.
+3. **Serving queries** through the TypeScript API's Fastify routes.
 
 In the local-first architecture, "subscribing" means the projection builder
-runs in-process with the event bus. The TS API's `read-model.ts` queries
+runs in-process with the event bus. The TypeScript API's `read-model.ts` queries
 the denormalized tables directly.
 
 **Key projection:** The `JobListProjection` is precomputed from domain events:
@@ -266,28 +304,28 @@ Orchestration owns stage transitions, and Operations updates read-side views.
 
 ### 6.8 TS API Write Operations — Domain Logic Hosting
 
-The current TS API (`write-model.ts`) performs several write operations
+The current TypeScript API (`write-model.ts`) performs several write operations
 directly against SQLite. In the target, each operation maps to a driving port
 on the appropriate bounded context. The question is: which runtime *hosts*
 the domain logic?
 
 **Principle:** Simple state-transition commands that require no LLM, browser,
-or scraping infrastructure are hosted **in the TS API process** directly,
+or scraping infrastructure are hosted **in the TypeScript API process** directly,
 using shared domain types from `packages/domain-types`. Complex processing
 commands are dispatched to the Python worker via JSON-RPC.
 
 | Current `write-model.ts` operation | Target driving port | Hosted in | Rationale |
 |---|---|---|---|
-| `resetJobStage` | `RetryStageUseCase` (Pipeline Orchestration) | **TS API** | Pure state machine transition — `StageStateMachine` is a shared domain type. No Python needed. |
-| `markJobApplied` | `MarkAppliedUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. No browser/LLM. |
-| `markJobSkipped` | `SkipJobUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. |
-| `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TS API** | Tombstone write. No Python needed. |
-| `restoreJob` | `RestoreJobUseCase` (Discovery) | **TS API** | Tombstone removal. |
-| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | Shared schema validation and normalized SQLite write. |
+| `resetJobStage` | `RetryStageUseCase` (Pipeline Orchestration) | **TypeScript API** | Pure state machine transition — `StageStateMachine` is a shared domain type. No Python needed. |
+| `markJobApplied` | `MarkAppliedUseCase` (Pipeline Orchestration) | **TypeScript API** | Simple stage state update. No browser/LLM. |
+| `markJobSkipped` | `SkipJobUseCase` (Pipeline Orchestration) | **TypeScript API** | Simple stage state update. |
+| `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TypeScript API** | Tombstone write. No Python needed. |
+| `restoreJob` | `RestoreJobUseCase` (Discovery) | **TypeScript API** | Tombstone removal. |
+| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TypeScript API** | Shared schema validation and normalized SQLite write. |
 | pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands that start Temporal workflows | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
 
-**Trade-off:** The TS API hosting simple commands means the `StageStateMachine`
+**Trade-off:** The TypeScript API hosting simple commands means the `StageStateMachine`
 logic exists in both TypeScript (via `packages/domain-types`) and Python. This
 is acceptable because: (a) the state machine is a small, pure function with
 well-defined transitions; (b) both implementations derive from the same
@@ -297,7 +335,7 @@ routing every button click through a Python subprocess — adds unacceptable
 latency for simple UI operations.
 
 **Cloud evolution:** In cloud mode, both TS and Python import the same
-`StageStateMachine` from a shared package. The TS API continues to host simple
+`StageStateMachine` from a shared package. The TypeScript API continues to host simple
 commands directly against Postgres via the repository adapter. Complex
 commands go through Temporal instead of subprocess.
 

@@ -3,6 +3,16 @@
 Every port the domain depends on and the local adapters that implement them.
 Part of the [Domain Model](index.md) reference.
 
+A **port** is an interface the domain uses to reach the outside world; an
+**adapter** is a concrete implementation of that port. Driving (inbound) ports
+are the use cases external callers invoke; driven (outbound) ports are the
+infrastructure the domain calls out to. Each context below lists both, with the
+local adapter in use today and the hosted adapter named for the cloud future.
+
+**Read this if** you need to know where an external dependency — a database, an
+LLM, a browser, the filesystem — plugs into the domain, and what would change to
+swap it for a hosted service.
+
 ### Port Naming Convention
 
 - **Driving ports** (inbound): named as use cases — `ScoreJobUseCase`, `TailorResumeUseCase`.
@@ -181,8 +191,8 @@ agents are managed fleet resources.
 > overlap/dedup control); per-job preparation is a
 > `JobPreparationWorkflow` (`prep-{idempotency_key}`); each stage is a Temporal activity
 > with retry, timeout, heartbeat, and finalize semantics. For the concrete
-> execution model see `docs/architecture.md` and
-> `docs/job-pipeline-architecture.md`.
+> execution model see the [System Architecture overview](../index.md) and the
+> [Job Pipeline section](../pipeline/index.md).
 
 ### 5.8 Operations / Read-Side Context
 

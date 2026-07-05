@@ -4,6 +4,15 @@ The three state layers (server / URL / client) in detail (§5) and the hexagonal
 frontend ports with local + hosted adapters (§6). Part of the
 [Frontend Architecture](index.md) reference.
 
+**Read this if** you are deciding where a value belongs, or how feature code
+should reach the network, storage, clipboard, or OS without depending on them
+directly.
+
+Two questions, one per half of the page: §5 answers *where does this value
+live?* — the server cache, the URL, or a client store; §6 answers *how does
+feature code reach the outside world?* — through a port, never a raw browser or
+network API.
+
 ## 5. State Architecture (Detailed)
 
 ### 5.1 Layer Boundaries — What Goes Where
@@ -33,7 +42,7 @@ is the canonical decision matrix.
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
 | Form drafts (profile, settings) | **Form library state** (TanStack Form) | Owned by the form until submit; mutates the server via the mutation hook. |
-| Connection status to API ("local API live"/"offline") | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
+| Connection status to API (the "live"/"offline" pill) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding
 

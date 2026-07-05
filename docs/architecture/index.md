@@ -1,44 +1,119 @@
+---
+pageClass: jh-visual-doc
+aside: false
+---
+
 # System Architecture
 
-JobHunter is a local-first TypeScript product API + React web app orchestrating a
-Python automation worker over Temporal. This page holds the system shape, the
-bounded-context composition, and the core data flow; the rest of the section
-drills into each boundary:
+JobHunter is a local-first system: a TypeScript API and a web app (the web app
+talks to the API) orchestrate a Python worker over Temporal (the workflow
+engine). This is the whole machine on one map — every process, store, and
+external dependency, with the data that flows between them:
 
-- [Runtime Boundaries](runtime.md) — the four processes and what each owns
-- [Observability](observability.md) — OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans
-- [Storage](storage.md) — SQLite layout, generated files, and local artifacts
-- [Scoring Architecture](scoring.md) — retrieval and fit assessment
-- [Materials & Tailoring Audit](materials.md) — employer analysis, provenance, voice pass, and the explanation read model
-- [Apply Feedback & Read-Model Projections](read-model.md) — outcome loop and projections
-- [Job Pipeline](pipeline/index.md) — workflow-by-workflow execution on Temporal
-- [Domain Model (DDD)](domain-model/index.md) — canonical bounded contexts, aggregates, and ports
-- [Frontend Architecture](frontend/index.md) — state layers, contexts, ports, and realtime
-- [Tailoring Contract](tailoring.md) — the resume tailoring prompt/validation contract
+```mermaid
+flowchart TD
+  subgraph Client["🌐 Your browser"]
+    Web["Web app<br/>(React + TanStack)"]
+  end
+  subgraph TS["⚡ TypeScript host"]
+    Api["TypeScript API<br/>(Fastify, projection-backed)"]
+    Projections["Projection refresher<br/>(refreshProjections)"]
+    JsonRpc["JSON-RPC bridge<br/>(SubprocessJsonRpcAdapter)"]
+  end
+  subgraph Py["🐍 Python automation"]
+    RpcSrv["jobhunter rpc<br/>(JSON-RPC server)"]
+    Cli["jobhunter CLI"]
+    Worker["Python worker<br/>(queue jobhunter-default)"]
+    Workflows["Workflows + activities<br/>Discover / JobPipeline / JobPreparation<br/>Apply / ProfileImport / CompensationRefresh"]
+    Bus["InProcessEventBus"]
+    Repos["Per-aggregate<br/>repositories"]
+    Builder["ProjectionBuilder"]
+  end
+  Temporal["⏱️ Temporal dev server<br/>(gRPC :7233, UI :8233)"]
+  Db[("SQLite<br/>~/.jobhunter/jobhunter.db")]
+  Files[("Artifact files<br/>resumes · covers · PDFs")]
+  subgraph Ext["🌍 Outside world"]
+    Boards(["Job boards / ATSes"])
+    LLM(["LLM providers"])
+    Browser(["Browser automation<br/>(local Chrome)"])
+  end
 
-This document is the canonical architecture reference for JobHunter. The domain
-model that this implementation realises is defined in
-[`docs/ddd-target.md`](domain-model/index.md). Project history lives under
-`docs/plans/`.
+  Web -- "HTTP + SSE" --> Api
+  Api --> Projections
+  Api -- "complex commands" --> JsonRpc
+  Projections -- "projection rows" --> Db
+  JsonRpc -- "JSON-RPC 2.0<br/>(stdin/stdout)" --> RpcSrv
+  RpcSrv -- "start workflows" --> Temporal
+  RpcSrv -- "sync methods" --> Repos
+  Cli -- "start + await workflows" --> Temporal
+  Temporal -- "task queue" --> Worker
+  Worker --> Workflows
+  Workflows -- "domain writes" --> Repos
+  Repos -- "aggregate rows + job_events" --> Db
+  Repos -- "domain events" --> Bus
+  Bus --> Builder
+  Builder -- "projection rows" --> Db
+  Repos -- "artifact files" --> Files
+  Workflows -- "searches + postings" --> Boards
+  Workflows -- "prompts / completions" --> LLM
+  Workflows -- "form fills (apply)" --> Browser
 
-For a stage-by-stage execution view of the job pipeline, including sequence
-diagrams, component diagrams, call paths, persistence, events, and failure
-behavior, see [`docs/job-pipeline-architecture.md`](pipeline/index.md).
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+  classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+  class Web ui
+  class Api,Projections,JsonRpc ts
+  class RpcSrv,Cli,Worker,Workflows,Bus,Repos,Builder py
+  class Temporal infra
+  class Db,Files store
+  class Boards,LLM,Browser ext
+```
+
+What to notice: every durable fact converges on SQLite — workflows write
+aggregates and `job_events` on the Python side, projection builders turn events
+into read rows, and the web app reads only projections; commands travel the
+other way, over JSON-RPC and Temporal. Click the map to zoom.
+
+**Read this if** you want the whole-system picture before diving into a single
+boundary, or you need to know which page answers a given question.
+
+- [Runtime Boundaries](runtime.md) — What are the processes, and what does each own?
+- [Job Pipeline](pipeline/index.md) — How does a job move through the stages, workflow by workflow?
+- [Scoring](scoring.md) — How does a discovered job become a defensible fit score?
+- [Materials & Tailoring Audit](materials.md) — How are tailored artifacts generated and every claim audited?
+- [Tailoring Contract](tailoring.md) — What is the model asked, and which gates approve a resume?
+- [Apply Feedback & Projections](read-model.md) — How do apply outcomes feed back, and how do events become the read model?
+- [Storage](storage.md) — Where does data live on disk (SQLite tables and generated files)?
+- [Observability](observability.md) — How are LLM, workflow, and JSON-RPC spans traced to Langfuse?
+- [Backend Domain Model (DDD)](domain-model/index.md) — How is the domain designed (bounded contexts, aggregates, ports)?
+- [Frontend](frontend/index.md) — How is the web app designed (state layers, contexts, ports, realtime)?
+
+This page is the canonical architecture reference for JobHunter. The domain
+model this implementation realises is defined in the
+[Backend Domain Model](domain-model/index.md) section; project history lives
+under `docs/plans/`.
+
+For a stage-by-stage execution view of the job pipeline — sequence diagrams,
+component diagrams, call paths, persistence, events, and failure behavior — see
+the [Job Pipeline](pipeline/index.md) section.
 
 ## System Shape
 
 JobHunter is a local-first job-search automation system. The product surface is
-a local web UI and API; the automation engine remains Python because the
-existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
+the web app and the TypeScript API; the automation engine remains Python because
+the existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
 flows live there. The supported runtime shape has four long-lived local
-processes — the Temporal dev server, the local TypeScript API, the Vite web
-app, and the Python Temporal worker (`jobhunter worker`) — plus an ephemeral
-`jobhunter rpc` subprocess the API spawns for JSON-RPC dispatch. Work-starting
+processes — the Temporal dev server, the TypeScript API, the web app, and the
+Python worker (`jobhunter worker`) — plus a `jobhunter rpc` subprocess the API
+spawns on the first JSON-RPC call and reuses for dispatch. Work-starting
 commands, from the CLI and the API alike, start Temporal workflows; the
 long-lived worker executes them.
 
-The codebase is organised around the **eight bounded contexts** defined in
-`docs/ddd-target.md` §3:
+The codebase is organised around the **eight bounded contexts** defined in the
+Backend Domain Model's [strategic design](domain-model/strategic.md) (§3):
 
 | Bounded context             | Aggregate root                | Where it lives                                                    |
 |-----------------------------|-------------------------------|-------------------------------------------------------------------|
@@ -58,53 +133,16 @@ Repository ownership mirrors the runtime boundaries:
 - `packages/contracts`: shared schemas, DTOs, enums, and JSON-RPC envelopes.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.
 - `packages/api-client`: typed transport client used by the frontend and tests.
-- `workers/automation`: uv-managed Python automation worker and CLI package.
+- `workers/automation`: uv-managed Python worker and CLI package.
 - `packages/tsconfig`: shared TypeScript compiler presets.
 
-```mermaid
-flowchart LR
-  subgraph TS["TypeScript host"]
-    Web["React web UI"]
-    Api["Local TypeScript API\n(Fastify, projection-backed)"]
-    Projections["TS projection refresher\n(apps/api/src/projections.ts)"]
-    JsonRpc["SubprocessJsonRpcAdapter\n(apps/api/src/json-rpc-adapter.ts)"]
-  end
-  subgraph Py["Python automation"]
-    RpcSrv["jobhunter rpc\n(JsonRpcServer, infra/rpc/server.py)"]
-    Cli["jobhunter CLI"]
-    Worker["jobhunter worker\n(Temporal worker, queue jobhunter-default)"]
-    Workflows["Workflows + activities\n(Discover / JobPipeline / JobPreparation /\nApply / ProfileImport / CompensationRefresh)"]
-    Bus["InProcessEventBus\n(infra/events/in_process_bus.py)"]
-    Repos["Per-aggregate repositories"]
-    Builder["ProjectionBuilder\n(infra/projections/projection_builder.py)"]
-  end
-  Temporal["Temporal dev server\n(gRPC 127.0.0.1:7233, UI :8233)"]
-  Db["SQLite\n~/.jobhunter/jobhunter.db"]
-  Files["Local artifact files"]
-  Boards["Job boards / ATSes"]
-  LLM["LLM providers"]
-  Browser["Local browser automation"]
-
-  Web --> Api
-  Api --> Projections
-  Api --> JsonRpc
-  Projections --> Db
-  JsonRpc -- "JSON-RPC 2.0\n(stdin/stdout)" --> RpcSrv
-  RpcSrv -- "workflow-mode methods\nstart workflows" --> Temporal
-  RpcSrv -- "analyze_job / cancel_run\n(sync, inline)" --> Repos
-  Cli -- "work-starting commands\nstart + await workflows" --> Temporal
-  Temporal -- "task queue" --> Worker
-  Worker --> Workflows
-  Workflows --> Repos
-  Repos --> Db
-  Repos --> Bus
-  Bus --> Builder
-  Builder --> Db
-  Repos --> Files
-  Workflows --> Boards
-  Workflows --> LLM
-  Workflows --> Browser
-```
+These boundaries are the subgraphs of the system map at the top of this page;
+the source anchors are `apps/api/src/projections.ts`,
+`apps/api/src/json-rpc-adapter.ts`, `infra/rpc/server.py`,
+`infra/events/in_process_bus.py`, and
+`infra/projections/projection_builder.py`. The rpc server's workflow-mode
+methods start Temporal workflows, while `analyze_job` / `cancel_run` run
+synchronously against the repositories.
 
 ## Bounded Context Composition
 
@@ -112,13 +150,14 @@ Each context exposes its **driving ports** (use cases) and depends on **driven
 ports** (capabilities) for I/O. The local-mode adapters satisfy each driven
 port via SQLite, the local filesystem, the local Chrome / Playwright stack, the
 local Temporal dev server, and the local LLM clients. The hosted-mode adapters
-(Postgres, S3, SQS, Browserbase, managed Temporal) are named in
-`docs/ddd-target.md` §5 but not implemented yet — they are the next-evolution
-seam, not a parallel codepath today.
+(Postgres, S3, SQS, Browserbase, managed Temporal) are named in the Backend
+Domain Model's [ports & adapters](domain-model/ports.md) (§5) but not implemented
+yet — they are the next-evolution seam, not a parallel codepath today.
 
 Cross-context integration uses the **`InProcessEventBus`** for domain events and
-the **`SubprocessJsonRpcAdapter`** for the TS↔Python integration protocol
-(§6.5 of `docs/ddd-target.md`).
+the **`SubprocessJsonRpcAdapter`** for the TS↔Python integration protocol (the
+Backend Domain Model's [cross-context integration](domain-model/integration.md),
+§6.5).
 
 Discovery preparation is a cross-context workflow family, not a merged
 aggregate. Discovery owns source and enrichment facts, then derives
@@ -167,8 +206,8 @@ vanishes from the funnel.
 7. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
    `job_events` rows and rebuild affected projection rows from canonical
    aggregate state. The Python builder owns `apply_run_projections` and
-   `workflow_run_projections`; the TS API reads them directly.
-8. The UI reads from the projection tables via the TS read-model — no joins.
+   `workflow_run_projections`; the TypeScript API reads them directly.
+8. The UI reads from the projection tables via the TypeScript read model — no joins.
    The Workflow Runs view at `/runs` reads the unified
    `workflow_run_projections` via `GET /v1/workflow-runs` (apply rows are
    enriched with job context from `apply_run_projections`) and deep-links each
@@ -176,7 +215,7 @@ vanishes from the funnel.
 9. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions. JSON-RPC worker subprocesses inherit
    the API runtime `JOBHUNTER_DIR`, so action writes land in the same
-   database the API and web UI read.
+   database the API and web app read.
 
 ## Local Commands
 
@@ -191,7 +230,7 @@ uv --project workers/automation run jobhunter backup
 uv --project workers/automation run jobhunter rpc      # JSON-RPC server (spawned by the API)
 ```
 
-TypeScript API and web UI:
+TypeScript API and web app:
 
 ```bash
 pnpm api:dev

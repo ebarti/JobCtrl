@@ -1,7 +1,10 @@
-# Storage: SQLite And Files
+# Storage
 
 Everything durable lives on the user's machine: one SQLite database plus
 generated files under the local workspace directory.
+
+**Read this if** you need to know which table or file owns a piece of data, or
+where generated artifacts land on disk.
 
 ## Schema At A Glance
 
@@ -41,6 +44,10 @@ erDiagram
     jobs ||--o{ application_email_evidence : "linked Gmail evidence"
     application_email_evidence ||--o{ application_outcome_suggestions : "classifier suggestions"
 ```
+
+One `jobs` row (keyed by posting URL) is the hub: per-stage state, events,
+scores, analysis, tailoring generations, artifacts, and apply records all hang
+off it.
 
 The remaining tables group by owner:
 
@@ -113,7 +120,19 @@ flowchart LR
     APPLY -->|write| LOGS
     DB -->|"artifact_list_projections"| API["TypeScript API"]
     API --> WEB["Web app artifact views"]
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class GEN,APPLY py
+    class API ts
+    class WEB ui
+    class DB,ART,LOGS store
 ```
+
+A file and its database registration are written together; the read model serves
+the `job_artifacts` / `job_materials_artifacts` rows, never the raw files.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

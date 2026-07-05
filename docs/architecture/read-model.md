@@ -1,8 +1,10 @@
-# Apply Feedback & Read-Model Projections
+# Apply Feedback & Projections
 
 How submitted applications feed outcomes back into the product, and how domain
 events project into the read model the API and web app serve.
 
+**Read this if** you need to know how apply outcomes are captured and reviewed,
+or how domain events become the read model behind every list and detail view.
 
 ```mermaid
 flowchart LR
@@ -14,18 +16,39 @@ flowchart LR
     IR -->|"invalidate / patch query keys"| TQ["TanStack Query cache"]
     API --> TQ
     TQ --> UI["Views"]
+
+    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class W py
+    class API,SSE ts
+    class IR,UI ui
+    class EV,PT,TQ store
 ```
+
+Every write appends to `job_events` and refreshes projections; the Server-Sent
+Events (SSE) stream then tells the web app's cache which queries to refetch.
 
 ```mermaid
 flowchart LR
-    RD["application_review_decisions (approve_submit)"] --> CLAIM["Atomic apply claim (Python launcher)"]
+    RD[("application_review_decisions (approve_submit)")] --> CLAIM["Atomic apply claim (Python launcher)"]
     CLAIM --> INTENT["ApplySubmitIntended checkpoint"]
     INTENT --> SUBMIT["Live submission"]
-    SUBMIT --> OUT["application_outcomes"]
-    GM["Bounded Gmail scan (feedback.py)"] --> EVID["application_email_evidence"]
-    EVID --> SUG["application_outcome_suggestions"]
+    SUBMIT --> OUT[("application_outcomes")]
+    GM["Bounded Gmail scan (feedback.py)"] --> EVID[("application_email_evidence")]
+    EVID --> SUG[("application_outcome_suggestions")]
     SUG -->|"user accepts / declines"| OUT
+
+    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
+    class CLAIM,INTENT,SUBMIT,GM py
+    class RD,OUT,EVID,SUG store
 ```
+
+The apply path is gated and checkpointed: an approved review decision precedes
+the atomic claim, a durable submit-intent checkpoint precedes live submission,
+and Gmail evidence later suggests outcomes for the user to accept or decline.
 
 ## Apply Review And Outcome Feedback
 
@@ -50,6 +73,12 @@ on, no API or RPC dispatch path can submit without a committed
 it for a run, which is why the Preferences form shows a persistent warning
 when it is off. Dry-run claims bypass this approval gate. Manual
 outcome notes are stored only in the local outcome table.
+
+::: warning Live submission requires an explicit approval
+Live apply is blocked until an `approve_submit` decision exists for the job
+(`applyApprovalRequired`, default on). Disabling the gate lets a run submit real
+applications without human approval; dry-run claims always bypass it.
+:::
 
 Apply has an at-most-once checkpoint before autonomous submission:
 `ApplySubmitIntended` is durably recorded immediately before the agent may
@@ -99,7 +128,7 @@ tables that back every read-model endpoint:
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
-| `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TS API creates/reads it. |
+| `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 

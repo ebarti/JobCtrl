@@ -3,6 +3,23 @@
 The full `apps/web/src` folder contract. Part of the
 [Frontend Architecture](index.md) reference.
 
+**Read this if** you are looking for where a file lives, or deciding where a new
+one should go.
+
+`apps/web/src` has five primary directories; almost everything is a variation on
+one of them:
+
+| Directory | Holds | Rule of thumb |
+|---|---|---|
+| `routes/` | File-based route tree (URL → screen) | Mirrors the URL; routes only mount views and declare typed search-param schemas. |
+| `contexts/` | The eight bounded contexts | 1:1 with the backend; owns hooks, mutations, components, and event handlers. |
+| `views/` | The eight page composers | Arrange context pieces into a layout; never own queries, mutations, or stores. |
+| `shared/` | UI primitives, layout, providers, ports, stores, helpers | Only things genuinely shared across contexts and views. |
+| `test/` | MSW handlers, fixtures, setup | Cross-cutting test scaffolding. |
+
+The exhaustive tree below is the full contract; the **folder principles** after
+it state the rules.
+
 ```
 apps/web/
 ├── package.json
