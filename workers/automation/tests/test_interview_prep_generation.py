@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.domain.events import (
@@ -18,7 +23,13 @@ from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.interview import SqliteInterviewPrepRepository
-from jobhunter.interview.activities import InterviewPrepEventRecorder
+from jobhunter.interview import activities as interview_activities
+from jobhunter.interview.activities import (
+    GenerateInterviewPrepActivityInput,
+    GenerateInterviewPrepActivityOutput,
+    InterviewPrepEventRecorder,
+    generate_interview_prep_activity,
+)
 
 
 class _FakeLlm:
@@ -307,6 +318,181 @@ def test_event_recorder_writes_safe_camel_and_snake_payload_aliases(tmp_path: Pa
         assert payload["generatedAt"] == "2026-07-05T12:00:00Z"
     finally:
         close_connection(tmp_path / "jobs.db")
+
+
+def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        publisher = _RecordingPublisher()
+        llm = _FakeLlm(
+            [
+                _candidate(
+                    "star_draft",
+                    "Latency story",
+                    "Reduced API latency by 30% using Python.",
+                    evidence_ids=["ev-platform-latency"],
+                    requirement_ids=["req-python"],
+                ),
+                _judge_pass(),
+            ]
+        )
+        use_case = GenerateInterviewPrepUseCase(
+            repository=repository,
+            llm=llm,
+            publisher=publisher,
+        )
+        request = {
+            "tenant_id": LOCAL_TENANT,
+            "job": _job(),
+            "profile_snapshot": _profile_snapshot(),
+            "evidence_entries": _evidence_entries(),
+            "evidence_gaps": (),
+            "requirements": _requirements("req-python", "Python service optimization"),
+            "model": "fake-model",
+        }
+
+        first = use_case.execute(origin_run_id="wf-run-1", **request)
+        assert first.status == "accepted"
+        assert first.prep.generation == 1
+        assert len(llm.calls) == 2  # one generation call + one judge call
+
+        # A retried activity attempt for the SAME workflow run must reuse the
+        # already-generated prep: no second LLM spend, no duplicate row. Only two
+        # canned responses exist, so a re-generation would also raise IndexError.
+        retry = use_case.execute(origin_run_id="wf-run-1", **request)
+        assert retry.status == "accepted"
+        assert retry.prep.generation == 1
+        assert len(llm.calls) == 2
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM job_interview_prep WHERE job_url = ?",
+            ("https://example.test/job/1",),
+        ).fetchone()[0]
+        assert row_count == 1
+        assert [event.event_type for event in publisher.events] == ["InterviewPrepGenerated"]
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        request = {
+            "tenant_id": LOCAL_TENANT,
+            "job": _job(),
+            "profile_snapshot": _profile_snapshot(),
+            "evidence_entries": _evidence_entries(),
+            "evidence_gaps": (),
+            "requirements": _requirements("req-python", "Python service optimization"),
+            "model": "fake-model",
+        }
+
+        first_llm = _FakeLlm(
+            [
+                _candidate(
+                    "star_draft",
+                    "Latency story",
+                    "Reduced API latency by 30% using Python.",
+                    evidence_ids=["ev-platform-latency"],
+                    requirement_ids=["req-python"],
+                ),
+                _judge_pass(),
+            ]
+        )
+        first = GenerateInterviewPrepUseCase(
+            repository=repository,
+            llm=first_llm,
+            publisher=_RecordingPublisher(),
+        ).execute(origin_run_id="wf-run-1", **request)
+        assert first.prep.generation == 1
+
+        # A genuinely new workflow run (new run id) is not a retry: idempotency
+        # must not suppress a legitimate re-generation.
+        second_llm = _FakeLlm(
+            [
+                _candidate(
+                    "star_draft",
+                    "Latency story",
+                    "Reduced API latency by 30% using Python.",
+                    evidence_ids=["ev-platform-latency"],
+                    requirement_ids=["req-python"],
+                ),
+                _judge_pass(),
+            ]
+        )
+        second = GenerateInterviewPrepUseCase(
+            repository=repository,
+            llm=second_llm,
+            publisher=_RecordingPublisher(),
+        ).execute(origin_run_id="wf-run-2", **request)
+        assert second.status == "accepted"
+        assert second.prep.generation == 2
+        assert len(second_llm.calls) == 2
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.asyncio
+async def test_generate_activity_offloads_generation_and_heartbeats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    heartbeats: list[str] = []
+    forwarded: dict[str, str] = {}
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking_generate(
+        job_url: str,
+        *,
+        tenant_id: TenantId = LOCAL_TENANT,
+        llm_model: str | None = None,
+        origin_run_id: str = "",
+    ) -> GenerateInterviewPrepActivityOutput:
+        forwarded["origin_run_id"] = origin_run_id
+        started.set()
+        # Stand in for a generation that runs longer than the heartbeat timeout.
+        if not release.wait(timeout=5):
+            raise AssertionError("release was never set")
+        return GenerateInterviewPrepActivityOutput(
+            status="accepted",
+            job_url=job_url,
+            generation=1,
+            item_count=1,
+        )
+
+    monkeypatch.setattr(interview_activities, "generate_interview_prep_by_url", _blocking_generate)
+    monkeypatch.setattr(
+        interview_activities.activity,
+        "heartbeat",
+        lambda *args, **_kwargs: heartbeats.append(args[0] if args else ""),
+    )
+    monkeypatch.setattr(
+        interview_activities.activity,
+        "info",
+        lambda: SimpleNamespace(
+            activity_type="generate_interview_prep",
+            workflow_run_id="wf-run-heartbeat",
+        ),
+    )
+
+    task = asyncio.create_task(
+        generate_interview_prep_activity(
+            GenerateInterviewPrepActivityInput(job_url="https://example.test/job/1")
+        )
+    )
+    # The blocking generation runs in the worker thread pool, so the event loop
+    # stays responsive instead of being starved by an inline blocking call.
+    await asyncio.get_running_loop().run_in_executor(None, started.wait, 2)
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    assert "interview-prep starting" in heartbeats
+
+    release.set()
+    output = await asyncio.wait_for(task, timeout=5)
+    assert output.status == "accepted"
+    assert heartbeats[-1] == "done"
+    assert forwarded["origin_run_id"] == "wf-run-heartbeat"
 
 
 def _init_conn(tmp_path: Path):

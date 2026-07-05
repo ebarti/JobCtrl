@@ -2238,11 +2238,17 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
             judge_verdict              TEXT,
             warnings_json              TEXT NOT NULL DEFAULT '[]',
             failure_reason             TEXT NOT NULL DEFAULT '',
+            origin_run_id              TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (job_url, generation),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
         """
     )
+    prep_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_interview_prep)").fetchall()}
+    if "origin_run_id" not in prep_cols:
+        conn.execute(
+            "ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_interview_prep_items (
@@ -2277,6 +2283,12 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
         """
         CREATE INDEX IF NOT EXISTS idx_job_interview_prep_tenant_status
         ON job_interview_prep(tenant_id, status, generated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_interview_prep_origin_run
+        ON job_interview_prep(tenant_id, job_url, origin_run_id)
         """
     )
     conn.execute(
