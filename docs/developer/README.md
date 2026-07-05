@@ -9,10 +9,12 @@ directory is for contributors who need to change behavior safely.
 1. [Getting started](../user/getting-started.md) for the local stack.
 2. [Configuration](../user/configuration.md) for runtime variables and local
    data boundaries.
-3. [Architecture](../architecture.md) for the current runtime shape.
-4. [Job pipeline architecture](../job-pipeline-architecture.md) for stage-by-
-   stage sequence and class diagrams.
+3. [System architecture](../architecture/index.md) for the current runtime shape.
+4. [Job pipeline architecture](../architecture/pipeline/index.md) for the
+   workflow-by-workflow execution view with sequence and component diagrams.
 5. [Local reliability QA](../local-reliability-qa.md) for regression ownership.
+6. [Security](security.md) for the trust boundary, apply-path containment, and
+   secret/data hygiene rules.
 
 ## Current Runtime Shape
 
@@ -21,10 +23,10 @@ flowchart LR
   Web["React/Vite web app"] --> Api["TypeScript Fastify API"]
   Api --> Db["SQLite read/write model"]
   Api --> Rpc["JSON-RPC subprocess"]
-  Rpc --> Worker["Python automation worker"]
+  Rpc -- "start workflows" --> Temporal["Temporal dev server"]
+  Temporal -- "task queue" --> Worker["Python automation worker"]
   Worker --> Db
   Worker --> Files["Local artifacts"]
-  Worker --> Temporal["Temporal dev server"]
   Worker --> Providers["LLMs / job sources / browser automation"]
   Db --> Sse["SSE event stream"]
   Sse --> Web
@@ -46,16 +48,16 @@ The React app mirrors those contexts under `apps/web/src/contexts/`. Views under
 
 ## Current Vs Historical Docs
 
-- `docs/architecture.md` and `docs/job-pipeline-architecture.md` describe the
+- `docs/architecture/` (with `pipeline/`) describes the
   implemented local architecture.
-- `docs/ddd-target.md` and `docs/frontend-target.md` are canonical architecture
+- `docs/architecture/domain-model/` and `docs/architecture/frontend/` are canonical architecture
   references plus hosted-future seams.
 - `docs/plans/implemented/` contains plan records and QA notes. Treat those as
   project history; current product behavior belongs in the canonical docs and
   live code.
 - `openspec/` contains current and archived OpenSpec-style requirements. When a
-  feature ships, sync public docs and `docs/delivered.md` so the archive is not
-  the only discoverable source.
+  feature ships, sync the public docs so the archive is not the only
+  discoverable source.
 
 ## Validation
 
@@ -87,9 +89,8 @@ Update the owning doc when behavior changes:
 
 - public behavior, setup, commands, config, or safety: README and `docs/user/`;
 - API/SSE behavior: `docs/local-ts-api.md`;
-- architecture or runtime ownership: `docs/architecture.md`;
-- frontend architecture: `docs/frontend-target.md`;
+- architecture or runtime ownership: `docs/architecture/` (`runtime.md`, `index.md`);
+- frontend architecture: `docs/architecture/frontend/`;
 - QA expectations: `docs/local-reliability-qa.md`;
 - roadmap/backlog: `ROADMAP.md` for public direction, `docs/backlog.md` for
-  detailed engineering tasks;
-- shipped feature summaries: `docs/delivered.md`.
+  detailed engineering tasks.

@@ -1,0 +1,155 @@
+/* Theme customisations for the JobHunter docs site.
+   Owns: click-to-expand lightbox styling + affordance, and letting inline
+   mermaid diagrams use the full content width. */
+
+/* --------------------------------------------------------------------------
+   Inline mermaid: render as large as possible before zooming.
+   Mermaid caps each SVG at its intrinsic width, so small diagrams render tiny
+   and large ones shrink to the text column. Force every diagram to fill the
+   column width (SVG scales crisply, so upscaling small diagrams is lossless).
+   The text column width itself is untouched.
+   -------------------------------------------------------------------------- */
+.vp-doc .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+.vp-doc .mermaid svg {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+/* --------------------------------------------------------------------------
+   Zoom affordance
+   -------------------------------------------------------------------------- */
+.vp-doc .mermaid,
+.vp-doc .mermaid svg,
+.vp-doc .mermaid-wrapper svg {
+  cursor: zoom-in;
+}
+
+/* Subtle hover hint so mermaid diagrams read as interactive. */
+.vp-doc .mermaid {
+  border-radius: 8px;
+  outline: 1px solid transparent;
+  transition:
+    outline-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.vp-doc .mermaid:hover {
+  outline-color: var(--vp-c-brand-1);
+  box-shadow: 0 0 0 4px var(--vp-c-brand-soft);
+}
+
+/* Keyboard focus indicator for zoomable triggers (they are focusable buttons). */
+.vp-doc [data-jh-zoomable]:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Lightbox overlay
+   -------------------------------------------------------------------------- */
+.jh-lightbox-open {
+  overflow: hidden !important;
+}
+
+.jh-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+}
+
+.jh-lightbox:focus {
+  outline: none;
+}
+
+.jh-lightbox__stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.86);
+  /* the lightbox implements its own pan/zoom, so suppress native gestures */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.jh-lightbox__content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  cursor: grab;
+}
+
+.jh-lightbox__content.is-panning {
+  cursor: grabbing;
+}
+
+.jh-lightbox__content img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  /* Serialized mermaid SVGs are transparent; theme-coloured diagram text needs
+     the theme surface behind it to stay readable over the dark backdrop. */
+  background: var(--vp-c-bg);
+}
+
+/* --------------------------------------------------------------------------
+   Toolbar
+   -------------------------------------------------------------------------- */
+.jh-lightbox__toolbar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+.jh-lightbox__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vp-c-text-1);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.jh-lightbox__btn:hover {
+  background: var(--vp-c-default-soft);
+}
+
+.jh-lightbox__btn:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vp-doc .mermaid,
+  .jh-lightbox__btn {
+    transition: none;
+  }
+}

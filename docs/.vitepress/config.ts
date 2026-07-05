@@ -5,15 +5,20 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 const REPO_URL = "https://github.com/ebarti/JobHunter";
 
 // Docs that stay in the repository but are not published on the site.
+// docs/README.md is the repo-facing documentation map (GitHub renders it when
+// browsing docs/); the site's homepage is the hero landing page in index.md.
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
-const UNPUBLISHED_FILES = new Set(["docs/backlog.md", "docs/delivered.md"]);
+const UNPUBLISHED_FILES = new Set([
+  "docs/backlog.md",
+  "docs/delivered.md",
+  "docs/README.md",
+]);
 
 // Single source of truth for page rewrites: fed to VitePress `rewrites` AND
 // used to fix inbound links. VitePress strips `.md` from links but does not
 // apply the rewrite map to them, so a link to `developer/README.md` would
 // otherwise emit `developer/README` — a page that is never built.
 const PAGE_REWRITES: Record<string, string> = {
-  "INDEX.md": "index.md",
   "developer/README.md": "developer/index.md",
 };
 
@@ -25,7 +30,7 @@ function routeForRewrittenPage(docPath: string): string | null {
 }
 
 const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
-  { text: "Overview", link: "/" },
+  { text: "Home", link: "/" },
   {
     text: "User Guide",
     items: [
@@ -33,6 +38,7 @@ const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Configuration", link: "/user/configuration" },
       { text: "Normal Flows", link: "/user/normal-flows" },
       { text: "Data & Safety", link: "/user/data-and-safety" },
+      { text: "Security", link: "/user/security" },
       { text: "Screenshots", link: "/user/screenshots" },
     ],
   },
@@ -40,24 +46,70 @@ const USER_SIDEBAR: DefaultTheme.SidebarItem[] = [
 
 const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
-    text: "Developer Guide",
+    text: "Start Here",
     items: [
-      { text: "Overview", link: "/developer/" },
+      { text: "Contributing", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
-      { text: "Local TypeScript API", link: "/local-ts-api" },
       { text: "Reliability & QA", link: "/local-reliability-qa" },
-      { text: "Screenshot Playbook", link: "/developer/screenshot-playbook" },
+      { text: "Security", link: "/developer/security" },
     ],
   },
   {
-    text: "Architecture",
+    text: "System Architecture",
     items: [
-      { text: "System Architecture", link: "/architecture" },
-      { text: "Job Pipeline", link: "/job-pipeline-architecture" },
-      { text: "Domain Model (DDD)", link: "/ddd-target" },
-      { text: "Frontend", link: "/frontend-target" },
-      { text: "Resume Tailoring", link: "/tailoring" },
+      { text: "Overview", link: "/architecture/" },
+      { text: "Runtime Boundaries", link: "/architecture/runtime" },
+      { text: "Observability", link: "/architecture/observability" },
+      { text: "Storage", link: "/architecture/storage" },
+      { text: "Scoring", link: "/architecture/scoring" },
+      { text: "Materials & Tailoring Audit", link: "/architecture/materials" },
+      { text: "Apply Feedback & Projections", link: "/architecture/read-model" },
+      { text: "Tailoring Contract", link: "/architecture/tailoring" },
+      {
+        text: "Job Pipeline",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/architecture/pipeline/" },
+          { text: "Envelope & Activities", link: "/architecture/pipeline/envelope" },
+          { text: "Concurrency & Fan-out", link: "/architecture/pipeline/concurrency" },
+          { text: "Stage Walkthrough", link: "/architecture/pipeline/stages" },
+          { text: "Operations & Events", link: "/architecture/pipeline/operations" },
+        ],
+      },
+      {
+        text: "Domain Model (DDD)",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/architecture/domain-model/" },
+          { text: "Strategic Design", link: "/architecture/domain-model/strategic" },
+          { text: "Tactical Design", link: "/architecture/domain-model/tactical" },
+          { text: "Ports & Adapters", link: "/architecture/domain-model/ports" },
+          { text: "Cross-Context Integration", link: "/architecture/domain-model/integration" },
+          { text: "Persistence & Consistency", link: "/architecture/domain-model/persistence" },
+          { text: "Cloud Deployment", link: "/architecture/domain-model/cloud" },
+          { text: "Risks & Glossary", link: "/architecture/domain-model/reference" },
+        ],
+      },
+      {
+        text: "Frontend",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/architecture/frontend/" },
+          { text: "Bounded Contexts", link: "/architecture/frontend/contexts" },
+          { text: "Context Patterns", link: "/architecture/frontend/patterns" },
+          { text: "State & Ports", link: "/architecture/frontend/state-and-ports" },
+          { text: "Realtime (SSE)", link: "/architecture/frontend/realtime" },
+          { text: "Integration & Evolution", link: "/architecture/frontend/integration" },
+          { text: "Testing", link: "/architecture/frontend/testing" },
+          { text: "Folder Structure", link: "/architecture/frontend/structure" },
+          { text: "Risks & Glossary", link: "/architecture/frontend/reference" },
+        ],
+      },
     ],
+  },
+  {
+    text: "API",
+    items: [{ text: "Local TypeScript API", link: "/local-ts-api" }],
   },
   {
     text: "Reference",
@@ -76,14 +128,10 @@ const DEVELOPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
 const SIDEBAR: DefaultTheme.Sidebar = {
   "/user/": USER_SIDEBAR,
   "/developer/": DEVELOPER_SIDEBAR,
+  "/architecture/": DEVELOPER_SIDEBAR,
   "/local-development": DEVELOPER_SIDEBAR,
   "/local-ts-api": DEVELOPER_SIDEBAR,
   "/local-reliability-qa": DEVELOPER_SIDEBAR,
-  "/architecture": DEVELOPER_SIDEBAR,
-  "/job-pipeline-architecture": DEVELOPER_SIDEBAR,
-  "/ddd-target": DEVELOPER_SIDEBAR,
-  "/frontend-target": DEVELOPER_SIDEBAR,
-  "/tailoring": DEVELOPER_SIDEBAR,
   "/requirements": DEVELOPER_SIDEBAR,
   "/decisions": DEVELOPER_SIDEBAR,
   "/": USER_SIDEBAR,
@@ -123,7 +171,7 @@ export default withMermaid(
     title: "JobHunter",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
-    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md"],
+    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md", "README.md"],
     cleanUrls: true,
     lastUpdated: true,
     rewrites: PAGE_REWRITES,
@@ -159,7 +207,7 @@ export default withMermaid(
       nav: [
         { text: "User Guide", link: "/user/getting-started" },
         { text: "Developer", link: "/developer/" },
-        { text: "Architecture", link: "/architecture" },
+        { text: "Architecture", link: "/architecture/" },
       ],
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],

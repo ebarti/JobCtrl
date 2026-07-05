@@ -34,7 +34,8 @@ Live browser submission requires an Apply Review approval by default
 settings form shows a persistent warning because the agent may submit
 applications immediately after claiming a job. Dry-run still keeps the prompt
 instruction, and it also installs a browser-layer CDP guard that blocks
-cross-origin POST/PUT/PATCH requests and form submits.
+non-loopback POST/PUT/PATCH requests and form submits (only localhost
+targets are allowed).
 
 ## Current System
 
@@ -42,8 +43,8 @@ JobHunter has three local runtime components:
 
 - `apps/api`: local TypeScript/Fastify API for read models, profile/settings,
   structured actions, artifacts, and worker dispatch.
-- `apps/web`: React/Vite app using TanStack Router, Query, Table, and Form with
-  SSE-backed cache invalidation.
+- `apps/web`: React/Vite app using TanStack Router, Query, and Form, a shared
+  filterable data grid, and SSE-backed cache invalidation.
 - `workers/automation`: Python automation engine, CLI, Temporal worker,
   discovery, scoring, materials, PDF rendering, and apply automation.
 
@@ -61,6 +62,8 @@ Requirements:
 - uv
 - Temporal CLI with `temporal server start-dev`
 - Playwright Chromium for HTML/CSS PDF rendering
+- Chrome or Chromium for browser automation
+- Poppler (`pdftoppm` on `PATH`) for PDF page previews
 - an LLM provider key or local LLM endpoint for scoring and materials
 
 Install and run:
@@ -84,9 +87,9 @@ the non-interactive Node + Python dependency sync.
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
 
-Commands that start work (`jobhunter run`, per-stage commands, apply, profile
-import, and compensation refresh) now start Temporal workflows and wait on their
-handles. They require a reachable Temporal server plus a running JobHunter
+Commands that start work (`jobhunter run`, per-stage commands, `jobhunter
+apply`, `jobhunter action profile_import`, and `jobhunter
+compensation-refresh`) start Temporal workflows and wait on their handles. They require a reachable Temporal server plus a running JobHunter
 worker: use `pnpm dev`, or start `temporal server start-dev` and
 `uv --project workers/automation run jobhunter worker` yourself. They do not
 fall back to the old in-process pipeline path.
@@ -167,6 +170,30 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
 expected state transitions.
 
+## CLI Reference
+
+All commands run as `uv --project workers/automation run jobhunter <command>`.
+Work-starting commands need the Temporal dev server plus a running worker
+(`pnpm dev` provides both).
+
+| Command | What it does |
+| --- | --- |
+| `init` | Create local configuration under `~/.jobhunter/`. |
+| `doctor` | Report feature tiers: database, LLM, Temporal, browser, Gmail, telemetry. |
+| `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
+| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores reset stale scores. |
+| `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
+| `apply` | Start apply automation; utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, `--gen`, `--continuous`. |
+| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
+| `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
+| `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |
+| `status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
+| `worker` | Run the long-lived Temporal worker. |
+| `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
+| `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
+| `migrate-resume-html` | Convert/refresh approved resume PDFs onto the HTML/CSS renderer. |
+| `gmail-auth` | Authenticate the read-only Gmail connector. |
+
 ## Configuration
 
 Configuration comes from three places:
@@ -239,8 +266,8 @@ pnpm docs:screenshots
 
 ![Apply Review with synthetic data](docs/assets/screenshots/apply-review.png)
 
-The screenshot playbook in
-[docs/developer/screenshot-playbook.md](docs/developer/screenshot-playbook.md)
+The Documentation Screenshots section of
+[docs/local-development.md](docs/local-development.md)
 explains the disposable database, routes, and refresh process.
 
 ## Documentation
@@ -249,13 +276,13 @@ explains the disposable database, routes, and refresh process.
   and screenshot references.
 - [docs/developer/](docs/developer/): contributor onboarding and architecture
   reading path.
-- [docs/architecture.md](docs/architecture.md): current runtime architecture.
-- [docs/job-pipeline-architecture.md](docs/job-pipeline-architecture.md):
+- [docs/architecture/](docs/architecture/index.md): system architecture — runtime
+  boundaries, observability, storage, scoring, materials audit, and read model.
+- [docs/architecture/pipeline/](docs/architecture/pipeline/index.md):
   stage-by-stage pipeline sequence and class diagrams.
 - [docs/local-reliability-qa.md](docs/local-reliability-qa.md): regression
   matrix and QA gates.
 - [docs/decisions.md](docs/decisions.md): accepted architecture decisions.
-- [docs/delivered.md](docs/delivered.md): delivery history.
 - [docs/backlog.md](docs/backlog.md): detailed engineering backlog.
 - [docs/plans/](docs/plans/): proposal and implementation records.
 

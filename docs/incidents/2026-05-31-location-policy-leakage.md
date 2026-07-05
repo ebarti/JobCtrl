@@ -1,7 +1,10 @@
 # Incident Report: Location Policy Leakage
 
 Date: 2026-05-31
-Status: investigated; fix required
+Status: resolved — fixed by PR #113 (policy-guarded rediscovery restores with a
+`JobRestored` audit event; regression coverage in
+`workers/automation/tests/test_discovery_identity.py` and
+`workers/automation/tests/test_smartextract_discovery.py`)
 Severity: High
 
 ## Summary

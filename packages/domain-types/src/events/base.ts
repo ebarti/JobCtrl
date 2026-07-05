@@ -5,7 +5,7 @@
  * occurredAt) plus a typed payload with context-specific data.
  * Events are immutable facts named in past tense.
  *
- * @see ddd-target.md §2 (Modeling Principles), §6.1 (Integration Backbone)
+ * @see docs/architecture/domain-model/index.md §2 (Modeling Principles); docs/architecture/domain-model/integration.md §6.1 (Integration Backbone)
  */
 
 import type { TenantId } from "../tenant.js";

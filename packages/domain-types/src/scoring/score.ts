@@ -1,7 +1,7 @@
 /**
  * JobScore aggregate + value objects — TypeScript mirror.
  *
- * See ddd-target.md §4.4. The Python ``JobScore`` aggregate
+ * See docs/architecture/domain-model/tactical.md §4.4. The Python ``JobScore`` aggregate
  * (``workers/automation/src/jobhunter/domain/scoring/aggregate.py``) is the
  * source of truth; both languages must stay structurally compatible.
  *

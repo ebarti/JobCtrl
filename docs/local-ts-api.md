@@ -9,7 +9,10 @@ invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
 any request whose `Host` header is not a loopback host (`127.0.0.1`,
 `localhost`, or `[::1]`, with an optional port) with `403` `forbidden_host`;
 local browser and CLI callers always send a loopback `Host`, so legitimate
-access is unaffected. Full bearer-token authentication and keychain-to-worker
+access is unaffected. A second guard rejects cross-site mutations: `DELETE`,
+`PATCH`, `POST`, and `PUT` requests whose `Origin` or `Referer` is present but
+not loopback fail with `403` `cross_site_request` before any handler runs.
+Full bearer-token authentication and keychain-to-worker
 credential passing remain a deliberate follow-up that needs coordinated
 frontend and dev-launcher changes.
 
@@ -87,7 +90,8 @@ layout map return an empty array.
 
 Resume template editing is exposed through local JSON endpoints:
 `GET /v1/resume-templates` lists the built-in and saved templates plus the
-current default, `POST /v1/resume-templates` saves a style/layout-only template
+current default, `GET /v1/resume-templates/:templateId` returns one template,
+`POST /v1/resume-templates` saves a style/layout-only template
 version, `PATCH /v1/resume-templates/default` selects the default template, and
 `PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
@@ -173,7 +177,7 @@ stale in `job_score_staleness`; corrected score versions are not marked stale.
 markers and resets their score stage to `pending` for an explicit rescore. The
 body accepts `jobKeys` for selected stale scores or an empty list for all active
 stale scores, plus optional `limit` for bounded resets. The backend command
-that consumes those reset jobs is `jobhunter run score --rescore` or the batch
+that consumes those reset jobs is `jobhunter score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
 The jobs list `deleted` filter accepts `active`, `closed`, `deleted`, `hidden`,
 or `all`. Closed jobs are non-deleted postings whose active-state verification
@@ -183,7 +187,10 @@ inspectable from the Closed tab. Deleted jobs are temporary removals: discovery
 clears the delete tombstone when the same posting is observed again. Hidden jobs
 use a separate `jobhunter_hidden_jobs` tombstone and remain suppressed from
 active/deleted/closed lists, dashboard totals, artifacts, workflow runs, and
-activity until an unhide mutation clears that hidden tombstone. The API exposes
+activity until an unhide mutation clears that hidden tombstone. Soft delete
+and restore are exposed at `DELETE /v1/jobs/:key` and
+`POST /v1/jobs/:key/restore`, plus bulk `POST /v1/jobs/bulk-delete` and
+`POST /v1/jobs/bulk-restore`. The API exposes
 bulk hide/unhide routes at `POST /v1/jobs/bulk-hide` and
 `POST /v1/jobs/bulk-unhide`, plus single-job `POST /v1/jobs/:key/hide` and
 `POST /v1/jobs/:key/unhide`. Permanent delete is
@@ -371,8 +378,9 @@ Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
 default. When no reported source matches, the estimator still falls back to the
 selected job's captured employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
-bonus-only or one-sided rows. The response is the standard action response with
-a synchronous `succeeded` result when the local JSON-RPC handler completes.
+bonus-only or one-sided rows. The refresh dispatches `refresh_compensation`,
+which starts `CompensationRefreshWorkflow`; the response is the standard
+action response with the queued workflow ID.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
@@ -459,6 +467,8 @@ verification-code MCP server:
   deterministic JobHunter line-comment threads from audit pins, and
   `POST /v1/resume-review/comment-threads/:threadId/replies` records the user's
   reply without suppressing the original source pointer or risk label.
+  `GET /v1/jobs/:jobKey/resume-review/feedback` lists the bounded feedback
+  signals extracted from that job's draft edits.
 - `POST /v1/resume-review/drafts/:draftId/render` validates the latest saved
   draft, writes a new `job_materials` generation with `tailored_resume` and
   `resume_pdf` artifacts plus layout boxes, and marks the draft promoted. It
@@ -632,6 +642,16 @@ overrides the default low-fit auto-tailoring gate for the selected job without
 changing the batch `minScore` behavior, and immediately continues into cover
 generation when tailoring succeeds.
 
+Other per-job action routes: `POST /v1/jobs/:jobKey/actions/apply` dispatches
+the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
+`POST /v1/jobs/:jobKey/actions/generate-materials` dispatches the tailor →
+cover preparation stages for one job and returns `202` when the worker is
+ready; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
+cancellation of that job's in-flight work; and
+`POST /v1/jobs/:jobKey/actions/mark-applied` /
+`POST /v1/jobs/:jobKey/actions/mark-skipped` record manual pipeline outcomes
+without browser automation.
+
 The `analyze_job` JSON-RPC method (params `jobUrl`, optional `force`) produces or
 returns the canonical employer analysis for one job independently of a full
 tailor. Unlike the workflow-mode tailor methods, it runs synchronously: it
@@ -701,9 +721,20 @@ runtime values before writing, and fail non-retryably if the automation worker
 is connected to a different local app directory or SQLite database. The worker
 writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
 returns the API app/database identity plus the latest automation worker
-heartbeat status. The web topbar surfaces missing or stale worker heartbeats,
-and the pipeline stage trigger blocks new worker-backed actions until the worker
-is healthy.
+heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
+when the worker points at a different app dir/database) and an `llmSpend`
+block (`status: ok | over_budget`, today's `estimatedUsd`, and the configured
+`dailyBudgetUsd` — default `25`, `0` = unlimited) read from the local
+`llm_spend` metering table, plus worker startup concurrency metadata
+(`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
+surfaces missing or stale worker heartbeats, the Settings page surfaces the
+worker activity-slot configuration, and the pipeline stage trigger blocks new
+worker-backed actions until the worker is healthy. Server-side, worker-backed action routes are
+gated by the same check and return
+`503 { ok: false, error: "worker_runtime_unavailable", worker }` while the
+heartbeat is missing, stale, or mismatched. Action routes share dispatch
+semantics: a queued Temporal workflow start returns `202` with the workflow
+ID, while synchronous local results return `200`.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,
@@ -728,7 +759,10 @@ no longer head-of-line-blocks `cancel_run` or other fast calls; the TS
 subprocess adapter applies a per-request timeout so a dead handler rejects
 instead of hanging forever; and the api-client wraps every fetch in an
 `AbortController` timeout so a stuck request fails cleanly rather than freezing
-the browser tab.
+the browser tab. (`POST /v1/_internal/rpc` is a separate internal seam that
+validates a JSON-RPC 2.0 envelope and acknowledges it with
+`{status: "accepted"}` without dispatching anything; malformed envelopes get
+a JSON-RPC error response.)
 
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
 `activity[].eventType` so the web UI can render started, completed, and failed
@@ -736,6 +770,20 @@ stage states from backend events instead of local button state alone. The
 top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
 paginated, sortable table; this keeps Dashboard lightweight without imposing an
 event-history cap.
+
+## Settings And Credentials
+
+- `GET /v1/settings` returns the runtime settings stored in the local
+  settings file (`dashboard.json` under the app dir): apply approval gate,
+  apply concurrency, discovery scheduling, LLM spend budget, and related
+  preferences. `PATCH /v1/settings` updates them; the web Preferences and
+  Settings forms use these routes.
+- `GET /v1/credentials` lists the supported provider credential keys
+  (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_URL`) with a label, storage kind,
+  and a `configured` presence flag only — values are never returned.
+  `PATCH /v1/credentials` stores a value in the macOS Keychain
+  (service `JobHunter`) and `DELETE /v1/credentials/:key` removes it; unknown
+  keys return `400 invalid_credential_key`.
 
 ## Related Packages
 
@@ -754,7 +802,8 @@ apps/api -> packages/domain-types
 apps/web -> packages/api-client -> packages/contracts
 ```
 
-The API must not depend on `packages/api-client`.
+The API must not depend on `packages/api-client` at runtime (it appears only
+as a devDependency of `apps/api` for API tests).
 
 ## Commands
 
@@ -768,14 +817,17 @@ pnpm web:build
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to
-that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set.
+that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set. The Vite dev-server
+proxy target itself is controlled by `VITE_DEV_API_PROXY_TARGET` (default
+`http://127.0.0.1:8766`); isolated or multi-worktree stacks override it to
+point the proxy at a non-default API port.
 
 ## Server-Sent Events — `GET /v1/events/stream`
 
 The API exposes a Server-Sent Events endpoint that the frontend's
 `SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
 the browser's native `EventSource`. Per
-[`docs/frontend-target.md`](frontend-target.md) §7.1, this endpoint is the
+[`docs/architecture/frontend/realtime.md`](architecture/frontend/realtime.md) §7.1, this endpoint is the
 single realtime channel from the worker / API write-side to the frontend's
 TanStack Query cache; the frontend's `InvalidationRouter` translates each
 `DomainEvent` into the right `invalidateQueries` / `setQueryData` calls.
@@ -797,11 +849,15 @@ the server resolves `tenantId` from the JWT, the JWT-derived tenant is
 canonical, and a mismatched query-string value returns `403 Forbidden`.
 
 `since` is optional and is used only by the planned IndexedDB warm-start path
-(`docs/frontend-target.md` §9.7) to resume from a persisted watermark on
+(`docs/architecture/frontend/integration.md` §9.7) to resume from a persisted watermark on
 first connect; the browser's native `EventSource` auto-reconnect uses the
 `Last-Event-ID` header instead.
 
 ### Response framing
+
+The header block below is abbreviated; the live response also carries
+`charset=utf-8` on the Content-Type, `Cache-Control: no-cache, no-transform`,
+`Connection: keep-alive`, and CORS headers.
 
 ```
 HTTP/1.1 200 OK
@@ -853,7 +909,7 @@ guarantees that tenantless local rows still match the local-mode filter without
 a write-side backfill.
 
 Tenant scope is mandatory; there is no "all tenants" mode
-(`docs/frontend-target.md` §7.8).
+(`docs/architecture/frontend/realtime.md` §7.8).
 
 ### Resume-position precedence
 

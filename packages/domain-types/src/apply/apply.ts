@@ -2,7 +2,7 @@
  * ApplyRun aggregate + ApplyRunEvent entity + apply value objects —
  * TypeScript mirror.
  *
- * See ddd-target.md §4.6. The Python ``ApplyRun`` aggregate
+ * See docs/architecture/domain-model/tactical.md §4.6. The Python ``ApplyRun`` aggregate
  * (``workers/automation/src/jobhunter/domain/apply/aggregate.py``) is
  * the source of truth; both languages must stay structurally
  * compatible.
