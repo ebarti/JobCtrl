@@ -48,6 +48,11 @@ import package, console script, and product name all move together here. The
 release-gate checklist in that spec (§5) gains the line "product rename to
 JobCtl complete" as its final pre-flip item.
 
+The spec-side half of this decision is PR #257 ("defer naming and PyPI
+publishing to the pre-publication rename train"): it removes §W2.1 from the
+active OSS program and points the spec at this train. The two PRs compose —
+#257 edits the spec, this plan is the train it defers to; merge both.
+
 Evidence the direction was pre-staged: the docs-site deploy workflow already
 targets a Cloudflare Pages project named `jobctl-docs`
 (`.github/workflows/docs-site.yml:77`). That is the only pre-existing `jobctl`
