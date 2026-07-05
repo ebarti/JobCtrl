@@ -19,7 +19,7 @@ Each phase ships as its own stacked PR (or PR series) and must be **merged to `m
 
 | Phase | Name | Gate to START | Blocking collision with |
 | --- | --- | --- | --- |
-| P0 | Local API capability token + extension trust (server substrate) | This plan merged | none (from `main`) |
+| P0 | Local API capability token + extension trust (server substrate) | Delivered by the OSS-spec §W2.3 origin-gate train (§3.3 is its requirements contract) | none (from `main`) |
 | P1 | Capture (save-a-job from the browser) | P0 merged + QA PASS | discovery-controls / manual-capture surfaces |
 | P2 | Assisted autofill (profile-backed suggestions; user submits) | P1 merged + QA PASS | apply/profile read-model surfaces |
 | P3 | Guarded submission (route through supervised apply) — **DEFERRED** | P2 merged + QA PASS **and** §6.1 gate satisfied | apply workflow substrate |
@@ -142,6 +142,16 @@ Uses the repo's Ubiquitous Language convention (`docs/architecture/domain-model/
 Today the local API has **no authentication**. Its only gates are network-locality checks (`apps/api/src/server.ts` `onRequest` hook → `forbidden_host` for non-loopback `Host`; `cross_site_request` for mutations whose `Origin`/`Referer` is not loopback, via `apps/api/src/local-origin.ts` » `isTrustedMutationSource`), and CORS restricted to loopback origins (`apps/api/src/local-origin.ts` » `LOCAL_ORIGIN_PATTERNS`, registered at `apps/api/src/server.ts` `app.register(cors, …)`). A `chrome-extension://<id>` origin does **not** match those patterns, so an extension mutation would be rejected `cross_site_request` and would receive no `Access-Control-Allow-Origin`. This is the central constraint the extension must resolve, and it is why P0 exists.
 
 P0 objective: give the extension a first-class, least-privilege way to authenticate to the local API without weakening loopback-only posture.
+
+**Ownership note (2026-07-05).** P0 is not implemented by the extension
+workstream. It is delivered by the OSS release remediation spec's §W2.3
+origin-gate train (`docs/plans/2026-07-03-oss-release-remediation-spec.md`),
+which already owns this exact server surface (`apps/api/src/server.ts`,
+`apps/api/src/local-origin.ts`). This section — the token model, server
+trust rules, contracts, and scope below, plus owner decisions D-1/D-2 (§13)
+— is the requirements contract that train must satisfy. The extension
+workstream starts at P1 and consumes the substrate; it must not re-implement
+API authentication.
 
 - **Token.** The local stack generates a Local Capability Token (§2), stored under `~/.jobhunter/` with restrictive permissions, surfaced to the user in the web app Settings surface for one-time pairing (recommended). The extension stores it in extension storage and presents it on every request (recommended header: `Authorization: Bearer <token>`).
 - **Server trust.** The API validates the token on the extension-facing routes and, for token-authenticated requests, treats the request as a trusted local client: it must still pass the loopback `Host` gate, and CORS must echo the extension origin for those routes. The exact relaxation of the mutation-origin check for token-bearing requests is **owner decision D-1** (§13); recommended default: a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
