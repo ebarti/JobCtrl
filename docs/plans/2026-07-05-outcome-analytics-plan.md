@@ -583,6 +583,12 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
   manual_marked, external_confirmed}` (from non-dry-run apply run success /
   MarkApplied / `applied_confirmation` outcome without an apply run), dry-runs
   excluded. *Owner: confirm the buckets and the precedence when multiple apply.*
+  **Decision 2026-07-05:** use
+  `apply_mode ∈ {automated_live, manual_marked, external_confirmed}`. Exclude
+  dry-runs. When multiple apply signals exist for one job, classify by precedence:
+  non-dry-run apply run success as `automated_live`, then MarkApplied as
+  `manual_marked`, then an `applied_confirmation` outcome without an apply run as
+  `external_confirmed`.
 - **D5 — Cost analytics.** No per-run apply cost is projected. Recommend **v1
   non-goal** (`costPerInterview` stays `null`); if wanted, add a cost column to
   `apply_run_projections` fed from apply run token/cost telemetry, then aggregate.
@@ -590,6 +596,9 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
 - **D6 — Endpoint shape.** Recommend a dedicated `GET /v1/analytics/outcomes`
   (keeps the dashboard summary payload bounded and gives the analytics view its
   own query key) over extending `DashboardSummary.conversion`. *Owner: confirm.*
+  **Decision 2026-07-05:** use the dedicated
+  `GET /v1/analytics/outcomes` endpoint with its own Operations query key. Do not
+  extend `DashboardSummary.conversion` with the full analytics payload.
 
 ## 13. Anchor Appendix (verified against `main` @ `a488e4e9`)
 
