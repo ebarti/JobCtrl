@@ -8,4 +8,4 @@
 
 ## Checklist
 
-- [ ] Every commit in this PR includes a DCO `Signed-off-by:` trailer (`git commit -s`).
+- [ ] External contributor commits include a DCO `Signed-off-by:` trailer (`git commit -s`).

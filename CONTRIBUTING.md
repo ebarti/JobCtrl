@@ -27,7 +27,8 @@ JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm dev
 
 - Keep changes scoped to one behavior or documentation concern.
 - Use Conventional Commits for commit messages and PR titles.
-- Sign off every commit with the Developer Certificate of Origin trailer.
+- External contributors should sign off every commit with the Developer
+  Certificate of Origin trailer.
 - Update documentation when public behavior, commands, runtime requirements,
   configuration, architecture, or QA expectations change.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
@@ -35,9 +36,11 @@ JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm dev
 
 ## Developer Certificate of Origin Sign-Off
 
-Every pull request commit must include a `Signed-off-by:` trailer. This is a
-DCO sign-off that says you have the right to submit the contribution; it is
-separate from GPG or SSH commit signing.
+External contributor pull request commits must include a `Signed-off-by:`
+trailer. This is a DCO sign-off that says you have the right to submit the
+contribution; it is separate from GPG or SSH commit signing. Repository-owner
+PRs are exempted by GitHub actor in CI so maintainer email addresses do not need
+to be published in workflow configuration.
 
 Use `git commit -s` for new commits:
 
