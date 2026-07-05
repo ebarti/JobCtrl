@@ -177,12 +177,14 @@ Useful command-line checks:
 
 ```bash
 uv --project workers/automation run jobhunter status
+uv --project workers/automation run jobhunter digest
 uv --project workers/automation run jobhunter runs
 uv --project workers/automation run jobhunter runs --failed-only
 ```
 
-These print your pipeline status, list all workflow runs, and list only failed
-runs, respectively.
+These print your pipeline status, show the local daily digest, list all workflow
+runs, and list only failed runs, respectively. The digest is read-only unless
+you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 Useful web app views:
 

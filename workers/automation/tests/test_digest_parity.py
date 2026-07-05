@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jobhunter.digest import build_digest, read_digest_state
+from jobhunter.digest import acknowledge_digest, build_digest, read_digest_state
 from jobhunter.llm import SpendBudgetStatus
 
 
@@ -61,6 +61,53 @@ def test_build_digest_matches_shared_fixture_without_acknowledging(tmp_path: Pat
     assert "scoredSince=2026-07-01T00%3A00%3A00.000Z" in digest["deepLinks"]["newMatches"]
     assert digest["deepLinks"]["budget"] == "/settings"
     assert read_digest_state(conn) == before
+
+
+def test_acknowledge_digest_updates_watermark_and_records_event(tmp_path: Path) -> None:
+    fixture = json.loads(FIXTURE_PATH.read_text())
+    conn = sqlite3.connect(tmp_path / "jobhunter.db")
+    conn.row_factory = sqlite3.Row
+    _create_schema(conn)
+    _seed_fixture(conn, fixture)
+
+    result = acknowledge_digest(
+        conn,
+        acknowledged_at=fixture["expected"]["generatedAt"],
+        now=_parse_utc(fixture["now"]),
+    )
+
+    assert result == {
+        "ok": True,
+        "state": {
+            "lastAcknowledgedAt": fixture["expected"]["generatedAt"],
+            "updatedAt": fixture["expected"]["generatedAt"],
+        },
+    }
+    event = conn.execute(
+        """
+        SELECT event_type, payload_json
+        FROM job_events
+        WHERE event_type = 'DigestReviewed'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert event is not None
+    assert event["event_type"] == "DigestReviewed"
+    assert json.loads(event["payload_json"]) == {
+        "tenantId": "local",
+        "acknowledgedAt": fixture["expected"]["generatedAt"],
+        "previousAcknowledgedAt": fixture["since"],
+        "reviewedAt": fixture["expected"]["generatedAt"],
+    }
+
+    stale = acknowledge_digest(
+        conn,
+        acknowledged_at=fixture["since"],
+        now=_parse_utc(fixture["now"]),
+    )
+
+    assert stale["state"]["lastAcknowledgedAt"] == fixture["expected"]["generatedAt"]
 
 
 def _create_schema(conn: sqlite3.Connection) -> None:
@@ -236,6 +283,16 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             run_id TEXT,
             duration_ms INTEGER,
             error_class TEXT
+        );
+        CREATE TABLE job_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_url TEXT,
+            stage TEXT,
+            event_type TEXT NOT NULL DEFAULT '',
+            level TEXT NOT NULL DEFAULT 'info',
+            message TEXT,
+            occurred_at TEXT NOT NULL,
+            payload_json TEXT
         );
         """
     )

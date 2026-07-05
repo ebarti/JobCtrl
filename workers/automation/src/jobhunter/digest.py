@@ -107,6 +107,45 @@ def build_digest(
     }
 
 
+def acknowledge_digest(
+    conn: sqlite3.Connection | None = None,
+    *,
+    acknowledged_at: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    if conn is None:
+        conn = get_connection()
+    ensure_digest_state_table(conn)
+    previous = read_digest_state(conn)["lastAcknowledgedAt"]
+    reviewed_at = _format_utc_timestamp(_utc_now(now))
+    requested_acknowledged_at = acknowledged_at or reviewed_at
+    bounded_acknowledged_at = _bounded_acknowledge_timestamp(requested_acknowledged_at, reviewed_at)
+    next_acknowledged_at = (
+        previous
+        if previous and _timestamp_after(previous, bounded_acknowledged_at)
+        else bounded_acknowledged_at
+    )
+
+    conn.execute(
+        """
+        INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(tenant_id) DO UPDATE SET
+            last_acknowledged_at = excluded.last_acknowledged_at,
+            updated_at = excluded.updated_at
+        """,
+        (TENANT_ID, next_acknowledged_at, reviewed_at),
+    )
+    _record_digest_reviewed_event(
+        conn,
+        acknowledged_at=next_acknowledged_at,
+        previous_acknowledged_at=previous,
+        reviewed_at=reviewed_at,
+    )
+    conn.commit()
+    return {"ok": True, "state": read_digest_state(conn)}
+
+
 def _normalize_threshold(value: int | None) -> int:
     try:
         numeric = int(value if value is not None else 7)
@@ -125,6 +164,71 @@ def _utc_now(value: datetime | None) -> datetime:
 
 def _format_utc_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _bounded_acknowledge_timestamp(candidate: str, now_iso: str) -> str:
+    candidate_time = _parse_utc_timestamp(candidate)
+    now_time = _parse_utc_timestamp(now_iso)
+    if candidate_time is None or now_time is None:
+        return now_iso
+    if candidate_time > now_time:
+        return now_iso
+    return candidate
+
+
+def _timestamp_after(left: str, right: str) -> bool:
+    left_time = _parse_utc_timestamp(left)
+    right_time = _parse_utc_timestamp(right)
+    if left_time is None or right_time is None:
+        return False
+    return left_time > right_time
+
+
+def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _record_digest_reviewed_event(
+    conn: sqlite3.Connection,
+    *,
+    acknowledged_at: str,
+    previous_acknowledged_at: str | None,
+    reviewed_at: str,
+) -> None:
+    if not _table_exists(conn, "job_events"):
+        return
+    columns = _table_columns(conn, "job_events")
+    values: dict[str, Any] = {
+        "job_url": None,
+        "stage": None,
+        "event_type": "DigestReviewed",
+        "level": "info",
+        "message": "Digest reviewed.",
+        "occurred_at": reviewed_at,
+        "payload_json": json.dumps(
+            {
+                "tenantId": TENANT_ID,
+                "acknowledgedAt": acknowledged_at,
+                "previousAcknowledgedAt": previous_acknowledged_at,
+                "reviewedAt": reviewed_at,
+            },
+            separators=(",", ":"),
+        ),
+    }
+    entries = [(name, value) for name, value in values.items() if name in columns]
+    if not entries:
+        return
+    column_sql = ", ".join(name for name, _ in entries)
+    placeholders = ", ".join("?" for _ in entries)
+    conn.execute(
+        f"INSERT INTO job_events ({column_sql}) VALUES ({placeholders})",
+        [value for _, value in entries],
+    )
 
 
 def _budget_payload(status: SpendBudgetStatus) -> dict[str, Any]:
@@ -612,6 +716,10 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
         (table_name,),
     ).fetchone()
     return row is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
 def _row_get(row: Any, key: str) -> Any:

@@ -159,6 +159,11 @@ Important local files include:
 - `codex_home/`: isolated Codex SDK home when apply/review agents need it.
 - `backups/`: timestamped database snapshots written by `jobhunter backup`.
 
+The daily digest is local-only. `jobhunter digest` and the Dashboard digest read
+from `jobhunter.db` without sending notifications or advancing review state;
+only the explicit Dashboard acknowledge action or `jobhunter digest
+--acknowledge` updates the `digest_state` watermark.
+
 Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
 profiles, logs, SQLite databases, screenshots containing real data, or local
 worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
@@ -232,6 +237,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |
 | `status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
+| `digest` | Print the local daily digest (`--json`, `--acknowledge`, `--min-fit-score`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
 | `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
