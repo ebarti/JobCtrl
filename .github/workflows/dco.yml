@@ -1,0 +1,21 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check commit sign-offs
+        uses: KineticCafe/actions-dco@v3.1.0
+        with:
+          config: |
+            [bot]
+            policy = "none"
