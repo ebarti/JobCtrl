@@ -765,9 +765,8 @@ Per `CLAUDE.md` documentation table, when each phase lands:
 ## Owner Decisions
 
 Resolved 2026-07-05 during implementation. Per owner instruction, proceed on
-the plan recommendations for decisions 1-5; decision 6 remains the only
-blocking owner decision and must stop the stack at the P3 boundary until
-resolved:
+the plan recommendations for decisions 1-5. Decision 6 was later resolved as
+the nullable-link option, so the P3 boundary is no longer blocked:
 
 1. **Evidence-map read model: projection vs live read.** Decision:
    `evidence_usage_projections` (dual-builder, parity-tested, SSE-fresh). The
@@ -791,11 +790,11 @@ resolved:
    default LLM lane with the existing spend-budget controls. Generation is
    explicit, user-triggered, and never unattended.
 
-Still open; STOP at the P3 boundary if unresolved:
-
 6. **Reflection ↔ prep link.** Whether to add a nullable
    `interview_prep_generation` column to `application_outcomes` (P3) or keep
-   reflections as plain `interview` outcome notes.
+   reflections as plain `interview` outcome notes. Decision: add the nullable
+   `interview_prep_generation` link so a post-interview reflection can identify
+   the stored prep generation it followed when one exists.
 
 ## References (in-repo)
 
