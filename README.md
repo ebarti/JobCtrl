@@ -1,16 +1,20 @@
 # JobHunter
 
-JobHunter is a local-first job search automation system. It keeps your profile,
-job database, generated materials, browser state, and logs on your machine while
-helping you move jobs through a focused pipeline:
+JobHunter helps you **find jobs worth applying to, judge them against your real
+profile, tailor audited materials, and apply — safely and entirely on your own
+machine.** Your profile, job database, generated resumes and cover letters,
+browser state, and logs stay on your computer; nothing leaves it except the
+specific steps you configure and run.
+
+Work moves through a focused pipeline:
 
 ```text
 discover -> apply
 ```
 
 Discovery finds and enriches jobs, scores them against your candidate profile,
-and prepares tailored materials when the job is eligible. Apply is separate
-because it can drive browser automation and submit applications.
+and prepares tailored materials when a job is eligible. Apply is a separate,
+supervised step because it can drive browser automation and submit applications.
 
 ## What It Does
 
@@ -79,6 +83,15 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   local worker state are sensitive local artifacts. Public bug reports,
   screenshots, and reproduction cases should use synthetic data only; `pnpm
   qa:seed` creates a disposable synthetic workspace for that purpose.
+
+## Current vs Roadmap
+
+Everything in [What It Does](#what-it-does) above is **shipped and runs on your
+machine today**. Work that is planned but **not built yet** — desktop packaging,
+workspace export/import, and any hosted or multi-user deployment (accounts,
+billing, managed browsers, object storage, cloud sync) — lives in
+[ROADMAP.md](ROADMAP.md) and is never presented as current here. Nothing above
+the roadmap boundary depends on a hosted service.
 
 ## Current System
 
@@ -221,6 +234,35 @@ or override that identity before crawling real sites via
 ([Configuration → Crawl Politeness](docs/user/configuration.md#crawl-politeness));
 `jobhunter doctor` prints the effective value. JobHunter never bypasses login,
 paywall, CAPTCHA, rate-limit, or bot-control gates.
+
+### What Leaves Your Machine
+
+Nothing leaves your machine by default. Privacy-sensitive content leaves only
+when you deliberately run a step that needs an outside service, and each path is
+opt-in and configuration-gated:
+
+- **LLM providers** — scoring, employer analysis, resume tailoring, and
+  cover-letter generation (job text, your profile evidence, and generated
+  material text).
+- **The apply agent's model** — the apply prompt during apply or dry-run (your
+  profile summary, the tailored materials, and, only if you configured them, a
+  login password and the CapSolver key).
+- **Job boards, ATS APIs, and posting pages** — discovery and enrichment
+  fetches.
+- **Gmail (read-only)** — verification-code and application-outcome lookups, only
+  if you authenticate the connector; it never requests `gmail.send`.
+- **Google Maps** — address autocomplete, only if you set
+  `VITE_GOOGLE_MAPS_API_KEY`.
+- **CAPTCHA solving** — site keys and page URLs, only if you set
+  `CAPSOLVER_API_KEY` for a live apply.
+- **Langfuse / OpenTelemetry** — traces, only when you configure it
+  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
+
+The apply prompt is the largest single batch of personal data that can leave. For
+the full per-call breakdown of what is sent and when, see
+[Security → What Leaves Your Machine](docs/user/security.md#what-leaves-your-machine);
+for the storage-and-privacy inventory, see
+[docs/user/data-and-safety.md](docs/user/data-and-safety.md).
 
 ### Back Up And Restore
 
