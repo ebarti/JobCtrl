@@ -37,6 +37,7 @@ import type {
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  ExtensionCapabilityTokenResponse,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -291,6 +292,8 @@ export interface ApiClientPort {
 
   settings(): Promise<SettingsResponse>;
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse>;
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse>;
 
   credentials(): Promise<CredentialsResponse>;

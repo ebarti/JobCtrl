@@ -69,6 +69,15 @@ security. Treat `~/.jobhunter/` as sensitive: do not commit it, copy it into
 shared locations, or attach it to bug reports.
 :::
 
+## Browser Extension Pairing
+
+The browser-extension API surface uses a local capability token so an installed
+extension can prove it is paired with your local JobHunter stack. The token is
+generated under `~/.jobhunter/`, shown in Settings for pairing, and only
+accepted on `/v1/extension/*` routes that still target a loopback host. It does
+not grant application-submission authority; live submission remains behind
+Apply Review.
+
 ## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive

@@ -16,6 +16,7 @@ let options: BuildAppOptions;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
+const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -495,6 +496,162 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("issues and rotates a local extension capability token from loopback settings callers", async () => {
+    const app = buildApp(options);
+    try {
+      const first = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      expect(first.headers["cache-control"]).toBe("no-store");
+      const firstBody = first.json() as { token: string; tokenPath: string; created: boolean };
+      expect(firstBody.token).toHaveLength(43);
+      expect(firstBody.tokenPath).toBe(path.join(tempDir, "extension-capability-token"));
+      expect(fs.readFileSync(firstBody.tokenPath, "utf8").trim()).toBe(firstBody.token);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(firstBody.tokenPath).mode & 0o777).toBe(0o600);
+      }
+
+      const extensionRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(extensionRead.statusCode, extensionRead.body).toBe(403);
+      expect(extensionRead.headers["access-control-allow-origin"]).toBeUndefined();
+
+      const rotated = await app.inject({
+        method: "POST",
+        url: "/v1/extension/pairing-token/rotate",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(rotated.statusCode, rotated.body).toBe(200);
+      const rotatedBody = rotated.json() as { token: string; tokenPath: string };
+      expect(rotatedBody.tokenPath).toBe(firstBody.tokenPath);
+      expect(rotatedBody.token).not.toBe(firstBody.token);
+      expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows CORS preflight only for authenticated extension API routes", async () => {
+    const app = buildApp(options);
+    try {
+      const extensionPreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(extensionPreflight.statusCode, extensionPreflight.body).toBe(204);
+      expect(extensionPreflight.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("authorization");
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("content-type");
+
+      const profilePreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "PATCH",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(profilePreflight.statusCode, profilePreflight.body).toBe(204);
+      expect(profilePreflight.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("trusts valid extension bearer tokens only on extension API routes without weakening CSRF", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+
+      const missingTokenRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/auth/status",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(missingTokenRead.statusCode, missingTokenRead.body).toBe(401);
+      expect(missingTokenRead.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(missingTokenRead.json()).toMatchObject({ ok: false, error: "invalid_extension_capability_token" });
+
+      const extensionStatus = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(extensionStatus.statusCode, extensionStatus.body).toBe(200);
+      expect(extensionStatus.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(extensionStatus.json()).toMatchObject({
+        ok: true,
+        authenticated: true,
+        capabilities: ["capture", "autofill_read"],
+      });
+
+      const invalidToken = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: "Bearer not-the-local-token",
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(invalidToken.statusCode, invalidToken.body).toBe(403);
+      expect(invalidToken.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const foreignOrigin = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: "https://example.com",
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(foreignOrigin.statusCode, foreignOrigin.body).toBe(403);
+      expect(foreignOrigin.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+      const nonExtensionRoute = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: { reason: "must stay blocked" },
+      });
+      expect(nonExtensionRoute.statusCode, nonExtensionRoute.body).toBe(403);
+      expect(nonExtensionRoute.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const db = new Database(options.dbPath);
+      const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
+        apply_status: string | null;
+        applied_at: string | null;
+      };
+      db.close();
+      expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
     const dispatch = vi.fn(
       async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({ status: "queued" }),
@@ -747,6 +904,28 @@ describe("local TypeScript API", () => {
         .get("https://example.com/jobs/ready") as { apply_status: string | null; applied_at: string | null };
       db.close();
       expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps the Host gate mandatory for valid extension bearer tokens", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          host: "evil.example.com",
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "forbidden_host" });
     } finally {
       await app.close();
     }

@@ -2,12 +2,13 @@
 
 JobHunter is a local-first application, and its security model follows from that:
 the trust boundary is the developer's or user's own machine, not a network
-perimeter. There is no authentication on the API today, and that is a deliberate
-local-only posture, not an oversight — the enforcement is locality, not identity.
-This page explains what enforces that boundary, how the highest-risk path (apply)
-is contained, which integrity gates double as security controls, the hygiene
-rules that keep private data out of the repository, and which seams change the
-posture if JobHunter is ever hosted.
+perimeter. Ordinary web and CLI API access is intentionally protected by
+locality rather than identity; browser-extension routes add a scoped local
+capability token without changing the loopback posture. This page explains what
+enforces that boundary, how the highest-risk path (apply) is contained, which
+integrity gates double as security controls, the hygiene rules that keep private
+data out of the repository, and which seams change the posture if JobHunter is
+ever hosted.
 
 **Read this if** you are changing the API surface, the apply path, or credential
 and data handling, and need to know which boundary keeps private data on the
@@ -27,13 +28,14 @@ telemetry). It does **not** defend against a compromised OS account or an
 attacker with local disk access — local data is stored unencrypted, so those are
 out of scope by design.
 
-Because there is no auth, locality is enforced structurally:
+For ordinary local callers, locality is enforced structurally:
 
 | Control | Mechanism | Where |
 | --- | --- | --- |
 | Loopback bind | The API binds `127.0.0.1` by default and refuses to start on a non-loopback host unless `JOBHUNTER_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
 | Host-header allowlist | Every request whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` is rejected `403 forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
 | Origin/Referer check | Mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) with a non-loopback `Origin` or `Referer` are rejected `403 cross_site_request`. | `apps/api/src/server.ts` |
+| Extension capability token | Authenticated `/v1/extension/*` routes require `Authorization: Bearer <token>` from the token file under `~/.jobhunter/`, accept trusted `chrome-extension://` CORS only for those routes, and still require the loopback Host gate. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts` |
 | Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists, so actions cannot dispatch into a missing or mismatched runtime. | `apps/api/src/server.ts`, `GET /v1/health` |
 
 ::: warning The loopback assumption is load-bearing

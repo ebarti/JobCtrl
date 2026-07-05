@@ -14,6 +14,7 @@ import {
   sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
+  sampleExtensionCapabilityTokenResponse,
   sampleHealthResponse,
   sampleProfileResponse,
   sampleResumeTemplateListResponse,
@@ -718,6 +719,16 @@ export const handlers = [
 
   http.get("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
   http.patch("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
+  http.get("*/v1/extension/pairing-token", () =>
+    HttpResponse.json(sampleExtensionCapabilityTokenResponse),
+  ),
+  http.post("*/v1/extension/pairing-token/rotate", () =>
+    HttpResponse.json({
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
+    }),
+  ),
 
   http.get("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),

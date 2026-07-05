@@ -387,6 +387,25 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.extension-pairing-controls {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.extension-pairing-controls dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.extension-token-field input {
+  font-family: var(--font-mono);
+}
+
+.extension-pairing-actions {
+  justify-content: flex-start;
+  padding: 0;
+}
+
 .field-grid.one {
   grid-template-columns: 1fr;
 }
