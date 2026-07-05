@@ -502,6 +502,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         keywords: ["platform reliability", "sre"],
       },
       materialsPreview: {
+        materialsGeneration: 2,
         resumeText:
           "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
         resumeTextArtifactId: "resume-text-2",
@@ -611,6 +612,23 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         state: "pending",
         decision: null,
         decidedAt: null,
+        materialsGeneration: null,
+        profileVersion: null,
+        applicationUrl: null,
+        partialOverrideRunId: null,
+      },
+      approvalGate: {
+        materialsGeneration: 1,
+        profileVersion: 3,
+        applicationUrl: sampleSecondaryJob.applicationUrl,
+        dryRunEvidence: {
+          runId: "apply-run-2",
+          coverage: "full",
+          finishedAt: "2026-05-06T06:35:00Z",
+          blockedChannels: [],
+        },
+        partialDryRunEvidence: null,
+        reasons: ["awaiting_approval"],
       },
       blockers: [],
     },
@@ -650,6 +668,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         keywords: ["platform", "typescript"],
       },
       materialsPreview: {
+        materialsGeneration: 1,
         resumeText:
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
         resumeTextArtifactId: "resume-text-1",
@@ -663,6 +682,18 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         state: "pending",
         decision: null,
         decidedAt: null,
+        materialsGeneration: null,
+        profileVersion: null,
+        applicationUrl: null,
+        partialOverrideRunId: null,
+      },
+      approvalGate: {
+        materialsGeneration: 1,
+        profileVersion: 3,
+        applicationUrl: sampleJob.applicationUrl,
+        dryRunEvidence: null,
+        partialDryRunEvidence: null,
+        reasons: ["awaiting_approval"],
       },
       blockers: ["cover letter missing"],
     },

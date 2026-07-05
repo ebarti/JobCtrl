@@ -244,6 +244,10 @@ export const ApplyReviewDecisionRequestSchema = z
     decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
+    materialsGeneration: z.number().int().nonnegative().nullable().optional(),
+    profileVersion: z.number().int().positive().nullable().optional(),
+    applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
+    partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -255,6 +259,10 @@ export interface ApplyReviewDecision {
   reason: string | null;
   decidedBy: string;
   decidedAt: string;
+  materialsGeneration?: number | null;
+  profileVersion?: number | null;
+  applicationUrl?: string | null;
+  partialOverrideRunId?: string | null;
 }
 
 export interface ApplyReviewDecisionResponse {
@@ -375,6 +383,7 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
+  materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
@@ -663,6 +672,31 @@ export interface ApplyAudit {
   sources: ApplyAuditSource[];
 }
 
+export type ApplyReviewDryRunCoverage = "full" | "partial";
+export type ApplyReviewApprovalGateReason =
+  | "awaiting_approval"
+  | "awaiting_dry_run"
+  | "approval_stale_materials"
+  | "approval_stale_profile"
+  | "approval_stale_url"
+  | "override_evidence_invalid";
+
+export interface ApplyReviewDryRunEvidence {
+  runId: string;
+  coverage: ApplyReviewDryRunCoverage;
+  finishedAt: string | null;
+  blockedChannels: string[];
+}
+
+export interface ApplyReviewApprovalGate {
+  materialsGeneration: number | null;
+  profileVersion: number | null;
+  applicationUrl: string | null;
+  dryRunEvidence: ApplyReviewDryRunEvidence | null;
+  partialDryRunEvidence: ApplyReviewDryRunEvidence | null;
+  reasons: ApplyReviewApprovalGateReason[];
+}
+
 export interface ApplyReviewQueueItem {
   jobKey: string;
   title: string;
@@ -701,7 +735,12 @@ export interface ApplyReviewQueueItem {
     state: "pending" | "approved_submit" | "approved_dry_run" | "deferred" | "declined";
     decision: ApplyReviewDecisionValue | null;
     decidedAt: string | null;
+    materialsGeneration?: number | null;
+    profileVersion?: number | null;
+    applicationUrl?: string | null;
+    partialOverrideRunId?: string | null;
   };
+  approvalGate: ApplyReviewApprovalGate;
   blockers: string[];
 }
 
