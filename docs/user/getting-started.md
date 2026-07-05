@@ -22,8 +22,9 @@ screenshots — no install required.
 
 ## 1. Install Requirements
 
-JobHunter builds on a handful of standard developer tools. Install these first;
-each line says what the tool is for.
+JobHunter builds on a handful of standard developer tools. Installing them is
+the bulk of the setup — expect roughly 15–30 minutes end to end, mostly
+downloads. Each line says what the tool is for.
 
 - **Python 3.11 or newer** — the language the Python worker is written in.
 - **Node.js 20.19 or newer** — the JavaScript runtime behind the TypeScript API
@@ -40,14 +41,14 @@ each line says what the tool is for.
 - **Poppler** (with `pdftoppm` on your `PATH`) — turns PDF pages into the
   preview images shown in the app.
 
-Optional, and only for specific features:
-
+::: details Optional tools — skip these on a first install
 - **TeX / `pdflatex`** — only if you switch the resume renderer to
   `JOBHUNTER_RESUME_RENDERER=latex_pdf`.
 - **Google Maps API key** — enables address autocomplete in the Profile form.
 - **Gmail OAuth Desktop client** — enables read-only scans for verification
   codes and application outcomes.
 - **CAPTCHA-solving key** — only for auto-apply runs that explicitly opt into it.
+:::
 
 ## 2. Install Dependencies
 

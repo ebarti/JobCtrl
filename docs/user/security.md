@@ -1,3 +1,7 @@
+---
+next: false
+---
+
 # Security
 
 JobHunter runs entirely on your machine. There is no hosted backend, no account,

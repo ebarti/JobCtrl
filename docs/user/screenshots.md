@@ -50,7 +50,8 @@ sit at each stage, the health of your job sources, and your most recent apply
 runs. Check here first to see what happened while a run was working.
 
 **What to check here:** whether your sources are healthy and where jobs are
-piling up between stages.
+piling up between stages. An unhealthy source is the usual reason a Discover
+run comes back thin — fix it before running more.
 
 ## The Jobs Table
 
@@ -74,7 +75,8 @@ short on, matched and transferable skills, keywords, and compensation evidence.
 This is where you decide whether a job is worth applying to.
 
 **What to decide here:** whether the score's evidence convinces you this job
-deserves materials and an application.
+deserves an application. Good looks like matched requirements you actually
+have; a red flag is a high score whose evidence you cannot personally back.
 
 ## Apply Review
 
@@ -98,8 +100,8 @@ and a link into the web interface of Temporal, the workflow engine, for deep
 debugging. Come here to confirm a run finished, or to investigate one that
 failed.
 
-**What to check here:** that runs finish, and which one to open in Temporal
-when something fails.
+**What to check here:** that runs finish. A failed run's Temporal link shows
+exactly which step stopped and why — that is your first stop before retrying.
 
 ::: info Generating these screenshots
 Screenshots are produced from synthetic data only and must never include a real
