@@ -451,3 +451,33 @@ def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection)
         "bySource": [],
         "byBand": [],
     }
+
+
+def test_outcome_conversion_keeps_raw_counts_for_small_sample(
+    conn: sqlite3.Connection,
+) -> None:
+    """Dual-writer parity: the Python builder never drops a bucket for a small
+    sample. The minimum-sample rate suppression is a read-time concern in
+    ``read-model.ts`` (``MIN_CONVERSION_SAMPLE``); the projection keeps the raw
+    counts so a single application with a single reply stays inspectable and the
+    counts match the TypeScript builder byte-for-byte.
+    """
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    _apply_job(conn, "https://example.com/solo", site="linkedin", fit_score=8)
+    _record_outcome(conn, "https://example.com/solo", "recruiter_reply")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    # n = 1 keeps its raw counts (rates are never materialised in the projection).
+    assert conversion["totals"] == {
+        "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
+    by_source = {entry["source"]: entry for entry in conversion["bySource"]}
+    assert by_source["linkedin"] == {
+        "source": "linkedin", "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
