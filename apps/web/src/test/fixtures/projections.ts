@@ -1172,6 +1172,13 @@ export const sampleSettingsResponse: SettingsResponse = {
   paths: { settingsPath: "/tmp/jobhunter-test/settings.json" },
 };
 
+export const sampleExtensionCapabilityTokenResponse = {
+  ok: true as const,
+  token: "jh_ext_test_token_123456789012345678901234567890",
+  tokenPath: "/tmp/jobhunter-test/extension-capability-token",
+  created: false,
+};
+
 export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
   ok: true,
   templates: [

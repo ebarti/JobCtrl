@@ -91,10 +91,12 @@ These boundaries are the operator's responsibility:
 - **Scraping and source terms:** source access can violate provider or site
   terms. Default discovery options include LinkedIn and Indeed; disable any
   source you are not allowed to query automatically.
-- **Local API exposure:** the TypeScript API is a local, unauthenticated API
-  intended for loopback use. The default host is `127.0.0.1`; opting into a
-  non-loopback bind or exposing it through a tunnel can expose private profile,
-  job, artifact, and credential-adjacent metadata.
+- **Local API exposure:** the TypeScript API is intended for loopback use. The
+  default host is `127.0.0.1`; opting into a non-loopback bind or exposing it
+  through a tunnel can expose private profile, job, artifact, and
+  credential-adjacent metadata. Browser-extension routes add a local capability
+  token stored under `~/.jobhunter/`, but that token does not make a remote bind
+  safe.
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.

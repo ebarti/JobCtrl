@@ -1,5 +1,5 @@
 import cors from "@fastify/cors";
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -65,6 +65,8 @@ import {
   ResumeReviewDraftRevisionSaveRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
+  type ExtensionCapabilityTokenResponse,
+  type ExtensionAuthStatusResponse,
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
@@ -104,6 +106,11 @@ import {
   writeDiscoverySettings,
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
+import {
+  ensureLocalCapabilityToken,
+  isAuthorizedLocalCapabilityToken,
+  rotateLocalCapabilityToken,
+} from "./extension-auth.js";
 import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   type ActionDispatchResult,
@@ -167,8 +174,10 @@ import {
 import {
   isLoopbackHostHeader,
   isTrustedMutationSource,
+  LOCAL_CORS_ALLOWED_HEADERS,
   LOCAL_CORS_METHODS,
   LOCAL_ORIGIN_PATTERNS,
+  resolveExtensionCorsOrigin,
 } from "./local-origin.js";
 import {
   ProfileInputError,
@@ -220,6 +229,9 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
 ]);
 const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
 const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
+const EXTENSION_API_PREFIX = "/v1/extension/";
+const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
+const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";
 const execFileAsync = promisify(execFile);
 
 export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
@@ -257,10 +269,26 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const actionContext = { appDir, dbPath: options.dbPath };
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
+  ensureLocalCapabilityToken(appDir);
 
   void app.register(cors, {
-    origin: LOCAL_ORIGIN_PATTERNS,
-    methods: LOCAL_CORS_METHODS,
+    delegator: (request, callback) => {
+      const extensionOrigin = isExtensionCorsPath(request.url)
+        ? resolveExtensionCorsOrigin(request.headers.origin)
+        : undefined;
+      if (extensionOrigin) {
+        callback(null, {
+          origin: extensionOrigin,
+          methods: LOCAL_CORS_METHODS,
+          allowedHeaders: LOCAL_CORS_ALLOWED_HEADERS,
+        });
+        return;
+      }
+      callback(null, {
+        origin: LOCAL_ORIGIN_PATTERNS,
+        methods: LOCAL_CORS_METHODS,
+      });
+    },
   });
 
   app.addHook("onRequest", async (request, reply) => {
@@ -272,11 +300,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     }
     if (!UNSAFE_METHODS.has(request.method)) {
+      if (!isAuthorizedExtensionApiRequest(request, appDir)) {
+        return rejectInvalidExtensionToken(request, reply);
+      }
       return;
     }
     const hasBrowserOriginMetadata =
       hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer);
-    if (!isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
+    const extensionTokenTrusted = hasTrustedExtensionToken(request, appDir);
+    if (!extensionTokenTrusted && !isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
       return reply.code(403).send({
         ok: false,
         error: "cross_site_request",
@@ -284,6 +316,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     }
     if (
+      !extensionTokenTrusted &&
       !isTrustedSecFetchSite(request.headers["sec-fetch-site"], {
         allowLoopbackSameSite: hasBrowserOriginMetadata,
       })
@@ -293,6 +326,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         error: "cross_site_request",
         message: "Mutation requests require trusted Sec-Fetch-Site metadata.",
       });
+    }
+    if (!isAuthorizedExtensionApiRequest(request, appDir)) {
+      return rejectInvalidExtensionToken(request, reply);
     }
     return;
   });
@@ -306,6 +342,39 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     llmSpend: readLlmSpendHealth(options.dbPath, options.settingsPath),
     worker: readWorkerHealth(options.dbPath),
   }));
+
+  app.get(EXTENSION_PAIRING_TOKEN_PATH, async (request, reply) => {
+    if (resolveExtensionCorsOrigin(request.headers.origin)) {
+      void reply.code(403);
+      return { ok: false, error: "extension_origin_not_allowed" };
+    }
+    const token = ensureLocalCapabilityToken(appDir);
+    void reply.header("cache-control", "no-store");
+    return {
+      ok: true,
+      token: token.token,
+      tokenPath: token.tokenPath,
+      created: token.created,
+    } satisfies ExtensionCapabilityTokenResponse;
+  });
+
+  app.post(EXTENSION_PAIRING_TOKEN_ROTATE_PATH, async (request, reply) => {
+    if (resolveExtensionCorsOrigin(request.headers.origin)) {
+      void reply.code(403);
+      return { ok: false, error: "extension_origin_not_allowed" };
+    }
+    const token = rotateLocalCapabilityToken(appDir);
+    void reply.header("cache-control", "no-store");
+    return {
+      ok: true,
+      token: token.token,
+      tokenPath: token.tokenPath,
+      created: token.created,
+    } satisfies ExtensionCapabilityTokenResponse;
+  });
+
+  app.get("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
+  app.post("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
 
   registerEventStreamRoute(app, { dbPath: options.dbPath });
 
@@ -1981,6 +2050,61 @@ function decodeRouteParam(value: string): string {
     return decodeURIComponent(value);
   } catch {
     return value;
+  }
+}
+
+function extensionAuthStatus(): ExtensionAuthStatusResponse {
+  return {
+    ok: true,
+    authenticated: true,
+    capabilities: ["capture", "autofill_read"],
+  };
+}
+
+function isExtensionCorsPath(url: string): boolean {
+  return isExtensionAuthenticatedApiPath(url);
+}
+
+function isExtensionAuthenticatedApiPath(url: string): boolean {
+  const pathname = requestPathname(url);
+  return (
+    pathname.startsWith(EXTENSION_API_PREFIX) &&
+    pathname !== EXTENSION_PAIRING_TOKEN_PATH &&
+    pathname !== EXTENSION_PAIRING_TOKEN_ROTATE_PATH
+  );
+}
+
+function hasTrustedExtensionToken(request: FastifyRequest, appDir: string): boolean {
+  return (
+    isExtensionAuthenticatedApiPath(request.url) &&
+    Boolean(resolveExtensionCorsOrigin(request.headers.origin)) &&
+    isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir)
+  );
+}
+
+function isAuthorizedExtensionApiRequest(request: FastifyRequest, appDir: string): boolean {
+  if (request.method === "OPTIONS" || !isExtensionAuthenticatedApiPath(request.url)) {
+    return true;
+  }
+  return isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir);
+}
+
+function rejectInvalidExtensionToken(request: FastifyRequest, reply: FastifyReply): FastifyReply | undefined {
+  if (!isExtensionAuthenticatedApiPath(request.url)) {
+    return undefined;
+  }
+  return reply.code(401).send({
+    ok: false,
+    error: "invalid_extension_capability_token",
+    message: "Extension API requests require a valid local capability token.",
+  });
+}
+
+function requestPathname(url: string): string {
+  try {
+    return new URL(url, "http://127.0.0.1").pathname;
+  } catch {
+    return url.split("?", 1)[0] || "/";
   }
 }
 

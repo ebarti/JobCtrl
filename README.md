@@ -57,9 +57,11 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - Scraping and source access can violate site terms. Default discovery options
   include LinkedIn and Indeed; disable any source you are not allowed to query
   automatically.
-- The local API is intended for loopback use and has no user authentication. Do
-  not bind it to a network interface or tunnel it unless you accept exposing
-  private profile, job, and artifact data.
+- The local API is intended for loopback use. Ordinary web and CLI callers use
+  the loopback boundary; browser-extension API routes additionally require a
+  local capability token shown in Settings and stored under `~/.jobhunter/`. Do
+  not bind the API to a network interface or tunnel it unless you accept
+  exposing private profile, job, and artifact data.
 - LLM work can spend money and send job, profile, and generated-material text to
   configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
   but it is an estimate rather than the provider bill.

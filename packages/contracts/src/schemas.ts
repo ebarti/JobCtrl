@@ -2967,6 +2967,30 @@ export interface SettingsResponse {
   };
 }
 
+export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;
+export type ExtensionCapability = (typeof EXTENSION_CAPABILITY_VALUES)[number];
+
+export const ExtensionCapabilityTokenResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    token: z.string().trim().min(32),
+    tokenPath: z.string().trim().min(1),
+    created: z.boolean(),
+  })
+  .strict();
+export type ExtensionCapabilityTokenResponse = z.infer<
+  typeof ExtensionCapabilityTokenResponseSchema
+>;
+
+export const ExtensionAuthStatusResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    authenticated: z.literal(true),
+    capabilities: z.array(z.enum(EXTENSION_CAPABILITY_VALUES)),
+  })
+  .strict();
+export type ExtensionAuthStatusResponse = z.infer<typeof ExtensionAuthStatusResponseSchema>;
+
 export const COMPENSATION_SOURCE_TYPES = [
   "posted_salary",
   "public_wage_baseline",

@@ -298,6 +298,12 @@ export class FetchApiClientAdapter implements ApiClientPort {
   updateSettings(body: Parameters<JobHunterApiClient["updateSettings"]>[0]) {
     return this.client.updateSettings(body);
   }
+  extensionCapabilityToken() {
+    return this.client.extensionCapabilityToken();
+  }
+  rotateExtensionCapabilityToken() {
+    return this.client.rotateExtensionCapabilityToken();
+  }
   runPipelineStages(body: Parameters<JobHunterApiClient["runPipelineStages"]>[0]) {
     return this.client.runPipelineStages(body);
   }

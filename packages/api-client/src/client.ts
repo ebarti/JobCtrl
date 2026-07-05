@@ -42,6 +42,7 @@ import type {
   GmailOutcomeScanResponse,
   EnsureCurrentResumeMaterialsRequest,
   EnsureCurrentResumeMaterialsResponse,
+  ExtensionCapabilityTokenResponse,
   JobResumeTemplateAssignmentRequest,
   JobResumeTemplateAssignmentResponse,
   JobDetail,
@@ -603,6 +604,14 @@ export class JobHunterApiClient {
 
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse> {
     return this.patch("/v1/settings", body);
+  }
+
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.get("/v1/extension/pairing-token");
+  }
+
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.post("/v1/extension/pairing-token/rotate", {});
   }
 
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> {

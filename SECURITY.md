@@ -42,6 +42,13 @@ and `cross-site` is rejected. Headerless local clients such as curl, seed
 scripts, and other local automation remain allowed because local processes are
 trusted in the supported local-only mode.
 
+Browser-extension routes are the narrow exception to loopback-origin browser
+CORS. They still must target a loopback `Host`, but authenticated
+`/v1/extension/*` routes accept a trusted `chrome-extension://` origin only when
+the request presents the local capability token generated under `~/.jobhunter/`.
+The pairing token is shown from the local web Settings surface and is not a
+remote-account credential.
+
 Setting `JOBHUNTER_API_ALLOW_REMOTE_BIND=1` allows a non-loopback API bind. That
 is an operator-owned risk for controlled environments only; do not expose that
 mode on untrusted networks or treat it as a hosted security boundary.

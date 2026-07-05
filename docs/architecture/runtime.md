@@ -256,7 +256,11 @@ return `503 worker_runtime_unavailable` until a healthy heartbeat exists.
 Request hardening beyond the loopback bind: a Host-header allowlist rejects
 non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
 mutating requests with a non-loopback `Origin`/`Referer` are rejected with
-`403 cross_site_request`.
+`403 cross_site_request`. Browser-extension routes are additive: authenticated
+`/v1/extension/*` routes still require a loopback Host and a local capability
+token, then allow a trusted `chrome-extension://` origin through route-scoped
+CORS and mutation-origin checks. Ordinary web and CLI routes keep the existing
+loopback posture.
 
 ## Python Automation Engine
 
