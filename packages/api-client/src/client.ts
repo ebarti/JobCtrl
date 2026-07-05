@@ -27,6 +27,8 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
   DailyDigest,
   DeleteJobRequest,
@@ -185,6 +187,10 @@ export class JobHunterApiClient {
 
   digest(): Promise<DailyDigest> {
     return this.get("/v1/digest");
+  }
+
+  acknowledgeDigest(body: DigestAcknowledgeRequest = {}): Promise<DigestAcknowledgeResponse> {
+    return this.post("/v1/digest/acknowledge", body);
   }
 
   activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {

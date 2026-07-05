@@ -49,6 +49,7 @@ import {
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
 import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
 import { createCompensationFactsUpdated } from "../src/events/compensation.js";
+import { createDigestReviewed } from "../src/events/operations.js";
 
 describe("DomainEvent base", () => {
   it("createDomainEvent sets envelope fields", () => {
@@ -63,6 +64,19 @@ describe("DomainEvent base", () => {
     const ts = "2025-01-01T12:00:00Z";
     const event = createDomainEvent("X", LOCAL_TENANT, {}, ts);
     expect(event.occurredAt).toBe(ts);
+  });
+});
+
+describe("Operations events", () => {
+  it("DigestReviewed carries the explicit acknowledge watermark", () => {
+    const event = createDigestReviewed(LOCAL_TENANT, {
+      acknowledgedAt: "2026-07-05T10:00:00.000Z",
+      reviewedAt: "2026-07-05T10:01:00.000Z",
+      previousAcknowledgedAt: "2026-07-04T10:00:00.000Z",
+    });
+    expect(event.eventType).toBe("DigestReviewed");
+    expect(event.tenantId).toBe("local");
+    expect(event.payload.acknowledgedAt).toBe("2026-07-05T10:00:00.000Z");
   });
 });
 

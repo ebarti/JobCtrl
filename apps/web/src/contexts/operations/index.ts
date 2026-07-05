@@ -17,6 +17,8 @@ export type {
   CredentialsResponse,
   DashboardSettings,
   DashboardSummary,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DailyDigest,
   DiscoveryFeedbackKind,
   DiscoveryFeedbackRequest,
@@ -76,6 +78,7 @@ export { applyRunsKeys } from "./applyRunsKeys.js";
 export { applyReviewKeys } from "./applyReviewKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
+export { digestKeys } from "./digestKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
 export { outcomesKeys } from "./outcomesKeys.js";
@@ -98,6 +101,7 @@ export { useApplicationOutcomesQuery } from "./hooks/useApplicationOutcomesQuery
 export { useArtifactDetailQuery } from "./hooks/useArtifactDetailQuery.js";
 export { useArtifactsListQuery } from "./hooks/useArtifactsListQuery.js";
 export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
+export { useAcknowledgeDigestMutation, useDigestQuery } from "./hooks/useDigestQuery.js";
 export { useResumeReviewDraftQuery } from "./hooks/useResumeReviewDraftQuery.js";
 export {
   useDiscoveryQuarantineQuery,

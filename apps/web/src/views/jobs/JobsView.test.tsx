@@ -424,6 +424,72 @@ describe("<JobsView> bulk delete integration", () => {
     ).toBeInTheDocument();
   });
 
+  it("saves and reapplies digest timestamp URL filters in table views", async () => {
+    const user = userEvent.setup();
+    const since = "2026-07-01T00:00:00.000Z";
+    const newMatchJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-digest-new-match",
+      url: "https://example.com/jobs/job-digest-new-match",
+      title: "Digest new match",
+    };
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(
+        query?.discoveredSince === since && query?.scoredSince === since
+          ? [newMatchJob]
+          : [],
+      ),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const digestSearch = `${SEARCH}&discoveredSince=${encodeURIComponent(
+      since,
+    )}&scoredSince=${encodeURIComponent(since)}`;
+    const { router, Wrapper } = buildRouter(harness, digestSearch);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(newMatchJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Digest new");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.selectOptions(viewSelect, "default");
+    await waitFor(() => {
+      expect(router.state.location.search.discoveredSince).toBeUndefined();
+      expect(router.state.location.search.scoredSince).toBeUndefined();
+    });
+    expect(screen.queryByText(newMatchJob.title)).not.toBeInTheDocument();
+
+    await user.selectOptions(
+      viewSelect,
+      screen.getByRole("option", { name: "Digest new" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
+    );
+    expect(await screen.findByText(newMatchJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
+    );
+  });
+
   it("continues all matching pending preparation when the jobs page opens on eligible pending work", async () => {
     const pendingTailor: JobSummary = {
       ...sampleJob,

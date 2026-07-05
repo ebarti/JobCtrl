@@ -120,6 +120,8 @@ export const SavedTableViewUrlFiltersSchema = z
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    discoveredSince: z.string().trim().min(1).optional().catch(undefined),
+    scoredSince: z.string().trim().min(1).optional().catch(undefined),
   })
   .strict();
 export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
@@ -2405,6 +2407,23 @@ export interface DailyDigest {
   };
   budget: DailyDigestBudget;
   deepLinks: Record<DailyDigestItemKey, string>;
+}
+
+export const DigestAcknowledgeRequestSchema = z
+  .object({
+    acknowledgedAt: IsoTimestampSchema.optional().catch(undefined),
+  })
+  .transform((value): { acknowledgedAt?: string } =>
+    value.acknowledgedAt ? { acknowledgedAt: value.acknowledgedAt } : {},
+  );
+
+export interface DigestAcknowledgeRequest {
+  acknowledgedAt?: string;
+}
+
+export interface DigestAcknowledgeResponse {
+  ok: true;
+  state: DigestState;
 }
 
 export interface OperationalMetricsSummary {

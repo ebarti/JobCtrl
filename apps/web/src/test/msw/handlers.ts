@@ -11,6 +11,7 @@ import {
   makeWorkflowRunsPage,
   makeWorkflowRunDetail,
   sampleCredentialsResponse,
+  sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
   sampleHealthResponse,
@@ -150,6 +151,17 @@ const sampleCompensationSourcePolicy = {
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/digest", () => HttpResponse.json(sampleDailyDigest)),
+  http.post("*/v1/digest/acknowledge", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { acknowledgedAt?: string };
+    return HttpResponse.json({
+      ok: true,
+      state: {
+        lastAcknowledgedAt: body.acknowledgedAt ?? sampleDailyDigest.generatedAt,
+        updatedAt: sampleDailyDigest.generatedAt,
+      },
+    });
+  }),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),

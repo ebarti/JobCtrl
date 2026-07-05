@@ -27,6 +27,8 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
   DailyDigest,
   DeleteJobRequest,
@@ -149,6 +151,7 @@ export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
   digest(): Promise<DailyDigest>;
+  acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;

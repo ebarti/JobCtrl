@@ -17,7 +17,13 @@ const snapshot: SavedTableViewSnapshot = {
   },
   density: "compact",
   sort: { columnId: "fit_score", direction: "desc" },
-  urlFilters: { q: "platform", stage: "apply", pageSize: 25 },
+  urlFilters: {
+    q: "platform",
+    stage: "apply",
+    pageSize: 25,
+    discoveredSince: "2026-07-01T00:00:00.000Z",
+    scoredSince: "2026-07-01T00:00:00.000Z",
+  },
   gridFilters: {
     source: { operator: "contains", text: "greenhouse", selectedValues: [] },
   },
@@ -44,7 +50,12 @@ describe("saved table views store", () => {
             widths: { company: 222, ghost: 999 },
           },
           sort: { columnId: "ghost", direction: "asc" },
-          urlFilters: { stage: "apply", deleted: "hidden" },
+          urlFilters: {
+            stage: "apply",
+            deleted: "hidden",
+            discoveredSince: "2026-07-01T00:00:00.000Z",
+            scoredSince: "2026-07-01T00:00:00.000Z",
+          },
           gridFilters: {
             ghost: {
               operator: "contains",
@@ -95,6 +106,12 @@ describe("saved table views store", () => {
       columnId: "discovered_at",
       direction: "desc",
     });
+    expect(legacy?.urlFilters).toMatchObject({
+      stage: "apply",
+      deleted: "hidden",
+      discoveredSince: "2026-07-01T00:00:00.000Z",
+      scoredSince: "2026-07-01T00:00:00.000Z",
+    });
     expect(legacy?.gridFilters).toEqual({
       company: {
         operator: "does_not_contain",
@@ -130,6 +147,14 @@ describe("saved table views store", () => {
         .getState()
         .views.find((view) => view.id === createdId)?.columns.hidden,
     ).toEqual(["company"]);
+    expect(
+      useSavedTableViewsStore
+        .getState()
+        .views.find((view) => view.id === createdId)?.urlFilters,
+    ).toMatchObject({
+      discoveredSince: "2026-07-01T00:00:00.000Z",
+      scoredSince: "2026-07-01T00:00:00.000Z",
+    });
 
     expect(
       useSavedTableViewsStore.getState().updateActiveView(JOBS_TABLE_ID, {

@@ -31,6 +31,7 @@ import type {
   DashboardConversionFunnel,
   DashboardSettings,
   DashboardSummary,
+  DigestAcknowledgeResponse,
   DailyDigest,
   DigestState,
   EmployerAnalysis,
@@ -407,6 +408,11 @@ export interface BuildDigestOptions {
   now?: Date;
 }
 
+export interface AcknowledgeDigestOptions {
+  acknowledgedAt?: string;
+  now?: Date;
+}
+
 export function ensureDigestStateTable(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS digest_state (
@@ -427,6 +433,39 @@ export function readDigestState(db: SqliteDatabase): DigestState {
   return {
     lastAcknowledgedAt: nullableString(row?.last_acknowledged_at),
     updatedAt: nullableString(row?.updated_at),
+  };
+}
+
+export function acknowledgeDigest(
+  db: SqliteDatabase,
+  options: AcknowledgeDigestOptions = {},
+): DigestAcknowledgeResponse {
+  ensureDigestStateTable(db);
+  const previous = readDigestState(db).lastAcknowledgedAt;
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
+  const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
+  const nextAcknowledgedAt =
+    previous && Date.parse(previous) > Date.parse(acknowledgedAt) ? previous : acknowledgedAt;
+
+  db.prepare(
+    `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(tenant_id) DO UPDATE SET
+       last_acknowledged_at = excluded.last_acknowledged_at,
+       updated_at = excluded.updated_at`,
+  ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
+
+  recordDigestReviewedEvent(db, {
+    acknowledgedAt: nextAcknowledgedAt,
+    previousAcknowledgedAt: previous,
+    reviewedAt: nowIso,
+  });
+
+  return {
+    ok: true,
+    state: readDigestState(db),
   };
 }
 
@@ -463,6 +502,43 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
     budget: digestBudget(options.budget),
     deepLinks: digestDeepLinks(since),
   };
+}
+
+function boundedAcknowledgeTimestamp(candidate: string, nowIso: string): string {
+  const candidateTime = Date.parse(candidate);
+  const nowTime = Date.parse(nowIso);
+  if (!Number.isFinite(candidateTime)) return nowIso;
+  if (candidateTime > nowTime) return nowIso;
+  return candidate;
+}
+
+function recordDigestReviewedEvent(
+  db: SqliteDatabase,
+  payload: {
+    acknowledgedAt: string;
+    previousAcknowledgedAt: string | null;
+    reviewedAt: string;
+  },
+): void {
+  if (!tableExists(db, "job_events")) return;
+  const columns = columnNames(db, "job_events");
+  const values: Record<string, SqliteValue> = {
+    job_url: null,
+    stage: null,
+    event_type: "DigestReviewed",
+    level: "info",
+    message: "Digest reviewed.",
+    occurred_at: payload.reviewedAt,
+    payload_json: JSON.stringify({
+      tenantId: DEFAULT_TENANT,
+      ...payload,
+    }),
+  };
+  const entries = Object.entries(values).filter(([name]) => columns.has(name));
+  if (!entries.length) return;
+  db.prepare(
+    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
+  ).run(...entries.map(([, value]) => value));
 }
 
 function normalizeDigestThreshold(value: number | null | undefined): number {

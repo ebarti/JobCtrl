@@ -185,6 +185,56 @@ describe("daily digest read model", () => {
       cleanup();
     }
   });
+
+  it("advances the watermark only through POST /v1/digest/acknowledge", async () => {
+    const { dbPath, settingsPath, tempDir, cleanup } = makeTempDb();
+    try {
+      seedDigestDatabase(dbPath, tempDir);
+      fs.writeFileSync(settingsPath, JSON.stringify({ min_fit_score: fixture.minFitScore }));
+      const app = buildApp({ dbPath, settingsPath });
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/digest/acknowledge",
+        payload: { acknowledgedAt: fixture.now },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        state: { lastAcknowledgedAt: fixture.now },
+      });
+
+      const db = new Database(dbPath);
+      expect(readDigestState(db).lastAcknowledgedAt).toBe(fixture.now);
+      const event = db
+        .prepare(
+          "SELECT event_type, payload_json FROM job_events WHERE event_type = 'DigestReviewed' ORDER BY event_id DESC LIMIT 1",
+        )
+        .get() as { event_type: string; payload_json: string } | undefined;
+      expect(event?.event_type).toBe("DigestReviewed");
+      expect(JSON.parse(event?.payload_json ?? "{}")).toMatchObject({
+        tenantId: "local",
+        acknowledgedAt: fixture.now,
+        previousAcknowledgedAt: fixture.since,
+      });
+
+      const staleResponse = await app.inject({
+        method: "POST",
+        url: "/v1/digest/acknowledge",
+        payload: { acknowledgedAt: fixture.since },
+      });
+      expect(staleResponse.statusCode).toBe(200);
+      expect(staleResponse.json()).toMatchObject({
+        ok: true,
+        state: { lastAcknowledgedAt: fixture.now },
+      });
+      expect(readDigestState(db).lastAcknowledgedAt).toBe(fixture.now);
+      db.close();
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 function makeTempDb(): { dbPath: string; settingsPath: string; tempDir: string; cleanup: () => void } {

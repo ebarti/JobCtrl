@@ -95,6 +95,8 @@ const DEFAULT_SAVED_URL_FILTERS = {
   pageSize: 50,
   minFitScore: undefined,
   maxFitScore: undefined,
+  discoveredSince: undefined,
+  scoredSince: undefined,
 } satisfies SavedTableViewSnapshot["urlFilters"];
 
 function filterFor(value: string | undefined): DataGridTextFilter | undefined {
@@ -190,6 +192,8 @@ function savedUrlFiltersFromSearch(
     pageSize: search.pageSize,
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
+    discoveredSince: search.discoveredSince,
+    scoredSince: search.scoredSince,
   };
 }
 
@@ -206,6 +210,8 @@ function searchPatchFromSavedView(
     pageSize: filters.pageSize ?? 50,
     minFitScore: filters.minFitScore,
     maxFitScore: filters.maxFitScore,
+    discoveredSince: filters.discoveredSince,
+    scoredSince: filters.scoredSince,
     sort: isJobSortField(view.sort.columnId) ? view.sort.columnId : "discovered_at",
     dir: view.sort.direction,
     page: 1,
@@ -305,10 +311,12 @@ export function JobsView() {
       search.applyStatus,
       search.deleted,
       search.dir,
+      search.discoveredSince,
       search.maxFitScore,
       search.minFitScore,
       search.pageSize,
       search.q,
+      search.scoredSince,
       search.sort,
       search.stage,
       search.state,
@@ -600,6 +608,8 @@ export function JobsView() {
     search.maxFitScore,
     search.minFitScore,
     search.q,
+    search.discoveredSince,
+    search.scoredSince,
     search.stage,
     search.state,
     stageTriggerConfigs,

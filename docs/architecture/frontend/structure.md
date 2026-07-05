@@ -69,13 +69,13 @@ apps/web/
 │   │   # not-found is a notFoundComponent on __root.tsx — there is no 404.tsx
 │   ├── contexts/                         # 1:1 with backend bounded contexts
 │   │   ├── operations/                   # Operations / Read-Side
-│   │   │   ├── queryKeys.ts              # registry: re-exports 17 factories (10 local + 7 context)
-│   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
+│   │   │   ├── queryKeys.ts              # registry: re-exports 18 factories (11 local + 7 context)
+│   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / digestKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
 │   │   │   ├── invalidation-router.ts    # event → invalidations (invalidate, patchApplyRunEvent, useInvalidationRouter)
 │   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobhunter/contracts)
 │   │   │   ├── providers/EventStreamProvider.tsx   # SSE subscription lifecycle + useEventStreamStatus
 │   │   │   ├── components/JobAuditHistory.tsx
-│   │   │   ├── hooks/                    # ~18 read hooks: dashboard, jobs (list/detail), artifacts (list/detail),
+│   │   │   ├── hooks/                    # ~19 read hooks: dashboard, digest, jobs (list/detail), artifacts (list/detail),
 │   │   │   │                            #   applyRuns (derived), activity (list/event), workflowRuns (list/detail),
 │   │   │   │                            #   applyReviewQueue, resumeReviewDraft, application outcomes, health,
 │   │   │   │                            #   discovery product controls, useInvalidationRouter
@@ -148,7 +148,7 @@ apps/web/
 │   │       ├── handlers.ts               # Stage* + PreparationWorkItem* + Workflow* handlers
 │   │       └── index.ts
 │   ├── views/                            # NOT bounded contexts — composers only (8 folders)
-│   │   ├── dashboard/                    # DashboardView, KpiGrid, ConversionPanel, Funnel, SourceHealthCard, ApplyRunsCard, apply-run-dot-state
+│   │   ├── dashboard/                    # DashboardView, KpiGrid, DigestPanel, ConversionPanel, Funnel, SourceHealthCard, ApplyRunsCard, apply-run-dot-state
 │   │   ├── jobs/                         # JobsView, JobsTable, JobBulkActions, JobDetailDrawer, JobOverview, JobDescription, JobAuditTriage, columns, jobStageFilters, selectors/jobsSelectors
 │   │   ├── artifacts/                    # ArtifactsView, ArtifactsTable, ArtifactFilterBar, ArtifactDetailPanel, columns
 │   │   ├── apply-review/                 # ApplyReviewView (queue + Plate resume editor + decision controls)
