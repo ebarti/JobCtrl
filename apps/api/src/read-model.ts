@@ -24,12 +24,15 @@ import type {
   ArtifactListQuery,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  ApplyReviewQueueResponse,
   BulletCoverageAudit,
   BulletProvenanceEntry,
   BulkJobMutationFilter,
   DashboardConversionFunnel,
   DashboardSettings,
   DashboardSummary,
+  DailyDigest,
+  DigestState,
   EmployerAnalysis,
   JobCompensationAudit,
   JobCompensationSummary,
@@ -54,7 +57,14 @@ import type {
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "./contracts.js";
-import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
+import {
+  DIGEST_DAY_BOUNDARY,
+  DIGEST_FOLLOW_UP_THRESHOLD_DAYS,
+  PIPELINE_RUN_STAGES,
+  ProfileSchema,
+  STAGES,
+  WORKFLOW_RUN_STATUSES,
+} from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
@@ -382,6 +392,249 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   };
 }
 
+export interface DigestBudgetSnapshot {
+  status: "ok" | "over_budget";
+  estimatedUsd: number;
+  dailyBudgetUsd: number;
+  remainingUsd: number | null;
+  unlimited: boolean;
+}
+
+export interface BuildDigestOptions {
+  budget?: DigestBudgetSnapshot;
+  applyReviewQueue?: ApplyReviewQueueResponse;
+  minFitScore?: number;
+  now?: Date;
+}
+
+export function ensureDigestStateTable(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS digest_state (
+      tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
+      last_acknowledged_at   TEXT,
+      updated_at             TEXT NOT NULL
+    );
+  `);
+}
+
+export function readDigestState(db: SqliteDatabase): DigestState {
+  ensureDigestStateTable(db);
+  const row = getRow<{ last_acknowledged_at: string | null; updated_at: string | null }>(
+    db,
+    "SELECT last_acknowledged_at, updated_at FROM digest_state WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  return {
+    lastAcknowledgedAt: nullableString(row?.last_acknowledged_at),
+    updatedAt: nullableString(row?.updated_at),
+  };
+}
+
+export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}): DailyDigest {
+  refreshProjections(db, DEFAULT_TENANT);
+  const now = options.now ?? new Date();
+  const generatedAt = now.toISOString();
+  const since = readDigestState(db).lastAcknowledgedAt;
+  const highFitThreshold = normalizeDigestThreshold(options.minFitScore);
+  const queueItems = options.applyReviewQueue?.items ?? [];
+  const preparation = buildPreparationSummary(db, DEFAULT_TENANT);
+  return {
+    ok: true,
+    generatedAt,
+    since,
+    highFitThreshold,
+    newMatches: countDigestNewMatches(db, since, highFitThreshold),
+    blockedSources: digestBlockedSources(db),
+    reviewNeededMaterials: {
+      count: queueItems.filter(isReviewNeededMaterial).length,
+    },
+    staleScores: {
+      count: preparation.outdatedScoreCount,
+    },
+    pendingApprovals: {
+      count: queueItems.filter((item) => item.review.state === "pending").length,
+    },
+    followUpsDue: {
+      count: countFollowUpsDue(db, now),
+      derived: true,
+      thresholdDays: DIGEST_FOLLOW_UP_THRESHOLD_DAYS,
+      dayBoundary: DIGEST_DAY_BOUNDARY,
+    },
+    budget: digestBudget(options.budget),
+    deepLinks: digestDeepLinks(since),
+  };
+}
+
+function normalizeDigestThreshold(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_SETTINGS.minFitScore;
+  return Math.min(10, Math.max(1, Math.trunc(Number(value))));
+}
+
+function digestBudget(budget: DigestBudgetSnapshot | undefined): DailyDigest["budget"] {
+  if (!budget) {
+    return {
+      status: "ok",
+      estimatedUsd: 0,
+      dailyBudgetUsd: 0,
+      remainingUsd: null,
+      unlimited: true,
+    };
+  }
+  return {
+    status: budget.status,
+    estimatedUsd: Number(budget.estimatedUsd),
+    dailyBudgetUsd: Number(budget.dailyBudgetUsd),
+    remainingUsd: budget.remainingUsd === null ? null : Number(budget.remainingUsd),
+    unlimited: Boolean(budget.unlimited),
+  };
+}
+
+function digestDeepLinks(since: string | null): DailyDigest["deepLinks"] {
+  const newMatches = new URLSearchParams({
+    deleted: "active",
+    sort: "discovered_at",
+    dir: "desc",
+  });
+  if (since) {
+    newMatches.set("discoveredSince", since);
+    newMatches.set("scoredSince", since);
+  }
+  const staleScores = new URLSearchParams({
+    deleted: "active",
+    state: "stale",
+    sort: "fit_score",
+    dir: "desc",
+  });
+  return {
+    newMatches: `/jobs?${newMatches.toString()}`,
+    blockedSources: "/discovery",
+    reviewNeededMaterials: "/apply-review",
+    staleScores: `/jobs?${staleScores.toString()}`,
+    pendingApprovals: "/apply-review",
+    followUpsDue: "/jobs?applyStatus=applied",
+    budget: "/settings",
+  };
+}
+
+function isReviewNeededMaterial(item: ApplyReviewQueueResponse["items"][number]): boolean {
+  const hasMaterial = item.materials.hasResume || item.materials.hasCoverLetter || item.materials.hasPdf;
+  return hasMaterial && !item.materials.ready;
+}
+
+function digestBlockedSources(db: SqliteDatabase): DailyDigest["blockedSources"] {
+  const sources = listSourceHealth(db)
+    .filter(
+      (source) =>
+        source.recommendedState === "quarantined" ||
+        source.recommendedState === "disabled" ||
+        source.consecutiveFailures >= 3,
+    )
+    .map((source) => ({
+      sourceId: source.sourceId,
+      recommendedState: source.recommendedState,
+      consecutiveFailures: source.consecutiveFailures,
+    }));
+  return { count: sources.length, sources };
+}
+
+function countDigestNewMatches(
+  db: SqliteDatabase,
+  since: string | null,
+  highFitThreshold: number,
+): DailyDigest["newMatches"] {
+  const activeFilter = jobSqlFilter(db, digestBaseJobQuery());
+  const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
+  const sinceParams: SqliteValue[] = since ? [since, since] : [];
+  const where = `${activeFilter.where}${sinceClause}`;
+  const params = [...activeFilter.params, ...sinceParams];
+  return {
+    count: countRows(db, `SELECT COUNT(*) AS count FROM job_list_projections${where}`, params),
+    highFitCount: countRows(
+      db,
+      `SELECT COUNT(*) AS count FROM job_list_projections${where} AND COALESCE(fit_score, -1) >= ?`,
+      [...params, highFitThreshold],
+    ),
+  };
+}
+
+function digestBaseJobQuery(): JobListQuery {
+  return {
+    page: 1,
+    pageSize: 1,
+    sort: "discovered_at",
+    dir: "desc",
+    q: "",
+    deleted: "active",
+    applyStatus: "all",
+    source: "",
+    company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
+  };
+}
+
+const FOLLOW_UP_STOP_OUTCOMES = new Set([
+  "recruiter_reply",
+  "interview",
+  "assessment",
+  "offer",
+  "rejection",
+  "withdrawn",
+  "bounced",
+]);
+
+function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
+  if (!tableExists(db, "application_outcomes")) return 0;
+  const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const rows = allRows<{
+    job_key: string;
+    kind: string;
+    occurred_at: string;
+    recorded_at: string | null;
+  }>(
+    db,
+    `SELECT job_key, kind, occurred_at, recorded_at
+       FROM application_outcomes
+      WHERE tenant_id = ?
+      ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC`,
+    [DEFAULT_TENANT],
+  );
+  const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
+  for (const row of rows) {
+    const jobKey = row.job_key;
+    const current = byJob.get(jobKey) ?? {
+      appliedAt: null,
+      lastActivityAt: null,
+      stopped: false,
+    };
+    const occurredAt = row.occurred_at || row.recorded_at || "";
+    if (!occurredAt) continue;
+    if (!current.lastActivityAt || occurredAt > current.lastActivityAt) {
+      current.lastActivityAt = occurredAt;
+    }
+    if (row.kind === "applied_confirmation") {
+      if (!current.appliedAt || occurredAt > current.appliedAt) {
+        current.appliedAt = occurredAt;
+        current.stopped = false;
+      }
+    } else if (
+      current.appliedAt &&
+      occurredAt > current.appliedAt &&
+      FOLLOW_UP_STOP_OUTCOMES.has(row.kind)
+    ) {
+      current.stopped = true;
+    }
+    byJob.set(jobKey, current);
+  }
+  let count = 0;
+  for (const item of byJob.values()) {
+    if (item.appliedAt && !item.stopped && item.lastActivityAt && item.lastActivityAt <= cutoff) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function localDateKey(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -404,6 +657,8 @@ function dashboardTodayMetrics(
     applyStatus: "all",
     source: "",
     company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
   });
   const rows = allRows<{ discovered_at: string | null; applied_at: string | null }>(
     db,
@@ -582,6 +837,8 @@ function activeJobUrlSet(db: SqliteDatabase): Set<string> {
     applyStatus: "all",
     source: "",
     company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
   });
   const rows = allRows<{ job_id: string }>(
     db,
@@ -3901,6 +4158,8 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
+    discoveredSince: undefined,
+    scoredSince: undefined,
   };
 }
 
@@ -3992,6 +4251,18 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
   if (query.maxFitScore !== undefined) {
     clauses.push("COALESCE(fit_score, 999) <= ?");
     params.push(query.maxFitScore);
+  }
+  if (query.discoveredSince && query.scoredSince) {
+    clauses.push(
+      "((discovered_at IS NOT NULL AND discovered_at >= ?) OR (scored_at IS NOT NULL AND scored_at >= ?))",
+    );
+    params.push(query.discoveredSince, query.scoredSince);
+  } else if (query.discoveredSince) {
+    clauses.push("discovered_at IS NOT NULL AND discovered_at >= ?");
+    params.push(query.discoveredSince);
+  } else if (query.scoredSince) {
+    clauses.push("scored_at IS NOT NULL AND scored_at >= ?");
+    params.push(query.scoredSince);
   }
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
@@ -4147,6 +4418,8 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     applyStatus: query.applyStatus,
     minFitScore: query.minFitScore ?? null,
     maxFitScore: query.maxFitScore ?? null,
+    discoveredSince: query.discoveredSince ?? null,
+    scoredSince: query.scoredSince ?? null,
     deleted: query.deleted,
   };
 }
@@ -4185,6 +4458,14 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
   if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
   if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
   if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
+  if (query.discoveredSince && query.scoredSince) {
+    const discoveredMatches = timestampAtOrAfter(job.discoveredAt, query.discoveredSince);
+    const scoredMatches = timestampAtOrAfter(job.scoredAt, query.scoredSince);
+    if (!discoveredMatches && !scoredMatches) return false;
+  } else {
+    if (query.discoveredSince && !timestampAtOrAfter(job.discoveredAt, query.discoveredSince)) return false;
+    if (query.scoredSince && !timestampAtOrAfter(job.scoredAt, query.scoredSince)) return false;
+  }
   if (!normalizedQuery) return true;
   return [
     job.title,
@@ -4200,6 +4481,13 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
     job.currentSubstage,
     job.currentState,
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function timestampAtOrAfter(value: string | null | undefined, since: string): boolean {
+  if (!value) return false;
+  const valueTime = Date.parse(value);
+  const sinceTime = Date.parse(since);
+  return Number.isFinite(valueTime) && Number.isFinite(sinceTime) && valueTime >= sinceTime;
 }
 
 function displayPostingSource(

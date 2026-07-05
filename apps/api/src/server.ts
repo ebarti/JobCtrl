@@ -129,6 +129,7 @@ import {
 } from "./gmail-feedback-worker.js";
 import {
   buildDashboardSummary,
+  buildDigest,
   getActivityEvent,
   getArtifactDetail,
   getJobDetail,
@@ -308,6 +309,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/digest", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const settings = readSettingsConfig({ settingsPath: options.settingsPath }).settings;
+      return buildDigest(db, {
+        applyReviewQueue: listApplyReviewQueue(db),
+        budget: readLlmSpendHealth(options.dbPath, options.settingsPath),
+        minFitScore: settings.minFitScore,
+      });
+    }),
   );
 
   app.get("/v1/debug/activity", async (request, reply) =>

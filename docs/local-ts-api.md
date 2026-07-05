@@ -197,11 +197,21 @@ source registry id where the job was found and falls back to the discovery
 strategy/source pair when canonical source identity is absent. `postingSource`
 and `postingSourceUrl` come from canonical identity evidence when a broad-board
 result points at a known ATS or employer-owned posting. The jobs list accepts
-`minFitScore` and
-`maxFitScore` query parameters, plus `applyStatus=applied` for jobs with an
-actual applied outcome (`applied_at` present or apply status `applied`). The
-same score and applied-outcome filters are accepted by all-matching bulk job
-mutations.
+`minFitScore`, `maxFitScore`, `discoveredSince`, and `scoredSince` query
+parameters, plus `applyStatus=applied` for jobs with an actual applied outcome
+(`applied_at` present or apply status `applied`). The timestamp filters accept
+ISO UTC timestamps and are used by digest deep links; when `discoveredSince`
+and `scoredSince` are both present, the jobs list matches rows where either
+timestamp is at or after its threshold. Active filters and sort remain URL state
+in the web app. The same score and applied-outcome filters are accepted by
+all-matching bulk job mutations.
+`GET /v1/digest` returns the local daily digest read model for the dashboard and
+CLI. It composes projection-backed counts for new matches, blocked sources,
+apply-review materials, stale scores, pending approvals, derived follow-ups due,
+and budget status. Passive reads never advance `digest_state.last_acknowledged_at`;
+only the explicit acknowledge flow may move the watermark. The digest uses a
+timestamp watermark and a UTC follow-up cutoff, resolving the plan's local-vs-UTC
+day-boundary inconsistency in favor of UTC.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python

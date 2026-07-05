@@ -28,6 +28,7 @@ import type {
   CredentialsResponse,
   CredentialUpdateRequest,
   DashboardSummary,
+  DailyDigest,
   DeleteJobRequest,
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
@@ -180,6 +181,10 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  digest(): Promise<DailyDigest> {
+    return this.get("/v1/digest");
   }
 
   activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {

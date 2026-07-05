@@ -17,6 +17,7 @@ export type {
   CredentialsResponse,
   DashboardSettings,
   DashboardSummary,
+  DailyDigest,
   DiscoveryFeedbackKind,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,

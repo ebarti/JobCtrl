@@ -752,6 +752,13 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             updated_at          TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS digest_state (
+            tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
+            last_acknowledged_at   TEXT,
+            updated_at             TEXT NOT NULL
+        )
+    """)
     # S-09 / round-1 review M1: one-shot snake_case → PascalCase rename
     # over historical `job_events` rows.  The CASE expression is exhaustive
     # for every snake_case event_type the worker has emitted; rows that
@@ -803,7 +810,7 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
 
     reconcile_dependency_blockers(conn)
     conn.commit()
-    return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
+    return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks", "digest_state"]
 
 
 def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
