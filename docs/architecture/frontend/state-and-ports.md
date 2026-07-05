@@ -37,6 +37,7 @@ is the canonical decision matrix.
 | Profile data | **Server** (Query) | Fetched, cached, mutation-invalidated. |
 | Settings / credentials | **Server** (Query) | Same. |
 | Dashboard summary | **Server** (Query) | Same. |
+| Daily digest and digest acknowledge state | **Server** (Query + mutation) | `GET /v1/digest` is a passive local read. Only explicit acknowledge advances `digest_state`; digest deep links carry filters/sort in the URL. |
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
 | Artifacts list / detail | **Server** (Query) | Same. |

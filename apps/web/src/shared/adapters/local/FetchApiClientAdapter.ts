@@ -17,6 +17,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   digest() {
     return this.client.digest();
   }
+  acknowledgeDigest(body?: Parameters<JobHunterApiClient["acknowledgeDigest"]>[0]) {
+    return this.client.acknowledgeDigest(body);
+  }
   activity(query: Parameters<JobHunterApiClient["activity"]>[0] = {}) {
     return this.client.activity(query);
   }

@@ -30,6 +30,7 @@ import {
   CredentialKeys,
   CredentialUpdateRequestSchema,
   DeleteJobRequestSchema,
+  DigestAcknowledgeRequestSchema,
   DiscoverySettingsUpdateRequestSchema,
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
@@ -128,6 +129,7 @@ import {
   type GmailFeedbackScanner,
 } from "./gmail-feedback-worker.js";
 import {
+  acknowledgeDigest,
   buildDashboardSummary,
   buildDigest,
   getActivityEvent,
@@ -321,6 +323,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     }),
   );
+
+  app.post("/v1/digest/acknowledge", async (request, reply) => {
+    const body = parseBody(reply, DigestAcknowledgeRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => acknowledgeDigest(db, body));
+  });
 
   app.get("/v1/debug/activity", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listActivity(db, ActivityListQuerySchema.parse(request.query))),

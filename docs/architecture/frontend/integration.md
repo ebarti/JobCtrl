@@ -134,14 +134,15 @@ via SSE):
 | `EmployerAnalyzed`, `BulletProvenanceRecorded`, `TailorRetailorRequested`, `TailoredArtifactsSuppressed` | jobs (lists, detail), artifacts (lists) |
 | `PreparationWorkItemQueued` / `Started` / `Completed` / `Failed` | jobs (lists, detail), dashboard |
 | `ApplySubmitIntended`, `ApplicationEmailFeedbackIngested` | apply-runs, jobs (detail), apply review |
+| `DigestReviewed` | digest read model |
 | `WorkflowStarted` / `Completed` / `Failed` / `Canceled` / `TimedOut` / `Terminated` | workflow-runs (lists, detail), jobs (lists, detail), dashboard |
 
-The `DomainEventUnion` has **68** arms today (grouped above where several
+The `DomainEventUnion` has **69** arms today (grouped above where several
 share an invalidation target). This table is representative; the
 authoritative registry is the set of per-context `handlers.ts` files wired
 through `contexts/operations/invalidation-router.ts`, and the
 `every-event-has-handler.test.ts` parity test (§10.2) guarantees every one
-of the 68 has a handler. A new backend event means a handler in the owning
+of the 69 has a handler. A new backend event means a handler in the owning
 context and a matching row (or grouped entry) here.
 
 Beyond the per-event targets above, the router appends

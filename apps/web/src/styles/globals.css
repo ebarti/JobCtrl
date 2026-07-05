@@ -774,6 +774,64 @@ textarea:focus-visible {
   grid-column: 1 / -1;
 }
 
+.digest-panel {
+  align-self: start;
+}
+
+.digest-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.digest-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(42px, auto) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+}
+
+.digest-row:hover {
+  background: var(--accent);
+}
+
+.digest-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.digest-label {
+  font-weight: 650;
+}
+
+.digest-detail {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.digest-value {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.digest-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
 .conversion-body {
   display: flex;
   flex-direction: column;
