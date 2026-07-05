@@ -1,4 +1,6 @@
-# W2.1 restores tag publishing after the PyPI distribution rename.
+# Tag publishing returns with the pre-publication rename train
+# (docs/plans/2026-07-03-oss-release-remediation-spec.md §1 "Naming").
+# Do not re-enable before it; the release_check structural guard enforces this.
 name: Publish to PyPI
 
 on:
