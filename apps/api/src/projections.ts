@@ -44,6 +44,13 @@ const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "DiscoveryFeedbackRecorded",
 ]);
 const COMPENSATION_PROJECTION_VERSION = 1;
+const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
+  ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
+  ["error_code", "TEXT"],
+  ["error_message", "TEXT"],
+  ["retryable", "INTEGER NOT NULL DEFAULT 0"],
+  ["temporal_run_id", "TEXT"],
+];
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -649,6 +656,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "dashboard_projections", "outcome_conversion_json", "TEXT NOT NULL DEFAULT '{}'") ||
     schemaChanged;
+  for (const [columnName, definition] of WORKFLOW_RUN_PROJECTION_COLUMNS) {
+    schemaChanged = ensureProjectionColumn(db, "workflow_run_projections", columnName, definition) || schemaChanged;
+  }
   return schemaChanged;
 }
 

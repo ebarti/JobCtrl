@@ -237,6 +237,61 @@ describe("local TypeScript API", () => {
           appDir: tempDir,
           dbPath: options.dbPath,
           taskQueue: "jobhunter-default",
+          maxConcurrentActivities: 8,
+          activityExecutorMaxWorkers: 10,
+        },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports legacy worker heartbeat rows without Temporal concurrency metadata", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS worker_runtime_heartbeats (
+        worker_id TEXT PRIMARY KEY,
+        component TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        hostname TEXT NOT NULL,
+        app_dir TEXT NOT NULL,
+        db_path TEXT NOT NULL,
+        task_queue TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO worker_runtime_heartbeats
+        (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "worker-legacy",
+      "temporal-worker",
+      1234,
+      "localhost",
+      tempDir,
+      options.dbPath,
+      "jobhunter-default",
+      "2026-05-20T10:00:00.000Z",
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      worker: {
+        status: "healthy",
+        heartbeat: {
+          workerId: "worker-legacy",
+          maxConcurrentActivities: null,
+          activityExecutorMaxWorkers: null,
         },
       },
     });
@@ -748,6 +803,94 @@ describe("local TypeScript API", () => {
         updatedAt: "2026-04-29T10:20:00+00:00",
       },
     ]);
+
+    await app.close();
+  });
+
+  it("marks pipeline progress as not running when the linked workflow terminalized", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Discover workflow started",
+        "2026-07-04T07:57:11.846Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 0,
+            total: 1,
+            percent: 0,
+            currentStep: null,
+            status: "running",
+            message: "Discover workflow started",
+          },
+        }),
+      );
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_run_projections (
+          workflow_id            TEXT PRIMARY KEY,
+          tenant_id              TEXT NOT NULL DEFAULT 'local',
+          workflow_type          TEXT NOT NULL DEFAULT '',
+          status                 TEXT NOT NULL DEFAULT 'in_progress',
+          input_summary_json     TEXT NOT NULL DEFAULT '{}',
+          error_code             TEXT,
+          error_message          TEXT,
+          retryable              INTEGER NOT NULL DEFAULT 0,
+          started_at             TEXT,
+          finished_at            TEXT,
+          duration_ms            INTEGER,
+          temporal_run_id        TEXT,
+          events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+      `);
+      db.prepare(
+        `INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          error_code, error_message, retryable, started_at, finished_at,
+          temporal_run_id, events_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "discover-local",
+        "local",
+        "DiscoverWorkflow",
+        "terminated",
+        JSON.stringify({ limit: 1000 }),
+        "reconciled_not_found",
+        "The reconciler closed this run: its Temporal execution no longer exists on the server.",
+        0,
+        "2026-07-04T07:57:11.751742+00:00",
+        "2026-07-04T11:16:55.314850+00:00",
+        "temporal-run-1",
+        "[]",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress[0]).toMatchObject({
+      stage: "discover",
+      status: "failed",
+      runId: "discover-local",
+      workflowId: "discover-local",
+      percent: 0,
+      completed: 0,
+      total: 1,
+      message: "Workflow terminated: The reconciler closed this run: its Temporal execution no longer exists on the server.",
+      updatedAt: "2026-07-04T11:16:55.314850+00:00",
+    });
 
     await app.close();
   });
@@ -7165,6 +7308,8 @@ function insertWorkerHeartbeat(
     appDir: string;
     dbPath: string;
     lastSeenAt: string;
+    maxConcurrentActivities?: number | null;
+    activityExecutorMaxWorkers?: number | null;
   },
 ): void {
   const db = new Database(dbPath);
@@ -7178,13 +7323,16 @@ function insertWorkerHeartbeat(
       db_path TEXT NOT NULL,
       task_queue TEXT NOT NULL,
       started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      last_seen_at TEXT NOT NULL,
+      max_concurrent_activities INTEGER,
+      activity_executor_max_workers INTEGER
     );
   `);
   db.prepare(
     `INSERT INTO worker_runtime_heartbeats
-      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
+       max_concurrent_activities, activity_executor_max_workers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     heartbeat.workerId,
     "temporal-worker",
@@ -7195,6 +7343,8 @@ function insertWorkerHeartbeat(
     "jobhunter-default",
     "2026-05-20T10:00:00.000Z",
     heartbeat.lastSeenAt,
+    heartbeat.maxConcurrentActivities ?? 8,
+    heartbeat.activityExecutorMaxWorkers ?? 10,
   );
   db.close();
 }

@@ -11,6 +11,7 @@ import os from "node:os";
 import fs from "node:fs";
 import Database from "better-sqlite3";
 
+import { ensureProjectionTables } from "../src/projections.js";
 import { buildApp } from "../src/server.js";
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
@@ -487,6 +488,58 @@ function insertCompensationRows(dbPath: string): void {
   );
   db.close();
 }
+
+describe("projection schema upgrades", () => {
+  it("adds workflow-run projection columns to existing legacy tables", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      const db = new Database(dbPath);
+      try {
+        db.exec(`
+          CREATE TABLE workflow_run_projections (
+            workflow_id            TEXT PRIMARY KEY,
+            run_id                 TEXT NOT NULL DEFAULT '',
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            workflow_type          TEXT NOT NULL DEFAULT 'pipeline',
+            job_id                 TEXT NOT NULL DEFAULT '',
+            title                  TEXT NOT NULL DEFAULT '',
+            company                TEXT NOT NULL DEFAULT '',
+            status                 TEXT NOT NULL DEFAULT 'starting',
+            result                 TEXT,
+            dry_run                INTEGER NOT NULL DEFAULT 0,
+            model                  TEXT,
+            started_at             TEXT,
+            finished_at            TEXT,
+            duration_ms            INTEGER,
+            stages_json            TEXT NOT NULL DEFAULT '[]',
+            events_json            TEXT NOT NULL DEFAULT '[]'
+          );
+        `);
+
+        expect(ensureProjectionTables(db)).toBe(true);
+
+        const columns = new Set(
+          (db.prepare("PRAGMA table_info(workflow_run_projections)").all() as Array<{ name: string }>).map(
+            (row) => row.name,
+          ),
+        );
+        expect([...columns]).toEqual(
+          expect.arrayContaining([
+            "input_summary_json",
+            "error_code",
+            "error_message",
+            "retryable",
+            "temporal_run_id",
+          ]),
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
 
 describe("apply_run_projections without legacy apply_runs table", () => {
   it("dashboard summary surfaces the projection row when apply_runs is absent", async () => {
