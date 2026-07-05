@@ -857,3 +857,21 @@ Targeted tests this work must add/extend (by surface):
 | Sensitive contact data (names, emails, page bodies) leaking into events/logs/telemetry. | Store only safe references + extracted fields; never raw bodies in `job_events`/projections/logs (mirrors the apply-feedback rule); treat as sensitive per CLAUDE.md. |
 | Research produces low-quality/incorrect candidates. | Supervised model (INV-4): candidates are proposals in `needs_review`; the user confirms before anything becomes a stored fact; confidence + provenance shown. |
 | Scope creep into an "assistant that sends for you." | Non-goals (§17) + owner decisions (§16) + the no-auto-send invariant as the product's stated stance. |
+
+## Delivery Model: Stacked PRs On This Plan
+
+Implement this plan as a series of stacked PRs that begin on this plan's
+branch:
+
+- The first implementation PR uses this plan PR's branch as its base; each
+  subsequent PR stacks on the previous one. One reviewable concern per PR;
+  Conventional Commit titles.
+- As a parent merges, retarget the next PR to `main` before merging it
+  (retarget-before-merge; never merge a PR whose base branch is already
+  merged and deleted).
+- If this plan PR has already merged to `main`, start the stack from `main`
+  instead — the instruction is "stack on the plan", not "recreate it".
+- Each PR states which plan phase it delivers and runs that phase's
+  verification commands from this plan before requesting review.
+- Do not begin implementation while this plan's stated gates or
+  dependencies are unmet.
