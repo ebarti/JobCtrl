@@ -129,6 +129,7 @@ import {
 } from "./gmail-feedback-worker.js";
 import {
   buildDashboardSummary,
+  buildOutcomeAnalyticsSummary,
   getActivityEvent,
   getArtifactDetail,
   getJobDetail,
@@ -308,6 +309,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/analytics/outcomes", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => buildOutcomeAnalyticsSummary(db)),
   );
 
   app.get("/v1/debug/activity", async (request, reply) =>

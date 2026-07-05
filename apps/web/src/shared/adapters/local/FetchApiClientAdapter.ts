@@ -14,6 +14,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   dashboardSummary() {
     return this.client.dashboardSummary();
   }
+  outcomeAnalytics() {
+    return this.client.outcomeAnalytics();
+  }
   activity(query: Parameters<JobHunterApiClient["activity"]>[0] = {}) {
     return this.client.activity(query);
   }

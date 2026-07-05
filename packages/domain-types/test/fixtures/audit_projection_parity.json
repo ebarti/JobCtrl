@@ -463,7 +463,9 @@
       "source": "linkedin",
       "strategy": "jobspy",
       "tenant_id": "local",
-      "title": "Senior Platform Engineer"
+      "title": "Senior Platform Engineer",
+      "fit_band": "unreported",
+      "apply_mode": "manual_marked"
     },
     "jobDetail": {
       "compensation_audit_json": {
@@ -847,6 +849,26 @@
             "interview": 1,
             "offer": 1,
             "rejection": 0
+          }
+        ],
+        "byFitBand": [
+          {
+            "fitBand": "unreported",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
+          }
+        ],
+        "byApplyMode": [
+          {
+            "applyMode": "manual_marked",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
           }
         ]
       },

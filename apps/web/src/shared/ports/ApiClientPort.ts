@@ -53,6 +53,7 @@ import type {
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -147,6 +148,7 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;

@@ -447,6 +447,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       description            TEXT NOT NULL DEFAULT '',
       full_description       TEXT NOT NULL DEFAULT '',
       fit_score              INTEGER,
+      fit_band               TEXT,
       compensation_summary_json TEXT,
       score_breakdown_json   TEXT,
       score_keywords_json    TEXT NOT NULL DEFAULT '[]',
@@ -467,6 +468,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       has_pdf                INTEGER NOT NULL DEFAULT 0,
       apply_status           TEXT,
       applied_at             TEXT,
+      apply_mode             TEXT,
       artifact_count         INTEGER NOT NULL DEFAULT 0,
       deleted_at             TEXT,
       last_updated_at        TEXT,
@@ -628,6 +630,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'") ||
     schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "fit_band", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "apply_mode", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "compensation_summary_json", "TEXT") || schemaChanged;
@@ -923,6 +927,9 @@ interface RequirementFitReportRow extends Record<string, unknown> {
   summary_json: string;
 }
 
+const FIT_BAND_ORDER = ["excellent", "strong", "plausible", "stretch", "poor", "unreported"] as const;
+const APPLY_MODE_ORDER = ["automated_live", "manual_marked", "external_confirmed"] as const;
+
 interface RequirementFitItemRow extends Record<string, unknown> {
   requirement_id: string;
   requirement_text: string;
@@ -1056,6 +1063,24 @@ function loadRequirementFitReportJson(
     assessments: items.map(requirementFitAssessmentToReadModel),
   };
   return JSON.stringify(readModel);
+}
+
+function loadLatestRequirementFitBand(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): string | null {
+  if (!tableExists(db, "job_requirement_fit_reports")) return null;
+  const row = getRow<{ fit_band: string | null }>(
+    db,
+    `SELECT fit_band
+       FROM job_requirement_fit_reports
+      WHERE tenant_id = ? AND job_url = ?
+      ORDER BY score_version DESC
+      LIMIT 1`,
+    [tenantId, jobUrl],
+  );
+  return nullableString(row?.fit_band);
 }
 
 function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {
@@ -1721,6 +1746,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const materials = loadLatestMaterials(db, jobUrl);
   const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
   const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
+  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobUrl));
   const enrichment = loadEnrichment(db, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
@@ -1749,6 +1775,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const applyStatus = deriveApplyStatus(apply.status, nullableString(job.apply_status));
   const appliedAt = apply.status === "succeeded" ? apply.finishedAt : nullableString(job.applied_at);
+  const applyMode = deriveApplyMode(db, tenantId, jobUrl, apply, nullableString(job.apply_status), nullableString(job.applied_at));
 
   const description = stringField(job.description);
   const fullDescription = enrichment.fullDescription ?? stringField(job.full_description);
@@ -1768,14 +1795,14 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO job_list_projections (
      tenant_id, job_id, title, employer, source, strategy, location,
      salary, application_url, discovered_at, description, full_description,
-       fit_score, compensation_summary_json,
-       score_breakdown_json, score_keywords_json, score_reasoning,
-       score_version, scored_at, score_criteria_json, score_trace_json,
-       score_correction_json, current_stage, current_substage, current_state,
-       current_error_code, current_error_message, current_next_action,
-       has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
-       artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     fit_score, fit_band, compensation_summary_json,
+     score_breakdown_json, score_keywords_json, score_reasoning,
+     score_version, scored_at, score_criteria_json, score_trace_json,
+     score_correction_json, current_stage, current_substage, current_state,
+     current_error_code, current_error_message, current_next_action,
+     has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
+     apply_mode, artifact_count, deleted_at, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -1788,6 +1815,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        description           = excluded.description,
        full_description      = excluded.full_description,
        fit_score             = excluded.fit_score,
+       fit_band              = excluded.fit_band,
        compensation_summary_json = excluded.compensation_summary_json,
        score_breakdown_json  = excluded.score_breakdown_json,
        score_keywords_json   = excluded.score_keywords_json,
@@ -1808,6 +1836,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        has_pdf               = excluded.has_pdf,
        apply_status          = excluded.apply_status,
        applied_at            = excluded.applied_at,
+       apply_mode            = excluded.apply_mode,
        artifact_count        = excluded.artifact_count,
        deleted_at            = excluded.deleted_at,
        last_updated_at       = excluded.last_updated_at`,
@@ -1825,6 +1854,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     description,
     fullDescription,
     fitScore,
+    requirementFitBand,
     compensationProjection.summaryJson,
     scoreBreakdownJson,
     scoreKeywordsJson,
@@ -1845,6 +1875,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     hasPdf ? 1 : 0,
     applyStatus,
     appliedAt,
+    applyMode,
     activeArtifacts.length,
     deletedAt,
     lastUpdatedAt,
@@ -2412,6 +2443,8 @@ interface OutcomeConversion {
   totals: ConversionCounts;
   bySource: Array<{ source: string } & ConversionCounts>;
   byBand: Array<{ band: string } & ConversionCounts>;
+  byFitBand: Array<{ fitBand: string } & ConversionCounts>;
+  byApplyMode: Array<{ applyMode: string } & ConversionCounts>;
 }
 
 function scoreBand(fitScore: number | null | undefined): string {
@@ -2421,6 +2454,16 @@ function scoreBand(fitScore: number | null | undefined): string {
   if (fitScore >= 5) return "moderate";
   if (fitScore >= 3) return "weak";
   return "poor";
+}
+
+function fitBand(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return FIT_BAND_ORDER.includes(normalized as (typeof FIT_BAND_ORDER)[number]) ? normalized : "unreported";
+}
+
+function applyMode(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return APPLY_MODE_ORDER.includes(normalized as (typeof APPLY_MODE_ORDER)[number]) ? normalized : "manual_marked";
 }
 
 function hasAnyKind(kinds: Set<string>, target: Set<string>): boolean {
@@ -2453,6 +2496,8 @@ function buildOutcomeConversion(
     apply_status: string | null;
     applied_at: string | null;
     fit_score: number | null;
+    fit_band: string | null;
+    apply_mode: string | null;
     source: string;
   }>,
 ): OutcomeConversion {
@@ -2462,9 +2507,13 @@ function buildOutcomeConversion(
   const totals = blank();
   const bySource = new Map<string, ConversionCounts>();
   const byBand = new Map<string, ConversionCounts>();
+  const byFitBand = new Map<string, ConversionCounts>();
+  const byApplyMode = new Map<string, ConversionCounts>();
   for (const row of appliedRows) {
     const source = row.source || "unknown";
     const band = scoreBand(row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score));
+    const canonicalFitBand = fitBand(row.fit_band);
+    const mode = applyMode(row.apply_mode);
     const kinds = outcomesByJob.get(row.job_id) ?? new Set<string>();
     let sourceBucket = bySource.get(source);
     if (!sourceBucket) {
@@ -2476,7 +2525,17 @@ function buildOutcomeConversion(
       bandBucket = blank();
       byBand.set(band, bandBucket);
     }
-    for (const bucket of [totals, sourceBucket, bandBucket]) {
+    let fitBandBucket = byFitBand.get(canonicalFitBand);
+    if (!fitBandBucket) {
+      fitBandBucket = blank();
+      byFitBand.set(canonicalFitBand, fitBandBucket);
+    }
+    let applyModeBucket = byApplyMode.get(mode);
+    if (!applyModeBucket) {
+      applyModeBucket = blank();
+      byApplyMode.set(mode, applyModeBucket);
+    }
+    for (const bucket of [totals, sourceBucket, bandBucket, fitBandBucket, applyModeBucket]) {
       bucket.applied += 1;
       if (hasAnyKind(kinds, REPLY_OUTCOME_KINDS)) bucket.reply += 1;
       if (hasAnyKind(kinds, INTERVIEW_OUTCOME_KINDS)) bucket.interview += 1;
@@ -2491,7 +2550,22 @@ function buildOutcomeConversion(
     band,
     ...byBand.get(band)!,
   }));
-  return { version: 1, totals, bySource: bySourceList, byBand: byBandList };
+  const byFitBandList = FIT_BAND_ORDER.filter((band) => byFitBand.has(band)).map((band) => ({
+    fitBand: band,
+    ...byFitBand.get(band)!,
+  }));
+  const byApplyModeList = APPLY_MODE_ORDER.filter((mode) => byApplyMode.has(mode)).map((mode) => ({
+    applyMode: mode,
+    ...byApplyMode.get(mode)!,
+  }));
+  return {
+    version: 1,
+    totals,
+    bySource: bySourceList,
+    byBand: byBandList,
+    byFitBand: byFitBandList,
+    byApplyMode: byApplyModeList,
+  };
 }
 
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
@@ -2518,11 +2592,13 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     deleted_at: string | null;
     has_resume: number;
     fit_score: number | null;
+    fit_band: string | null;
+    apply_mode: string | null;
     source: string;
   }>(
     db,
     `SELECT job_id, current_stage, current_state, apply_status, applied_at,
-            deleted_at, has_resume, fit_score, source
+            deleted_at, has_resume, fit_score, fit_band, apply_mode, source
      FROM job_list_projections jlp
      WHERE jlp.tenant_id = ?
        ${hiddenWhere}
@@ -3208,6 +3284,47 @@ function deriveApplyStatus(arStatus: string | null, legacyStatus: string | null)
     return arStatus;
   }
   return legacyStatus;
+}
+
+function deriveApplyMode(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+  apply: ApplyLatest,
+  legacyStatus: string | null,
+  legacyAppliedAt: string | null,
+): string | null {
+  if (apply.status === "succeeded" && !apply.dryRun) return "automated_live";
+  const isApplied = Boolean(legacyAppliedAt) || legacyStatus === "applied";
+  if (!isApplied) return null;
+  if (hasJobEvent(db, jobUrl, "ApplicationManuallyMarked")) return "manual_marked";
+  if (hasApplicationOutcomeKind(db, tenantId, jobUrl, "applied_confirmation")) return "external_confirmed";
+  return "manual_marked";
+}
+
+function hasJobEvent(db: SqliteDatabase, jobUrl: string, eventType: string): boolean {
+  if (!tableExists(db, "job_events")) return false;
+  const row = getRow<{ c: number }>(
+    db,
+    "SELECT COUNT(*) AS c FROM job_events WHERE job_url = ? AND event_type = ?",
+    [jobUrl, eventType],
+  );
+  return Number(row?.c ?? 0) > 0;
+}
+
+function hasApplicationOutcomeKind(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+  kind: string,
+): boolean {
+  if (!tableExists(db, "application_outcomes")) return false;
+  const row = getRow<{ c: number }>(
+    db,
+    "SELECT COUNT(*) AS c FROM application_outcomes WHERE tenant_id = ? AND job_key = ? AND kind = ?",
+    [tenantId, jobUrl, kind],
+  );
+  return Number(row?.c ?? 0) > 0;
 }
 
 function companyName(site: string, postingUrl: string): string {

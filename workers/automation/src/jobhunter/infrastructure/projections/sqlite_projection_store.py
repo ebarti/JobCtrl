@@ -58,6 +58,8 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "score_trace_json", "TEXT"),
     ("job_list_projections", "score_correction_json", "TEXT"),
     ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
+    ("job_list_projections", "fit_band", "TEXT"),
+    ("job_list_projections", "apply_mode", "TEXT"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
     ("job_detail_projections", "compensation_summary_json", "TEXT"),
     ("job_detail_projections", "compensation_audit_json", "TEXT"),
@@ -105,6 +107,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             description            TEXT NOT NULL DEFAULT '',
             full_description       TEXT NOT NULL DEFAULT '',
             fit_score              INTEGER,
+            fit_band               TEXT,
             compensation_summary_json TEXT,
             score_breakdown_json   TEXT,
             score_keywords_json    TEXT NOT NULL DEFAULT '[]',
@@ -125,6 +128,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             has_pdf                INTEGER NOT NULL DEFAULT 0,
             apply_status           TEXT,
             applied_at             TEXT,
+            apply_mode             TEXT,
             artifact_count         INTEGER NOT NULL DEFAULT 0,
             deleted_at             TEXT,
             last_updated_at        TEXT,
@@ -398,18 +402,18 @@ class SqliteProjectionStore:
             INSERT INTO job_list_projections (
                 tenant_id, job_id, title, employer, source, strategy, location,
                 salary, application_url, discovered_at, description,
-                full_description, fit_score, compensation_summary_json,
+                full_description, fit_score, fit_band, compensation_summary_json,
                 score_breakdown_json, score_keywords_json,
                 score_reasoning, score_version, scored_at,
                 score_criteria_json, score_trace_json, score_correction_json,
                 current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
-                artifact_count, deleted_at,
+                apply_mode, artifact_count, deleted_at,
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -423,6 +427,7 @@ class SqliteProjectionStore:
                 description           = excluded.description,
                 full_description      = excluded.full_description,
                 fit_score             = excluded.fit_score,
+                fit_band              = excluded.fit_band,
                 compensation_summary_json = excluded.compensation_summary_json,
                 score_breakdown_json  = excluded.score_breakdown_json,
                 score_keywords_json   = excluded.score_keywords_json,
@@ -443,6 +448,7 @@ class SqliteProjectionStore:
                 has_pdf               = excluded.has_pdf,
                 apply_status          = excluded.apply_status,
                 applied_at            = excluded.applied_at,
+                apply_mode            = excluded.apply_mode,
                 artifact_count        = excluded.artifact_count,
                 deleted_at            = excluded.deleted_at,
                 last_updated_at       = excluded.last_updated_at
@@ -461,6 +467,7 @@ class SqliteProjectionStore:
                 projection.description,
                 projection.full_description,
                 projection.fit_score,
+                projection.fit_band,
                 projection.compensation_summary_json,
                 projection.score_breakdown_json,
                 projection.score_keywords_json,
@@ -481,6 +488,7 @@ class SqliteProjectionStore:
                 1 if projection.has_pdf else 0,
                 projection.apply_status,
                 projection.applied_at,
+                projection.apply_mode,
                 projection.artifact_count,
                 projection.deleted_at,
                 projection.last_updated_at,
