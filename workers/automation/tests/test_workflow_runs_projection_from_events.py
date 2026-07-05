@@ -63,35 +63,6 @@ def _row_value(row, key, default=None):
     return value if value is not None else default
 
 
-def _replace_workflow_projection_schema_with_legacy_shape(
-    conn: sqlite3.Connection,
-) -> None:
-    conn.execute("DROP TABLE workflow_run_projections")
-    conn.execute(
-        """
-        CREATE TABLE workflow_run_projections (
-            workflow_id            TEXT PRIMARY KEY,
-            run_id                 TEXT NOT NULL DEFAULT '',
-            tenant_id              TEXT NOT NULL DEFAULT 'local',
-            workflow_type          TEXT NOT NULL DEFAULT 'pipeline',
-            job_id                 TEXT NOT NULL DEFAULT '',
-            title                  TEXT NOT NULL DEFAULT '',
-            company                TEXT NOT NULL DEFAULT '',
-            status                 TEXT NOT NULL DEFAULT 'starting',
-            result                 TEXT,
-            dry_run                INTEGER NOT NULL DEFAULT 0,
-            model                  TEXT,
-            started_at             TEXT,
-            finished_at            TEXT,
-            duration_ms            INTEGER,
-            stages_json            TEXT NOT NULL DEFAULT '[]',
-            events_json            TEXT NOT NULL DEFAULT '[]'
-        )
-        """
-    )
-    conn.commit()
-
-
 def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     _record(
         conn,
@@ -107,18 +78,6 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
         ),
     )
     conn.commit()
-    last_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
-    conn.execute(
-        """
-        INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(projection_name) DO UPDATE SET
-            last_event_id = excluded.last_event_id,
-            updated_at = excluded.updated_at
-        """,
-        ("operations_projections", last_event_id, "2026-07-04T08:36:17Z"),
-    )
-    conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -132,57 +91,6 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "temporal_run_id") == "temporal-1"
     assert json.loads(_row_value(row, "input_summary_json", "{}")) == {
         "stages": ["discover"]
-    }
-
-
-def test_legacy_workflow_projection_schema_is_migrated_before_fold(
-    conn: sqlite3.Connection,
-) -> None:
-    """Existing local DBs may have the old workflow projection table shape.
-
-    The finalize activity records a WorkflowStarted event, then immediately
-    refreshes projections. If the table is not upgraded before the refresh, the
-    activity fails and Temporal retries forever before source discovery starts.
-    """
-    _replace_workflow_projection_schema_with_legacy_shape(conn)
-    _record(
-        conn,
-        create_workflow_started(
-            LOCAL_TENANT,
-            WorkflowStartedPayload(
-                workflow_id="discover-local",
-                workflow_type="DiscoverWorkflow",
-                input_summary={"limit": 1000, "workers": 10},
-                started_at="2026-07-04T07:57:11+00:00",
-                temporal_run_id="temporal-discover",
-            ),
-        ),
-    )
-    conn.commit()
-
-    ProjectionBuilder(conn_factory=lambda: conn).refresh()
-
-    columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(workflow_run_projections)")
-    }
-    assert {
-        "input_summary_json",
-        "error_code",
-        "error_message",
-        "retryable",
-        "temporal_run_id",
-    }.issubset(columns)
-    row = conn.execute(
-        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
-        ("discover-local",),
-    ).fetchone()
-    assert row is not None
-    assert _row_value(row, "status") == "in_progress"
-    assert _row_value(row, "workflow_type") == "DiscoverWorkflow"
-    assert _row_value(row, "temporal_run_id") == "temporal-discover"
-    assert json.loads(_row_value(row, "input_summary_json", "{}")) == {
-        "limit": 1000,
-        "workers": 10,
     }
 
 

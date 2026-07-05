@@ -77,14 +77,6 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("dashboard_projections", "outcome_conversion_json", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
-WORKFLOW_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("input_summary_json", "TEXT NOT NULL DEFAULT '{}'"),
-    ("error_code", "TEXT"),
-    ("error_message", "TEXT"),
-    ("retryable", "INTEGER NOT NULL DEFAULT 0"),
-    ("temporal_run_id", "TEXT"),
-)
-
 
 def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
     """Create the projection tables if they do not exist (idempotent)."""
@@ -345,8 +337,6 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         # Projection rows are fully derived; resetting them lets the next
         # refresh rebuild migrated rows from canonical job_scores evidence.
         _reset_score_evidence_projections(conn)
-    for column_name, definition in WORKFLOW_RUN_COLUMNS:
-        _ensure_column(conn, "workflow_run_projections", column_name, definition)
     conn.commit()
     return list(PROJECTION_TABLES)
 

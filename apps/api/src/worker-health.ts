@@ -20,8 +20,6 @@ export interface WorkerHeartbeatSnapshot {
   taskQueue: string;
   startedAt: string;
   lastSeenAt: string;
-  maxConcurrentActivities: number | null;
-  activityExecutorMaxWorkers: number | null;
 }
 
 export interface WorkerHealthSnapshot {
@@ -55,8 +53,6 @@ interface HeartbeatRow {
   task_queue: string;
   started_at: string;
   last_seen_at: string;
-  max_concurrent_activities?: number | null;
-  activity_executor_max_workers?: number | null;
 }
 
 interface LlmSpendRow {
@@ -97,7 +93,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
 
     const row = db
       .prepare(
-        `SELECT *
+        `SELECT worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at
          FROM ${WORKER_HEARTBEAT_TABLE}
          ORDER BY last_seen_at DESC
          LIMIT 1`,
@@ -240,21 +236,11 @@ function toHeartbeatSnapshot(row: HeartbeatRow): WorkerHeartbeatSnapshot {
     taskQueue: row.task_queue,
     startedAt: row.started_at,
     lastSeenAt: row.last_seen_at,
-    maxConcurrentActivities: nullableNumber(row.max_concurrent_activities),
-    activityExecutorMaxWorkers: nullableNumber(row.activity_executor_max_workers),
   };
 }
 
 function normalizePath(value: string): string {
   return path.resolve(value);
-}
-
-function nullableNumber(value: number | null | undefined): number | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : null;
 }
 
 function runtimeMismatches(input: {
