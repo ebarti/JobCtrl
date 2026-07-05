@@ -183,6 +183,19 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
 
 
+@activity.defn(name="discovery_enrichment")
+async def _partial_discovery_enrichment(
+    payload: DiscoveryEnrichmentActivityInput,
+) -> DiscoveryEnrichmentActivityOutput:
+    _EVENTS.append(("enrichment", payload.limit))
+    return DiscoveryEnrichmentActivityOutput(
+        status="partial",
+        passes=1,
+        pending=0,
+        site_errors={"indeed": {"error_class": "RuntimeError", "error_message": "boom"}},
+    )
+
+
 @activity.defn(name="discovery_preparation_fanout")
 async def _discovery_preparation_fanout(
     payload: DiscoveryPreparationFanoutInput,
@@ -301,11 +314,22 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
 
 
 @pytest.mark.asyncio
-async def test_discover_workflow_collects_source_failures_before_failing() -> None:
+async def test_discover_workflow_tolerates_partial_source_failure() -> None:
+    """One failed family must not abort discovery: enrichment + preparation still
+    run and the workflow SUCCEEDS with the failed family recorded (legacy
+    partial-source semantics)."""
     _reset_state()
     global _FAIL_FAMILY
     _FAIL_FAMILY = "workday"
-    queue = f"discover-fail-{uuid.uuid4()}"
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-partial-{uuid.uuid4()}"
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
@@ -315,19 +339,187 @@ async def test_discover_workflow_collects_source_failures_before_failing() -> No
             activities=_discovery_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
-            with pytest.raises(WorkflowFailureError):
-                await env.client.execute_workflow(
-                    DiscoverWorkflow.run,
-                    DiscoverWorkflowInput(tenant_id="local"),
-                    id=f"discover-source-fail-{uuid.uuid4()}",
-                    task_queue=queue,
-                )
+            result = await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"discover-partial-{uuid.uuid4()}",
+                task_queue=queue,
+            )
 
     source_events = [event for event in _EVENTS if event[0] == "source"]
     assert [event[1] for event in source_events] == ["jobspy", "workday", "smartextract"]
+    assert result.families_completed == ["jobspy", "smartextract"]
+    assert result.families_failed == ["workday"]
+    assert result.preparation_started == 1
+    assert any(event[0] == "enrichment" for event in _EVENTS)
+    assert any(event[0] == "fanout" for event in _EVENTS)
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+def _partial_enrichment_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _discovery_source_family,
+        _partial_discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_preserves_partial_enrichment_site_errors() -> None:
+    _reset_state()
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-partial-enrichment-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_partial_enrichment_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            result = await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"discover-partial-enrichment-{uuid.uuid4()}",
+                task_queue=queue,
+            )
+
+    assert result.enrichment_status == "partial"
+    assert result.enrichment_site_errors == {
+        "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
+    }
+    assert result.preparation_started == 1
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@activity.defn(name="discovery_source_family")
+async def _always_failing_source_family(
+    payload: DiscoverySourceActivityInput,
+) -> DiscoverySourceActivityOutput:
+    _EVENTS.append(("source", payload.family))
+    raise ApplicationError(
+        f"{payload.family} unavailable",
+        type="source_unavailable",
+        non_retryable=True,
+    )
+
+
+def _all_fail_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _always_failing_source_family,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_fails_only_when_every_source_fails() -> None:
+    """When ALL families fail the workflow still runs enrichment + preparation,
+    then fails terminally as a source failure (legacy semantics)."""
+    _reset_state()
+    queue = f"discover-allfail-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_all_fail_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as excinfo:
+                await env.client.execute_workflow(
+                    DiscoverWorkflow.run,
+                    DiscoverWorkflowInput(tenant_id="local"),
+                    id=f"discover-allfail-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert any(event[0] == "enrichment" for event in _EVENTS)
+    assert any(event[0] == "fanout" for event in _EVENTS)
     assert ("workflow_outcome", "failed") in _EVENTS
-    assert not any(event[0] == "enrichment" for event in _EVENTS)
-    assert not any(event[0] == "derive" for event in _EVENTS)
+    cause = excinfo.value.cause
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == "discovery_source_failed"
+
+
+@activity.defn(name="discovery_enrichment")
+async def _failing_enrichment(
+    payload: DiscoveryEnrichmentActivityInput,
+) -> DiscoveryEnrichmentActivityOutput:
+    _EVENTS.append(("enrichment", payload.limit))
+    raise ApplicationError(
+        "discover:enrichment failed: Error: BrowserType.launch: Executable doesn't exist at /x",
+        type="configuration",
+        non_retryable=True,
+    )
+
+
+def _enrichment_fail_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _discovery_source_family,
+        _failing_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_surfaces_real_enrichment_failure_after_preparation() -> None:
+    """A non-retryable enrichment failure fails the workflow with the REAL cause
+    (never "failed: failed"), and preparation still runs first."""
+    _reset_state()
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-enrichfail-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_enrichment_fail_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as excinfo:
+                await env.client.execute_workflow(
+                    DiscoverWorkflow.run,
+                    DiscoverWorkflowInput(tenant_id="local"),
+                    id=f"discover-enrichfail-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert any(event[0] == "fanout" for event in _EVENTS)
+    assert ("workflow_outcome", "failed") in _EVENTS
+    cause = excinfo.value.cause
+    assert isinstance(cause, ApplicationError)
+    assert "Executable doesn't exist" in str(cause)
+    assert cause.type == "configuration"
 
 
 @activity.defn(name="discovery_source_family")

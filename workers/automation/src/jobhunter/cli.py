@@ -1423,6 +1423,40 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
             log.warning("Discovery schedule %s reconcile failed", schedule_id, exc_info=True)
 
 
+# Truthy spellings accepted by the browser-preflight escape hatch, matching the
+# convention used by other JobHunter env flags (e.g. ``LANGFUSE_DISABLE``).
+_SKIP_BROWSER_PREFLIGHT_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _preflight_browsers_or_exit() -> None:
+    """Fail fast at worker startup when Playwright Chromium is missing.
+
+    Discovery scraping and HTML/CSS PDF rendering both launch Chromium; without
+    it the worker would boot, connect to Temporal, and only fail hours into a
+    Discover run the first time an activity opens a browser. Set
+    ``JOBHUNTER_SKIP_BROWSER_PREFLIGHT=1`` to bypass (e.g. a worker that only
+    runs non-browser activities).
+    """
+    import os
+
+    skip = os.environ.get("JOBHUNTER_SKIP_BROWSER_PREFLIGHT", "").strip().lower()
+    if skip in _SKIP_BROWSER_PREFLIGHT_TRUTHY:
+        return
+
+    from jobhunter.infrastructure.preflight import check_playwright_chromium
+
+    ok, message = check_playwright_chromium()
+    if ok:
+        return
+
+    console.print(f"[red]Worker preflight failed:[/red] {message}")
+    console.print(
+        "[dim]Set JOBHUNTER_SKIP_BROWSER_PREFLIGHT=1 to start the worker anyway "
+        "(browser activities will still fail at runtime).[/dim]"
+    )
+    raise typer.Exit(code=1)
+
+
 @app.command()
 def worker(
     task_queue: Optional[str] = typer.Option(
@@ -1433,6 +1467,11 @@ def worker(
 ) -> None:
     """Run the long-lived JobHunter Temporal worker."""
     _bootstrap()
+
+    # Verify the browser this worker needs is installed before we connect to
+    # Temporal and start accepting activities — a missing binary must surface
+    # here, not two hours into a Discover run.
+    _preflight_browsers_or_exit()
 
     from jobhunter.infrastructure.temporal import (
         JOBHUNTER_TASK_QUEUE,
@@ -1807,6 +1846,19 @@ def doctor() -> None:
                 results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
         except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
             results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
+
+    # Playwright Chromium is required for discovery scraping *and* HTML/CSS PDF
+    # rendering, so validate it regardless of the chosen resume renderer — a
+    # LaTeX renderer does not remove the browser dependency from scraping. This
+    # is the same check the worker runs at startup to fail fast.
+    from jobhunter.infrastructure.preflight import check_playwright_chromium
+
+    chromium_ok, chromium_note = check_playwright_chromium()
+    results.append((
+        "playwright chromium (scraping + PDF)",
+        ok_mark if chromium_ok else fail_mark,
+        chromium_note,
+    ))
 
     if RESUME_TEMPLATE_PATH.exists():
         results.append(("legacy resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))

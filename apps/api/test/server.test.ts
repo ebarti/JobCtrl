@@ -1043,6 +1043,69 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("finalizes an unlinked discover progress card from the tenant's discover workflow", async () => {
+    // The incident's frozen card: the Temporal-path smartextract completion
+    // event carries only the per-source discovery run id — no workflowId — so
+    // the workflow-status linkage must fall back to the deterministic
+    // discover-<tenant> id instead of leaving "running 67%" on a failed run.
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "info",
+        "Discovery source smartextract ok",
+        "2026-07-04T13:35:06.648Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          source: "smartextract",
+          runId: "discovery:smartextract:57cfde27c40b43fb97dfa21b3cb7fbbc",
+          progress: {
+            completed: 4,
+            total: 6,
+            percent: 67,
+            currentStep: "Smart extract",
+            status: "running",
+            message: "Smart extract complete",
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "source_unavailable",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(summary.statusCode, summary.body).toBe(200);
+      const discover = summary
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "failed",
+        percent: 67,
+        completed: 4,
+        currentStep: "Smart extract",
+      });
+      expect(discover.message).toContain("Workflow failed");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("preserves partial terminal pipeline progress from durable event payloads", async () => {
     const db = new Database(options.dbPath);
     try {
@@ -1084,6 +1147,87 @@ describe("local TypeScript API", () => {
     ]);
 
     await app.close();
+  });
+
+  it("preserves partial discover warnings after the workflow succeeds", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "warn",
+        "Detail enrichment partially complete",
+        "2026-07-04T14:06:43.000+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          workflowId: "discover-local",
+          progress: {
+            completed: 5,
+            total: 6,
+            percent: 83,
+            currentStep: "Detail enrichment",
+            status: "partial",
+            message: "Detail enrichment partially complete",
+          },
+          siteErrors: {
+            indeed: {
+              error_class: "RuntimeError",
+              error_message: "BrowserType.launch: Executable doesn't exist",
+            },
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "succeeded",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: DISCOVER_NEW_START,
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        startedAt: DISCOVER_NEW_START,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowCompleted",
+        occurredAt: "2026-07-04T14:09:00.000+00:00",
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        status: "succeeded",
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      const discover = response
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "partial",
+        workflowId: "discover-local",
+        percent: 100,
+        completed: 6,
+        total: 6,
+        currentStep: "Detail enrichment",
+        message: "Detail enrichment partially complete",
+        updatedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
   });
 
   it("returns local-day dashboard deltas for active jobs and applications", async () => {
@@ -4452,6 +4596,303 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("supersedes a stale terminal workflow-run projection when a reused workflow id restarts and fails", async () => {
+    // Discover-reliability incident: the reconciler terminated `discover-local`
+    // (reconciled_not_found), then a NEW Temporal execution reused the same
+    // workflow id, emitted a duplicate start marker, and ultimately failed. The
+    // Python fold froze the row on the OLD terminal outcome (chimera). The read
+    // model must re-fold the canonical lifecycle to the current run's verdict.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        eventsJson: JSON.stringify([
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, status: "terminated", message: RECONCILED_MESSAGE },
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, status: "failed", message: "Activity task failed" },
+        ]),
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: DISCOVER_TERMINATE_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START_DUP });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const list = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
+      expect(list.statusCode, list.body).toBe(200);
+      const run = list.json().items.find((r: { workflowId: string }) => r.workflowId === "discover-local");
+      expect(run).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      const body = detail.json();
+      expect(body).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        retryable: true,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      // The superseded terminal outcome is gone from the served verdict.
+      expect(body.status).not.toBe("terminated");
+      expect(body.errorCode).not.toBe("reconciled_not_found");
+      // The timeline preserves the full history of both executions.
+      expect(body.events).toHaveLength(5);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("clears the prior terminal error while a reused workflow id is back in progress (duplicate start idempotent)", async () => {
+    // Same reuse, observed between the new run's start and its terminal event:
+    // the frozen row still says terminated, but the canonical lifecycle shows an
+    // open run. A duplicate `WorkflowStarted` must not advance the start time.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: DISCOVER_TERMINATE_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START_DUP });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        finishedAt: null,
+        startedAt: DISCOVER_NEW_START,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("ignores a late duplicate start for an already-terminalized execution", async () => {
+    // A finalize-activity retry can append a second `WorkflowStarted` AFTER the
+    // run's terminal event, with a later occurredAt. Same temporal run id means
+    // it is NOT a new execution, so the failed verdict must survive — run-id
+    // equality outranks wall-clock ordering in the reopen guard.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: "2026-07-04T14:09:10.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: "2026-07-04T14:09:10.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("ignores a late terminal from a superseded execution while a newer run is live", async () => {
+    // Terminal-direction twin of the reopen guard: run A dies without a
+    // terminal, run B starts, THEN the reconciler's WorkflowTerminated for run
+    // A lands with a later occurredAt. The stale terminal belongs to the
+    // superseded execution and must not flip the live run B; B's own terminal
+    // must still apply afterwards.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: "2026-07-04T12:13:39.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: "2026-07-04T12:13:39.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: null,
+        startedAt: DISCOVER_NEW_START,
+      });
+
+      const followUp = new Database(options.dbPath);
+      try {
+        insertPipelineWorkflowEvent(followUp, { eventType: "WorkflowCompleted", occurredAt: "2026-07-04T12:45:00.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, finishedAt: "2026-07-04T12:45:00.000+00:00" });
+      } finally {
+        followUp.close();
+      }
+      const after = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(after.statusCode, after.body).toBe(200);
+      expect(after.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "succeeded",
+        finishedAt: "2026-07-04T12:45:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps the first terminal verdict within a single execution (reconciler describe race)", async () => {
+    // Regression guard for the M-1 backstop: a reconciler `describe` that
+    // observes the closed run and emits COMPLETED after the real WorkflowFailed
+    // must not flip the verdict back to succeeded.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        retryable: true,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowCompleted", occurredAt: "2026-07-04T14:09:00.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, status: "succeeded", finishedAt: "2026-07-04T14:09:00.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        status: "failed",
+        errorCode: "activity_task_failed",
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("finalizes discover progress from the re-folded workflow verdict, not the stale terminal row", async () => {
+    // Fix B: even with a frozen `terminated` row and a discover progress event
+    // stuck at 67% "running", the dashboard progress must report the current
+    // run's re-folded `failed` verdict without hiding the last known step.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Smart extract complete",
+        "2026-07-04T13:00:00.000+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 2,
+            total: 3,
+            percent: 67,
+            currentStep: "Smart extract complete",
+            status: "running",
+            message: "Smart extract complete",
+          },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      const progress = response
+        .json()
+        .progress.find((p: { stage: string }) => p.stage === "discover");
+      expect(progress).toMatchObject({
+        stage: "discover",
+        status: "failed",
+        workflowId: "discover-local",
+        percent: 67,
+        completed: 2,
+        total: 3,
+        currentStep: "Smart extract complete",
+        message: "Workflow failed: Activity task failed",
+        updatedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("opens only a known existing artifact through the injected opener", async () => {
     const opened: string[] = [];
     const app = buildApp({
@@ -7384,6 +7825,84 @@ function seedDatabase(dbPath: string): void {
     "temporal-run-1",
   );
   db.close();
+}
+
+const DISCOVER_OLD_START = "2026-07-04T07:57:11.751+00:00";
+const DISCOVER_TERMINATE_AT = "2026-07-04T11:16:55.314+00:00";
+const DISCOVER_NEW_START = "2026-07-04T12:13:38.757+00:00";
+const DISCOVER_NEW_START_DUP = "2026-07-04T12:13:38.776+00:00";
+const DISCOVER_FAILED_AT = "2026-07-04T14:08:43.547+00:00";
+const DISCOVER_OLD_TEMPORAL_RUN = "temporal-run-old-0001";
+const DISCOVER_NEW_TEMPORAL_RUN = "019f2d0c-7441-7641-ae61-b7f6f5b1127d";
+const RECONCILED_MESSAGE =
+  "The reconciler closed this run: its Temporal execution no longer exists on the server (dev-server history loss).";
+
+function insertPipelineWorkflowEvent(
+  db: Database.Database,
+  event: {
+    eventType: string;
+    occurredAt: string;
+    workflowId: string;
+    temporalRunId?: string;
+    status?: string;
+    message?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    retryable?: boolean;
+    startedAt?: string;
+    finishedAt?: string;
+    durationMs?: number;
+    inputSummary?: Record<string, unknown>;
+  },
+): void {
+  const payload: Record<string, unknown> = {
+    workflowId: event.workflowId,
+    workflowType: "DiscoverWorkflow",
+  };
+  for (const [key, value] of Object.entries(event)) {
+    if (key === "eventType" || key === "occurredAt" || key === "workflowId" || key === "message") continue;
+    if (value !== undefined) payload[key] = value;
+  }
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(null, "workflow", event.eventType, "info", event.message ?? null, event.occurredAt, JSON.stringify(payload));
+}
+
+function insertDiscoverWorkflowRunRow(
+  db: Database.Database,
+  row: {
+    status: string;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    retryable?: boolean;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    durationMs?: number | null;
+    temporalRunId?: string | null;
+    eventsJson?: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO workflow_run_projections (
+       workflow_id, tenant_id, workflow_type, status, input_summary_json,
+       error_code, error_message, retryable, started_at, finished_at,
+       duration_ms, temporal_run_id, events_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "discover-local",
+    "local",
+    "DiscoverWorkflow",
+    row.status,
+    JSON.stringify({ limit: 1000 }),
+    row.errorCode ?? null,
+    row.errorMessage ?? null,
+    row.retryable ? 1 : 0,
+    row.startedAt ?? null,
+    row.finishedAt ?? null,
+    row.durationMs ?? null,
+    row.temporalRunId ?? DISCOVER_NEW_TEMPORAL_RUN,
+    row.eventsJson ?? "[]",
+  );
 }
 
 function insertWorkerHeartbeat(

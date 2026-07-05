@@ -291,6 +291,45 @@ def _score_band(fit_score: int | None) -> str:
     return "poor"
 
 
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _starts_new_execution(
+    *,
+    folded_run_id: str | None,
+    folded_finished_at: str | None,
+    event_run_id: str | None,
+    event_occurred_at: str | None,
+) -> bool:
+    """Whether a ``WorkflowStarted`` belongs to a new execution of the id.
+
+    A workflow_id is reused when Temporal restarts a run the reconciler already
+    closed. When both the folded terminal and the start event carry a Temporal
+    run id, a differing id is authoritative. When run ids are absent, fall back
+    to wall-clock ordering: a start that occurred after the folded run finished
+    is a new execution.
+    """
+    if event_run_id and folded_run_id:
+        return event_run_id != folded_run_id
+    started = _parse_iso_timestamp(event_occurred_at)
+    finished = _parse_iso_timestamp(folded_finished_at)
+    if started is None or finished is None:
+        return False
+    return started > finished
+
+
 class ProjectionBuilder:
     """In-process projection materialiser.
 
@@ -1824,45 +1863,69 @@ class ProjectionBuilder:
                 or payload.get("workflow_type")
                 or workflow_type
             )
-            trid = payload.get("temporalRunId") or payload.get("temporal_run_id")
-            if trid:
-                temporal_run_id = str(trid)
+            event_run_id = payload.get("temporalRunId") or payload.get("temporal_run_id")
+            event_run_id = str(event_run_id) if event_run_id else None
+            occurred_at = event.get("occurred_at")
             timeline.append(
                 {
                     "eventType": event_type,
-                    "occurredAt": event.get("occurred_at"),
+                    "occurredAt": occurred_at,
                     "status": payload.get("status"),
                     "message": payload.get("errorMessage") or payload.get("message"),
                 }
             )
 
             if event_type == "WorkflowStarted":
-                started_at = (
-                    payload.get("startedAt")
-                    or event.get("occurred_at")
-                    or started_at
-                )
+                # Run-scoped fold: a WorkflowStarted for a NEW Temporal execution
+                # that reuses this workflow_id (a restart after the reconciler
+                # closed the prior run) reopens the row so the new run's own
+                # terminal can apply. A stale/duplicate WorkflowStarted for the
+                # run that already folded a terminal is idempotent and preserves
+                # that terminal (the reconciler-describe vs finalize backstop).
+                if status in _WORKFLOW_TERMINAL_STATUSES and not _starts_new_execution(
+                    folded_run_id=temporal_run_id,
+                    folded_finished_at=finished_at,
+                    event_run_id=event_run_id,
+                    event_occurred_at=occurred_at,
+                ):
+                    continue
+                status = "in_progress"
+                error_code = None
+                error_message = None
+                retryable = False
+                finished_at = None
+                duration_ms = None
+                started_at = payload.get("startedAt") or occurred_at or started_at
                 summary = payload.get("inputSummary")
                 if isinstance(summary, dict):
                     input_summary = summary
-                # Only regress to in_progress if a terminal event has not
-                # already been folded (events are ordered, so this is a
-                # defensive guard against duplicate start markers).
-                if status not in _WORKFLOW_TERMINAL_STATUSES:
-                    status = "in_progress"
+                if event_run_id:
+                    temporal_run_id = event_run_id
             elif event_type in _WORKFLOW_TERMINAL_STATUS:
-                # First-terminal-wins: once a terminal event has been folded, a
-                # later terminal event for the same workflow_id is still recorded
-                # in the timeline (above) but must NOT replace the first terminal
-                # outcome. This is the fold-side backstop for a reconciler
-                # describe (COMPLETED) racing a finalize WorkflowFailed, which
-                # would otherwise flip failed -> succeeded (M-1 review).
+                # First-terminal-wins WITHIN a run: once this run folded a
+                # terminal, a later terminal for the SAME run stays in the
+                # timeline (above) but must NOT replace the outcome. This is the
+                # backstop for a reconciler describe (COMPLETED) racing a
+                # finalize WorkflowFailed, which would otherwise flip
+                # failed -> succeeded (M-1 review).
                 if status in _WORKFLOW_TERMINAL_STATUSES:
                     continue
+                # Run-scoped in the terminal direction too: a late terminal
+                # from a superseded execution (the reconciler closing a dead
+                # run after a newer WorkflowStarted already folded) must not
+                # clobber the live run.
+                if (
+                    event_run_id
+                    and temporal_run_id
+                    and event_run_id != temporal_run_id
+                ):
+                    continue
+                if event_run_id:
+                    temporal_run_id = event_run_id
                 status = _WORKFLOW_TERMINAL_STATUS[event_type]
                 finished_at = (
                     payload.get("finishedAt")
-                    or event.get("occurred_at")
+                    or occurred_at
                     or finished_at
                 )
                 duration = payload.get("durationMs")

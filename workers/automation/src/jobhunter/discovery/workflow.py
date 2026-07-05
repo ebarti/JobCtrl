@@ -50,6 +50,8 @@ class DiscoverWorkflowResult:
     families_completed: list[str] = field(default_factory=list)
     families_failed: list[str] = field(default_factory=list)
     preparation_started: int = 0
+    enrichment_status: str = "ok"
+    enrichment_site_errors: dict[str, Any] = field(default_factory=dict)
     failure: str | None = None
     error_code: str | None = None
 
@@ -189,36 +191,97 @@ class DiscoverWorkflow:
                 failed.append(family)
                 failures.append(f"{family}: {exc.cause if exc.cause else exc}")
 
-        if failures:
+        # Legacy semantics: per-source failures are tolerated. Enrichment and
+        # preparation ALWAYS run so the healthy sources' jobs still flow through
+        # the pipeline; the workflow only fails as a source failure when EVERY
+        # family failed.
+        enrichment_failure: str | None = None
+        enrichment_error_code: str | None = None
+        enrichment_status = "ok"
+        enrichment_site_errors: dict[str, Any] = {}
+        try:
+            enrichment_result = await workflow.execute_activity(
+                discovery_enrichment_activity,
+                DiscoveryEnrichmentActivityInput(
+                    tenant_id=payload.tenant_id,
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
+                    workers=payload.workers,
+                    limit=payload.limit,
+                    progress_completed=len(plan.families),
+                    progress_total=plan.progress_total,
+                ),
+                start_to_close_timeout=_DISCOVERY_TIMEOUT,
+                heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
+                retry_policy=_ENRICH_RETRY,
+            )
+            enrichment_status = enrichment_result.status
+            enrichment_site_errors = dict(enrichment_result.site_errors)
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            enrichment_failure = str(exc.cause) if exc.cause else str(exc)
+            enrichment_error_code = _activity_error_code(exc)
+
+        preparation_started = 0
+        preparation_error: ActivityError | None = None
+        try:
+            preparation_started = await _start_preparation_workflows(
+                payload,
+                progress_completed=len(plan.families) + 1,
+                progress_total=plan.progress_total,
+            )
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            preparation_error = exc
+
+        all_families_failed = bool(failed) and not completed
+        if all_families_failed:
             return DiscoverWorkflowResult(
                 families_completed=completed,
                 families_failed=failed,
+                preparation_started=preparation_started,
+                enrichment_status=enrichment_status,
+                enrichment_site_errors=enrichment_site_errors,
                 failure="; ".join(failures),
                 error_code="discovery_source_failed",
             )
-
-        await workflow.execute_activity(
-            discovery_enrichment_activity,
-            DiscoveryEnrichmentActivityInput(
-                tenant_id=payload.tenant_id,
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-                workers=payload.workers,
-                limit=payload.limit,
-            ),
-            start_to_close_timeout=_DISCOVERY_TIMEOUT,
-            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_ENRICH_RETRY,
-        )
-        preparation_started = await _start_preparation_workflows(payload)
+        if enrichment_failure is not None:
+            message = enrichment_failure
+            if preparation_error is not None:
+                prep_cause = (
+                    str(preparation_error.cause)
+                    if preparation_error.cause
+                    else str(preparation_error)
+                )
+                message = f"{enrichment_failure}; preparation also failed: {prep_cause}"
+            return DiscoverWorkflowResult(
+                families_completed=completed,
+                families_failed=failed,
+                preparation_started=preparation_started,
+                enrichment_status=enrichment_status,
+                enrichment_site_errors=enrichment_site_errors,
+                failure=message,
+                error_code=enrichment_error_code or "discovery_enrichment_failed",
+            )
+        if preparation_error is not None:
+            raise preparation_error
         return DiscoverWorkflowResult(
             families_completed=completed,
             families_failed=failed,
             preparation_started=preparation_started,
+            enrichment_status=enrichment_status,
+            enrichment_site_errors=enrichment_site_errors,
         )
 
 
-async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
+async def _start_preparation_workflows(
+    payload: DiscoverWorkflowInput,
+    *,
+    progress_completed: int = 0,
+    progress_total: int = 0,
+) -> int:
     result = await workflow.execute_activity(
         discovery_preparation_fanout_activity,
         DiscoveryPreparationFanoutInput(
@@ -233,6 +296,8 @@ async def _start_preparation_workflows(payload: DiscoverWorkflowInput) -> int:
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
         ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

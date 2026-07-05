@@ -4496,6 +4496,7 @@ function loadPipelineWorkflowRunStatus(db: SqliteDatabase): Map<string, Pipeline
   if (!tableExists(db, "workflow_run_projections")) {
     return new Map();
   }
+  const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
   const rows = allRows<{
     workflow_id: string;
     status: string;
@@ -4509,14 +4510,17 @@ function loadPipelineWorkflowRunStatus(db: SqliteDatabase): Map<string, Pipeline
     [DEFAULT_TENANT],
   );
   return new Map(
-    rows.map((row) => [
-      row.workflow_id,
-      {
-        status: normalizeWorkflowRunStatus(row.status),
-        errorMessage: nullableString(row.error_message),
-        finishedAt: nullableString(row.finished_at),
-      },
-    ]),
+    rows.map((row) => {
+      const fold = lifecycleFolds.get(row.workflow_id);
+      return [
+        row.workflow_id,
+        {
+          status: normalizeWorkflowRunStatus(fold ? fold.status : row.status),
+          errorMessage: fold ? fold.errorMessage : nullableString(row.error_message),
+          finishedAt: fold ? fold.finishedAt : nullableString(row.finished_at),
+        },
+      ];
+    }),
   );
 }
 
@@ -4525,10 +4529,16 @@ function progressWithWorkflowStatus(
   workflowRunStatus: Map<string, PipelineWorkflowRunStatus>,
 ): DashboardSummary["progress"][number] {
   const workflowId = progress.workflowId || progress.runId;
-  if (!workflowId) {
-    return progress;
+  let workflow = workflowId ? workflowRunStatus.get(workflowId) : undefined;
+  if (!workflow && progress.stage === "discover") {
+    // Discover progress events emitted on the Temporal path may carry only a
+    // per-source discovery run id (`discovery:<family>:<hex>`), never the
+    // owning workflow id — which is deterministic per tenant. Without this
+    // fallback the discover card can keep reporting a stale mid-crawl
+    // percentage (the incident's frozen "running 67%") after the workflow
+    // itself terminalized.
+    workflow = workflowRunStatus.get(`discover-${DEFAULT_TENANT}`);
   }
-  const workflow = workflowRunStatus.get(workflowId);
   if (!workflow) {
     return progress;
   }
@@ -4542,12 +4552,14 @@ function progressWithWorkflowStatus(
   const message = workflow.errorMessage
     ? `Workflow ${workflow.status}: ${workflow.errorMessage}`
     : `Workflow ${workflow.status}`;
+  const workflowSucceeded = status === "succeeded";
+  const preservePartialWarning = workflowSucceeded && progress.status === "partial";
   return {
     ...progress,
-    status,
-    percent: status === "succeeded" ? 100 : progress.percent,
-    completed: status === "succeeded" ? progress.total : progress.completed,
-    message,
+    status: preservePartialWarning ? "partial" : status,
+    percent: workflowSucceeded ? 100 : progress.percent,
+    completed: workflowSucceeded ? progress.total : progress.completed,
+    message: preservePartialWarning ? progress.message || message : message,
     updatedAt: workflow.finishedAt ?? progress.updatedAt,
   };
 }
@@ -4934,11 +4946,225 @@ function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
 }
 
 /**
+ * Read-side re-fold of the `Workflow*` lifecycle stream (truthfulness backstop).
+ *
+ * `workflow_run_projections` is materialised by the Python `ProjectionBuilder`,
+ * whose fold is *globally* first-terminal-wins: once a run is terminal it drops
+ * later `Workflow*` events, and a `WorkflowStarted` only regresses `status` to
+ * `in_progress` when the run is not already terminal — yet it always advances
+ * `started_at`. When a NEW Temporal execution reuses a `workflowId` whose prior
+ * execution already terminalized (e.g. the reconciler closed `discover-local`
+ * with `reconciled_not_found`, then the pipeline restarts under the same id),
+ * that guard freezes the stored row on the OLD run's terminal outcome while
+ * `started_at` jumps to the new run — a chimera the API would otherwise serve.
+ *
+ * The read model re-derives the current execution's real verdict from the
+ * canonical `job_events` here with *run-scoped* precedence:
+ *   - a `WorkflowStarted` for a run that is not already open begins a fresh
+ *     execution and clears the prior run's terminal error/finish;
+ *   - duplicate start markers for an open run are idempotent (keep `startedAt`);
+ *   - first-terminal-wins holds only *within* an open run, so a reconciler
+ *     `describe` COMPLETED racing a finalize `WorkflowFailed` cannot flip the
+ *     verdict (preserves the M-1 backstop).
+ * Runs with no `Workflow*` events (legacy seeds) fall back to the stored row.
+ */
+const WORKFLOW_LIFECYCLE_EVENT_TYPES = [
+  "WorkflowStarted",
+  "WorkflowCompleted",
+  "WorkflowFailed",
+  "WorkflowCanceled",
+  "WorkflowTimedOut",
+  "WorkflowTerminated",
+] as const;
+
+const WORKFLOW_TERMINAL_STATUS_BY_EVENT: Record<string, WorkflowRunStatus> = {
+  WorkflowCompleted: "succeeded",
+  WorkflowFailed: "failed",
+  WorkflowCanceled: "canceled",
+  WorkflowTimedOut: "timed_out",
+  WorkflowTerminated: "terminated",
+};
+
+interface WorkflowLifecycleFold {
+  status: WorkflowRunStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+interface WorkflowLifecycleEvent {
+  eventType: string;
+  occurredAt: string | null;
+  payload: Record<string, unknown>;
+}
+
+function loadWorkflowRunLifecycleFolds(db: SqliteDatabase): Map<string, WorkflowLifecycleFold> {
+  const folds = new Map<string, WorkflowLifecycleFold>();
+  if (!tableExists(db, "job_events")) {
+    return folds;
+  }
+  const placeholders = WORKFLOW_LIFECYCLE_EVENT_TYPES.map(() => "?").join(", ");
+  const rows = allRows<{ event_type: string; occurred_at: string | null; payload_json: string | null }>(
+    db,
+    `SELECT event_type, occurred_at, payload_json
+       FROM job_events
+      WHERE event_type IN (${placeholders})
+      ORDER BY event_id ASC`,
+    [...WORKFLOW_LIFECYCLE_EVENT_TYPES],
+  );
+  const byWorkflow = new Map<string, WorkflowLifecycleEvent[]>();
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    if (!payload) {
+      continue;
+    }
+    const workflowId = stringField(payload.workflowId ?? payload.workflow_id);
+    if (!workflowId) {
+      continue;
+    }
+    const events = byWorkflow.get(workflowId) ?? [];
+    events.push({ eventType: row.event_type, occurredAt: nullableString(row.occurred_at), payload });
+    byWorkflow.set(workflowId, events);
+  }
+  for (const [workflowId, events] of byWorkflow) {
+    folds.set(workflowId, foldWorkflowRunEvents(events));
+  }
+  return folds;
+}
+
+function workflowLifecycleRunId(payload: Record<string, unknown>): string | null {
+  return nullableString(payload.temporalRunId ?? payload.temporal_run_id);
+}
+
+/**
+ * Mirror of the Python writer's `_starts_new_execution` guard: a
+ * `WorkflowStarted` reopens a terminalized fold only when it belongs to a NEW
+ * Temporal execution. When both sides carry a run id, a differing id is
+ * authoritative (so a late-replayed duplicate start for the SAME run can never
+ * un-terminalize it); with run ids absent, fall back to wall-clock ordering.
+ */
+function startsNewWorkflowExecution(args: {
+  foldedRunId: string | null;
+  foldedFinishedAt: string | null;
+  eventRunId: string | null;
+  eventOccurredAt: string | null;
+}): boolean {
+  if (args.eventRunId && args.foldedRunId) {
+    return args.eventRunId !== args.foldedRunId;
+  }
+  const started = args.eventOccurredAt ? Date.parse(args.eventOccurredAt) : Number.NaN;
+  const finished = args.foldedFinishedAt ? Date.parse(args.foldedFinishedAt) : Number.NaN;
+  if (Number.isNaN(started) || Number.isNaN(finished)) {
+    return false;
+  }
+  return started > finished;
+}
+
+function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): WorkflowLifecycleFold {
+  let phase: "none" | "in_progress" | "terminal" = "none";
+  let status: WorkflowRunStatus = "in_progress";
+  let errorCode: string | null = null;
+  let errorMessage: string | null = null;
+  let retryable = false;
+  let startedAt: string | null = null;
+  let finishedAt: string | null = null;
+  let durationMs: number | null = null;
+  let runId: string | null = null;
+
+  for (const event of events) {
+    const payload = event.payload;
+    if (event.eventType === "WorkflowStarted") {
+      const eventRunId = workflowLifecycleRunId(payload);
+      const eventStartedAt = nullableString(payload.startedAt) ?? event.occurredAt;
+      // A start carrying a NEW run id while the fold is still open means the
+      // previous execution died without a recorded terminal (Temporal id reuse
+      // only admits a new run once the old one closed server-side); the fold
+      // must adopt the live execution — Python fold parity.
+      const adoptsNewExecution =
+        phase === "in_progress" && eventRunId !== null && runId !== null && eventRunId !== runId;
+      const reopens =
+        phase === "none" ||
+        adoptsNewExecution ||
+        (phase === "terminal" &&
+          startsNewWorkflowExecution({
+            foldedRunId: runId,
+            foldedFinishedAt: finishedAt,
+            eventRunId,
+            // Parity with Python _starts_new_execution: the wall-clock
+            // fallback compares the event's occurredAt (record time), never
+            // payload.startedAt.
+            eventOccurredAt: event.occurredAt,
+          }));
+      if (reopens) {
+        status = "in_progress";
+        errorCode = null;
+        errorMessage = null;
+        retryable = false;
+        finishedAt = null;
+        durationMs = null;
+        startedAt = eventStartedAt ?? startedAt;
+        runId = eventRunId;
+        phase = "in_progress";
+      } else if (phase === "in_progress" && !runId && eventRunId) {
+        // A duplicate start for the open run may carry the id the first lacked.
+        runId = eventRunId;
+      }
+      continue;
+    }
+    const terminalStatus = WORKFLOW_TERMINAL_STATUS_BY_EVENT[event.eventType];
+    if (!terminalStatus || phase === "terminal") {
+      continue;
+    }
+    const terminalRunId = workflowLifecycleRunId(payload);
+    // Run-scoped in the terminal direction too: a late terminal from a
+    // superseded execution (the reconciler closing a dead run after a newer
+    // WorkflowStarted already folded) must not clobber the live run.
+    if (terminalRunId && runId && terminalRunId !== runId) {
+      continue;
+    }
+    status = terminalStatus;
+    phase = "terminal";
+    finishedAt = nullableString(payload.finishedAt) ?? event.occurredAt ?? finishedAt;
+    durationMs = nullableNumber(payload.durationMs) ?? durationMs;
+    errorCode = nullableString(payload.errorCode) ?? errorCode;
+    errorMessage = nullableString(payload.errorMessage ?? payload.message) ?? errorMessage;
+    retryable = "retryable" in payload ? Boolean(payload.retryable) : retryable;
+    runId = terminalRunId ?? runId;
+  }
+  return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
+}
+
+function applyWorkflowLifecycleFold(
+  row: WorkflowRunProjectionRow,
+  fold: WorkflowLifecycleFold | undefined,
+): WorkflowRunProjectionRow {
+  if (!fold) {
+    return row;
+  }
+  return {
+    ...row,
+    status: fold.status,
+    error_code: fold.errorCode,
+    error_message: fold.errorMessage,
+    retryable: fold.retryable ? 1 : 0,
+    started_at: fold.startedAt,
+    finished_at: fold.finishedAt,
+    duration_ms: fold.durationMs,
+  };
+}
+
+/**
  * Workflow Runs view source (Temporal loop closure — P0).
  *
- * Reads the unified `workflow_run_projections` table (Python-sole-writer,
- * folded from the `Workflow*` lifecycle events) so every workflow type —
- * pipeline orchestrator, apply, and future workflows — appears in one list.
+ * Reads the unified `workflow_run_projections` table (materialised by the
+ * Python `ProjectionBuilder` from the `Workflow*` lifecycle events) so every
+ * workflow type — pipeline orchestrator, apply, and future workflows — appears
+ * in one list, then re-folds each row's lifecycle from `job_events` (see
+ * `loadWorkflowRunLifecycleFolds`) so a stale terminal outcome from a superseded
+ * execution never leaks onto a run the current execution has restarted.
  * Apply rows are enriched with job context via a LEFT JOIN to
  * `apply_run_projections` (the apply-specific detail projection); non-apply
  * rows show their workflow type instead of a job title. The `runId` equals
@@ -4989,8 +5215,9 @@ export function listWorkflowRuns(
      ORDER BY wrp.started_at DESC, wrp.workflow_id DESC`,
     params,
   );
+  const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
   const all = rows
-    .map(rowToWorkflowRunSummary)
+    .map((row) => rowToWorkflowRunSummary(applyWorkflowLifecycleFold(row, lifecycleFolds.get(stringField(row.workflow_id)))))
     .filter((run) => query.status === "all" || run.status === query.status);
   all.sort((left, right) => compareWorkflowRuns(left, right, query.sort, query.dir));
   return paginate(all, query.page, query.pageSize, query.sort, query.dir, {
@@ -5022,15 +5249,19 @@ export function getWorkflowRunDetail(
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`
     : "";
-  const row = getRow<WorkflowRunProjectionRow>(
+  const rawRow = getRow<WorkflowRunProjectionRow>(
     db,
     `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}
      WHERE wrp.tenant_id = ? AND wrp.workflow_id = ?`,
     [DEFAULT_TENANT, runId],
   );
-  if (!row) {
+  if (!rawRow) {
     return null;
   }
+  // Correct the run-scoped verdict from the canonical lifecycle stream while
+  // leaving `events_json` untouched so the timeline keeps the full history
+  // (including the superseded execution's terminal events).
+  const row = applyWorkflowLifecycleFold(rawRow, loadWorkflowRunLifecycleFolds(db).get(runId));
   const summary = rowToWorkflowRunSummary(row);
   return {
     workflowId: summary.workflowId,

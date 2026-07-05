@@ -72,10 +72,15 @@ Key facts about the four activities:
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a JobSpy, ATS,
   Workday, or Smart Extract failure records failure info and lets the workflow
-  see a partial result rather than failing the whole batch. With `limit > 0` the
-  cap is a **new-job budget** — rediscoveries record observations but do not
-  consume the budget, so exact-query duplicates never starve later recall queries
-  or sources.
+  see a partial result rather than failing the whole batch. If only some source
+  families fail, `DiscoverWorkflow` still proceeds through detail enrichment and
+  preparation for jobs returned by surviving sources; it fails the workflow only
+  when every planned source family fails. Source-family failures propagate
+  Temporal `ApplicationError` values with the real error class, message, and
+  details, so terminal workflow state names the actual cause instead of a
+  placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
+  budget** — rediscoveries record observations but do not consume the budget, so
+  exact-query duplicates never starve later recall queries or sources.
 - **`discovery_enrichment`** drains detail enrichment (below) and then runs
   post-discovery hygiene.
 - **`discovery_preparation_fanout`** derives targets and starts per-job
@@ -94,6 +99,11 @@ query/location, raw/accepted/duplicate/filtered counts, source errors). That
 progress is a heartbeat payload persisted onto the `discovery_runs` aggregate —
 it is not a domain event. Discovery uses a no-overlap Temporal policy and
 preserves source order so global-limit and source-budget semantics stay stable.
+Beyond source-level progress, the Temporal Discover path emits coarse
+stage-progress events for Detail enrichment and Preparation so the Runs and
+dashboard read models advance past the last source-family percentage. If the
+workflow fails, terminal workflow state finalizes the progress row instead of
+leaving a stale `running` card.
 
 ### Detail Enrichment
 
@@ -137,8 +147,13 @@ Two truths correct the old diagram:
 For LinkedIn rows that are failed or enriched without an application URL, a
 bounded authenticated Chrome pass may click the LinkedIn apply control to
 capture an external company URL — but it **stops before any form or submission**.
-Individual detail failures are recorded per job so later runs retry without
-crashing unrelated jobs.
+Detail enrichment isolates faults at two levels. A crash while processing one
+site's batch is recorded in `site_errors`, healthy sites keep running, and the
+enrichment run ends `partial` rather than `failed`. Within a site, a single
+job's enrichment crash marks only that job failed with `ENRICH_INTERNAL_ERROR`
+and the batch continues. If the enrichment activity itself must fail, it
+propagates a Temporal `ApplicationError` with the real error class and message
+rather than a `failed: failed` placeholder.
 
 ### Preparation
 

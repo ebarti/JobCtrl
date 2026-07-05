@@ -83,6 +83,19 @@ installs the Playwright Chromium browsers used by web tests and PDF rendering.
 For an already provisioned machine or CI-style setup, `pnpm dev:setup` remains
 the non-interactive Node + Python dependency sync.
 
+Playwright Chromium is installed per Python virtualenv, and both discovery
+scraping and HTML/CSS PDF rendering need it. `pnpm install:interactive` installs
+it for you, but `pnpm dev:setup`, a bare `uv sync`, or a fresh git worktree does
+not — run `uv --project workers/automation run playwright install chromium` in
+that checkout before starting the worker. Multiple git worktrees share the
+`~/Library/Caches/ms-playwright` cache, so running `playwright install` from a
+checkout on a newer Playwright version can garbage-collect the browser revision
+an older worktree still needs; set `PLAYWRIGHT_SKIP_BROWSER_GC=1` when
+installing from another checkout to keep both. `jobhunter doctor` validates the
+browser, and the worker refuses to start without it (set
+`JOBHUNTER_SKIP_BROWSER_PREFLIGHT=1` to override, e.g. for a worker that runs
+only non-browser activities).
+
 `pnpm dev` starts the full local stack in the foreground: Temporal dev server,
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
@@ -215,6 +228,11 @@ Common variables:
 - `CHROME_PATH`: override Chrome/Chromium detection.
 - `JOBHUNTER_RESUME_RENDERER=latex_pdf`: opt into the LaTeX resume compatibility
   renderer. The default is HTML/CSS printed by Playwright.
+- `PLAYWRIGHT_SKIP_BROWSER_GC=1`: keep other worktrees' Playwright browsers when
+  running `playwright install` from this checkout (they share the
+  `~/Library/Caches/ms-playwright` cache).
+- `JOBHUNTER_SKIP_BROWSER_PREFLIGHT=1`: skip the worker's startup Playwright
+  Chromium check (for a worker that runs only non-browser activities).
 - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`: optional
   OpenTelemetry/Langfuse export. Set `LANGFUSE_DISABLE=1` to opt out.
 
