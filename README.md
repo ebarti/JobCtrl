@@ -209,7 +209,8 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 7. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the
    backend claim can proceed.
-8. Track progress in Dashboard, Jobs, Runs, Artifacts, Apply Review, and Debug.
+8. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Apply Review,
+   and Debug.
 
 See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
 expected state transitions.

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventByType } from "../../test/fixtures/events.js";
 import { activityKeys } from "./activityKeys.js";
+import { analyticsKeys } from "./analyticsKeys.js";
 import { applyReviewKeys } from "./applyReviewKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
@@ -270,6 +271,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     outcomesKeys.lists(LOCAL_TENANT),
     outcomesKeys.detail(LOCAL_TENANT, JOB_ID),
     applyReviewKeys.queue(LOCAL_TENANT),
+    analyticsKeys.all(LOCAL_TENANT),
   ],
   ApplicationSubmitted: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -279,6 +281,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    analyticsKeys.all(LOCAL_TENANT),
   ],
   ApplicationFailed: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -288,6 +291,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    analyticsKeys.all(LOCAL_TENANT),
   ],
   StageStarted: [
     jobsKeys.lists(LOCAL_TENANT),

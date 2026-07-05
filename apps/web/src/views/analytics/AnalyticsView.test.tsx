@@ -1,0 +1,114 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { http, HttpResponse } from "msw";
+import { render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { analyticsSearchSchema } from "../../routes/-analytics.search.js";
+import { sampleOutcomeAnalyticsSummary } from "../../test/fixtures/projections.js";
+import { server } from "../../test/msw/server.js";
+import { buildProviderHarness } from "../../test/render.js";
+import { AnalyticsView } from "./AnalyticsView.js";
+
+function buildRouter(harness: ReturnType<typeof buildProviderHarness>, initialEntry = "/analytics") {
+  const rootRoute = createRootRoute({ component: () => <Outlet /> });
+  const analyticsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/analytics",
+    validateSearch: analyticsSearchSchema,
+    component: () => <AnalyticsView />,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([analyticsRoute]),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
+  });
+  return { router, Wrapper: harness.Wrapper };
+}
+
+describe("<AnalyticsView>", () => {
+  it("renders the analytics read model with the required small-sample caption", async () => {
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, "/analytics?dimension=fit_band");
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+
+    expect(screen.getByRole("heading", { name: "Outcome analytics" })).toBeInTheDocument();
+    expect(screen.getByText(/Recorded outcomes from canonical rows only/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analytics never affect scoring, ranking, or apply eligibility/i)).toBeInTheDocument();
+    expect(screen.getByText("excellent")).toBeInTheDocument();
+    expect(screen.getByText("stretch")).toBeInTheDocument();
+    expect(screen.getAllByText(/too few to rate/i).length).toBeGreaterThan(0);
+  });
+
+  it("keeps dimension selection in the URL search state", async () => {
+    const user = userEvent.setup();
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Apply mode" }));
+
+    expect(router.state.location.search).toMatchObject({ dimension: "apply_mode" });
+    expect(screen.getByText("automated live")).toBeInTheDocument();
+  });
+
+  it("renders the empty state without fabricating rows", async () => {
+    server.use(
+      http.get("*/v1/analytics/outcomes", () =>
+        HttpResponse.json({
+          ...sampleOutcomeAnalyticsSummary,
+          totals: {
+            n: 0,
+            applied: 0,
+            reply: 0,
+            interview: 0,
+            offer: 0,
+            rejection: 0,
+            replyRate: null,
+            interviewRate: null,
+            offerRate: null,
+            rejectionRate: null,
+          },
+          bySource: [],
+          byScoreBand: [],
+          byFitBand: [],
+          byApplyMode: [],
+        }),
+      ),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, "/analytics?dimension=source");
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() =>
+      expect(screen.getByText("No source outcome rows yet.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  });
+
+  it("does not render denied recommendation copy in headings, captions, or column labels", async () => {
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+
+    const headingsCaptionsAndLabels = [
+      ...screen.getAllByRole("heading").map((element) => element.textContent ?? ""),
+      ...screen.getAllByRole("columnheader").map((element) => element.textContent ?? ""),
+      ...screen.getAllByText(/Recorded outcomes/i).map((element) => element.textContent ?? ""),
+    ].join(" ");
+    expect(headingsCaptionsAndLabels.toLowerCase()).not.toMatch(
+      /\b(best|better|winner|improves|boosts|recommended|optimal)\b|increases your chances|should use/,
+    );
+  });
+});

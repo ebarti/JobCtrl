@@ -187,6 +187,10 @@ runs, respectively.
 Useful web app views:
 
 - Dashboard for high-level counts and source health.
+- Analytics for recorded outcome counts and sample-gated rates by source, score
+  band, fit band, and apply mode. The page reads canonical application outcome
+  rows and projections only; groups below the minimum sample count stay
+  count-only.
 - Jobs for triage and per-job actions.
 - Runs for workflow history.
 - Artifacts for generated files.

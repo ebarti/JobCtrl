@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { applyReviewKeys } from "./applyReviewKeys.js";
 import { activityKeys } from "./activityKeys.js";
+import { analyticsKeys } from "./analyticsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { healthKeys } from "./healthKeys.js";
@@ -37,6 +38,16 @@ describe("operations queryKeys", () => {
       LOCAL_TENANT,
       "dashboard",
       "summary",
+    ]);
+  });
+
+  it("scopes outcome analytics keys under tenant + analytics prefix", () => {
+    expect(analyticsKeys.outcomes(LOCAL_TENANT, { dimension: "fit_band" })).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "analytics",
+      "outcomes",
+      { dimension: "fit_band" },
     ]);
   });
 

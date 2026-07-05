@@ -14,6 +14,7 @@ import {
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
   sampleHealthResponse,
+  sampleOutcomeAnalyticsSummary,
   sampleProfileResponse,
   sampleResumeTemplateListResponse,
   sampleSettingsResponse,
@@ -150,6 +151,7 @@ const sampleCompensationSourcePolicy = {
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),

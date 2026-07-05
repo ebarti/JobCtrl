@@ -75,6 +75,7 @@ export type {
 export { applyRunsKeys } from "./applyRunsKeys.js";
 export { applyReviewKeys } from "./applyReviewKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
+export { analyticsKeys } from "./analyticsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
@@ -92,6 +93,7 @@ export {
 export { useInvalidationRouter } from "./hooks/useInvalidationRouter.js";
 
 export { useActivityEventQuery } from "./hooks/useActivityEventQuery.js";
+export { useOutcomeAnalyticsQuery } from "./hooks/useOutcomeAnalyticsQuery.js";
 export { useApplyRunsListQuery } from "./hooks/useApplyRunsListQuery.js";
 export { useApplyReviewQueueQuery } from "./hooks/useApplyReviewQueueQuery.js";
 export { useApplicationOutcomesQuery } from "./hooks/useApplicationOutcomesQuery.js";
