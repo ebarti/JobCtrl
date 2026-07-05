@@ -3475,10 +3475,26 @@ function defaultFunnel(): DashboardSummary["funnel"] {
 }
 
 /**
+ * Minimum applied-count (sample size) a bucket needs before its conversion rates
+ * are statistically meaningful. Below this, every rate is suppressed to ``null``
+ * while the raw counts stay visible, so a single reply on a single application no
+ * longer renders as a "100%" response rate.
+ *
+ * Owner-tunable. The default of 5 mirrors the sample-gating precedent elsewhere in
+ * the read model — ``recommendedState`` in ``projections.ts`` (and its Python twin
+ * in ``source_quality.py``) only acts on a source once ``sample >= 10``. Conversion
+ * uses a lower floor because applied volume accrues far more slowly than the
+ * discovery volume that gates source quality.
+ */
+const MIN_CONVERSION_SAMPLE = 5;
+
+/**
  * Derive the dashboard conversion section from the materialised
  * ``outcome_conversion_json`` counts. Rates are computed here (not stored) so the
  * cross-runtime projection stays integer-only; ``costPerInterview`` stays null
- * until per-run apply cost is projected into the read model (follow-up).
+ * until per-run apply cost is projected into the read model (follow-up). Buckets
+ * below ``MIN_CONVERSION_SAMPLE`` applied keep their raw counts but report ``null``
+ * rates (see ``conversionRate``).
  */
 function buildConversionSummary(json: string): DashboardSummary["conversion"] {
   let parsed: unknown = {};
@@ -3525,7 +3541,7 @@ function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {
 }
 
 function conversionRate(numerator: number, applied: number): number | null {
-  if (applied <= 0) return null;
+  if (applied < MIN_CONVERSION_SAMPLE) return null;
   return Math.round((numerator / applied) * 10000) / 10000;
 }
 
