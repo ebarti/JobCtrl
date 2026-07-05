@@ -18,6 +18,8 @@ because it can drive browser automation and submit applications.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
+- Capture a current browser job page through the optional local browser
+  extension, which feeds the existing manual-capture import path.
 - Score jobs as an applicant-side triage aid with auditable evidence.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Review and edit generated resumes in Apply Review before approval.
@@ -132,6 +134,25 @@ only non-browser activities).
 `pnpm dev` starts the full local stack in the foreground: Temporal dev server,
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
+
+### Browser Extension Capture
+
+The optional Manifest V3 browser extension is a local capture surface. Build it
+with:
+
+```bash
+pnpm extension:build
+```
+
+Load `dist/extension/` as an unpacked extension in Chrome/Chromium developer
+mode, then open JobHunter Settings and copy the browser-extension pairing token
+into the extension popup. Clicking **Save job** captures the active http(s) page
+URL and visible text, posts it over loopback to `/v1/extension/captures`, and
+reuses the existing manual-capture importer so dedupe, snapshots, quarantine,
+and source provenance remain identical to other user-mediated captures. If the
+local stack is down, the extension stores a bounded local queue in extension
+storage and retries after the next successful save. The extension has no
+submission path.
 
 Commands that start work (`jobhunter run`, per-stage commands, `jobhunter
 apply`, `jobhunter action profile_import`, and `jobhunter
@@ -306,6 +327,9 @@ pnpm web:check
 pnpm web:build
 pnpm web:test
 pnpm web:e2e
+pnpm extension:check
+pnpm extension:test
+pnpm extension:e2e
 uv --project workers/automation run --extra dev pytest -q
 ```
 

@@ -97,6 +97,11 @@ These boundaries are the operator's responsibility:
   credential-adjacent metadata. Browser-extension routes add a local capability
   token stored under `~/.jobhunter/`, but that token does not make a remote bind
   safe.
+- **Browser-extension captures:** the optional extension stores its pairing
+  token and any stack-down capture queue in browser extension storage. Queued
+  captures contain page URLs and visible posting text, expire under the
+  extension's bounded local policy, and are cleared when you save a new pairing
+  token.
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
