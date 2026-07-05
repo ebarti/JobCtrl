@@ -230,4 +230,14 @@ form when the tier calls for it.
 
 `pnpm docs:build` runs VitePress's strict dead-link check plus the
 emitted-href gate (`scripts/check-docs-site-links.mjs`). Both must pass before
-review.
+review. `pnpm docs:check:runtime` then boots a fresh preview of the dist and
+asserts in a real browser that pages hydrate: no failed asset requests, every
+diagram page renders a mermaid SVG, aria-current is set, and screenshots load.
+
+::: warning Rebuilds invalidate running previews
+`vitepress preview` (sirv) snapshots the dist's file list at boot. Rebuilding
+while a preview is running leaves it serving HTML whose hashed chunks 404 —
+pages then render with zero JavaScript (blank diagrams, no console errors).
+Always restart the preview after a rebuild, and never rebuild under a preview
+someone is relying on.
+:::
