@@ -399,3 +399,22 @@ Docs-only change; no runtime surface. Confirm:
 - Every path in this plan is backticked and resolves in-repo at
   `a488e4e9`; every PR reference is a real repository PR number; no external
   product or company is named.
+
+## Delivery Model: Stacked PRs On This Plan
+
+Implement this plan as a series of stacked PRs that begin on this plan's
+branch:
+
+- The first implementation PR uses this plan PR's branch as its base; each
+  subsequent PR stacks on the previous one. One reviewable concern per PR;
+  Conventional Commit titles.
+- As a parent merges, retarget the next PR to `main` before merging it
+  (retarget-before-merge; never merge a PR whose base branch is already
+  merged and deleted).
+- If this plan PR has already merged to `main`, start the stack from `main`
+  instead — the instruction is "stack on the plan", not "recreate it".
+- Each PR states which plan phase it delivers and runs that phase's
+  verification commands from this plan before requesting review.
+- Do not begin implementation while this plan's stated gates or
+  dependencies are unmet.
+- Scope note: the stacked PRs on this branch deliver this plan's own artifacts (status inventory, residual-gap records, go/no-go checklist). W-item implementation itself follows the OSS spec's own train sequencing, not this branch.
