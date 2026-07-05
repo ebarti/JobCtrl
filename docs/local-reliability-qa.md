@@ -194,11 +194,13 @@ Manual smoke:
 1. Open `/jobs` with at least one Discover-stage and one Apply-stage synthetic
    job.
 2. Filter the Stage column to `apply`, hide one non-critical column, reorder a
-   column, resize a column, and set the table density to `compact`.
+   column, resize a column, set the table density to `compact`, group by Stage,
+   and add one semantic color rule.
 3. Save the current template as a named view, switch to `Default`, then switch
    back to the named view.
 4. Reload the page and confirm the named template restores column visibility,
-   order, widths, density, and the URL-backed stage filter/sort.
+   order, widths, density, grouping, color rules, and the URL-backed stage
+   filter/sort.
 5. Rename the view, delete it, and confirm the table falls back to `Default`.
 
 ### Resume Tailoring Quality Eval Gate

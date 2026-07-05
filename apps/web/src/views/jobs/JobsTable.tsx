@@ -7,10 +7,12 @@ import type {
 } from "../../contexts/operations/types.js";
 import {
   FilterableDataGrid,
+  type DataGridColorRule,
   type DataGridColumn,
   type DataGridColumnWidthsState,
   type DataGridDensity,
   type DataGridFilterState,
+  type DataGridGroupingState,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
 import { jobColumns } from "./columns.js";
@@ -40,6 +42,8 @@ export interface JobsTableProps {
   columnWidths?: DataGridColumnWidthsState;
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
   density?: DataGridDensity | null;
+  grouping?: DataGridGroupingState | null;
+  colorRules?: readonly DataGridColorRule[];
   toolbarActions?: (columns: Array<DataGridColumn<JobSummary>>) => ReactNode;
 }
 
@@ -64,6 +68,8 @@ export function JobsTable({
   columnWidths,
   onColumnWidthsChange,
   density,
+  grouping,
+  colorRules,
   toolbarActions,
 }: JobsTableProps) {
   const [selectionAnchorJobKey, setSelectionAnchorJobKey] = useState<
@@ -135,6 +141,8 @@ export function JobsTable({
       {...(columnWidths ? { columnWidths } : {})}
       {...(onColumnWidthsChange ? { onColumnWidthsChange } : {})}
       {...(density !== undefined ? { density } : {})}
+      {...(grouping !== undefined ? { grouping } : {})}
+      {...(colorRules ? { colorRules } : {})}
       tableClassName="jobs-data-grid-table"
       rowAriaSelected={(row) =>
         allMatchingSelected || Boolean(rowSelection[row.jobKey])

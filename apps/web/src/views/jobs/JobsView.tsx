@@ -27,6 +27,7 @@ import type { JobsSearch } from "../../routes/-jobs.search.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
   JOBS_TABLE_ID,
+  DEFAULT_SAVED_TABLE_VIEW_ID,
   type SavedTablePresentation,
   type SavedTableViewSnapshot,
   useSavedTableViewsStore,
@@ -244,6 +245,11 @@ export function JobsView() {
   const retryFailedJobs = useRetryFailedJobsMutation();
   const runPendingPreparation = useRunPendingPreparationMutation();
   const stageTriggerConfigs = useStageTriggerStore((state) => state.configs);
+  const savedTableViews = useSavedTableViewsStore((state) => state.views);
+  const activeSavedViewId = useSavedTableViewsStore(
+    (state) =>
+      state.activeViewIdByTable[JOBS_TABLE_ID] ?? DEFAULT_SAVED_TABLE_VIEW_ID,
+  );
   const savedPresentation =
     useSavedTableViewsStore(
       (state) => state.presentationByTable[JOBS_TABLE_ID],
@@ -259,6 +265,13 @@ export function JobsView() {
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
   const autoPendingPreparationKeys = useRef<Set<string>>(new Set());
+  const activeSavedView = useMemo(
+    () =>
+      savedTableViews.find(
+        (view) => view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
+      ) ?? null,
+    [activeSavedViewId, savedTableViews],
+  );
   const tableFilters = useMemo<DataGridFilterState>(
     () => ({
       ...localTableFilters,
@@ -271,6 +284,13 @@ export function JobsView() {
       search.state,
     ],
   );
+
+  useEffect(() => {
+    setLocalTableFilters(
+      (activeSavedView?.gridFilters ?? {}) as DataGridFilterState,
+    );
+  }, [activeSavedView?.gridFilters]);
+
   const hasLocalFilters = hasActiveDataGridFilters(localTableFilters);
   const savedViewSnapshot = useMemo<SavedTableViewSnapshot>(
     () => ({
@@ -724,6 +744,8 @@ export function JobsView() {
           columnWidths={savedPresentation.columns.widths}
           onColumnWidthsChange={handleColumnWidthsChange}
           density={savedPresentation.density}
+          grouping={savedPresentation.grouping}
+          colorRules={savedPresentation.colorRules}
           toolbarActions={renderSavedTableActions}
         />
       </section>
