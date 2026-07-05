@@ -347,23 +347,24 @@ stack:
   Tier-3 extractor currently uses free-text `chat()` + `extract_json`; a new
   capability should use structured `chat_json`).
 
-### 5.3 Politeness gap to design in (does NOT exist today)
+### 5.3 Politeness substrate (hard dependency, delivered by a separate plan)
 
 Verified: there is **no robots.txt handling, no ToS/politeness logic, and no
 per-host rate limiting** anywhere in the repository (only fixed per-site sleeps
 in the legacy `workers/automation/src/jobhunter/enrichment/detail.py`
-`SITE_DELAYS`). Because INV-3 requires respecting platform terms, this plan
-**adds** (it does not merely reuse):
+`SITE_DELAYS`). That gap affects every existing fetch surface, not just this
+workstream, so it is **not built here**. It is delivered by the crawl
+politeness hardening plan (`docs/plans/2026-07-05-crawl-politeness-plan.md`,
+PR #272): a shared politeness gateway — robots.txt respect, per-host rate
+limiting and concurrency caps, per-run request budgets, honest user-agent —
+that all outbound fetching routes through, enforcing the declarative
+`SourcePolicy` knobs (`max_pages_per_run`, `max_run_frequency`,
+`locator_max_requests_per_domain`) that are declared but unenforced today.
 
-- a robots.txt fetch/parse/respect step before any contact-research fetch;
-- a per-host rate limiter and a bounded per-run page budget (reusing the
-  declarative knobs already on `SourcePolicy`:
-  `max_pages_per_run`, `max_run_frequency`, `locator_max_requests_per_domain`,
-  which are declared but not yet enforced at fetch time — enforce them here);
-- a user-agent that identifies JobHunter and a documented crawl-delay honour.
-
-This is called out explicitly as new work so an implementer does not assume the
-fetchers are already polite.
+**Dependency rule:** no contact-research fetch (Phase 2) may be implemented or
+enabled before that plan's politeness gateway is merged and the enrichment
+fetch path used here routes through it. Because INV-3 requires respecting
+platform terms, this dependency is a hard gate, not a recommendation.
 
 ### 5.4 Spend discipline (reuse, do not duplicate)
 
@@ -850,7 +851,7 @@ Targeted tests this work must add/extend (by surface):
 | Risk | Mitigation |
 |---|---|
 | A future refactor introduces a send path and quietly breaks INV-1. | Aggregate invariant + no-send-transport grep test + adapter-never-called test + regression-matrix row (§8.3). |
-| Politeness gap (no robots/rate-limit today) leads to disrespectful fetching. | Phase 2 adds robots/ToS + per-host rate limit + page budget as a hard prerequisite before any fetch (§5.3); enforce the declarative `SourcePolicy` knobs. |
+| Politeness gap (no robots/rate-limit today) leads to disrespectful fetching. | Phase 2 is hard-gated on the crawl politeness plan (`docs/plans/2026-07-05-crawl-politeness-plan.md`, PR #272) being merged and the enrichment fetch path routing through its gateway (§5.3); this plan builds no fetching before that. |
 | Provenance omitted under time pressure, reproducing the "displayed value with no source" defect class. | INV-2 aggregate guard (no attribute without provenance) + projection + UI rendering + fixture; CLAUDE.md root-cause discipline. |
 | Registry/parity drift (event added on one side only). | Same-PR dual-registry rule (§4.6) + compile-time exhaustiveness + parity tests. |
 | Sensitive contact data (names, emails, page bodies) leaking into events/logs/telemetry. | Store only safe references + extracted fields; never raw bodies in `job_events`/projections/logs (mirrors the apply-feedback rule); treat as sensitive per CLAUDE.md. |
