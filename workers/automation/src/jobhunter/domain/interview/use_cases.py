@@ -173,6 +173,7 @@ class GenerateInterviewPrepUseCase:
             profile=profile,
             target_skill_terms=target_skill_terms,
             source_text_by_evidence=source_text_by_evidence,
+            accepted_materials=accepted_materials,
         )
         if gate.status == "failed":
             return self._fail(
@@ -425,6 +426,7 @@ def _run_truthfulness_gates(
     profile: Mapping[str, Any],
     target_skill_terms: tuple[str, ...],
     source_text_by_evidence: Mapping[str, str],
+    accepted_materials: Sequence[Mapping[str, Any]],
 ) -> InterviewPrepGateAudit:
     profile_dict = dict(profile)
     corpus = build_evidence_corpus(profile_dict)
@@ -480,9 +482,12 @@ def _run_truthfulness_gates(
             review_required=False,
         )
         for item in items
-        if item.requirement_ids
+        if item.kind == "star_draft" and item.requirement_ids
     ]
-    grounding = ground_claim_mappings(mappings, bullets)
+    grounding = ground_claim_mappings(
+        mappings,
+        _canonical_grounding_lines(items, accepted_materials),
+    )
     grounding_findings.extend(
         f"{claim.claim_id} ungrounded: {claim.reason}"
         for claim in grounding.ungrounded
@@ -494,6 +499,40 @@ def _run_truthfulness_gates(
         judge_verdict=None,
         warnings=(),
     )
+
+
+def _canonical_grounding_lines(
+    items: tuple[InterviewPrepItem, ...],
+    accepted_materials: Sequence[Mapping[str, Any]],
+) -> tuple[tuple[str, str], ...]:
+    lines: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(line_id: str, text: object) -> None:
+        clean = sanitize_text(str(text or ""))
+        if not clean:
+            return
+        key = (line_id, clean)
+        if key in seen:
+            return
+        seen.add(key)
+        lines.append(key)
+
+    for item in items:
+        for index, text in enumerate(item.source_text):
+            add(f"{item.item_id}:evidence:{index}", text)
+
+    for index, material in enumerate(accepted_materials):
+        line_id = str(
+            material.get("bulletId")
+            or material.get("bullet_id")
+            or material.get("artifactId")
+            or material.get("artifact_id")
+            or f"accepted-material-{index}"
+        )
+        add(line_id, material.get("generatedText") or material.get("generated_text"))
+
+    return tuple(lines)
 
 
 def _source_text_by_evidence_id(profile: Mapping[str, Any]) -> dict[str, str]:
