@@ -301,3 +301,21 @@ For this documentation PR specifically: confirm the plan renders and its referen
 - Scripts + env: `scripts/install`, `scripts/dev`, `.env.example`.
 - Decision-record home: `docs/decisions.md`; plan conventions: `docs/plans/README.md`.
 - PR #254 (open, not on `main`): low-friction install and auth-reuse plan — `jobhunter setup`, `scripts/install.sh` bootstrap, `doctor` ensemble checks (S1), leg enable/disable (S4), glibc-Linux Codex wheel-gap remediation (S5), and the no-vendor-binary-redistribution stance.
+
+## Delivery Model: Stacked PRs On This Plan
+
+Implement this plan as a series of stacked PRs that begin on this plan's
+branch:
+
+- The first implementation PR uses this plan PR's branch as its base; each
+  subsequent PR stacks on the previous one. One reviewable concern per PR;
+  Conventional Commit titles.
+- As a parent merges, retarget the next PR to `main` before merging it
+  (retarget-before-merge; never merge a PR whose base branch is already
+  merged and deleted).
+- If this plan PR has already merged to `main`, start the stack from `main`
+  instead — the instruction is "stack on the plan", not "recreate it".
+- Each PR states which plan phase it delivers and runs that phase's
+  verification commands from this plan before requesting review.
+- Do not begin implementation while this plan's stated gates or
+  dependencies are unmet.
