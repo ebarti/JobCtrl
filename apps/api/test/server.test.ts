@@ -895,6 +895,91 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps a live re-run of a reused workflow id running despite a stale terminal projection", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Discover workflow started",
+        "2026-07-04T12:00:00.000Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 0,
+            total: 1,
+            percent: 0,
+            currentStep: null,
+            status: "running",
+            message: "Discover workflow started",
+          },
+        }),
+      );
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_run_projections (
+          workflow_id            TEXT PRIMARY KEY,
+          tenant_id              TEXT NOT NULL DEFAULT 'local',
+          workflow_type          TEXT NOT NULL DEFAULT '',
+          status                 TEXT NOT NULL DEFAULT 'in_progress',
+          input_summary_json     TEXT NOT NULL DEFAULT '{}',
+          error_code             TEXT,
+          error_message          TEXT,
+          retryable              INTEGER NOT NULL DEFAULT 0,
+          started_at             TEXT,
+          finished_at            TEXT,
+          duration_ms            INTEGER,
+          temporal_run_id        TEXT,
+          events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+      `);
+      db.prepare(
+        `INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          error_code, error_message, retryable, started_at, finished_at,
+          temporal_run_id, events_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "discover-local",
+        "local",
+        "DiscoverWorkflow",
+        "terminated",
+        JSON.stringify({ limit: 1000 }),
+        "reconciled_not_found",
+        "The reconciler closed this run: its Temporal execution no longer exists on the server.",
+        0,
+        "2026-07-04T07:57:11.751742+00:00",
+        "2026-07-04T11:16:55.314850+00:00",
+        "temporal-run-1",
+        "[]",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress[0]).toMatchObject({
+      stage: "discover",
+      status: "running",
+      runId: "discover-local",
+      workflowId: "discover-local",
+      message: "Discover workflow started",
+      updatedAt: "2026-07-04T12:00:00.000Z",
+    });
+
+    await app.close();
+  });
+
   it("normalizes source progress to a visible nonzero percentage", async () => {
     const db = new Database(options.dbPath);
     try {

@@ -4536,6 +4536,9 @@ function progressWithWorkflowStatus(
   if (!status) {
     return progress;
   }
+  if (progressIsNewerThanTerminal(progress.updatedAt, workflow.finishedAt)) {
+    return progress;
+  }
   const message = workflow.errorMessage
     ? `Workflow ${workflow.status}: ${workflow.errorMessage}`
     : `Workflow ${workflow.status}`;
@@ -4547,6 +4550,26 @@ function progressWithWorkflowStatus(
     message,
     updatedAt: workflow.finishedAt ?? progress.updatedAt,
   };
+}
+
+// Workflow ids are reused across executions (discover-{tenant}, apply-{jobKey})
+// and workflow_run_projections keeps the prior execution's terminal state until
+// the new run's WorkflowStarted folds in. Stage activity recorded after
+// finished_at can only belong to a newer live execution, so a stale terminal
+// must not override it.
+function progressIsNewerThanTerminal(
+  progressUpdatedAt: string | null | undefined,
+  workflowFinishedAt: string | null,
+): boolean {
+  if (!progressUpdatedAt || !workflowFinishedAt) {
+    return false;
+  }
+  const progressMs = Date.parse(progressUpdatedAt);
+  const finishedMs = Date.parse(workflowFinishedAt);
+  if (Number.isNaN(progressMs) || Number.isNaN(finishedMs)) {
+    return false;
+  }
+  return progressMs > finishedMs;
 }
 
 function pipelineProgressStatusForWorkflow(
