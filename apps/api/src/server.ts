@@ -208,6 +208,13 @@ import {
 } from "./write-model.js";
 
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
+const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
+  "awaiting_dry_run",
+  "approval_stale_materials",
+  "approval_stale_profile",
+  "approval_stale_url",
+  "partial_override_evidence_invalid",
+]);
 const execFileAsync = promisify(execFile);
 
 export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
@@ -2521,6 +2528,14 @@ async function withWritableDb<T>(
       return { ok: false, error: "invalid_resume_template", message: error.message };
     }
     if (error instanceof InputError) {
+      if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: error.message,
+          message: applyReviewPreconditionMessage(error.message),
+        };
+      }
       void reply.code(404);
       return { ok: false, error: "not_found", message: error.message };
     }
@@ -2533,6 +2548,22 @@ async function withWritableDb<T>(
   } finally {
     db?.close();
   }
+}
+
+function applyReviewPreconditionMessage(error: string): string {
+  if (error === "approval_stale_materials") {
+    return "The reviewed materials changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "approval_stale_profile") {
+    return "The reviewed profile changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "approval_stale_url") {
+    return "The reviewed application URL changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "partial_override_evidence_invalid") {
+    return "The selected partial dry-run evidence no longer matches this job's current materials, profile, and URL.";
+  }
+  return "Submit approval requires matching full dry-run evidence or an explicit matching partial dry-run override.";
 }
 
 type ApiDb = ReturnType<typeof openDatabase>;

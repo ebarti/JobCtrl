@@ -11,6 +11,8 @@ import type {
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
   ApplyReviewDecisionValue,
+  ApplyReviewApprovalGateReason,
+  ApplyReviewDryRunEvidence,
   ApplyReviewIdealRequirement,
   ApplyReviewProfileSourceField,
   ApplyReviewCoverageBasis,
@@ -91,6 +93,10 @@ interface ReviewQueueRow extends Record<string, unknown> {
   decision_id: string | null;
   decision: string | null;
   decided_at: string | null;
+  decision_materials_generation: number | null;
+  decision_profile_version: number | null;
+  decision_application_url: string | null;
+  partial_override_run_id: string | null;
   run_id: string | null;
   apply_run_status: string | null;
   result: string | null;
@@ -138,6 +144,10 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       reason       TEXT,
       decided_by   TEXT NOT NULL DEFAULT 'user',
       decided_at   TEXT NOT NULL,
+      materials_generation INTEGER,
+      profile_version INTEGER,
+      application_url TEXT,
+      partial_override_run_id TEXT,
       PRIMARY KEY (tenant_id, decision_id)
     );
     CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
@@ -205,6 +215,22 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
       ON application_outcome_suggestions(tenant_id, status, created_at DESC);
   `);
+  ensureApplicationReviewDecisionColumns(db);
+}
+
+function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
+  const columns = tableColumnSet(db, "application_review_decisions");
+  const additions: Record<string, string> = {
+    materials_generation: "INTEGER",
+    profile_version: "INTEGER",
+    application_url: "TEXT",
+    partial_override_run_id: "TEXT",
+  };
+  for (const [column, definition] of Object.entries(additions)) {
+    if (!columns.has(column)) {
+      db.exec(`ALTER TABLE application_review_decisions ADD COLUMN ${column} ${definition}`);
+    }
+  }
 }
 
 export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueResponse {
@@ -256,9 +282,13 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     db,
     `
     WITH latest_decision AS (
-      SELECT decision_id, job_key, decision, decided_at
+      SELECT decision_id, job_key, decision, decided_at,
+             materials_generation, profile_version, application_url,
+             partial_override_run_id
       FROM (
         SELECT decision_id, job_key, decision, decided_at,
+               materials_generation, profile_version, application_url,
+               partial_override_run_id,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_key
                  ORDER BY decided_at DESC, decision_id DESC
@@ -306,6 +336,10 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            jlp.has_resume, jlp.has_cover_letter, jlp.has_pdf,
            latest_decision.decision_id, latest_decision.decision,
            latest_decision.decided_at,
+           latest_decision.materials_generation AS decision_materials_generation,
+           latest_decision.profile_version AS decision_profile_version,
+           latest_decision.application_url AS decision_application_url,
+           latest_decision.partial_override_run_id,
            latest_apply_run.run_id, latest_apply_run.status AS apply_run_status,
            latest_apply_run.result, latest_apply_run.dry_run,
            latest_apply_run.started_at, latest_apply_run.finished_at,
@@ -361,6 +395,49 @@ export function recordApplyReviewDecision(
 ): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
   const jobUrl = existingJobUrl(db, jobKey);
+  const applicationUrl = currentApplicationUrl(db, jobUrl);
+  const materialsGeneration = currentReviewMaterialsGeneration(db, jobUrl);
+  const profileVersion = currentProfileVersion(db);
+  const partialOverrideRunId =
+    request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
+  if (request.decision === "approve_submit") {
+    if (
+      request.materialsGeneration === undefined ||
+      request.materialsGeneration !== materialsGeneration
+    ) {
+      throw new InputError("approval_stale_materials");
+    }
+    if (request.profileVersion === undefined || request.profileVersion !== profileVersion) {
+      throw new InputError("approval_stale_profile");
+    }
+    if (request.applicationUrl === undefined || request.applicationUrl !== applicationUrl) {
+      throw new InputError("approval_stale_url");
+    }
+  }
+  const fullDryRunEvidence =
+    request.decision === "approve_submit"
+      ? latestDryRunEvidence(db, {
+          jobKey: jobUrl,
+          materialsGeneration,
+          profileVersion,
+          applicationUrl,
+          coverage: "full",
+        })
+      : null;
+  if (partialOverrideRunId) {
+    const partialEvidence = latestDryRunEvidence(db, {
+      jobKey: jobUrl,
+      materialsGeneration,
+      profileVersion,
+      applicationUrl,
+      coverage: "partial",
+    });
+    if (partialEvidence?.runId !== partialOverrideRunId) {
+      throw new InputError("partial_override_evidence_invalid");
+    }
+  } else if (request.decision === "approve_submit" && !fullDryRunEvidence) {
+    throw new InputError("awaiting_dry_run");
+  }
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
@@ -369,12 +446,17 @@ export function recordApplyReviewDecision(
     reason: request.reason ?? null,
     decidedBy: request.decidedBy,
     decidedAt,
+    materialsGeneration,
+    profileVersion,
+    applicationUrl,
+    partialOverrideRunId,
   };
 
   db.prepare(
     `INSERT INTO application_review_decisions (
-       tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+       materials_generation, profile_version, application_url, partial_override_run_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     decision.decisionId,
@@ -383,6 +465,10 @@ export function recordApplyReviewDecision(
     decision.reason,
     decision.decidedBy,
     decision.decidedAt,
+    decision.materialsGeneration,
+    decision.profileVersion,
+    decision.applicationUrl,
+    decision.partialOverrideRunId,
   );
 
   recordEvent(db, {
@@ -396,6 +482,10 @@ export function recordApplyReviewDecision(
       decisionId: decision.decisionId,
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
+      materialsGeneration: decision.materialsGeneration,
+      profileVersion: decision.profileVersion,
+      applicationUrl: decision.applicationUrl,
+      partialOverrideRunId: decision.partialOverrideRunId,
     },
   });
 
@@ -665,6 +755,29 @@ function reviewQueueItemFromRow(
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
   const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
+  const materialsGeneration = materialsPreview.materialsGeneration;
+  const profileVersion = currentProfileVersion(db);
+  const dryRunEvidence = latestDryRunEvidence(db, {
+    jobKey: row.job_id,
+    materialsGeneration,
+    profileVersion,
+    applicationUrl,
+    coverage: "full",
+  });
+  const partialDryRunEvidence = latestDryRunEvidence(db, {
+    jobKey: row.job_id,
+    materialsGeneration,
+    profileVersion,
+    applicationUrl,
+    coverage: "partial",
+  });
+  const approvalReasons = approvalGateReasons(row, {
+    materialsGeneration,
+    profileVersion,
+    applicationUrl,
+    dryRunEvidence,
+    partialDryRunEvidence,
+  });
   const idealCandidate = cleanLimitedText(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
@@ -758,9 +871,62 @@ function reviewQueueItemFromRow(
       state: reviewState(row.decision),
       decision: reviewDecision(row.decision),
       decidedAt: row.decided_at,
+      materialsGeneration: nullableNumber(row.decision_materials_generation),
+      profileVersion: nullableNumber(row.decision_profile_version),
+      applicationUrl: row.decision_application_url,
+      partialOverrideRunId: row.partial_override_run_id,
+    },
+    approvalGate: {
+      materialsGeneration,
+      profileVersion,
+      applicationUrl,
+      dryRunEvidence,
+      partialDryRunEvidence,
+      reasons: approvalReasons,
     },
     blockers,
   };
+}
+
+function approvalGateReasons(
+  row: ReviewQueueRow,
+  current: {
+    readonly materialsGeneration: number | null;
+    readonly profileVersion: number | null;
+    readonly applicationUrl: string | null;
+    readonly dryRunEvidence: ApplyReviewDryRunEvidence | null;
+    readonly partialDryRunEvidence: ApplyReviewDryRunEvidence | null;
+  },
+): ApplyReviewApprovalGateReason[] {
+  if (row.decision !== "approve_submit") {
+    return ["awaiting_approval"];
+  }
+  if (
+    row.decision_materials_generation === null ||
+    current.materialsGeneration === null ||
+    Number(row.decision_materials_generation) !== current.materialsGeneration
+  ) {
+    return ["approval_stale_materials"];
+  }
+  if (
+    row.decision_profile_version === null ||
+    current.profileVersion === null ||
+    Number(row.decision_profile_version) !== current.profileVersion
+  ) {
+    return ["approval_stale_profile"];
+  }
+  if (!row.decision_application_url || row.decision_application_url !== current.applicationUrl) {
+    return ["approval_stale_url"];
+  }
+  if (current.dryRunEvidence) {
+    return [];
+  }
+  if (row.partial_override_run_id) {
+    return current.partialDryRunEvidence?.runId === row.partial_override_run_id
+      ? []
+      : ["override_evidence_invalid"];
+  }
+  return ["awaiting_dry_run"];
 }
 
 function queueBlockers(row: ReviewQueueRow, currentState: StageState): string[] {
@@ -780,6 +946,160 @@ function applyTargetUrl(row: ReviewQueueRow): string | null {
   }
   const postingUrl = cleanBlockerText(row.job_id);
   return postingUrl || null;
+}
+
+function currentApplicationUrl(db: SqliteDatabase, jobKey: string): string | null {
+  if (tableExists(db, "job_list_projections")) {
+    const row = getRow<{ application_url: string | null; job_id: string }>(
+      db,
+      `SELECT application_url, job_id
+       FROM job_list_projections
+       WHERE tenant_id = ? AND job_id = ?`,
+      [DEFAULT_TENANT, jobKey],
+    );
+    if (row) {
+      return cleanBlockerText(row.application_url) || cleanBlockerText(row.job_id) || null;
+    }
+  }
+  if (tableExists(db, "jobs")) {
+    const row = getRow<{ application_url: string | null; url: string }>(
+      db,
+      "SELECT application_url, url FROM jobs WHERE url = ?",
+      [jobKey],
+    );
+    if (row) {
+      return cleanBlockerText(row.application_url) || cleanBlockerText(row.url) || null;
+    }
+  }
+  return jobKey || null;
+}
+
+function latestMaterialsGeneration(db: SqliteDatabase, jobKey: string): number | null {
+  if (!tableExists(db, "job_materials")) return null;
+  const row = getRow<{ generation: number | null }>(
+    db,
+    "SELECT MAX(generation) AS generation FROM job_materials WHERE job_url = ?",
+    [jobKey],
+  );
+  return nullableNumber(row?.generation);
+}
+
+function currentReviewMaterialsGeneration(db: SqliteDatabase, jobKey: string): number | null {
+  return resumeMaterialPreviewForJob(db, jobKey).materialsGeneration ?? latestMaterialsGeneration(db, jobKey);
+}
+
+function currentProfileVersion(db: SqliteDatabase): number | null {
+  if (!tableExists(db, "candidate_profiles")) return null;
+  const columns = tableColumnSet(db, "candidate_profiles");
+  if (!columns.has("version")) return null;
+  const row = getRow<{ version: number | null }>(
+    db,
+    "SELECT version FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?",
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  return nullableNumber(row?.version);
+}
+
+function latestDryRunEvidence(
+  db: SqliteDatabase,
+  expected: {
+    readonly jobKey: string;
+    readonly materialsGeneration: number | null;
+    readonly profileVersion: number | null;
+    readonly applicationUrl: string | null;
+    readonly coverage: "full" | "partial";
+  },
+): ApplyReviewDryRunEvidence | null {
+  if (
+    expected.materialsGeneration === null ||
+    expected.profileVersion === null ||
+    !expected.applicationUrl ||
+    !tableExists(db, "job_events")
+  ) {
+    return null;
+  }
+  const rows = allRows<{ payload_json: string | null; occurred_at: string | null }>(
+    db,
+    `SELECT payload_json, occurred_at
+     FROM job_events
+     WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+     ORDER BY event_id DESC
+     LIMIT 24`,
+    [expected.jobKey],
+  );
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    const runId = stringValue(recordValue(payload, "runId", "run_id"));
+    if (!runId) continue;
+    const coverage = stringValue(recordValue(payload, "coverage", "dry_run_coverage"));
+    if (coverage !== expected.coverage) continue;
+    if (
+      !dryRunCompletionMatches(
+        db,
+        {
+          jobKey: expected.jobKey,
+          materialsGeneration: expected.materialsGeneration,
+          profileVersion: expected.profileVersion,
+          applicationUrl: expected.applicationUrl,
+        },
+        runId,
+        payload,
+      )
+    ) {
+      continue;
+    }
+    return {
+      runId,
+      coverage,
+      finishedAt: stringValue(recordValue(payload, "finishedAt", "finished_at")) || row.occurred_at,
+      blockedChannels: parseStringList(recordValue(payload, "blockedChannels", "blocked_channels")),
+    };
+  }
+  return null;
+}
+
+function dryRunCompletionMatches(
+  db: SqliteDatabase,
+  expected: {
+    readonly jobKey: string;
+    readonly materialsGeneration: number;
+    readonly profileVersion: number;
+    readonly applicationUrl: string;
+  },
+  runId: string,
+  completionPayload: Record<string, unknown> | null,
+): boolean {
+  const completionGeneration = nullableNumber(
+    recordValue(completionPayload, "materialsGeneration", "materials_generation"),
+  );
+  const completionProfileVersion = nullableNumber(
+    recordValue(completionPayload, "profileVersion", "profile_version"),
+  );
+  const completionUrl = stringValue(recordValue(completionPayload, "applicationUrl", "application_url"));
+  const started = getRow<{ payload_json: string | null }>(
+    db,
+    `SELECT payload_json
+     FROM job_events
+     WHERE job_url = ?
+       AND stage = 'apply'
+       AND event_type = 'ApplyRunStarted'
+       AND payload_json LIKE ?
+     ORDER BY event_id DESC
+     LIMIT 1`,
+    [expected.jobKey, `%${runId}%`],
+  );
+  const startedPayload = parseJsonRecord(started?.payload_json ?? null);
+  const matchedGeneration =
+    completionGeneration ?? nullableNumber(recordValue(startedPayload, "materialsGeneration", "materials_generation"));
+  const matchedProfileVersion =
+    completionProfileVersion ?? nullableNumber(recordValue(startedPayload, "profileVersion", "profile_version"));
+  const matchedUrl =
+    completionUrl || stringValue(recordValue(startedPayload, "applicationUrl", "application_url"));
+  return (
+    matchedGeneration === expected.materialsGeneration &&
+    matchedProfileVersion === expected.profileVersion &&
+    matchedUrl === expected.applicationUrl
+  );
 }
 
 function stageBlockerReason(row: ReviewQueueRow, currentState: StageState): string {
@@ -1440,6 +1760,7 @@ function uniqueProfileSourceFields(fields: readonly ApplyReviewProfileSourceFiel
 
 type ResumeMaterialPreview = Pick<
   ApplyReviewQueueItem["materialsPreview"],
+  | "materialsGeneration"
   | "resumeText"
   | "resumeTextArtifactId"
   | "resumePdfArtifactId"
@@ -1496,6 +1817,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     });
     if (text) {
       return {
+        materialsGeneration: text.candidate.generation,
         resumeText: text.preview,
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: null,
@@ -1513,6 +1835,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     );
     if (text) {
       return {
+        materialsGeneration: text.candidate.generation,
         resumeText: text.preview,
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
@@ -1526,6 +1849,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
   const pdfOnly = pdfCandidates[0];
   if (pdfOnly) {
     return {
+      materialsGeneration: pdfOnly.generation,
       resumeText: null,
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
@@ -1538,6 +1862,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
   const text = firstReadableTextCandidate(textCandidates, { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null });
   if (text) {
     return {
+      materialsGeneration: text.candidate.generation,
       resumeText: text.preview,
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
@@ -1548,6 +1873,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
   }
 
   return {
+    materialsGeneration: pdfCandidates[0]?.generation ?? null,
     resumeText: null,
     resumeTextArtifactId: null,
     resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,

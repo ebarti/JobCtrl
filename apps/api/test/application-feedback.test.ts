@@ -1007,18 +1007,95 @@ describe("application feedback API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(queueItem(response.json(), READY_JOB)?.materialsPreview).toMatchObject({
+      materialsGeneration: 2,
       resumeText: "review required candidate resume",
       resumeTextArtifactId: "review-candidate-resume",
       resumePdfArtifactId: null,
+    });
+    expect(queueItem(response.json(), READY_JOB)?.approvalGate).toMatchObject({
+      materialsGeneration: 2,
     });
     expect(queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit?.revision?.reason).toBe(
       "review_blocked_claims",
     );
 
+    const decisionDb = new Database(options.dbPath);
+    decisionDb.exec(`
+      CREATE TABLE IF NOT EXISTS candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    decisionDb
+      .prepare(
+        "INSERT OR REPLACE INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+      )
+      .run(7, NOW);
+    insertVersionedDryRunEvidence(decisionDb, {
+      applicationUrl: READY_JOB,
+      materialsGeneration: 2,
+      profileVersion: 7,
+      runId: "dry-run-review-candidate",
+    });
+    decisionDb.close();
+
+    const approve = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        reason: "Reviewed candidate generation.",
+        materialsGeneration: 2,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(approve.statusCode, approve.body).toBe(200);
+    const boundDb = new Database(options.dbPath);
+    try {
+      const row = boundDb
+        .prepare(
+          `SELECT materials_generation
+             FROM application_review_decisions
+            WHERE job_key = ?
+            ORDER BY decided_at DESC, decision_id DESC
+            LIMIT 1`,
+        )
+        .get(READY_JOB) as { materials_generation?: number } | undefined;
+      expect(row?.materials_generation).toBe(2);
+    } finally {
+      boundDb.close();
+    }
+
     await app.close();
   });
 
   it("records approve, defer, reset, and decline review decisions without dispatching apply", async () => {
+    const profileDb = new Database(options.dbPath);
+    profileDb.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    profileDb
+      .prepare(
+        "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+      )
+      .run(7, NOW);
+    insertVersionedDryRunEvidence(profileDb, {
+      applicationUrl: READY_JOB,
+      materialsGeneration: 1,
+      profileVersion: 7,
+      runId: "dry-run-profile-v7",
+    });
+    profileDb.close();
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
     const dryRunKey = encodeURIComponent(DRY_RUN_JOB);
@@ -1026,7 +1103,13 @@ describe("application feedback API", () => {
     const approve = await app.inject({
       method: "POST",
       url: `/v1/jobs/${readyKey}/apply-review/decision`,
-      payload: { decision: "approve_submit", reason: "Looks complete." },
+      payload: {
+        decision: "approve_submit",
+        reason: "Looks complete.",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+      },
     });
     expect(approve.statusCode, approve.body).toBe(200);
     expect(approve.json()).toMatchObject({
@@ -1041,10 +1124,21 @@ describe("application feedback API", () => {
     try {
       const row = db
         .prepare(
-          "SELECT decision FROM application_review_decisions WHERE job_key = ? ORDER BY decided_at DESC LIMIT 1",
+          `SELECT decision, materials_generation, profile_version, application_url
+           FROM application_review_decisions
+           WHERE job_key = ?
+           ORDER BY decided_at DESC LIMIT 1`,
         )
-        .get(READY_JOB) as { decision?: string } | undefined;
+        .get(READY_JOB) as {
+          decision?: string;
+          materials_generation?: number;
+          profile_version?: number;
+          application_url?: string;
+        } | undefined;
       expect(row?.decision).toBe("approve_submit");
+      expect(row?.materials_generation).toBe(1);
+      expect(row?.profile_version).toBe(7);
+      expect(row?.application_url).toBe(READY_JOB);
     } finally {
       db.close();
     }
@@ -1089,6 +1183,236 @@ describe("application feedback API", () => {
     expect(decline.statusCode, decline.body).toBe(200);
     const afterDecline = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
     expect(queueItem(afterDecline.json(), DRY_RUN_JOB)).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("returns approval precondition errors with stable conflict codes", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+    ).run(7, NOW);
+    db.prepare("DELETE FROM job_events WHERE event_type = 'DryRunCompleted'").run();
+    db.close();
+    const app = buildApp(options);
+    const readyKey = encodeURIComponent(READY_JOB);
+
+    const awaitingDryRun = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(awaitingDryRun.statusCode, awaitingDryRun.body).toBe(409);
+    expect(awaitingDryRun.json()).toMatchObject({
+      ok: false,
+      error: "awaiting_dry_run",
+    });
+
+    const invalidPartialOverride = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+        partialOverrideRunId: "missing-partial-run",
+      },
+    });
+    expect(invalidPartialOverride.statusCode, invalidPartialOverride.body).toBe(409);
+    expect(invalidPartialOverride.json()).toMatchObject({
+      ok: false,
+      error: "partial_override_evidence_invalid",
+    });
+
+    await app.close();
+  });
+
+  it("rejects submit approval when the displayed review binding is stale", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+    ).run(7, NOW);
+    insertVersionedDryRunEvidence(db, {
+      applicationUrl: READY_JOB,
+      materialsGeneration: 1,
+      profileVersion: 7,
+      runId: "dry-run-profile-v7",
+    });
+    db.close();
+    const app = buildApp(options);
+    const readyKey = encodeURIComponent(READY_JOB);
+
+    const staleMaterials = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 0,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(staleMaterials.statusCode, staleMaterials.body).toBe(409);
+    expect(staleMaterials.json()).toMatchObject({ ok: false, error: "approval_stale_materials" });
+
+    const staleProfile = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 6,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(staleProfile.statusCode, staleProfile.body).toBe(409);
+    expect(staleProfile.json()).toMatchObject({ ok: false, error: "approval_stale_profile" });
+
+    const staleUrl = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: "https://example.com/old-apply",
+      },
+    });
+    expect(staleUrl.statusCode, staleUrl.body).toBe(409);
+    expect(staleUrl.json()).toMatchObject({ ok: false, error: "approval_stale_url" });
+
+    await app.close();
+  });
+
+  it("rejects submit approval when dry-run evidence belongs to an older profile version", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+    ).run(2, NOW);
+    db.prepare("DELETE FROM job_events WHERE event_type IN ('ApplyRunStarted', 'DryRunCompleted')").run();
+    db.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      "Stale-profile dry run started",
+      "2026-06-01T12:00:00.000Z",
+      JSON.stringify({
+        run_id: "dry-run-profile-v1",
+        dry_run: true,
+        materials_generation: 1,
+        profile_version: 1,
+        application_url: READY_JOB,
+      }),
+    );
+    db.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      "Stale-profile dry run completed",
+      "2026-06-01T12:01:00.000Z",
+      JSON.stringify({
+        run_id: "dry-run-profile-v1",
+        result: "dry_run_complete",
+        dry_run: true,
+        coverage: "full",
+        materials_generation: 1,
+        profile_version: 1,
+        application_url: READY_JOB,
+        finished_at: "2026-06-01T12:01:00.000Z",
+      }),
+    );
+    db.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      "Stale-profile partial dry run completed",
+      "2026-06-01T12:02:00.000Z",
+      JSON.stringify({
+        run_id: "dry-run-profile-v1-partial",
+        result: "dry_run_complete",
+        dry_run: true,
+        coverage: "partial",
+        materials_generation: 1,
+        profile_version: 1,
+        application_url: READY_JOB,
+        finished_at: "2026-06-01T12:02:00.000Z",
+      }),
+    );
+    db.close();
+    const app = buildApp(options);
+    const readyKey = encodeURIComponent(READY_JOB);
+
+    const approveSubmit = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 2,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(approveSubmit.statusCode, approveSubmit.body).toBe(409);
+    expect(approveSubmit.json()).toMatchObject({
+      ok: false,
+      error: "awaiting_dry_run",
+    });
+
+    const approvePartial = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 2,
+        applicationUrl: READY_JOB,
+        partialOverrideRunId: "dry-run-profile-v1-partial",
+      },
+    });
+    expect(approvePartial.statusCode, approvePartial.body).toBe(409);
+    expect(approvePartial.json()).toMatchObject({
+      ok: false,
+      error: "partial_override_evidence_invalid",
+    });
 
     await app.close();
   });
@@ -1663,9 +1987,90 @@ function seedDatabase(dbPath: string): void {
     "2026-05-31T09:00:00.000Z",
     "2026-05-31T09:01:00.000Z",
   );
+  db.prepare(
+    `INSERT INTO job_events (
+       job_url, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    "Apply dry-run started",
+    "2026-05-31T09:00:00.000Z",
+    JSON.stringify({
+      run_id: "dry-run-ready",
+      dry_run: true,
+      materials_generation: 1,
+      application_url: READY_JOB,
+    }),
+  );
+  db.prepare(
+    `INSERT INTO job_events (
+       job_url, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    "Dry run completed",
+    "2026-05-31T09:01:00.000Z",
+    JSON.stringify({
+      run_id: "dry-run-ready",
+      result: "dry_run_complete",
+      dry_run: true,
+      coverage: "full",
+      materials_generation: 1,
+      application_url: READY_JOB,
+      finished_at: "2026-05-31T09:01:00.000Z",
+    }),
+  );
   insertBulletProvenance(db);
   insertCompensationRows(db, READY_JOB);
   db.close();
+}
+
+function insertVersionedDryRunEvidence(
+  db: Database.Database,
+  options: {
+    readonly applicationUrl: string;
+    readonly coverage?: "full" | "partial";
+    readonly materialsGeneration: number;
+    readonly profileVersion: number;
+    readonly runId: string;
+  },
+): void {
+  const coverage = options.coverage ?? "full";
+  db.prepare(
+    `INSERT INTO job_events (
+       job_url, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    "Versioned dry run started",
+    "2026-06-01T12:00:00.000Z",
+    JSON.stringify({
+      run_id: options.runId,
+      dry_run: true,
+      materials_generation: options.materialsGeneration,
+      profile_version: options.profileVersion,
+      application_url: options.applicationUrl,
+    }),
+  );
+  db.prepare(
+    `INSERT INTO job_events (
+       job_url, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    "Versioned dry run completed",
+    "2026-06-01T12:01:00.000Z",
+    JSON.stringify({
+      run_id: options.runId,
+      result: "dry_run_complete",
+      dry_run: true,
+      coverage,
+      materials_generation: options.materialsGeneration,
+      profile_version: options.profileVersion,
+      application_url: options.applicationUrl,
+      finished_at: "2026-06-01T12:01:00.000Z",
+    }),
+  );
 }
 
 function insertCompensationRows(db: Database.Database, jobUrl: string): void {

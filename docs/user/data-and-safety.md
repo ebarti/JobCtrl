@@ -67,12 +67,14 @@ Review configuration before running large pipelines.
 ## Auto-Apply Safety
 
 Apply automation can submit real applications, so it is guarded by approval
-gates: a rehearsal dry run (recommended before approving anything), an explicit
-approval before any live submission, a browser-level guard during dry runs, no
-application submitted twice, and a daily spend ceiling. The apply agent also reads untrusted job pages, so prompt
-injection is a real exposure. The full gate model, the apply agent's automation
-posture, and how credentials appear in the apply prompt live in
-[Security](security.md).
+gates: a rehearsal dry run before live submission, an explicit approval bound to
+the reviewed materials generation, profile version, and application URL, a
+browser-level guard during dry runs, no application submitted twice, and a daily
+spend ceiling. Apply Review allows a partial dry-run override only when it names
+the specific partial run and shows the blocked channels you are accepting. The
+apply agent also reads untrusted job pages, so prompt injection is a real
+exposure. The full gate model, the apply agent's automation posture, and how
+credentials appear in the apply prompt live in [Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 
