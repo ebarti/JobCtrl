@@ -66,6 +66,9 @@ rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
 file-backed until their own storage migration.
+The `digest_state` projection table stores the local daily digest review
+watermark; passive Dashboard and CLI reads do not update it, and only explicit
+acknowledge actions advance it.
 Posted compensation facts live in the canonical
 `job_posted_compensation_facts` table. The parser consumes only bounded salary
 source text such as `jobs.salary`, records explicit parse states and warnings,

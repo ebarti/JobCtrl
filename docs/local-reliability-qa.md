@@ -203,6 +203,27 @@ Manual smoke:
    filter/sort.
 5. Rename the view, delete it, and confirm the table falls back to `Default`.
 
+### Daily Digest Smoke
+
+For daily digest changes, run the TypeScript/Python parity fixtures plus the
+CLI smoke:
+
+```bash
+pnpm --dir apps/api exec vitest run test/digest.test.ts
+uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_digest_parity.py workers/automation/tests/test_digest_cli.py
+```
+
+Manual smoke:
+
+1. Open Dashboard and confirm the Digest panel renders the same counts as
+   `uv --project workers/automation run jobhunter digest --json` for the same
+   local database.
+2. Run `uv --project workers/automation run jobhunter digest` and confirm it
+   does not change `digest_state.last_acknowledged_at`.
+3. Run `uv --project workers/automation run jobhunter digest --acknowledge`
+   and confirm the watermark advances to the displayed digest timestamp and a
+   `DigestReviewed` event is recorded.
+
 ### Resume Tailoring Quality Eval Gate
 
 For resume tailoring prompt, evidence policy, deterministic quality checks,
