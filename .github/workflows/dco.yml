@@ -9,6 +9,9 @@ permissions:
 
 jobs:
   dco:
+    # Exempt repository-owner PRs by GitHub actor so the workflow does not
+    # publish maintainer email addresses in configuration.
+    if: ${{ github.event.pull_request.user.login != github.repository_owner }}
     name: DCO sign-off
     runs-on: ubuntu-latest
 
