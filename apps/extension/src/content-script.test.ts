@@ -146,6 +146,84 @@ describe("deterministic autofill content script", () => {
     expect(submitCount).toBe(0);
   });
 
+  it("selects the matching yes-no radio option once per logical field", async () => {
+    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
+    document.body.innerHTML = `
+      <form id="application">
+        <fieldset>
+          <legend>Are you legally authorized to work?</legend>
+          <label><input type="radio" name="legally_authorized_to_work" value="yes" /> Yes</label>
+          <label><input type="radio" name="legally_authorized_to_work" value="no" /> No</label>
+        </fieldset>
+        <fieldset>
+          <legend>Will you require sponsorship?</legend>
+          <label><input type="radio" name="require_sponsorship" value="yes" /> Yes</label>
+          <label><input type="radio" name="require_sponsorship" value="no" /> No</label>
+        </fieldset>
+      </form>
+    `;
+
+    const suggestions = buildAutofillSuggestions(
+      profileFields([
+        field("work_authorization.legally_authorized_to_work", "Profile > Work authorization > Legally authorized to work", "Yes"),
+        field("work_authorization.require_sponsorship", "Profile > Work authorization > Requires sponsorship", "No"),
+      ]),
+      collectFieldTargets(document),
+    );
+    const filled = applyAcceptedSuggestions(suggestions);
+
+    expect(suggestions.map((suggestion) => suggestion.profilePath)).toEqual([
+      "work_authorization.legally_authorized_to_work",
+      "work_authorization.require_sponsorship",
+    ]);
+    expect(filled).toBe(2);
+    expect((document.querySelector("[name='legally_authorized_to_work'][value='yes']") as HTMLInputElement).checked).toBe(true);
+    expect((document.querySelector("[name='legally_authorized_to_work'][value='no']") as HTMLInputElement).checked).toBe(false);
+    expect((document.querySelector("[name='require_sponsorship'][value='yes']") as HTMLInputElement).checked).toBe(false);
+    expect((document.querySelector("[name='require_sponsorship'][value='no']") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("selects matching yes-no select options for availability answers", async () => {
+    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
+    document.body.innerHTML = `
+      <form id="application">
+        <label>
+          Available for full time
+          <select name="available_for_full_time">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label>
+          Available for contract work
+          <select name="available_for_contract">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+      </form>
+    `;
+
+    const suggestions = buildAutofillSuggestions(
+      profileFields([
+        field("availability.available_for_full_time", "Profile > Availability > Full time", "Yes"),
+        field("availability.available_for_contract", "Profile > Availability > Contract", "No"),
+      ]),
+      collectFieldTargets(document),
+    );
+    const filled = applyAcceptedSuggestions(suggestions);
+
+    expect(suggestions.map((suggestion) => suggestion.profilePath)).toEqual([
+      "availability.available_for_full_time",
+      "availability.available_for_contract",
+    ]);
+    expect(filled).toBe(2);
+    expect((document.querySelector("[name='available_for_full_time']") as HTMLSelectElement).value).toBe("yes");
+    expect((document.querySelector("[name='available_for_contract']") as HTMLSelectElement).value).toBe("no");
+  });
+
   it("does not suggest or fill CSS-hidden controls", async () => {
     const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
     document.body.innerHTML = `
@@ -226,13 +304,43 @@ describe("deterministic autofill content script", () => {
 
     expect(suggestions).toEqual([]);
   });
+
+  it("does not map ambiguous citizenship, contract-type, or address-line-two fields", async () => {
+    const { buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
+    document.body.innerHTML = `
+      <form id="application">
+        <label>Country of citizenship <input name="country_of_citizenship" /></label>
+        <label>Country <input name="country" /></label>
+        <label>Contract type <select name="contract_type"><option>W2</option></select></label>
+        <label>Available for contract work <select name="available_for_contract"><option>Yes</option></select></label>
+        <label>Address line 2 <input name="address_line_2" /></label>
+        <label>Street address <input name="street_address" /></label>
+      </form>
+    `;
+
+    const suggestions = buildAutofillSuggestions(
+      profileFields([
+        field("personal.country", "Profile > Personal information > Country", "United States"),
+        field("availability.available_for_contract", "Profile > Availability > Contract", "Yes"),
+        field("personal.address", "Profile > Personal information > Street address", "123 Market St"),
+      ]),
+      collectFieldTargets(document),
+    );
+
+    expect(suggestions.map((suggestion) => suggestion.target.control.getAttribute("name"))).toEqual([
+      "country",
+      "available_for_contract",
+      "street_address",
+    ]);
+  });
 });
 
-function profileFields(): ExtensionAutofillProfileField[] {
+function profileFields(extra: ExtensionAutofillProfileField[] = []): ExtensionAutofillProfileField[] {
   return [
     field("personal.full_name", "Profile > Personal information > Full name", "Jordan Candidate"),
     field("personal.email", "Profile > Personal information > Email", "jordan@example.com"),
     field("personal.linkedin_url", "Profile > Personal information > LinkedIn URL", "https://linkedin.com/in/jordan"),
+    ...extra,
   ];
 }
 

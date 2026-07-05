@@ -25,6 +25,7 @@ interface FieldRule {
   path: string;
   label: string;
   patterns: RegExp[];
+  excludePatterns?: RegExp[];
   transform?: "first_name" | "last_name";
 }
 
@@ -38,10 +39,15 @@ const FIELD_RULES: FieldRule[] = [
   { path: "personal.full_name", label: "Last name", patterns: [/\blast\s*name\b|\bfamily\s*name\b|\bsurname\b/], transform: "last_name" },
   { path: "personal.full_name", label: "Full name", patterns: [/\bfull\s*name\b|\blegal\s*name\b|\bcandidate\s*name\b|\bapplicant\s*name\b|\byour\s*name\b/] },
   { path: "personal.phone", label: "Phone", patterns: [/\bphone\b|\bmobile\b|\btelephone\b/] },
-  { path: "personal.address", label: "Street address", patterns: [/\baddress\b|\bstreet\b/] },
+  {
+    path: "personal.address",
+    label: "Street address",
+    patterns: [/\bstreet\s*address\b|\baddress\s*(?:line\s*)?1\b|\baddress\b|\bstreet\b/],
+    excludePatterns: [/\baddress\s*(?:line\s*)?2\b|\baddress\s*2\b|\bapt\b|\bapartment\b|\bunit\b|\bsuite\b/],
+  },
   { path: "personal.city", label: "City", patterns: [/\bcity\b/] },
   { path: "personal.province_state", label: "State / province", patterns: [/\bstate\b|\bprovince\b|\bregion\b/] },
-  { path: "personal.country", label: "Country", patterns: [/\bcountry\b/] },
+  { path: "personal.country", label: "Country", patterns: [/\bcountry\b/], excludePatterns: [/\bcitizenship\b|\bnationality\b|\bpassport\b/] },
   { path: "personal.postal_code", label: "Postal code", patterns: [/\bpostal\b|\bzip\b/] },
   { path: "personal.linkedin_url", label: "LinkedIn URL", patterns: [/\blinkedin\b/] },
   { path: "personal.github_url", label: "GitHub URL", patterns: [/\bgithub\b/] },
@@ -52,8 +58,18 @@ const FIELD_RULES: FieldRule[] = [
   { path: "work_authorization.work_permit_type", label: "Work permit type", patterns: [/\bwork\s*permit\b|\bvisa\s*type\b/] },
   { path: "compensation.salary_expectation", label: "Salary expectation", patterns: [/\bsalary\b|\bcompensation\b|\bexpected\s*pay\b/] },
   { path: "availability.earliest_start_date", label: "Earliest start date", patterns: [/\bstart\s*date\b|\bavailable\s*from\b/] },
-  { path: "availability.available_for_full_time", label: "Available for full time", patterns: [/\bfull[\s-]*time\b/] },
-  { path: "availability.available_for_contract", label: "Available for contract", patterns: [/\bcontract\b/] },
+  {
+    path: "availability.available_for_full_time",
+    label: "Available for full time",
+    patterns: [/\bavailable\b.*\bfull[\s-]*time\b|\bfull[\s-]*time\b.*\bavailable\b|\bopen\b.*\bfull[\s-]*time\b|\bfull[\s-]*time\b.*\bavailability\b/],
+    excludePatterns: [/\bemployment\s*type\b|\bjob\s*type\b|\bposition\s*type\b/],
+  },
+  {
+    path: "availability.available_for_contract",
+    label: "Available for contract",
+    patterns: [/\bavailable\b.*\bcontract\b|\bcontract\b.*\bavailable\b|\bopen\b.*\bcontract\b|\bcontract\b.*\bavailability\b/],
+    excludePatterns: [/\bcontract\s*type\b|\bcontract\s*terms?\b|\baccept\b.*\bcontract\b|\bagree\b.*\bcontract\b/],
+  },
   { path: "eeo_voluntary.gender", label: "Gender", patterns: [/\bgender\b/] },
   { path: "eeo_voluntary.race_ethnicity", label: "Race / ethnicity", patterns: [/\brace\b|\bethnicity\b/] },
   { path: "eeo_voluntary.veteran_status", label: "Veteran status", patterns: [/\bveteran\b/] },
@@ -107,25 +123,31 @@ export function buildAutofillSuggestions(
   fields: readonly ExtensionAutofillProfileField[],
   targets: readonly FieldTarget[],
 ): AutofillSuggestion[] {
-  return targets.flatMap((target) => {
-    const rule = FIELD_RULES.find((candidate) => candidate.patterns.some((pattern) => pattern.test(target.descriptor)));
+  const suggestions: AutofillSuggestion[] = [];
+  const seenLogicalTargets = new Set<string>();
+  for (const target of targets) {
+    const rule = FIELD_RULES.find((candidate) => matchesRule(candidate, target.descriptor));
     if (!rule) {
-      return [];
+      continue;
     }
+    const suggestionKey = logicalSuggestionKey(target, rule);
+    if (seenLogicalTargets.has(suggestionKey)) {
+      continue;
+    }
+    seenLogicalTargets.add(suggestionKey);
     const field = fields.find((candidate) => candidate.path === rule.path);
     const value = field ? transformValue(field.value, rule.transform) : "";
-    return [
-      {
-        id: `${target.id}:${rule.path}:${rule.transform ?? "value"}`,
-        target,
-        profilePath: rule.path,
-        profileLabel: rule.label,
-        sourceLabel: field?.source.label ?? rule.label,
-        value,
-        status: value ? "suggested" : "missing",
-      },
-    ];
-  });
+    suggestions.push({
+      id: `${target.id}:${rule.path}:${rule.transform ?? "value"}`,
+      target,
+      profilePath: rule.path,
+      profileLabel: rule.label,
+      sourceLabel: field?.source.label ?? rule.label,
+      value,
+      status: value ? "suggested" : "missing",
+    });
+  }
+  return suggestions;
 }
 
 export function applyAcceptedSuggestions(suggestions: readonly AutofillSuggestion[]): number {
@@ -200,10 +222,11 @@ function renderOverlay(doc: Document, suggestions: AutofillSuggestion[], emptyMe
       });
       label.append(checkbox, ` ${suggestion.profileLabel}`);
       const detail = doc.createElement("div");
+      const formField = suggestion.target.descriptor ? `Form field: ${suggestion.target.descriptor}` : "Form field: detected control";
       detail.textContent =
         suggestion.status === "suggested"
-          ? `Profile value ready · ${suggestion.sourceLabel}`
-          : `Not in your profile · ${suggestion.sourceLabel}`;
+          ? `Profile value ready · ${suggestion.sourceLabel} · ${formField}`
+          : `Not in your profile · ${suggestion.sourceLabel} · ${formField}`;
       Object.assign(detail.style, { color: "#475569", fontSize: "12px", marginLeft: "22px" });
       label.append(detail);
       form.append(label);
@@ -248,12 +271,10 @@ function setControlValue(control: FormControl, value: string): boolean {
     }
     control.value = option.value;
   } else if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
-    const normalized = normalize(value);
-    control.checked =
-      normalized === "yes" ||
-      normalized === "true" ||
-      normalized === "authorized" ||
-      optionLabel(control).includes(normalized);
+    if (control.type === "radio") {
+      return setRadioValue(control, value);
+    }
+    return setCheckboxValue(control, value);
   } else {
     control.value = value;
   }
@@ -380,12 +401,152 @@ function transformValue(value: string, transform: FieldRule["transform"]): strin
 }
 
 function optionMatches(option: HTMLOptionElement, value: string): boolean {
-  const target = normalize(value);
-  return normalize(option.value) === target || normalize(option.textContent ?? "").includes(target);
+  return answerMatchesOption(value, normalize(`${option.value} ${option.textContent ?? ""}`));
 }
 
-function optionLabel(control: HTMLInputElement): string {
-  return fieldDescriptor(control);
+function setRadioValue(control: HTMLInputElement, value: string): boolean {
+  const match = radioGroupControls(control)
+    .filter(isFillableControl)
+    .find((candidate) => answerMatchesOption(value, inputOptionDescriptor(candidate)));
+  if (!match) {
+    return false;
+  }
+  for (const radio of radioGroupControls(control)) {
+    radio.checked = radio === match;
+  }
+  dispatchFormEvents(match);
+  return true;
+}
+
+function setCheckboxValue(control: HTMLInputElement, value: string): boolean {
+  const group = checkboxGroupControls(control).filter(isFillableControl);
+  if (group.length > 1) {
+    const match = group.find((candidate) => answerMatchesOption(value, inputOptionDescriptor(candidate)));
+    if (!match) {
+      return false;
+    }
+    match.checked = true;
+    dispatchFormEvents(match);
+    return true;
+  }
+
+  const booleanValue = parseBooleanAnswer(value);
+  if (booleanValue === null && !answerMatchesOption(value, inputOptionDescriptor(control))) {
+    return false;
+  }
+  control.checked = booleanValue ?? true;
+  dispatchFormEvents(control);
+  return true;
+}
+
+function radioGroupControls(control: HTMLInputElement): HTMLInputElement[] {
+  if (!control.name) {
+    return [control];
+  }
+  const root = control.form ?? control.ownerDocument;
+  return Array.from(root.querySelectorAll<HTMLInputElement>("input[type='radio']")).filter(
+    (candidate) => candidate.name === control.name,
+  );
+}
+
+function checkboxGroupControls(control: HTMLInputElement): HTMLInputElement[] {
+  if (!control.name) {
+    return [control];
+  }
+  const root = control.form ?? control.ownerDocument;
+  const group = Array.from(root.querySelectorAll<HTMLInputElement>("input[type='checkbox']")).filter(
+    (candidate) => candidate.name === control.name,
+  );
+  return group.length > 0 ? group : [control];
+}
+
+function inputOptionDescriptor(control: HTMLInputElement): string {
+  return normalize(
+    [
+      control.value,
+      control.getAttribute("aria-label"),
+      control.getAttribute("title"),
+      ...Array.from(control.labels ?? []).map((label) => label.textContent),
+      closestLabel(control),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function answerMatchesOption(value: string, optionText: string): boolean {
+  const option = tokenizeNormalized(optionText).join(" ");
+  if (!option) {
+    return false;
+  }
+  return answerMatchCandidates(value).some((candidate) => normalizedPhraseIncludes(option, candidate));
+}
+
+function answerMatchCandidates(value: string): string[] {
+  const normalized = normalize(value);
+  const booleanValue = parseBooleanAnswer(value);
+  if (booleanValue === true) {
+    return ["yes", "true", "y", "1"];
+  }
+  if (booleanValue === false) {
+    return ["no", "false", "n", "0"];
+  }
+  return normalized ? [normalized] : [];
+}
+
+function normalizedPhraseIncludes(option: string, candidate: string): boolean {
+  const normalizedCandidate = tokenizeNormalized(candidate).join(" ");
+  if (!normalizedCandidate) {
+    return false;
+  }
+  return option === normalizedCandidate || ` ${option} `.includes(` ${normalizedCandidate} `);
+}
+
+function parseBooleanAnswer(value: string): boolean | null {
+  const normalized = tokenizeNormalized(value).join(" ");
+  if (["yes", "true", "y", "1", "authorized", "legally authorized", "eligible"].includes(normalized)) {
+    return true;
+  }
+  if (
+    ["no", "false", "n", "0", "not authorized", "unauthorized", "not eligible", "ineligible"].includes(normalized)
+  ) {
+    return false;
+  }
+  return null;
+}
+
+function tokenizeNormalized(value: string): string[] {
+  return normalize(value)
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\w]+|[^\w]+$/g, ""))
+    .filter(Boolean);
+}
+
+function matchesRule(rule: FieldRule, descriptor: string): boolean {
+  return (
+    rule.patterns.some((pattern) => pattern.test(descriptor)) &&
+    !(rule.excludePatterns ?? []).some((pattern) => pattern.test(descriptor))
+  );
+}
+
+function logicalSuggestionKey(target: FieldTarget, rule: FieldRule): string {
+  const control = target.control;
+  if (control instanceof HTMLInputElement && control.type === "radio" && control.name) {
+    return `radio:${formScopeIndex(control)}:${control.name}:${rule.path}:${rule.transform ?? "value"}`;
+  }
+  return `${target.id}:${rule.path}:${rule.transform ?? "value"}`;
+}
+
+function formScopeIndex(control: HTMLInputElement): number {
+  if (!control.form) {
+    return -1;
+  }
+  return Array.from(control.ownerDocument.forms).indexOf(control.form);
+}
+
+function dispatchFormEvents(control: FormControl): void {
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+  control.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function normalize(value: string): string {

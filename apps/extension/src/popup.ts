@@ -22,7 +22,7 @@ saveTokenButton.addEventListener("click", () => {
     } else {
       setStatus(response.message);
     }
-    return refreshStatus();
+    return refreshStatus({ preserveStatus: true });
   });
 });
 
@@ -38,7 +38,7 @@ captureButton.addEventListener("click", () => {
       } else if (!response.ok) {
         setStatus(response.message);
       }
-      return refreshStatus();
+      return refreshStatus({ preserveStatus: true });
     })
     .finally(() => {
       captureButton.disabled = false;
@@ -55,7 +55,7 @@ autofillButton.addEventListener("click", () => {
       } else if (!response.ok) {
         setStatus(response.message);
       }
-      return refreshStatus();
+      return refreshStatus({ preserveStatus: true });
     })
     .finally(() => {
       autofillButton.disabled = false;
@@ -65,15 +65,17 @@ autofillButton.addEventListener("click", () => {
 clearQueueButton.addEventListener("click", () => {
   void sendMessage({ type: "clearQueue" }).then((response) => {
     setStatus(response.ok ? "Local capture queue cleared." : response.message);
-    return refreshStatus();
+    return refreshStatus({ preserveStatus: true });
   });
 });
 
-async function refreshStatus(): Promise<void> {
+async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promise<void> {
   const response = await sendMessage({ type: "getStatus" });
   if (!response.ok) {
     apiState.textContent = "Unavailable";
-    setStatus(response.message);
+    if (!options.preserveStatus) {
+      setStatus(response.message);
+    }
     return;
   }
   if (response.status !== "ready") {
@@ -83,6 +85,9 @@ async function refreshStatus(): Promise<void> {
   autofillButton.disabled = !response.paired;
   captureButton.disabled = !response.paired;
   clearQueueButton.disabled = response.queueSize === 0;
+  if (options.preserveStatus) {
+    return;
+  }
   if (!response.paired) {
     setStatus("Paste the pairing token from JobHunter Settings.");
   } else if (!response.apiReady) {
