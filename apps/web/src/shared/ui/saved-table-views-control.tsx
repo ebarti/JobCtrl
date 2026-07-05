@@ -42,6 +42,20 @@ export interface SavedTableViewsControlProps {
   onPresentationChange: (presentation: SavedTablePresentation) => void;
 }
 
+const COLOR_RULE_OPERATORS = [
+  { value: "contains", label: "contains" },
+  { value: "eq", label: "equals" },
+  { value: "neq", label: "not equal" },
+  { value: "gte", label: ">=" },
+  { value: "lte", label: "<=" },
+] as const;
+const COLOR_RULE_TONES = [
+  { value: "success", label: "Success" },
+  { value: "warning", label: "Warning" },
+  { value: "danger", label: "Danger" },
+  { value: "info", label: "Info" },
+] as const;
+
 function moveColumn(
   order: readonly string[],
   columnId: string,
@@ -90,6 +104,12 @@ export function SavedTableViewsControl({
   const [columnOpen, setColumnOpen] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [renameInput, setRenameInput] = useState("");
+  const [ruleColumnId, setRuleColumnId] = useState("");
+  const [ruleOperator, setRuleOperator] =
+    useState<(typeof COLOR_RULE_OPERATORS)[number]["value"]>("contains");
+  const [ruleValue, setRuleValue] = useState("");
+  const [ruleTone, setRuleTone] =
+    useState<(typeof COLOR_RULE_TONES)[number]["value"]>("info");
 
   const activeView = useMemo(
     () =>
@@ -186,6 +206,50 @@ export function SavedTableViewsControl({
       density,
       grouping: snapshot.grouping,
       colorRules: snapshot.colorRules,
+    });
+  };
+
+  const setGrouping = (columnId: string) => {
+    setPresentation({
+      columns: snapshot.columns,
+      density: snapshot.density,
+      grouping: columnId ? { columnId } : null,
+      colorRules: snapshot.colorRules,
+    });
+  };
+
+  const addColorRule = () => {
+    const columnId = ruleColumnId || columnOptions[0]?.id;
+    const trimmedValue = ruleValue.trim();
+    if (!columnId || !trimmedValue) return;
+    const numericValue = Number(trimmedValue);
+    const value =
+      (ruleOperator === "gte" || ruleOperator === "lte") &&
+      Number.isFinite(numericValue)
+        ? numericValue
+        : trimmedValue;
+    setPresentation({
+      columns: snapshot.columns,
+      density: snapshot.density,
+      grouping: snapshot.grouping,
+      colorRules: [
+        ...snapshot.colorRules,
+        {
+          columnId,
+          predicate: { op: ruleOperator, value },
+          tone: ruleTone,
+        },
+      ],
+    });
+    setRuleValue("");
+  };
+
+  const deleteColorRule = (index: number) => {
+    setPresentation({
+      columns: snapshot.columns,
+      density: snapshot.density,
+      grouping: snapshot.grouping,
+      colorRules: snapshot.colorRules.filter((_, ruleIndex) => ruleIndex !== index),
     });
   };
 
@@ -327,6 +391,112 @@ export function SavedTableViewsControl({
                 {option.label}
               </button>
             ))}
+          </section>
+          <label className="saved-table-rule-field">
+            <span>Group by</span>
+            <select
+              aria-label="Group table rows"
+              value={snapshot.grouping?.columnId ?? ""}
+              onChange={(event) => setGrouping(event.target.value)}
+            >
+              <option value="">No grouping</option>
+              {columnOptions.map((column) => (
+                <option key={column.id} value={column.id}>
+                  {column.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <section className="saved-table-rules" aria-label="Color rules">
+            <div className="saved-table-rule-editor">
+              <label>
+                <span>Column</span>
+                <select
+                  aria-label="Color rule column"
+                  value={ruleColumnId || columnOptions[0]?.id || ""}
+                  onChange={(event) => setRuleColumnId(event.target.value)}
+                >
+                  {columnOptions.map((column) => (
+                    <option key={column.id} value={column.id}>
+                      {column.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Predicate</span>
+                <select
+                  aria-label="Color rule predicate"
+                  value={ruleOperator}
+                  onChange={(event) =>
+                    setRuleOperator(
+                      event.target.value as typeof ruleOperator,
+                    )
+                  }
+                >
+                  {COLOR_RULE_OPERATORS.map((operator) => (
+                    <option key={operator.value} value={operator.value}>
+                      {operator.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Value</span>
+                <Input
+                  aria-label="Color rule value"
+                  value={ruleValue}
+                  onChange={(event) => setRuleValue(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Tone</span>
+                <select
+                  aria-label="Color rule tone"
+                  value={ruleTone}
+                  onChange={(event) =>
+                    setRuleTone(event.target.value as typeof ruleTone)
+                  }
+                >
+                  {COLOR_RULE_TONES.map((tone) => (
+                    <option key={tone.value} value={tone.value}>
+                      {tone.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={!ruleValue.trim()}
+                onClick={addColorRule}
+              >
+                Add
+              </button>
+            </div>
+            {snapshot.colorRules.length ? (
+              <div className="saved-table-rule-list">
+                {snapshot.colorRules.map((rule, index) => {
+                  const column = columnOptions.find(
+                    (option) => option.id === rule.columnId,
+                  );
+                  return (
+                    <div key={`${rule.columnId}-${index}`}>
+                      <span>
+                        {column?.label ?? rule.columnId} {rule.predicate.op}{" "}
+                        {String(rule.predicate.value)} · {rule.tone}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Delete color rule ${index + 1}`}
+                        onClick={() => deleteColorRule(index)}
+                      >
+                        <IconTrash size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
           <div className="saved-table-column-list">
             {snapshot.columns.order.map((columnId, index) => {

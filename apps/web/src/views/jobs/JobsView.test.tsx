@@ -29,7 +29,11 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
-import { useSavedTableViewsStore } from "../../shared/stores/saved-table-views.js";
+import {
+  JOBS_TABLE_COLUMN_IDS,
+  JOBS_TABLE_ID,
+  useSavedTableViewsStore,
+} from "../../shared/stores/saved-table-views.js";
 import { JobsView } from "./JobsView.js";
 
 const SEARCH =
@@ -302,6 +306,23 @@ describe("<JobsView> bulk delete integration", () => {
     const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
     await user.click(within(columnsDialog).getByRole("checkbox", { name: "Company" }));
     await user.click(within(columnsDialog).getByRole("button", { name: "Compact" }));
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Group table rows" }),
+      "current_stage",
+    );
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Color rule column" }),
+      "title",
+    );
+    await user.type(
+      within(columnsDialog).getByRole("textbox", { name: "Color rule value" }),
+      "Apply",
+    );
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Color rule tone" }),
+      "warning",
+    );
+    await user.click(within(columnsDialog).getByRole("button", { name: "Add" }));
     await user.click(within(columnsDialog).getByRole("button", { name: /close/i }));
     expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
 
@@ -332,6 +353,75 @@ describe("<JobsView> bulk delete integration", () => {
       "data-density",
       "compact",
     );
+    expect(screen.getByRole("row", { name: /apply 1/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    expect(rowForTitle(applyJob.title)).toHaveClass("data-grid-row-tone-warning");
+  });
+
+  it("hydrates active saved table view filters when the jobs view remounts", async () => {
+    const vonageJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-saved-filter-vonage",
+      title: "Saved Filter Manager",
+      company: "Vonage",
+      source: "Greenhouse",
+      discoverySource: "greenhouse:vonage",
+      postingSource: "greenhouse:vonage",
+    };
+    const acaiJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-saved-filter-acai",
+      title: "Saved Filter Engineer",
+      company: "Acai",
+      source: "Ashby",
+      discoverySource: "ashby:acai",
+      postingSource: "ashby:acai",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([vonageJob, acaiJob]));
+    useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Vonage", {
+      columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+      density: null,
+      grouping: null,
+      colorRules: [],
+      sort: { columnId: "discovered_at", direction: "desc" },
+      urlFilters: {
+        q: "",
+        stage: "all",
+        state: "all",
+        applyStatus: "all",
+        deleted: "active",
+        pageSize: 50,
+      },
+      gridFilters: {
+        company: {
+          operator: "contains",
+          text: "",
+          selectedValues: ["Vonage"],
+        },
+      },
+    });
+
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(vonageJob.title)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(acaiJob.title)).not.toBeInTheDocument(),
+    );
+    expect(router.state.location.search).toMatchObject({
+      stage: "all",
+      sort: "discovered_at",
+    });
+    expect(
+      screen.getByRole("button", {
+        name: /filter company column \(active\)/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("continues all matching pending preparation when the jobs page opens on eligible pending work", async () => {
