@@ -26,6 +26,7 @@ Known local commands:
 - TypeScript API: `pnpm api:dev`.
 - Web app: `pnpm web:dev`.
 - Web preview after build: `pnpm web:preview`.
+- Docs site (VitePress over `docs/`): `pnpm docs:dev`, `pnpm docs:build` (fails on dead internal links), `pnpm docs:preview`.
 
 Do not run auto-apply, browser submission, destructive profile/database actions, or commands that submit applications unless the user explicitly asks for that behavior.
 

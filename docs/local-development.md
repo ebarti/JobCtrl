@@ -175,3 +175,32 @@ pnpm web:storybook:test
 `web:storybook:test` runs the Storybook test runner over the static build,
 which executes the per-story `play()` interactions and the
 `@storybook/addon-a11y` axe checks (critical+serious violations fail).
+
+## Docs Site
+
+The documentation under `docs/` (minus internal planning docs) is also a
+static VitePress site, configured in `docs/.vitepress/config.ts`. The site
+publishes the user guide, developer guide, architecture docs, and reference
+docs; `docs/plans/`, `docs/incidents/`, and `docs/backlog.md` stay
+repository-only, and links that point at unpublished or repo-root files are
+rewritten to GitHub URLs at build time.
+
+```bash
+pnpm docs:dev
+pnpm docs:build
+pnpm docs:preview
+```
+
+`pnpm docs:build` fails on dead internal links, then runs
+`scripts/check-docs-site-links.mjs`, which fails if any href/src emitted into
+the built site does not resolve to a built page or asset (this catches links
+to pages relocated by `rewrites`, which VitePress's source-level dead-link
+check cannot see). Together they are the docs link-integrity gate; CI runs
+them on every pull request that touches `docs/`
+(`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
+the browser, so a build that passes can still contain a diagram that fails to
+parse — check edited diagrams in `pnpm docs:dev` before merging. Note that
+`pnpm docs:preview` snapshots the built file list at startup: after any
+rebuild, restart the preview server or hashed assets will 404. Deploys to
+Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
+variable and the Cloudflare credentials are configured.

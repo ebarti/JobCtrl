@@ -36,6 +36,9 @@
     "qa:seed": "corepack pnpm --filter @jobhunter/api qa:seed",
     "qa:test": "corepack pnpm --filter @jobhunter/api qa:test",
     "docs:screenshots": "corepack pnpm --filter @jobhunter/web e2e -- tests/docs-screenshots.spec.ts",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs && node scripts/check-docs-site-links.mjs",
+    "docs:preview": "vitepress preview docs",
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
@@ -61,7 +64,10 @@
   },
   "homepage": "https://github.com/ebarti/JobHunter#readme",
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "mermaid": "^11.16.0",
+    "typescript": "^6.0.3",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
