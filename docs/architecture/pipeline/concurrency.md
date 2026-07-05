@@ -63,8 +63,25 @@ Two knobs that look like Temporal concurrency but are not:
   loop**. This is deliberate isolation, not parallelism: each family gets its
   own activity-level timeout, heartbeat, and retry policy, and a family
   failure is recorded (`families_failed`) while the loop continues to the next
-  family. Enrichment and the preparation fan-out run as follow-up activities
-  after the families finish.
+  family.
+- **Score-as-you-discover streaming (R9 Phase 1).** After **each family
+  completes**, the workflow immediately runs `discovery_enrichment` (drains that
+  family's fresh jobs) and `discovery_preparation_fanout` (starts their per-job
+  `JobPreparationWorkflow`s), instead of waiting for every family to finish. So a
+  job discovered by the first family is scored while later families are still
+  crawling. A **terminal reconcile** enrichment + fan-out still runs after the
+  loop and remains authoritative for the tolerated-partial-failure folding and
+  progress finalization; the per-family passes are additive and best-effort
+  (any non-cancellation failure is left for the terminal pass to sweep up).
+  These streaming passes are **progress-silent** (`progress_total=0`) so the
+  Runs bar stays monotonic on the family + terminal spine — see
+  [Operations & Events](operations.md#discovery-run-progress). Repeated fan-out
+  is idempotent: the deterministic `prep-{idempotency_key}` id plus
+  `USE_EXISTING` means N invocations start exactly one workflow per job. The
+  first fan-out sweeps pre-existing `pending_tailor` stragglers once
+  (`include_pending_tailor=True`); every later pass is score-only, so a fresh
+  job crossing `pending_score` → `pending_tailor` mid-tailor is never
+  double-fanned.
 - **JobPipelineWorkflow** executes the selected stages in pipeline order and
   delegates `discover` and `apply` to child workflows, so the risky surfaces
   keep their own workflow identity, history, and retry policy.

@@ -85,6 +85,11 @@ class DiscoveryPreparationFanoutInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     progress_completed: int = 0
     progress_total: int = 0
+    # When False, only fresh ``pending_score`` jobs are fanned out; the
+    # ``pending_tailor`` straggler branch is skipped. Per-family streaming
+    # (R9 Phase 1) sweeps stragglers on the first fan-out only, then derives
+    # score-only, so a fresh job never gets a duplicate TAILOR_RESUME workflow.
+    include_pending_tailor: bool = True
 
 
 @dataclass(frozen=True)
@@ -259,6 +264,7 @@ async def discovery_preparation_fanout_activity(
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
+                include_pending_tailor=payload.include_pending_tailor,
             )
         except Exception as exc:
             _record_preparation_progress(

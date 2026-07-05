@@ -44,6 +44,26 @@ it is reconciled from settings only at **worker startup**
 schedule setting has no effect until the worker is restarted. Turning the
 schedule on or off, or changing its cron, requires bouncing the worker.
 
+## Discovery Run Progress
+
+The Runs view progress bar is driven by the `progress` payload
+(`_discovery_progress_payload` in `pipeline/runner.py`) that discovery
+activities emit onto the `discovery_runs` aggregate. The denominator is fixed at
+plan time: `progress_total = len(families) + 2` — one step per source family
+plus a terminal enrichment and a terminal preparation step. The counter is
+monotonic: family source activities advance it `0 … N-1`, then the terminal
+reconcile enrichment (`N`) and preparation (`N+1 → N+2`, i.e. 100%) finalize it.
+
+Under **score-as-you-discover streaming (R9 Phase 1)** the per-family enrichment
+and preparation fan-out that run after each family are **progress-silent**: they
+pass `progress_total=0`, which suppresses progress emission
+(`emit_progress = progress_total > 0`), so the bar advances only on the family +
+terminal spine and can never oscillate or shrink. Scores still appear
+incrementally in the Jobs view because that path is independent of the progress
+bar: `JobScored` events → projection builders → `GET /v1/events/stream`. No new
+`discovery_runs` progress columns are added, so both projection builders stay in
+parity.
+
 ## Persistence Map
 
 The Python worker writes to a single local SQLite database. Tables group by context;
