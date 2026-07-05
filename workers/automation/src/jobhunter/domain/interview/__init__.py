@@ -7,6 +7,10 @@ from jobhunter.domain.interview.value_objects import (
     InterviewPrepGateAudit,
     InterviewPrepItem,
 )
+from jobhunter.domain.interview.use_cases import (
+    GenerateInterviewPrepUseCase,
+    InterviewPrepGenerationOutcome,
+)
 
 __all__ = [
     "INTERVIEW_PREP_ITEM_KINDS",
@@ -14,4 +18,6 @@ __all__ = [
     "InterviewPrep",
     "InterviewPrepGateAudit",
     "InterviewPrepItem",
+    "GenerateInterviewPrepUseCase",
+    "InterviewPrepGenerationOutcome",
 ]

@@ -76,6 +76,12 @@ from jobhunter.domain.events.materials import (
     BulletProvenanceRecordedPayload,
     create_bullet_provenance_recorded,
 )
+from jobhunter.domain.events.interview import (
+    InterviewPrepGeneratedPayload,
+    create_interview_prep_generated,
+    InterviewPrepFailedPayload,
+    create_interview_prep_failed,
+)
 from jobhunter.domain.events.apply import (
     ApplicationEmailFeedbackIngestedPayload,
     create_application_email_feedback_ingested,
@@ -163,6 +169,8 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "MaterialsExhausted",
     "EmployerAnalyzed",
     "BulletProvenanceRecorded",
+    "InterviewPrepGenerated",
+    "InterviewPrepFailed",
     "TailorRetailorRequested",
     "TailoredArtifactsSuppressed",
     "ResumeTemplateVersionSaved",
@@ -276,6 +284,10 @@ __all__ = [
     "create_employer_analyzed",
     "BulletProvenanceRecordedPayload",
     "create_bullet_provenance_recorded",
+    "InterviewPrepGeneratedPayload",
+    "create_interview_prep_generated",
+    "InterviewPrepFailedPayload",
+    "create_interview_prep_failed",
     # Apply
     "ApplicationSubmittedPayload",
     "create_application_submitted",

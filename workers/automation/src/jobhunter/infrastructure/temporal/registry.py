@@ -28,6 +28,8 @@ from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
+from jobhunter.interview.activities import generate_interview_prep_activity
+from jobhunter.interview.workflow import InterviewPrepWorkflow
 from jobhunter.llm import check_spend_budget
 from jobhunter.materials.activities import (
     cover_letter_activity,
@@ -50,6 +52,7 @@ WORKFLOWS: list[type] = [
     ApplyWorkflow,
     ProfileImportWorkflow,
     CompensationRefreshWorkflow,
+    InterviewPrepWorkflow,
 ]
 
 ACTIVITIES: list[Callable[..., Any]] = [
@@ -69,6 +72,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     apply_activity,
     profile_import_activity,
     refresh_compensation_activity,
+    generate_interview_prep_activity,
     check_spend_budget,
     record_workflow_started,
     record_workflow_outcome,

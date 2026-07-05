@@ -29,6 +29,8 @@ import {
   createJobUpdated,
   createBulletProvenanceRecorded,
   createEmployerAnalyzed,
+  createInterviewPrepFailed,
+  createInterviewPrepGenerated,
   createMaterialsExhausted,
   createPdfRendered,
   createPreparationWorkItemCompleted,
@@ -316,6 +318,18 @@ export const eventByType = {
     generation: 1,
     bulletCount: 7,
     recordedAt: NOW,
+  }),
+  InterviewPrepGenerated: createInterviewPrepGenerated(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    generation: 1,
+    itemCount: 4,
+    generatedAt: NOW,
+  }),
+  InterviewPrepFailed: createInterviewPrepFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    generation: 2,
+    failedAt: NOW,
+    reasonCount: 1,
   }),
   TailoringPolicyUpdated: createTailoringPolicyUpdated(LOCAL_TENANT, {
     policyId: "tailoring:default",

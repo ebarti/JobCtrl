@@ -183,6 +183,16 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     artifactsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
   ],
+  InterviewPrepGenerated: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  InterviewPrepFailed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   TailoringPolicyUpdated: [
     profileKeys.profile(LOCAL_TENANT),
     jobsKeys.all(LOCAL_TENANT),

@@ -269,6 +269,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_resume_template_tables(conn)
     ensure_employer_analysis_tables(conn)
     ensure_bullet_provenance_tables(conn)
+    ensure_interview_prep_tables(conn)
     ensure_preparation_work_item_tables(conn)
     ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
@@ -2208,6 +2209,84 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     )
     conn.commit()
     return ["job_bullet_provenance"]
+
+
+def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create Interview Preparation canonical generation tables.
+
+    Interview prep is generated material, not a projection. Rows are versioned by
+    ``(job_url, generation)`` so a failed regenerate can be audited without
+    destroying the last accepted prep. Prompt/raw profile/job payloads are not
+    stored here; rows keep only the accepted/failed gate audit and item
+    provenance needed for later read-model projection.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_interview_prep (
+            job_url                    TEXT NOT NULL,
+            generation                 INTEGER NOT NULL,
+            tenant_id                  TEXT NOT NULL DEFAULT 'local',
+            status                     TEXT NOT NULL,
+            model                      TEXT,
+            generated_at               TEXT NOT NULL,
+            gate_status                TEXT NOT NULL,
+            fabrication_findings_json  TEXT NOT NULL DEFAULT '[]',
+            grounding_findings_json    TEXT NOT NULL DEFAULT '[]',
+            judge_verdict              TEXT,
+            warnings_json              TEXT NOT NULL DEFAULT '[]',
+            failure_reason             TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (job_url, generation),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_interview_prep_items (
+            job_url                    TEXT NOT NULL,
+            generation                 INTEGER NOT NULL,
+            item_id                    TEXT NOT NULL,
+            tenant_id                  TEXT NOT NULL DEFAULT 'local',
+            kind                       TEXT NOT NULL,
+            title                      TEXT NOT NULL,
+            generated_text             TEXT NOT NULL,
+            evidence_ids_json          TEXT NOT NULL DEFAULT '[]',
+            requirement_ids_json       TEXT NOT NULL DEFAULT '[]',
+            source_text_json           TEXT NOT NULL DEFAULT '[]',
+            transform_type             TEXT NOT NULL DEFAULT 'grounded_prep',
+            control                    TEXT NOT NULL DEFAULT 'never_fabricate',
+            grounding_audit_json       TEXT NOT NULL DEFAULT '[]',
+            warnings_json              TEXT NOT NULL DEFAULT '[]',
+            position                   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (job_url, generation, item_id),
+            FOREIGN KEY (job_url, generation)
+                REFERENCES job_interview_prep(job_url, generation) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_interview_prep_tenant_job_gen
+        ON job_interview_prep(tenant_id, job_url, generation DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_interview_prep_tenant_status
+        ON job_interview_prep(tenant_id, status, generated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_interview_prep_items_tenant_kind
+        ON job_interview_prep_items(tenant_id, kind, position)
+        """
+    )
+    conn.commit()
+    return ["job_interview_prep", "job_interview_prep_items"]
 
 
 def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str]:
