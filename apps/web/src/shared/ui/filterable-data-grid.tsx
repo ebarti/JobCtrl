@@ -66,6 +66,10 @@ export interface DataGridSortState {
   direction: DataGridSortDirection;
 }
 
+export type DataGridDensity = "compact" | "regular" | "comfy";
+export type DataGridColumnVisibilityState = Record<string, boolean>;
+export type DataGridColumnWidthsState = Record<string, number>;
+
 export interface DataGridHeaderContext<TData> {
   pageRows: readonly TData[];
   visibleRows: readonly TData[];
@@ -112,6 +116,11 @@ export interface FilterableDataGridProps<TData> {
   toolbarActions?: ReactNode;
   tableClassName?: string;
   resizableColumns?: boolean;
+  columnVisibility?: DataGridColumnVisibilityState;
+  columnOrder?: readonly string[];
+  columnWidths?: DataGridColumnWidthsState;
+  onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
+  density?: DataGridDensity | null;
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
@@ -184,6 +193,43 @@ function classNames(...values: Array<string | undefined | false>): string | unde
 
 function clampWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function orderColumns<TData>(
+  columns: Array<DataGridColumn<TData>>,
+  order: readonly string[] | undefined,
+): Array<DataGridColumn<TData>> {
+  if (!order?.length) return columns;
+  const byId = new Map(columns.map((column) => [column.id, column]));
+  const ordered: Array<DataGridColumn<TData>> = [];
+  const seen = new Set<string>();
+  for (const columnId of order) {
+    const column = byId.get(columnId);
+    if (!column || seen.has(columnId)) continue;
+    ordered.push(column);
+    seen.add(columnId);
+  }
+  for (const column of columns) {
+    if (!seen.has(column.id)) {
+      ordered.push(column);
+    }
+  }
+  return ordered;
+}
+
+function filterVisibleColumns<TData>(
+  columns: Array<DataGridColumn<TData>>,
+  visibility: DataGridColumnVisibilityState | undefined,
+): Array<DataGridColumn<TData>> {
+  if (!visibility) return columns;
+  return columns.filter((column) => visibility[column.id] !== false);
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 export function isActiveDataGridFilter(
@@ -359,6 +405,11 @@ export function FilterableDataGrid<TData>({
   toolbarActions,
   tableClassName,
   resizableColumns = true,
+  columnVisibility,
+  columnOrder,
+  columnWidths: controlledColumnWidths,
+  onColumnWidthsChange,
+  density,
   rowClassName,
   rowAriaSelected,
   onRowActivate,
@@ -371,20 +422,31 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [localColumnWidths, setLocalColumnWidths] =
+    useState<DataGridColumnWidthsState>({});
   const tableRef = useRef<HTMLTableElement | null>(null);
   const stopColumnResizeRef = useRef<(() => void) | null>(null);
+  const lastPageRowIdsRef = useRef<string[]>([]);
   const sort = controlledSort ?? localSort;
   const filters = controlledFilters ?? localFilters;
+  const columnWidths = controlledColumnWidths ?? localColumnWidths;
   const paginationEnabled = paginate || Boolean(pagination);
   const page = pagination?.page ?? localPage;
   const pageSize = pagination?.pageSize ?? localPageSize;
   const effectivePageSizeOptions =
     pagination?.pageSizeOptions ?? pageSizeOptions;
+  const orderedColumns = useMemo(
+    () => orderColumns(columns, columnOrder),
+    [columns, columnOrder],
+  );
+  const displayColumns = useMemo(
+    () => filterVisibleColumns(orderedColumns, columnVisibility),
+    [columnVisibility, orderedColumns],
+  );
   const activationColumnIndex = useMemo(() => {
-    const rowHeaderIndex = columns.findIndex((column) => column.rowHeader);
+    const rowHeaderIndex = displayColumns.findIndex((column) => column.rowHeader);
     return rowHeaderIndex >= 0 ? rowHeaderIndex : 0;
-  }, [columns]);
+  }, [displayColumns]);
 
   const filterableColumns = useMemo(
     () => columns.filter((column) => Boolean(column.getFilterValue)),
@@ -473,8 +535,14 @@ export function FilterableDataGrid<TData>({
     .filter(({ filter }) => isActiveDataGridFilter(filter));
 
   useEffect(() => {
-    onPageRowsChange?.(pageRows);
-  }, [onPageRowsChange, pageRows]);
+    if (!onPageRowsChange) return;
+    const nextIds = pageRows.map(getRowId);
+    if (sameStrings(lastPageRowIdsRef.current, nextIds)) {
+      return;
+    }
+    lastPageRowIdsRef.current = nextIds;
+    onPageRowsChange(pageRows);
+  }, [getRowId, onPageRowsChange, pageRows]);
 
   useEffect(() => {
     setColumnWidths((current) => {
@@ -492,6 +560,22 @@ export function FilterableDataGrid<TData>({
     },
     [],
   );
+
+  function setColumnWidths(
+    updater: (
+      current: DataGridColumnWidthsState,
+    ) => DataGridColumnWidthsState,
+  ) {
+    const next = updater(columnWidths);
+    if (next === columnWidths) {
+      return;
+    }
+    if (onColumnWidthsChange) {
+      onColumnWidthsChange(next);
+    } else {
+      setLocalColumnWidths(next);
+    }
+  }
 
   const setFilters = (
     updater: (current: DataGridFilterState) => DataGridFilterState,
@@ -663,14 +747,17 @@ export function FilterableDataGrid<TData>({
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
       : `${visibleRows.length} shown / ${data.length} loaded`;
   const columnWidthTotal = resizableColumns
-    ? columns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
+    ? displayColumns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
     : 0;
   const tableStyle = columnWidthTotal
     ? { width: `max(100%, ${columnWidthTotal}px)` }
     : undefined;
 
   return (
-    <div className="filterable-data-grid">
+    <div
+      className="filterable-data-grid"
+      data-density={density ?? undefined}
+    >
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
           <IconTable size={15} aria-hidden="true" />
@@ -716,7 +803,7 @@ export function FilterableDataGrid<TData>({
         >
           {resizableColumns ? (
             <colgroup>
-              {columns.map((column) => {
+              {displayColumns.map((column) => {
                 const width = columnWidths[column.id] ?? column.width;
                 return (
                   <col
@@ -730,7 +817,7 @@ export function FilterableDataGrid<TData>({
           ) : null}
           <thead>
             <tr>
-              {columns.map((column) => {
+              {displayColumns.map((column) => {
                 const active = sort.columnId === column.id;
                 const SortIcon = sort.direction === "desc" ? IconSortDescending : IconSortAscending;
                 const sortable =
@@ -862,7 +949,7 @@ export function FilterableDataGrid<TData>({
                       : undefined
                   }
                 >
-                  {columns.map((column, columnIndex) => {
+                  {displayColumns.map((column, columnIndex) => {
                     const content = column.render(row, { pageRows, rowId, rowIndex });
                     const isActivationCell =
                       Boolean(onRowActivate) && columnIndex === activationColumnIndex;

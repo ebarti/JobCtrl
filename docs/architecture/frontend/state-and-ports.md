@@ -29,6 +29,7 @@ is the canonical decision matrix.
 | Currently active route | **URL** (path) | Trivially. |
 | Global text search ("Filter jobs, errors, companies...") | **URL** | Bookmarkable searches. |
 | Bulk-selection set (checked job keys) | **Component** (`useState`) | Intentionally ephemeral; selecting 50 jobs and refreshing should not preserve the selection. Documented exception. |
+| Saved table view definitions, active view id, column visibility/order/widths, and table density override | **Client** (Zustand+persist) | Local UI preference/template data. Applying a view writes URL-owned filters/sort through `navigate`; active filters/sort are not shadowed in the store. |
 | Theme (light/dark) | **Client** (Zustand+persist) | User preference; not URL-bound; persists across sessions. |
 | Density (compact/regular/comfy) | **Client** (Zustand+persist) | Same. |
 | Tenant identity | **Client** (context fed by Zustand+session in cloud) | Determined by session; not navigation-controlled. |

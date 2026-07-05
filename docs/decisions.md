@@ -43,6 +43,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Frontend Hexagonal Ports With Local + Hosted Adapters Named](#_2026-05-06-frontend-hexagonal-ports-with-local-hosted-adapters-named) · 2026-05-06
 - [SSE Realtime Via `GET /v1/events/stream` + Invalidation Router](#_2026-05-06-sse-realtime-via-get-v1-events-stream-invalidation-router) · 2026-05-06
 - [View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror](#_2026-05-06-view-vs-context-dichotomy-1-1-backend-bounded-context-mirror) · 2026-05-06
+- [Saved Table Views Stay Client-Persisted Templates](#_2026-07-05-saved-table-views-stay-client-persisted-templates) · 2026-07-05
 
 **Orchestration & workflow reliability (Temporal)**
 
@@ -1316,3 +1317,31 @@ Consequences:
 - the in-process preparation queue and its reaper are removed
 
 Cites: PR #237 (P3).
+
+## 2026-07-05: Saved Table Views Stay Client-Persisted Templates
+
+Status: accepted
+
+Decision: saved table-view definitions and table presentation state live in a
+versioned Zustand `persist` store (`jh:saved-table-views`). Active Jobs filters,
+sort, page, and page size remain URL state. Applying a saved view writes those
+URL-owned dimensions through router navigation and applies only presentation
+dimensions directly from the client store.
+
+Rationale:
+
+- filters and sort are already bookmarkable URL state and feed the route loader
+  query key
+- table views are local UI templates, not backend domain data or cross-device
+  settings
+- the client store follows the same migration-safe pattern as other persisted
+  UI preferences and can drop renamed/removed column ids without corrupting a
+  view
+
+Consequences:
+
+- a saved view is not a live second copy of the current URL filters/sort
+- editing filters after applying a view does not mutate the saved template
+  unless the user explicitly saves/updates that view
+- server-side or shareable saved views would require a separate future
+  aggregate/API decision rather than repurposing this local store
