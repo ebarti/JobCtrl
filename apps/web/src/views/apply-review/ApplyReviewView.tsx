@@ -846,7 +846,8 @@ function ResumeLineReview({
   const renderDraftAsync = renderDraft.mutateAsync;
   const handleRenderDraft = useCallback(async () => {
     if (!draft?.currentRevisionId) return false;
-    renderBaselineArtifactId.current = auditArtifactId;
+    renderBaselineArtifactId.current =
+      renderBaselineArtifactId.current ?? draftBaseArtifactId(draft) ?? auditArtifactId;
     const result = await renderDraftAsync({
       draftId: draft.draftId,
       jobId: item.jobKey,
@@ -861,7 +862,7 @@ function ResumeLineReview({
       comparisonDraftTarget(
         renderedDraftResult,
         draft,
-        renderBaselineArtifactId.current ?? auditArtifactId,
+        renderBaselineArtifactId.current ?? draftBaseArtifactId(draft) ?? auditArtifactId,
       ),
     [auditArtifactId, draft, renderedDraftResult],
   );
@@ -988,10 +989,14 @@ function comparisonDraftTarget(
     return null;
   }
   return {
-    acceptedArtifactId,
+    acceptedArtifactId: acceptedArtifactId ?? draftBaseArtifactId(draft),
     artifactId: renderResult.artifacts.resumeText.artifactId,
     riskLabels: uniqueRiskLabels(draft?.commentThreads ?? []),
   };
+}
+
+function draftBaseArtifactId(draft: ResumeReviewDraft | null): string | null {
+  return draft?.baseResumeTextArtifactId ?? draft?.baseResumePdfArtifactId ?? null;
 }
 
 function uniqueRiskLabels(commentThreads: readonly ResumeCommentThread[]): string[] {

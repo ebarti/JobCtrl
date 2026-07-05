@@ -1677,6 +1677,12 @@ describe("<ApplyReviewView>", () => {
     expect(comparison.getByText("gcp")).toBeInTheDocument();
     expect(comparison.getByText("claim risk")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
+
+    await waitFor(() => expect(renderButton).not.toBeDisabled());
+    await userEvent.click(renderButton);
+    await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledTimes(2));
+    expect(await comparison.findByText("Accepted resume")).toBeInTheDocument();
+    expect(comparison.getByText("Rendered draft resume")).toBeInTheDocument();
   });
 
   it("does not reuse a rendered draft comparison after switching jobs", async () => {
