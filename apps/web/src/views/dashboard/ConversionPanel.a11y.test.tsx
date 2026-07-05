@@ -46,4 +46,34 @@ describe("<ConversionPanel> a11y", () => {
 
     expect(await axe(container)).toHaveNoViolations();
   });
+
+  it("has no axe violations in the small-sample (suppressed rate) state", async () => {
+    const smallSampleSummary: DashboardSummary = {
+      ...sampleDashboardSummary,
+      conversion: {
+        totals: {
+          applied: 1,
+          reply: 1,
+          interview: 0,
+          offer: 0,
+          rejection: 0,
+          replyRate: null,
+          interviewRate: null,
+          offerRate: null,
+          rejectionRate: null,
+          costPerInterview: null,
+        },
+        bySource: [],
+        byBand: [],
+      },
+    };
+
+    const { container } = render(
+      <main>
+        <ConversionPanel summary={smallSampleSummary} />
+      </main>,
+    );
+
+    expect(await axe(container)).toHaveNoViolations();
+  });
 });

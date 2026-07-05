@@ -43,6 +43,9 @@ function ConversionFunnelView({ funnel }: { funnel: ConversionFunnel }) {
         {funnel.rejection} rejected ({formatRate(funnel.rejectionRate)}) · Cost / interview:{" "}
         {formatCost(funnel.costPerInterview)}
       </p>
+      {funnel.applied > 0 && funnel.replyRate === null ? (
+        <p className="conversion-note">Not enough applications yet for reliable conversion rates.</p>
+      ) : null}
     </div>
   );
 }

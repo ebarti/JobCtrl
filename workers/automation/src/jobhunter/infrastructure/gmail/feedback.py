@@ -257,6 +257,10 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           reason       TEXT,
           decided_by   TEXT NOT NULL DEFAULT 'user',
           decided_at   TEXT NOT NULL,
+          materials_generation INTEGER,
+          profile_version INTEGER,
+          application_url TEXT,
+          partial_override_run_id TEXT,
           PRIMARY KEY (tenant_id, decision_id)
         );
         CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
@@ -324,6 +328,16 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
           ON application_outcome_suggestions(tenant_id, status, created_at DESC);
         """
+    )
+    _ensure_columns(
+        conn,
+        "application_review_decisions",
+        {
+            "materials_generation": "INTEGER",
+            "profile_version": "INTEGER",
+            "application_url": "TEXT",
+            "partial_override_run_id": "TEXT",
+        },
     )
 
 
@@ -838,7 +852,21 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 
 
 def _columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    return {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
+def _ensure_columns(
+    conn: sqlite3.Connection,
+    table_name: str,
+    additions: dict[str, str],
+) -> None:
+    columns = _columns(conn, table_name)
+    for column, definition in additions.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
 
 
 def _column_expr(columns: set[str], column: str, *, prefix: str | None = None) -> str:
