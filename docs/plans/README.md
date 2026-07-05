@@ -4,7 +4,7 @@ Plans are historical working documents. Canonical project documentation lives
 at the top of `docs/`.
 
 - Top level: accepted plans that are not fully delivered (currently the OSS
-  release remediation spec).
+  release remediation spec and its drive-to-done verification plan).
 - `implemented/`: plans, specs, QA checklists, and delivery notes for work
   that has landed or been superseded by canonical docs.
 
@@ -53,6 +53,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-03 | [Temporal-Native Rearchitecture](implemented/2026-07-03-temporal-native-rearchitecture.md) | Implemented — #230 (plan), #233, #231, #235, #238, #237, #239, #240; ADRs 2026-07-03 |
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](2026-07-03-oss-release-remediation-spec.md) | **Active** — spec #234; W0 landed #242–#247 |
+| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](2026-07-05-oss-release-drive-to-done-plan.md) | **Active** — plan #258; #274 inventory keeps the release gate open on W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`
