@@ -1917,6 +1917,159 @@ export interface RequirementFitReport {
   assessments: RequirementFitAssessment[];
 }
 
+export const EVIDENCE_MAP_ENTRY_KINDS = ["achievement_evidence", "skill"] as const;
+export type EvidenceMapEntryKind = (typeof EVIDENCE_MAP_ENTRY_KINDS)[number];
+
+export const EVIDENCE_USAGE_REF_KINDS = [
+  "resume_bullet",
+  "requirement_fit",
+  "skill_coverage",
+] as const;
+export type EvidenceUsageRefKind = (typeof EVIDENCE_USAGE_REF_KINDS)[number];
+
+export const EVIDENCE_GAP_KINDS = [
+  "missing_requirement",
+  "blocked_requirement",
+  "transferable_requirement",
+  "missing_skill",
+] as const;
+export type EvidenceGapKind = (typeof EVIDENCE_GAP_KINDS)[number];
+
+/**
+ * One recorded use of a profile proof point or skill.
+ *
+ * This is a read-model reference, not a new fact. Resume usages come from
+ * bullet provenance rows; requirement usages come from requirement-fit items;
+ * skill coverage comes from the generation-time coverage audit. Optional fields
+ * are scoped by ``kind`` so callers can deep-link without guessing.
+ */
+export interface EvidenceUsageRef {
+  kind: EvidenceUsageRefKind;
+  jobKey: string;
+  jobTitle: string | null;
+  employer: string | null;
+  artifactId: string | null;
+  bulletId: string | null;
+  generation: number | null;
+  generatedTextPreview: string | null;
+  scoreVersion: number | null;
+  requirementId: string | null;
+  requirementText: string | null;
+  requirementFitKind: RequirementFitStatus["kind"] | null;
+  artifactCoverageState: RequirementArtifactCoverage["state"] | null;
+  keyword: string | null;
+  coverageState: "covered" | "declared" | "missing" | null;
+  occurredAt: string | null;
+}
+
+export interface EvidenceFreshness {
+  evidenceDateRange: string | null;
+  evidenceStrength: "verified" | "supported" | "inferred" | "draft" | string | null;
+  userConfirmed: boolean;
+  claimConfidence: number | null;
+  lastUsedAt: string | null;
+}
+
+export interface EvidenceReusableStory {
+  scope: string;
+  action: string;
+  outcome: string;
+  metrics: string[];
+}
+
+export interface EvidenceGap {
+  gapId: string;
+  kind: EvidenceGapKind;
+  requirementId: string | null;
+  requirementText: string;
+  demandedSkill: string | null;
+  tier: "must_have" | "nice_to_have" | string | null;
+  weight: number | null;
+  fitKind: RequirementFitStatus["kind"] | null;
+  reason: string;
+  jobRefs: EvidenceUsageRef[];
+}
+
+export interface EvidenceMapEntry {
+  entryId: string;
+  kind: EvidenceMapEntryKind;
+  evidenceId: string | null;
+  skillId: string | null;
+  title: string;
+  story: EvidenceReusableStory | null;
+  skills: string[];
+  tags: string[];
+  freshness: EvidenceFreshness;
+  resumeUsages: EvidenceUsageRef[];
+  requirementUsages: EvidenceUsageRef[];
+  coverageUsages: EvidenceUsageRef[];
+  gaps: EvidenceGap[];
+}
+
+export interface EvidenceMapResponse {
+  ok: true;
+  entries: EvidenceMapEntry[];
+  gaps: EvidenceGap[];
+  generatedAt: string;
+}
+
+export const INTERVIEW_PREP_ITEM_KINDS = [
+  "theme",
+  "star_draft",
+  "gap_drill",
+  "company_note",
+] as const;
+export type InterviewPrepItemKind = (typeof INTERVIEW_PREP_ITEM_KINDS)[number];
+
+export const INTERVIEW_PREP_STATUSES = ["accepted", "failed", "superseded"] as const;
+export type InterviewPrepStatus = (typeof INTERVIEW_PREP_STATUSES)[number];
+
+export interface InterviewPrepGateAudit {
+  status: "passed" | "failed";
+  fabricationFindings: string[];
+  groundingFindings: string[];
+  judgeVerdict: string | null;
+  warnings: string[];
+}
+
+export interface InterviewPrepItem {
+  itemId: string;
+  kind: InterviewPrepItemKind;
+  title: string;
+  generatedText: string;
+  evidenceIds: string[];
+  requirementIds: string[];
+  sourceText: string[];
+  transformType: string;
+  control: string;
+  groundingAudit: string[];
+  warnings: string[];
+  position: number;
+}
+
+export interface InterviewPrep {
+  jobKey: string;
+  generation: number;
+  status: InterviewPrepStatus;
+  generatedAt: string;
+  model: string | null;
+  gateAudit: InterviewPrepGateAudit;
+  items: InterviewPrepItem[];
+}
+
+export interface InterviewPrepResponse {
+  ok: true;
+  prep: InterviewPrep | null;
+}
+
+export interface GenerateInterviewPrepResponse {
+  ok: true;
+  runId: string | null;
+  workflowId: string | null;
+  firstExecutionRunId: string | null;
+  prep: InterviewPrep | null;
+}
+
 export interface ScoringCriteriaSnapshot {
   minFitScore: number;
   criteriaText: string;
