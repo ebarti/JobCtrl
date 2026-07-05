@@ -3261,10 +3261,19 @@ describe("dashboard outcome-conversion projection", () => {
     const { dbPath, cleanup } = withTempDb();
     try {
       seedConversionDb(dbPath);
+      // Each asserted bucket clears MIN_CONVERSION_SAMPLE (5) so the read model
+      // actually computes rates instead of suppressing them.
       seedJobs(dbPath, [
-        { url: "https://example.com/li-a", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
-        { url: "https://example.com/li-b", site: "linkedin", fitScore: 8, applied: true },
-        { url: "https://example.com/gh-a", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["offer"] },
+        { url: "https://example.com/li-1", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/li-2", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/li-3", site: "linkedin", fitScore: 8, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/li-4", site: "linkedin", fitScore: 8, applied: true },
+        { url: "https://example.com/li-5", site: "linkedin", fitScore: 8, applied: true },
+        { url: "https://example.com/gh-1", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["offer"] },
+        { url: "https://example.com/gh-2", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/gh-3", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["rejection"] },
+        { url: "https://example.com/gh-4", site: "greenhouse", fitScore: 6, applied: true },
+        { url: "https://example.com/gh-5", site: "greenhouse", fitScore: 6, applied: true },
       ]);
       const app = buildApp({
         dbPath,
@@ -3276,25 +3285,93 @@ describe("dashboard outcome-conversion projection", () => {
         const conversion = res.json().conversion;
 
         expect(conversion.totals).toEqual({
-          applied: 3, reply: 2, interview: 2, offer: 1, rejection: 0,
-          replyRate: 0.6667, interviewRate: 0.6667, offerRate: 0.3333, rejectionRate: 0,
+          applied: 10, reply: 6, interview: 4, offer: 1, rejection: 1,
+          replyRate: 0.6, interviewRate: 0.4, offerRate: 0.1, rejectionRate: 0.1,
           costPerInterview: null,
         });
         const bySource = Object.fromEntries(
           conversion.bySource.map((g: { source: string }) => [g.source, g]),
         );
         expect(bySource.linkedin).toMatchObject({
-          applied: 2, reply: 1, interview: 1, offer: 0, rejection: 0,
-          replyRate: 0.5, interviewRate: 0.5,
+          applied: 5, reply: 3, interview: 2, offer: 0, rejection: 0,
+          replyRate: 0.6, interviewRate: 0.4,
         });
         expect(bySource.greenhouse).toMatchObject({
-          applied: 1, reply: 1, interview: 1, offer: 1, offerRate: 1, costPerInterview: null,
+          applied: 5, reply: 3, interview: 2, offer: 1, rejection: 1,
+          replyRate: 0.6, interviewRate: 0.4, offerRate: 0.2, rejectionRate: 0.2,
         });
         const byBand = Object.fromEntries(
           conversion.byBand.map((g: { band: string }) => [g.band, g]),
         );
-        expect(byBand.strong).toMatchObject({ applied: 2, reply: 1, interview: 1 });
-        expect(byBand.moderate).toMatchObject({ applied: 1, offer: 1 });
+        expect(byBand.strong).toMatchObject({ applied: 5, reply: 3, interview: 2, replyRate: 0.6 });
+        expect(byBand.moderate).toMatchObject({ applied: 5, offer: 1, offerRate: 0.2 });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("suppresses rates below the minimum sample size while keeping raw counts", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      // Three sources / bands at applied sample sizes 1, 4 (MIN - 1) and 5 (MIN).
+      seedJobs(dbPath, [
+        // n = 1: the exact defect scenario — one application, one reply.
+        { url: "https://example.com/solo", site: "linkedin", fitScore: 8, applied: true, outcomes: ["recruiter_reply"] },
+        // n = 4: MIN_CONVERSION_SAMPLE - 1, still suppressed.
+        { url: "https://example.com/four-1", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/four-2", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/four-3", site: "greenhouse", fitScore: 6, applied: true },
+        { url: "https://example.com/four-4", site: "greenhouse", fitScore: 6, applied: true },
+        // n = 5: MIN_CONVERSION_SAMPLE, rates become visible.
+        { url: "https://example.com/five-1", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-2", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-3", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-4", site: "lever", fitScore: 4, applied: true },
+        { url: "https://example.com/five-5", site: "lever", fitScore: 4, applied: true },
+      ]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const conversion = res.json().conversion;
+
+        const bySource = Object.fromEntries(
+          conversion.bySource.map((g: { source: string }) => [g.source, g]),
+        );
+        // INVARIANT: n = 1 keeps its raw counts but reports NO rate (never 100%).
+        expect(bySource.linkedin).toEqual({
+          source: "linkedin",
+          applied: 1,
+          reply: 1,
+          interview: 0,
+          offer: 0,
+          rejection: 0,
+          replyRate: null,
+          interviewRate: null,
+          offerRate: null,
+          rejectionRate: null,
+          costPerInterview: null,
+        });
+        // Boundary: MIN - 1 stays suppressed, counts still visible.
+        expect(bySource.greenhouse).toMatchObject({ applied: 4, reply: 2, replyRate: null });
+        // Boundary: exactly MIN applications -> rate is computed.
+        expect(bySource.lever).toMatchObject({ applied: 5, reply: 3, replyRate: 0.6 });
+
+        const byBand = Object.fromEntries(
+          conversion.byBand.map((g: { band: string }) => [g.band, g]),
+        );
+        expect(byBand.strong).toMatchObject({ applied: 1, reply: 1, replyRate: null });
+        expect(byBand.weak).toMatchObject({ applied: 5, reply: 3, replyRate: 0.6 });
+
+        // Totals clear the threshold (10 applied) so their rates are still shown.
+        expect(conversion.totals).toMatchObject({ applied: 10, reply: 6, replyRate: 0.6 });
       } finally {
         await app.close();
       }

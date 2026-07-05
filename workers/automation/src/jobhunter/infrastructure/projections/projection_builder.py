@@ -2067,6 +2067,13 @@ class ProjectionBuilder:
         counter); each applied job's ``application_outcomes`` decide which funnel
         stages it reached. Only counts are materialised — the read model derives
         rates so there is no cross-runtime float drift.
+
+        Dual-writer parity: this builder and its TypeScript twin
+        (``buildOutcomeConversion`` in ``apps/api/src/projections.ts``) must emit
+        identical raw counts, so neither ever drops a bucket for a small sample.
+        The minimum-sample suppression (``MIN_CONVERSION_SAMPLE`` in
+        ``read-model.ts``) is a read-time rate concern only: the counts stay
+        visible here regardless of sample size.
         """
         applied_rows = [
             row
