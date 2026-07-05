@@ -27,10 +27,30 @@ JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm dev
 
 - Keep changes scoped to one behavior or documentation concern.
 - Use Conventional Commits for commit messages and PR titles.
+- Sign off every commit with the Developer Certificate of Origin trailer.
 - Update documentation when public behavior, commands, runtime requirements,
   configuration, architecture, or QA expectations change.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
+
+## Developer Certificate of Origin Sign-Off
+
+Every pull request commit must include a `Signed-off-by:` trailer. This is a
+DCO sign-off that says you have the right to submit the contribution; it is
+separate from GPG or SSH commit signing.
+
+Use `git commit -s` for new commits:
+
+```bash
+git commit -s -m "fix: describe the change"
+```
+
+If you already made a commit, amend or rebase it before pushing:
+
+```bash
+git commit --amend -s --no-edit
+git rebase --signoff origin/main
+```
 
 ## Validation
 
