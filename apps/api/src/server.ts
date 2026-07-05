@@ -215,6 +215,8 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
   "approval_stale_url",
   "partial_override_evidence_invalid",
 ]);
+const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
+const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
 const execFileAsync = promisify(execFile);
 
 export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
@@ -269,14 +271,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!UNSAFE_METHODS.has(request.method)) {
       return;
     }
-    if (isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
-      return;
+    const hasBrowserOriginMetadata =
+      hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer);
+    if (!isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
+      return reply.code(403).send({
+        ok: false,
+        error: "cross_site_request",
+        message: "Mutation requests require a loopback Origin or Referer.",
+      });
     }
-    return reply.code(403).send({
-      ok: false,
-      error: "cross_site_request",
-      message: "Mutation requests require a loopback Origin or Referer.",
-    });
+    if (
+      !isTrustedSecFetchSite(request.headers["sec-fetch-site"], {
+        allowLoopbackSameSite: hasBrowserOriginMetadata,
+      })
+    ) {
+      return reply.code(403).send({
+        ok: false,
+        error: "cross_site_request",
+        message: "Mutation requests require trusted Sec-Fetch-Site metadata.",
+      });
+    }
+    return;
   });
 
   app.get("/v1/health", async () => ({
@@ -2846,6 +2861,25 @@ function parseBody<T>(reply: { code: (statusCode: number) => unknown }, schema: 
   }
   void reply.code(400);
   return null;
+}
+
+function isTrustedSecFetchSite(
+  secFetchSiteHeader: string | string[] | undefined,
+  options: { allowLoopbackSameSite?: boolean } = {},
+): boolean {
+  const values = Array.isArray(secFetchSiteHeader)
+    ? secFetchSiteHeader
+    : secFetchSiteHeader
+      ? [secFetchSiteHeader]
+      : [];
+  const trustedValues = options.allowLoopbackSameSite
+    ? LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES
+    : TRUSTED_SEC_FETCH_SITE_VALUES;
+  return values.length === 0 || values.every((value) => trustedValues.has(value.trim()));
+}
+
+function hasRequestHeader(header: string | string[] | undefined): boolean {
+  return Array.isArray(header) ? header.length > 0 : header !== undefined;
 }
 
 function stageRunStatus(actions: ActionRunResponse[]): string {

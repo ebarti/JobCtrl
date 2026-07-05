@@ -15,7 +15,11 @@ any request whose `Host` header is not a loopback host (`127.0.0.1`,
 local browser and CLI callers always send a loopback `Host`, so legitimate
 access is unaffected. A second guard rejects cross-site mutations: `DELETE`,
 `PATCH`, `POST`, and `PUT` requests whose `Origin` or `Referer` is present but
-not loopback fail with `403` `cross_site_request` before any handler runs.
+not loopback fail with `403` `cross_site_request` before any handler runs. When
+browser fetch metadata is present, unsafe mutations also reject
+`Sec-Fetch-Site: cross-site`; `same-site` is accepted only after the loopback
+`Origin`/`Referer` check has passed, so the default Vite web app on another
+loopback port still works while foreign browser origins do not.
 Full bearer-token authentication and keychain-to-worker
 credential passing remain a deliberate follow-up that needs coordinated
 frontend and dev-launcher changes.

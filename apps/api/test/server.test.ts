@@ -578,6 +578,88 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it.each([
+    {
+      name: "cross-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "cross-site metadata" },
+      headers: { "sec-fetch-site": "cross-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "same-site browser metadata without loopback origin",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-site metadata" },
+      headers: { "sec-fetch-site": "same-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "loopback same-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "loopback same-site metadata" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-site" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "same-origin browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-origin browser" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "browser navigation metadata",
+      jobUrl: "https://example.com/jobs/blocked-tailor",
+      action: "mark-skipped",
+      payload: { reason: "browser navigation" },
+      headers: { "sec-fetch-site": "none" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+    {
+      name: "headerless curl-style mutation",
+      jobUrl: "https://example.com/jobs/failed-score",
+      action: "mark-skipped",
+      payload: { reason: "CLI" },
+      headers: {},
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+  ])("enforces the unsafe mutation CSRF matrix for $name", async (testCase) => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(testCase.jobUrl)}/actions/${testCase.action}`,
+        headers: testCase.headers,
+        payload: testCase.payload,
+      });
+
+      expect(response.statusCode, response.body).toBe(testCase.expectedStatus);
+      expect(response.json()).toMatchObject(testCase.expectedBody);
+
+      if (testCase.expectedStatus === 403) {
+        const db = new Database(options.dbPath);
+        const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get(testCase.jobUrl) as {
+          apply_status: string | null;
+          applied_at: string | null;
+        };
+        db.close();
+        expect(row).toMatchObject({ apply_status: null, applied_at: null });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it("allows loopback browser and no-origin mutation callers", async () => {
     const app = buildApp(options);
     const appliedKey = encodeURIComponent("https://example.com/jobs/ready");
