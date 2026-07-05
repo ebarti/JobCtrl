@@ -62,6 +62,19 @@ export const JOB_SORT_FIELDS = [
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
+export const DAILY_DIGEST_ITEM_KEYS = [
+  "newMatches",
+  "blockedSources",
+  "reviewNeededMaterials",
+  "staleScores",
+  "pendingApprovals",
+  "followUpsDue",
+  "budget",
+] as const;
+export type DailyDigestItemKey = (typeof DAILY_DIGEST_ITEM_KEYS)[number];
+export const DIGEST_FOLLOW_UP_THRESHOLD_DAYS = 7 as const;
+export const DIGEST_DAY_BOUNDARY = "UTC" as const;
+
 export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "status", "size_bytes"] as const;
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
 
@@ -1712,10 +1725,16 @@ export const JobListQuerySchema = z
     company: optionalText,
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    discovered_since: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
+    scored_since: IsoTimestampSchema.optional().catch(undefined),
   })
   .transform((value) => ({
     ...value,
     pageSize: value.pageSize ?? value.page_size ?? 50,
+    discoveredSince: value.discoveredSince ?? value.discovered_since,
+    scoredSince: value.scoredSince ?? value.scored_since,
   }));
 
 export type JobListQuery = z.infer<typeof JobListQuerySchema>;
@@ -2337,6 +2356,55 @@ export interface SourceHealthSummary {
   lastRunId: string | null;
   lastErrorClass: string | null;
   updatedAt: string | null;
+}
+
+export interface DigestState {
+  lastAcknowledgedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface DailyDigestBudget {
+  status: "ok" | "over_budget";
+  estimatedUsd: number;
+  dailyBudgetUsd: number;
+  remainingUsd: number | null;
+  unlimited: boolean;
+}
+
+export interface DailyDigest {
+  ok: true;
+  generatedAt: string;
+  since: string | null;
+  highFitThreshold: number;
+  newMatches: {
+    count: number;
+    highFitCount: number;
+  };
+  blockedSources: {
+    count: number;
+    sources: Array<{
+      sourceId: string;
+      recommendedState: string;
+      consecutiveFailures: number;
+    }>;
+  };
+  reviewNeededMaterials: {
+    count: number;
+  };
+  staleScores: {
+    count: number;
+  };
+  pendingApprovals: {
+    count: number;
+  };
+  followUpsDue: {
+    count: number;
+    derived: true;
+    thresholdDays: typeof DIGEST_FOLLOW_UP_THRESHOLD_DAYS;
+    dayBoundary: typeof DIGEST_DAY_BOUNDARY;
+  };
+  budget: DailyDigestBudget;
+  deepLinks: Record<DailyDigestItemKey, string>;
 }
 
 export interface OperationalMetricsSummary {
