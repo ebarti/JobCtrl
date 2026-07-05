@@ -2460,11 +2460,81 @@ describe("<ApplyReviewView>", () => {
     await user.click(await screen.findByRole("button", { name: /approve submit for principal platform engineer/i }));
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
-    expect(decideApplyReview).toHaveBeenCalledWith(
-      "job-2",
-      expect.objectContaining({ decision: "approve_submit" }),
-    );
+	    expect(decideApplyReview).toHaveBeenCalledWith(
+	      "job-2",
+	      expect.objectContaining({
+	        decision: "approve_submit",
+	        materialsGeneration: sampleApplyReviewQueue.items[0]!.approvalGate.materialsGeneration,
+	        profileVersion: sampleApplyReviewQueue.items[0]!.approvalGate.profileVersion,
+	        applicationUrl: sampleApplyReviewQueue.items[0]!.approvalGate.applicationUrl,
+	      }),
+	    );
     expect(applyJob).not.toHaveBeenCalled();
+  });
+
+  it("offers submit approval with a partial dry-run override only when partial evidence exists", async () => {
+    const user = userEvent.setup();
+    const decideApplyReview = vi.fn(async () => ({
+      ok: true as const,
+      decision: {
+        decisionId: "decision-partial",
+        jobKey: "job-2",
+        decision: "approve_submit" as const,
+        reason: "approved",
+        decidedBy: "user",
+        decidedAt: "2026-05-06T08:30:00Z",
+      },
+    }));
+    const partialQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              approvalGate: {
+                ...item.approvalGate,
+                dryRunEvidence: null,
+                partialDryRunEvidence: {
+                  runId: "dry-run-partial",
+                  coverage: "partial" as const,
+                  finishedAt: "2026-05-06T06:35:00Z",
+                  blockedChannels: ["Document"],
+                },
+                reasons: ["awaiting_dry_run" as const],
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => partialQueue),
+          decideApplyReview,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Partial dry-run evidence only/i);
+    expect(screen.getByRole("button", { name: /Approve submit for Principal Platform Engineer/i })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", {
+        name: /Approve with partial dry-run evidence for Principal Platform Engineer/i,
+      }),
+    );
+
+    await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
+	    expect(decideApplyReview).toHaveBeenCalledWith(
+	      "job-2",
+	      expect.objectContaining({
+	        decision: "approve_submit",
+	        materialsGeneration: partialQueue.items[0]!.approvalGate.materialsGeneration,
+	        profileVersion: partialQueue.items[0]!.approvalGate.profileVersion,
+	        applicationUrl: partialQueue.items[0]!.approvalGate.applicationUrl,
+	        partialOverrideRunId: "dry-run-partial",
+	      }),
+	    );
   });
 
   it("does not depend on outcome suggestions to render the queue route", async () => {

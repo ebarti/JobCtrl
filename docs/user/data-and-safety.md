@@ -16,7 +16,8 @@ JobHunter has no hosted backend and no account system. Your database and files
 stay local by default. Privacy-sensitive content can still leave your machine
 when you deliberately run steps that need outside services: LLM calls, job-board
 fetches, Gmail read-only lookups, Google Maps autocomplete, CAPTCHA solving, or
-Langfuse telemetry when configured.
+Langfuse telemetry when configured. Live apply automation and any email-based
+application sending are real employer-facing actions, not simulations.
 
 ## Local Data
 
@@ -58,21 +59,58 @@ Depending on configuration, JobHunter can call:
 
 - LLM providers for scoring, employer analysis, tailoring, and cover letters;
 - job boards, ATS APIs, or public posting pages for discovery and enrichment;
-- Gmail read-only APIs for verification-code or outcome feedback flows;
+- Gmail read-only APIs for verification-code or outcome feedback flows. The
+  current connector does not request `gmail.send`; granting or wiring that scope
+  would authorize outgoing email and must be treated as a live application
+  submission path;
 - Langfuse/OpenTelemetry endpoints for traces when explicitly enabled;
-- CAPTCHA solving services when explicitly configured for apply automation.
+- paid CAPTCHA solving services when explicitly configured for apply automation.
 
 Review configuration before running large pipelines.
 
+## Responsible Use Boundaries
+
+These boundaries are the operator's responsibility:
+
+- **Live employer submissions:** apply automation can submit real applications
+  to real employers. Keep `applyApprovalRequired` enabled unless you have a
+  specific reason to disable it, rehearse with dry runs, and target one job or
+  site at a time while validating behavior.
+- **Email applications:** sending an application by email is still a live
+  employer submission. JobHunter's shipped Gmail connector is read-only; do not
+  add or grant Gmail `gmail.send` unless you intentionally want JobHunter to send
+  application email from your mailbox.
+- **Credential typing:** browser automation can type credentials you put in your
+  profile, and those credentials may appear in the apply agent prompt when a
+  login form needs them. Use a unique, dedicated job-site password. Do not reuse
+  email, banking, work, or primary personal passwords.
+- **CAPTCHA solving:** CAPTCHA solving is disabled unless `CAPSOLVER_API_KEY` is
+  configured. If you configure it, CAPTCHA site keys and page URLs are sent to a
+  paid third-party service, and you are responsible for the site's terms,
+  authorization requirements, and legal risk.
+- **Scraping and source terms:** source access can violate provider or site
+  terms. Default discovery options include LinkedIn and Indeed; disable any
+  source you are not allowed to query automatically.
+- **Local API exposure:** the TypeScript API is a local, unauthenticated API
+  intended for loopback use. The default host is `127.0.0.1`; opting into a
+  non-loopback bind or exposing it through a tunnel can expose private profile,
+  job, artifact, and credential-adjacent metadata.
+- **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
+  gates new spendful workflows, but it is an estimate and does not replace your
+  provider-side billing controls.
+
 ## Auto-Apply Safety
 
-Apply automation can submit real applications, so it is guarded by approval
-gates: a rehearsal dry run (recommended before approving anything), an explicit
-approval before any live submission, a browser-level guard during dry runs, no
-application submitted twice, and a daily spend ceiling. The apply agent also reads untrusted job pages, so prompt
-injection is a real exposure. The full gate model, the apply agent's automation
-posture, and how credentials appear in the apply prompt live in
-[Security](security.md).
+Apply automation can submit real applications to real employers, so it is
+guarded by approval gates: a rehearsal dry run before live submission, an
+explicit approval bound to the reviewed materials generation, profile version,
+and application URL, a browser-level guard during dry runs, no application
+submitted twice, and a daily spend ceiling. Apply Review allows a partial
+dry-run override only when it names the specific partial run and shows the
+blocked channels you are accepting. The apply agent also reads untrusted job
+pages, so prompt injection is a real exposure. The full gate model, the apply
+agent's automation posture, and how credentials appear in the apply prompt live
+in [Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 
@@ -101,7 +139,9 @@ LLM usage is metered locally. A daily budget (`dailyBudgetUsd`, default `25`;
 preflight runs before the heavy activity and stops the workflow with a
 non-retryable budget error once the estimated daily spend reaches the
 ceiling. Current spend versus budget is visible on `GET /v1/health` and in
-the web app's health surface.
+the web app's health surface. This ceiling controls JobHunter workflow starts;
+it is not the provider's bill and it does not stop provider usage outside
+JobHunter.
 
 ## Telemetry
 
@@ -111,7 +151,7 @@ completions are exported to the configured Langfuse instance. Set
 
 ## Public Bug Reports
 
-Use synthetic data. Do not include:
+Use synthetic data only. Do not include:
 
 - real resumes or profile fields;
 - real job-search databases;

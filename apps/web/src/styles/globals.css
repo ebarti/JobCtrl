@@ -1011,6 +1011,17 @@ textarea:focus-visible {
   text-align: end;
 }
 
+.apply-review-approval-binding {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 10px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: end;
+}
+
 .apply-review-audit-facts {
   display: grid;
   flex-basis: 100%;

@@ -37,6 +37,37 @@ instruction, and it also installs a browser-layer CDP guard that blocks
 non-loopback POST/PUT/PATCH requests and form submits (only localhost
 targets are allowed).
 
+## Responsible Use
+
+JobHunter is an applicant-side automation tool. Treat the paths that touch
+employers, accounts, provider APIs, and third-party sites as live operations:
+
+- Live apply automation can submit real applications to real employers. Keep
+  `applyApprovalRequired` on, rehearse with dry runs, and target one job or site
+  at a time until you trust the behavior.
+- Email-based application sending, if you enable or build it, is also a live
+  employer submission. The current Gmail connector is read-only; do not grant or
+  wire Gmail `gmail.send` unless you intend JobHunter to send application email
+  from your account.
+- Browser automation can type credentials you provide. Use a unique, dedicated
+  job-site password, not an email, banking, work, or reused personal password.
+- CAPTCHA solving is off unless `CAPSOLVER_API_KEY` is configured. Setting that
+  key sends CAPTCHA site keys and page URLs to a paid third-party solver, and
+  you are responsible for each site's terms and legal constraints.
+- Scraping and source access can violate site terms. Default discovery options
+  include LinkedIn and Indeed; disable any source you are not allowed to query
+  automatically.
+- The local API is intended for loopback use and has no user authentication. Do
+  not bind it to a network interface or tunnel it unless you accept exposing
+  private profile, job, and artifact data.
+- LLM work can spend money and send job, profile, and generated-material text to
+  configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
+  but it is an estimate rather than the provider bill.
+- Profiles, generated materials, browser state, logs, SQLite databases, and
+  local worker state are sensitive local artifacts. Public bug reports,
+  screenshots, and reproduction cases should use synthetic data only; `pnpm
+  qa:seed` creates a disposable synthetic workspace for that purpose.
+
 ## Current System
 
 JobHunter has three local runtime components:

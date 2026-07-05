@@ -33,8 +33,8 @@ flowchart TD
 
 *Blue steps are yours; green steps are JobHunter's. Setup happens once, the
 loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
-each eligible job — and the dry run is the recommended rehearsal, not an
-enforced prerequisite.*
+each eligible job. Live submission approval is bound to the current materials,
+profile version, application URL, and dry-run evidence.*
 
 ## 1. Build The Candidate Profile
 
@@ -165,8 +165,11 @@ by URL. A dry run never submits — it shows what would happen without sending
 anything.
 
 Only approve real submission after inspecting the dry run, final materials,
-field mapping, blockers, and apply-run history. The full approval model is on the
-[Security](security.md) page.
+field mapping, blockers, and apply-run history. Submit approval is valid only
+for the materials generation, profile version, and application URL shown in
+Apply Review, and requires full dry-run evidence unless you explicitly accept a
+listed partial dry-run with its blocked channels. The full approval model is on
+the [Security](security.md) page.
 
 ## 8. Inspect Progress
 

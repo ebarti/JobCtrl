@@ -250,9 +250,14 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             decision            TEXT NOT NULL,
             reason              TEXT,
             decided_by          TEXT,
-            decided_at          TEXT NOT NULL
+            decided_at          TEXT NOT NULL,
+            materials_generation INTEGER,
+            profile_version     INTEGER,
+            application_url     TEXT,
+            partial_override_run_id TEXT
         )
     """)
+    ensure_application_review_decision_columns(conn)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
         ON application_review_decisions(tenant_id, job_key, decided_at DESC)
@@ -601,6 +606,36 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
         ON job_market_compensation_estimates (tenant_id, normalized_company, normalized_role)
         """
     )
+    conn.commit()
+    return added
+
+
+def ensure_application_review_decision_columns(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Add approval-binding columns to application_review_decisions."""
+    if conn is None:
+        conn = get_connection()
+
+    existing = {
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(application_review_decisions)"
+        ).fetchall()
+    }
+    additions = {
+        "materials_generation": "INTEGER",
+        "profile_version": "INTEGER",
+        "application_url": "TEXT",
+        "partial_override_run_id": "TEXT",
+    }
+    added: list[str] = []
+    for column, definition in additions.items():
+        if column not in existing:
+            conn.execute(
+                f"ALTER TABLE application_review_decisions ADD COLUMN {column} {definition}"
+            )
+            added.append(column)
     conn.commit()
     return added
 

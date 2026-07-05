@@ -208,6 +208,15 @@ import {
 } from "./write-model.js";
 
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
+const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
+  "awaiting_dry_run",
+  "approval_stale_materials",
+  "approval_stale_profile",
+  "approval_stale_url",
+  "partial_override_evidence_invalid",
+]);
+const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
+const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
 const execFileAsync = promisify(execFile);
 
 export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
@@ -262,14 +271,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!UNSAFE_METHODS.has(request.method)) {
       return;
     }
-    if (isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
-      return;
+    const hasBrowserOriginMetadata =
+      hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer);
+    if (!isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
+      return reply.code(403).send({
+        ok: false,
+        error: "cross_site_request",
+        message: "Mutation requests require a loopback Origin or Referer.",
+      });
     }
-    return reply.code(403).send({
-      ok: false,
-      error: "cross_site_request",
-      message: "Mutation requests require a loopback Origin or Referer.",
-    });
+    if (
+      !isTrustedSecFetchSite(request.headers["sec-fetch-site"], {
+        allowLoopbackSameSite: hasBrowserOriginMetadata,
+      })
+    ) {
+      return reply.code(403).send({
+        ok: false,
+        error: "cross_site_request",
+        message: "Mutation requests require trusted Sec-Fetch-Site metadata.",
+      });
+    }
+    return;
   });
 
   app.get("/v1/health", async () => ({
@@ -2521,6 +2543,14 @@ async function withWritableDb<T>(
       return { ok: false, error: "invalid_resume_template", message: error.message };
     }
     if (error instanceof InputError) {
+      if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: error.message,
+          message: applyReviewPreconditionMessage(error.message),
+        };
+      }
       void reply.code(404);
       return { ok: false, error: "not_found", message: error.message };
     }
@@ -2533,6 +2563,22 @@ async function withWritableDb<T>(
   } finally {
     db?.close();
   }
+}
+
+function applyReviewPreconditionMessage(error: string): string {
+  if (error === "approval_stale_materials") {
+    return "The reviewed materials changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "approval_stale_profile") {
+    return "The reviewed profile changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "approval_stale_url") {
+    return "The reviewed application URL changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "partial_override_evidence_invalid") {
+    return "The selected partial dry-run evidence no longer matches this job's current materials, profile, and URL.";
+  }
+  return "Submit approval requires matching full dry-run evidence or an explicit matching partial dry-run override.";
 }
 
 type ApiDb = ReturnType<typeof openDatabase>;
@@ -2815,6 +2861,25 @@ function parseBody<T>(reply: { code: (statusCode: number) => unknown }, schema: 
   }
   void reply.code(400);
   return null;
+}
+
+function isTrustedSecFetchSite(
+  secFetchSiteHeader: string | string[] | undefined,
+  options: { allowLoopbackSameSite?: boolean } = {},
+): boolean {
+  const values = Array.isArray(secFetchSiteHeader)
+    ? secFetchSiteHeader
+    : secFetchSiteHeader
+      ? [secFetchSiteHeader]
+      : [];
+  const trustedValues = options.allowLoopbackSameSite
+    ? LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES
+    : TRUSTED_SEC_FETCH_SITE_VALUES;
+  return values.length === 0 || values.every((value) => trustedValues.has(value.trim()));
+}
+
+function hasRequestHeader(header: string | string[] | undefined): boolean {
+  return Array.isArray(header) ? header.length > 0 : header !== undefined;
 }
 
 function stageRunStatus(actions: ActionRunResponse[]): string {

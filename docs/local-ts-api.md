@@ -15,7 +15,11 @@ any request whose `Host` header is not a loopback host (`127.0.0.1`,
 local browser and CLI callers always send a loopback `Host`, so legitimate
 access is unaffected. A second guard rejects cross-site mutations: `DELETE`,
 `PATCH`, `POST`, and `PUT` requests whose `Origin` or `Referer` is present but
-not loopback fail with `403` `cross_site_request` before any handler runs.
+not loopback fail with `403` `cross_site_request` before any handler runs. When
+browser fetch metadata is present, unsafe mutations also reject
+`Sec-Fetch-Site: cross-site`; `same-site` is accepted only after the loopback
+`Origin`/`Referer` check has passed, so the default Vite web app on another
+loopback port still works while foreign browser origins do not.
 Full bearer-token authentication and keychain-to-worker
 credential passing remain a deliberate follow-up that needs coordinated
 frontend and dev-launcher changes.
@@ -531,8 +535,15 @@ verification-code MCP server:
   remains available.
 - `POST /v1/jobs/:jobKey/apply-review/decision` appends an
   `approve_submit`, `approve_dry_run`, `defer`, `decline`, or `reset`
-  decision. Approval records intent only in this slice; it does not dispatch
-  the apply worker.
+  decision. `approve_submit` records the reviewed materials generation, profile
+  version, and application URL, and it is accepted only when matching full
+  dry-run evidence exists or the request explicitly names a matching partial
+  dry-run run. `approve_submit` requests must include the displayed
+  `materialsGeneration`, `profileVersion`, and `applicationUrl`; if any value
+  no longer matches the current review row, the API returns `409` with
+  `approval_stale_materials`, `approval_stale_profile`, or `approval_stale_url`
+  before inserting a decision row. Approval records intent only in this slice;
+  it does not dispatch the apply worker.
 - `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
   outcomes and any outcome suggestions.
 - `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome.
@@ -545,11 +556,11 @@ verification-code MCP server:
   plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
   never returns raw Gmail body text.
 
-The web review queue records approval facts only, with no ordering
-constraint between decisions: `approve_submit` can be recorded at any time —
-the web app offers it as the primary gate action even before any dry run has
-run — and the live-apply gate is enforced later, at the Python worker's claim
-transaction, not by decision order. `approve_submit` does not dispatch browser
+The web review queue records approval facts only. `approve_submit` is bound to
+the material, profile, URL, and dry-run evidence shown in Apply Review; stale
+bindings, missing dry-run evidence, and invalid partial-run overrides are refused
+before the decision row is written. The live-apply gate is enforced again at the
+Python worker's claim transaction. `approve_submit` does not dispatch browser
 submission, and `approve_dry_run` does not start a dry run.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied.
