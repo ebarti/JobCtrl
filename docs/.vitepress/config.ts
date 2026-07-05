@@ -34,9 +34,10 @@ function routeForRewrittenPage(docPath: string): string | null {
 // in docs/developer/README.md): use the product (User Guide: install → see
 // it → use it daily → tune it → understand the data → protect it) → change
 // the product (Developer Guide) → understand the system (System
-// Architecture) → look things up (API, Reference). Large sections default to
-// collapsed; VitePress auto-expands the group holding the active page. URLs
-// are frozen; only labels and order may change here.
+// Architecture) → look things up (API, Reference). User-guide pages hide the
+// developer/reference groups in the theme layer; developer and reference
+// sections stay collapsed until opened or active. URLs are frozen; only labels
+// and order may change here.
 const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
   {
@@ -209,6 +210,10 @@ export default withMermaid(
       ],
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
+      footer: {
+        message: "Documentation screenshots and examples use synthetic data unless noted.",
+        copyright: `© 2026 Eloi Barti and contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>.`,
+      },
       search: {
         provider: "local",
         options: {

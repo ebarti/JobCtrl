@@ -235,8 +235,10 @@ pnpm docs:screenshots
 ```
 
 Refresh checklist: run the command on a clean checkout, review every PNG for
-private data / broken layout / local-path leaks, update docs if screenshot
-names changed, and finish with `git diff --check`.
+private data / broken layout / local-path leaks, confirm the homepage hero copy
+at `docs/public/assets/screenshots/dashboard.png` was refreshed from the
+gallery dashboard screenshot, update docs if screenshot names changed, and
+finish with `git diff --check`.
 
 Safety rules: never point generation at `~/.jobhunter`; never use real
 resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply

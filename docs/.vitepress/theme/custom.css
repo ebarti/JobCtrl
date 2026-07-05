@@ -93,9 +93,13 @@
 
 /* --------------------------------------------------------------------------
    Audience-specific navigation: user-guide pages should not look like a
-   developer reference manual.
+   developer reference manual. Hide by stable destination links rather than
+   sidebar position so group insertions/reordering cannot hide the wrong set.
    -------------------------------------------------------------------------- */
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:nth-of-type(n + 3) {
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/developer/"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/architecture/"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/local-ts-api"]),
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/requirements"]) {
   display: none;
 }
 
@@ -417,5 +421,20 @@
 
   .vp-doc table :is(th, td):first-child {
     min-width: 5rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Site-wide notice: VitePress hides its footer on sidebar pages by default,
+   but these docs carry the same copyright/license notice everywhere.
+   -------------------------------------------------------------------------- */
+.Layout .VPFooter.has-sidebar {
+  display: block !important;
+  margin-left: var(--vp-sidebar-width);
+}
+
+@media (max-width: 959px) {
+  .Layout .VPFooter.has-sidebar {
+    margin-left: 0;
   }
 }

@@ -44,7 +44,7 @@ features:
     title: Local-First & Private
     details: One SQLite database and generated files under your home directory. Nothing leaves your machine except steps you explicitly configured.
     link: /user/data-and-safety
-    linkText: Data & safety
+    linkText: Data, Privacy & Safety
   - icon: ⚙️
     title: Temporal-Native Pipeline
     details: Every stage runs as a durable workflow with heartbeats, classified retries, and a daily LLM spend ceiling.

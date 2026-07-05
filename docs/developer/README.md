@@ -160,7 +160,9 @@ Sections, section `index.md` reading paths, and the sidebar in
 of questions a newcomer asks — what is it → how do I use or run it → what does
 it do → how does each part work → where does data live → how do I operate it →
 how is it designed → reference lookup. Keep the three surfaces in sync when
-adding a page.
+adding a page. User-guide pages show only the user navigation; developer and
+reference sections remain available elsewhere and default to collapsed until
+opened or active.
 
 ### Terminology
 

@@ -19,6 +19,8 @@
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -37,6 +39,12 @@ const PAGES = [
 
 const BASE_VIEWPORT = { width: 1440, height: 1000 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const galleryHeroScreenshot = path.join(root, "docs/assets/screenshots/dashboard.png");
+const publicHeroScreenshot = path.join(root, "docs/public/assets/screenshots/dashboard.png");
+
+async function sha256(file) {
+  return createHash("sha256").update(await readFile(file)).digest("hex");
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -71,6 +79,12 @@ const fail = (msg) => {
   failures += 1;
   console.error(`FAIL  ${msg}`);
 };
+
+if ((await sha256(galleryHeroScreenshot)) !== (await sha256(publicHeroScreenshot))) {
+  fail("/ hero image: public hero screenshot is stale relative to docs/assets/screenshots/dashboard.png");
+} else {
+  console.log("ok    / hero image freshness");
+}
 
 const browser = await chromium.launch();
 try {
@@ -127,6 +141,12 @@ try {
   }
   if (!/User Guide|Product Tour|Daily Workflow|Security/.test(tourSidebar)) {
     fail("/user/screenshots: user-guide sidebar hides the user navigation");
+  }
+  const footerText = await page.locator(".VPFooter").innerText();
+  if (!/AGPL-3\.0-only|synthetic data/.test(footerText)) {
+    fail("/user/screenshots: copyright/license footer is missing or incomplete");
+  } else {
+    console.log("ok    /user/screenshots footer notice");
   }
   const tourImage = await page.locator(".vp-doc img").first().boundingBox();
   if (!tourImage || tourImage.width < 800) {
@@ -201,10 +221,10 @@ try {
     console.log("ok    / search privacy");
   }
 
-  await page.goto(`http://127.0.0.1:${port}/requirements#security-and-observability`, {
+  await page.goto(`http://127.0.0.1:${port}/requirements#technical-requirements`, {
     waitUntil: "networkidle",
   });
-  const tableMetrics = await page.locator(".vp-doc table").first().evaluate((table) => {
+  const tableMetrics = await page.locator(".vp-doc table", { hasText: "Credentials must use" }).first().evaluate((table) => {
     const cell = table.querySelector("td:nth-child(3)") ?? table.querySelector("td");
     return {
       clientWidth: table.clientWidth,
