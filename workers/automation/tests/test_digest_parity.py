@@ -48,7 +48,7 @@ def test_build_digest_matches_shared_fixture_without_acknowledging(tmp_path: Pat
     assert digest["since"] == expected["since"]
     assert digest["highFitThreshold"] == expected["highFitThreshold"]
     assert digest["newMatches"] == expected["newMatches"]
-    assert digest["blockedSources"]["count"] == expected["blockedSources"]["count"]
+    assert digest["blockedSources"] == expected["blockedSources"]
     assert digest["reviewNeededMaterials"] == expected["reviewNeededMaterials"]
     assert digest["staleScores"] == expected["staleScores"]
     assert digest["pendingApprovals"] == expected["pendingApprovals"]
@@ -217,6 +217,26 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             PRIMARY KEY (tenant_id, job_url)
         );
+        CREATE TABLE operational_attempt_metrics (
+            metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            occurred_at TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            source_id TEXT,
+            source_kind TEXT,
+            source_priority TEXT,
+            source_role TEXT,
+            adapter TEXT,
+            attempt_kind TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            failure_category TEXT,
+            is_operational_failure INTEGER NOT NULL DEFAULT 0,
+            is_scrape_failure INTEGER NOT NULL DEFAULT 0,
+            is_retryable INTEGER NOT NULL DEFAULT 1,
+            run_id TEXT,
+            duration_ms INTEGER,
+            error_class TEXT
+        );
         """
     )
 
@@ -303,6 +323,28 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 source["consecutiveFailures"],
                 source["recommendedState"],
                 fixture["now"],
+            ),
+        )
+
+    for attempt in fixture["operationalAttempts"]:
+        conn.execute(
+            """
+            INSERT INTO operational_attempt_metrics (
+                tenant_id, occurred_at, stage, source_id, source_kind,
+                source_priority, source_role, adapter, attempt_kind, outcome,
+                failure_category, is_operational_failure, is_scrape_failure,
+                is_retryable, run_id, duration_ms, error_class
+            ) VALUES (
+                'local', ?, ?, ?, 'ats', 'primary', 'discovery', 'fixture',
+                'digest_fixture', ?, 'fixture_failure', 1, 1, 1,
+                'digest-fixture-run', 100, 'FixtureError'
+            )
+            """,
+            (
+                attempt["occurredAt"],
+                attempt["stage"],
+                attempt["sourceId"],
+                attempt["outcome"],
             ),
         )
 

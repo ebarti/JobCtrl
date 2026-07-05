@@ -173,6 +173,26 @@
       "consecutiveFailures": 3
     }
   ],
+  "operationalAttempts": [
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:00:00.000Z"
+    },
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:01:00.000Z"
+    },
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:02:00.000Z"
+    }
+  ],
   "applicationReviewDecisions": [
     {
       "decisionId": "decision-ready-reset",
@@ -249,7 +269,19 @@
       "highFitCount": 2
     },
     "blockedSources": {
-      "count": 1
+      "count": 2,
+      "sources": [
+        {
+          "sourceId": "workday:unstable-example",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3
+        },
+        {
+          "sourceId": "greenhouse:ops-only",
+          "recommendedState": "normal",
+          "consecutiveFailures": 3
+        }
+      ]
     },
     "reviewNeededMaterials": {
       "count": 3

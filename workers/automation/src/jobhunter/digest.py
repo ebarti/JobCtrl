@@ -190,30 +190,73 @@ def _count_new_matches(
 
 
 def _blocked_sources(conn: sqlite3.Connection) -> dict[str, Any]:
-    if not _table_exists(conn, "source_quality_stats"):
-        return {"count": 0, "sources": []}
+    sources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if _table_exists(conn, "source_quality_stats"):
+        rows = conn.execute(
+            """
+            SELECT source_id, recommended_state, consecutive_failures, observed_jobs
+            FROM source_quality_stats
+            WHERE tenant_id = ?
+            ORDER BY recommended_state DESC, observed_jobs DESC, source_id ASC
+            """,
+            (TENANT_ID,),
+        ).fetchall()
+        for row in rows:
+            source_id = str(_row_get(row, "source_id") or "")
+            if source_id:
+                seen.add(source_id)
+            source = {
+                "sourceId": source_id,
+                "recommendedState": str(_row_get(row, "recommended_state") or "normal"),
+                "consecutiveFailures": int(_row_get(row, "consecutive_failures") or 0),
+            }
+            if _blocked_source_predicate(source):
+                sources.append(source)
+    for source in _operational_only_source_health(conn, seen):
+        if _blocked_source_predicate(source):
+            sources.append(source)
+    return {"count": len(sources), "sources": sources}
+
+
+def _blocked_source_predicate(source: dict[str, Any]) -> bool:
+    return source["recommendedState"] in {"quarantined", "disabled"} or source["consecutiveFailures"] >= 3
+
+
+def _operational_only_source_health(conn: sqlite3.Connection, seen: set[str]) -> list[dict[str, Any]]:
+    if not _table_exists(conn, "operational_attempt_metrics"):
+        return []
     rows = conn.execute(
         """
-        SELECT source_id, recommended_state, consecutive_failures
-        FROM source_quality_stats
+        SELECT source_id, outcome
+        FROM operational_attempt_metrics
         WHERE tenant_id = ?
-          AND (
-            recommended_state IN ('quarantined', 'disabled')
-            OR consecutive_failures >= 3
-          )
-        ORDER BY recommended_state DESC, source_id ASC
+          AND outcome != 'started'
+        ORDER BY occurred_at ASC, metric_id ASC
         """,
         (TENANT_ID,),
     ).fetchall()
-    sources = [
+    rollups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        source_id = str(_row_get(row, "source_id") or "")
+        if not source_id or source_id in seen:
+            continue
+        rollup = rollups.setdefault(
+            source_id,
+            {"sourceId": source_id, "failures": 0, "lastOutcome": None},
+        )
+        outcome = str(_row_get(row, "outcome") or "")
+        if outcome in {"failed", "partial_failed"}:
+            rollup["failures"] += 1
+        rollup["lastOutcome"] = outcome
+    return [
         {
-            "sourceId": str(_row_get(row, "source_id") or ""),
-            "recommendedState": str(_row_get(row, "recommended_state") or "normal"),
-            "consecutiveFailures": int(_row_get(row, "consecutive_failures") or 0),
+            "sourceId": str(rollup["sourceId"]),
+            "recommendedState": "normal",
+            "consecutiveFailures": int(rollup["failures"]) if rollup["lastOutcome"] == "failed" else 0,
         }
-        for row in rows
+        for rollup in rollups.values()
     ]
-    return {"count": len(sources), "sources": sources}
 
 
 def _count_review_needed_materials(conn: sqlite3.Connection) -> int:

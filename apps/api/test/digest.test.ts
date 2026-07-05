@@ -46,6 +46,12 @@ interface DigestParityFixture {
     recommendedState: string;
     consecutiveFailures: number;
   }>;
+  operationalAttempts: Array<{
+    sourceId: string;
+    stage: string;
+    outcome: string;
+    occurredAt: string;
+  }>;
   applicationReviewDecisions: Array<{
     decisionId: string;
     jobKey: string;
@@ -76,7 +82,14 @@ interface DigestParityFixture {
     generatedAt: string;
     highFitThreshold: number;
     newMatches: { count: number; highFitCount: number };
-    blockedSources: { count: number };
+    blockedSources: {
+      count: number;
+      sources: Array<{
+        sourceId: string;
+        recommendedState: string;
+        consecutiveFailures: number;
+      }>;
+    };
     reviewNeededMaterials: { count: number };
     staleScores: { count: number };
     pendingApprovals: { count: number };
@@ -123,7 +136,7 @@ describe("daily digest read model", () => {
       expect(digest.since).toBe(fixture.expected.since);
       expect(digest.highFitThreshold).toBe(fixture.expected.highFitThreshold);
       expect(digest.newMatches).toEqual(fixture.expected.newMatches);
-      expect(digest.blockedSources.count).toBe(fixture.expected.blockedSources.count);
+      expect(digest.blockedSources).toEqual(fixture.expected.blockedSources);
       expect(digest.reviewNeededMaterials).toEqual(fixture.expected.reviewNeededMaterials);
       expect(digest.staleScores).toEqual(fixture.expected.staleScores);
       expect(digest.pendingApprovals).toEqual(fixture.expected.pendingApprovals);
@@ -191,6 +204,7 @@ function seedDigestDatabase(dbPath: string, tempDir: string): void {
   ensureApplicationFeedbackTables(db);
   seedJobs(db, tempDir);
   seedSourceQuality(db);
+  seedOperationalAttempts(db);
   seedReviewDecisions(db);
   seedApplyRuns(db);
   seedScoreStaleness(db);
@@ -324,6 +338,26 @@ function createDigestSchema(db: Database.Database): void {
       latest_active_state TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (tenant_id, job_url)
+    );
+    CREATE TABLE operational_attempt_metrics (
+      metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      occurred_at TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      source_id TEXT,
+      source_kind TEXT,
+      source_priority TEXT,
+      source_role TEXT,
+      adapter TEXT,
+      attempt_kind TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      failure_category TEXT,
+      is_operational_failure INTEGER NOT NULL DEFAULT 0,
+      is_scrape_failure INTEGER NOT NULL DEFAULT 0,
+      is_retryable INTEGER NOT NULL DEFAULT 1,
+      run_id TEXT,
+      duration_ms INTEGER,
+      error_class TEXT
     );
   `);
 }
@@ -503,6 +537,29 @@ function seedSourceQuality(db: Database.Database): void {
       source.consecutiveFailures,
       source.recommendedState,
       fixture.now,
+    );
+  }
+}
+
+function seedOperationalAttempts(db: Database.Database): void {
+  const insert = db.prepare(
+    `INSERT INTO operational_attempt_metrics (
+       tenant_id, occurred_at, stage, source_id, source_kind, source_priority,
+       source_role, adapter, attempt_kind, outcome, failure_category,
+       is_operational_failure, is_scrape_failure, is_retryable, run_id,
+       duration_ms, error_class
+     ) VALUES (
+       'local', ?, ?, ?, 'ats', 'primary', 'discovery', 'fixture',
+       'digest_fixture', ?, 'fixture_failure', 1, 1, 1, 'digest-fixture-run',
+       100, 'FixtureError'
+     )`,
+  );
+  for (const attempt of fixture.operationalAttempts) {
+    insert.run(
+      attempt.occurredAt,
+      attempt.stage,
+      attempt.sourceId,
+      attempt.outcome,
     );
   }
 }
