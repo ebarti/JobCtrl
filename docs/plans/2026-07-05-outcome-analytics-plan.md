@@ -90,6 +90,13 @@ An outcome-conversion funnel is already computed and shipped:
   one application and one reply renders `100%`. `ConversionPanel` shows the count
   *and* the percentage at any `n ≥ 1`. There is no minimum-`n` gating and no
   non-causal framing.
+  **Status 2026-07-05: the existing-funnel half of this defect is fixed by
+  PR #273** (`fix/conversion-rate-min-sample`): `MIN_CONVERSION_SAMPLE = 5`
+  (owner-tunable, `apps/api/src/read-model.ts`) now gates every existing rate
+  (totals, `bySource`, `byBand`), `ConversionPanel` shows an insufficient-data
+  state, and the `n=1`-shows-no-rate fixture exists in both runtimes. This
+  plan's Phase 1 extends that shipped invariant to the new analytics
+  dimensions; it does not re-implement it.
 - **Grouping is limited to `source` and score band.** Fit band, apply mode,
   resume template, and tailoring policy are not grouped, even though the inputs
   are persisted (see §4).
@@ -218,11 +225,18 @@ gate.**
 
 ### Phase 1 — Outcome analytics read model + small-sample invariant
 
-**Objective.** Establish the small-sample invariant and non-causal framing on the
-outcome numbers, and expand the read model to the dimensions sourced directly
-from a job's own projection (source, score/fit band, apply mode). Deliver a
-dedicated analytics read model + endpoint that the Phase 2 view consumes; leave
-the dashboard's headline `conversion` funnel in place.
+**Objective.** Extend the small-sample invariant and non-causal framing to the
+new analytics dimensions, and expand the read model to the dimensions sourced
+directly from a job's own projection (source, score/fit band, apply mode).
+Deliver a dedicated analytics read model + endpoint that the Phase 2 view
+consumes; leave the dashboard's headline `conversion` funnel in place.
+
+**Scope reduction (2026-07-05).** The retrofit of the existing funnel — rate
+gating, `ConversionPanel` insufficient-data state, and the `n=1` regression
+fixtures — shipped separately as PR #273. Phase 1 reuses its shipped constant
+`MIN_CONVERSION_SAMPLE` (`apps/api/src/read-model.ts`, default `5`) as the one
+shared threshold everywhere this plan says `MIN_RATE_SAMPLE_N`; D1 is now
+"confirm or tune that shipped default", not "introduce the constant".
 
 - **Source of truth.** `application_outcomes` (`job_key`, `kind`, `occurred_at`)
   × applied `job_list_projections` rows (`source`, `fit_score`, `applied_at`,
