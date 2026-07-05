@@ -11,11 +11,11 @@ flowchart TD
     Profile["Create your profile"] --> Configure["Configure discovery targets"]
   end
   subgraph Loop["The daily loop"]
-    Discover["Discover finds, scores, and\nprepares materials for jobs"]
+    Discover["Discover finds, scores, and<br/>prepares materials for jobs"]
     Review["You review jobs and scores"]
-    ApplyReview["You edit and approve\nmaterials in Apply Review"]
-    DryRun["A dry run rehearses\nthe application"]
-    Submit["You approve the\nlive submission"]
+    ApplyReview["You edit and approve<br/>materials in Apply Review"]
+    DryRun["A dry run rehearses<br/>the application"]
+    Submit["You approve the<br/>live submission"]
     Discover --> Review --> ApplyReview --> DryRun --> Submit
     Submit -. "next batch" .-> Discover
   end
