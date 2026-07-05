@@ -136,7 +136,7 @@ Fixtures"), and stated in user-facing docs.
   `BulletCoverageAudit`, `VoicePassAudit`.
 - There is **no company-level analysis** — employer analysis is strictly
   per-posting (`job_employer_analysis` PK `(job_url, generation)`). A
-  cross-posting company profile is greenfield (see Non-Goals / Open Decisions).
+  cross-posting company profile is greenfield (see Non-Goals).
 
 **Truthfulness / fabrication gates (reused verbatim for prep).**
 - `workers/automation/src/jobhunter/domain/materials/fabrication_detector.py`:
@@ -373,10 +373,9 @@ to where the evidence was used.
   {missing, blocked}` or transferable/low contribution, plus demanded skills that
   ground nowhere (the `missing` coverage bucket), each linking to demanding jobs.
 - Persist the inverted index as a new Operations projection
-  `evidence_usage_projections` (recommended) rebuilt incrementally off
+  `evidence_usage_projections` rebuilt incrementally off
   `BulletProvenanceRecorded`, `JobScored`, `ResumeApproved`, `ProfileUpdated`,
-  `ProfileImported` via the existing watermark; OR compute at read time in the
-  API (owner decision — see Open Decisions). If projected, add the table to
+  `ProfileImported` via the existing watermark. Add the table to
   `PROJECTION_TABLES`, build it in BOTH `projection_builder.py` and
   `apps/api/src/projections.ts`, and extend the parity fixture.
 - Serve `GET /v1/evidence-map` (list) and, if needed,
@@ -466,9 +465,9 @@ as generated resume/cover material, persisting it as canonical
 generation-versioned rows with provenance.
 
 **Scope.**
-- New bounded context **Interview Preparation** (`domain/interview/` — name TBD,
-  see Open Decisions) owning `InterviewPrep` aggregate, `InterviewPrepItem`
-  entity, and a generation use case `GenerateInterviewPrepUseCase`.
+- New bounded context **Interview Preparation** (`domain/interview/`) owning
+  `InterviewPrep` aggregate, `InterviewPrepItem` entity, and a generation use
+  case `GenerateInterviewPrepUseCase`.
 - Inputs (all existing): `ProfileSnapshot` evidence, the accepted `MaterialsSet`
   + `BulletProvenanceSet` + coverage audit, `EmployerAnalysis`,
   `RequirementFitReport`, the job record. The use case selects the strongest,
@@ -518,7 +517,7 @@ generation-versioned rows with provenance.
 - **UI surface:** none in this phase.
 - **Approving user action:** user invokes `generate_interview_prep` for one job
   (button lands in P2). No auto-generation.
-- **Regression fixture (two mandated invariants):**
+- **Regression fixture (three mandated invariants):**
   1. **Prep carries provenance / truthfulness:** a fixture that generates prep
      from a profile with known evidence and asserts every `star_draft` item
      carries `evidence_ids` resolving to real profile evidence, and that a
@@ -528,6 +527,11 @@ generation-versioned rows with provenance.
   2. **Gap-drill honesty:** a fixture proving a `gap_drill` for a missing
      requirement never emits an experience claim (it names the gap), asserted by
      the same never-fabricate scan over its text.
+  3. **No-live-assistance boundary:** this guard test ships in P1 (the first
+     prep PR), even though the read/UI surface lands in P2. It asserts the
+     worker/RPC/API surface contains only one-shot generation plumbing for prep
+     and no streaming, transcript, websocket, microphone, live, in-session, or
+     browser/agent participation path.
 - **Local QA path:** `uv --project workers/automation run --extra dev pytest -q`
   (generation + gates + persistence + versioning), `ruff check .`, and a manual
   `generate_interview_prep` RPC against a seeded local DB confirming canonical
@@ -543,12 +547,11 @@ no-live-assistance boundary.
 
 **Scope.**
 - Read model: project the latest accepted prep into
-  `job_detail_projections.interview_prep_json` (recommended, parity with
-  `requirement_fit_report_json`) built by BOTH builders, OR a dedicated
-  `interview_prep_projections` table (owner decision). DTO `InterviewPrep` on
-  `JobDetail` (or `GET /v1/jobs/:jobKey/interview-prep`), with each prep item
-  exposing its provenance (`evidenceIds`, `requirementIds`) and joined profile
-  source text (reuse `attachProfileSourceTextToBulletProvenance` pattern).
+  `job_detail_projections.interview_prep_json` (parity with
+  `requirement_fit_report_json`) built by BOTH builders. DTO `InterviewPrep` on
+  `JobDetail`, with each prep item exposing its provenance (`evidenceIds`,
+  `requirementIds`) and joined profile source text (reuse
+  `attachProfileSourceTextToBulletProvenance` pattern).
 - Safe exposure: expose prep item text + provenance + gate/judge verdict +
   lifecycle-labelled warnings (used-to-repair / accepted-residual /
   post-acceptance) — never raw prompts, full profile, or full job description.
@@ -572,8 +575,8 @@ no-live-assistance boundary.
 - **Source of truth:** the canonical `job_interview_prep` rows from P1.
 - **Owning bounded context:** Interview Preparation (read model + context
   components); a view composes it.
-- **Projection/read model:** `job_detail_projections.interview_prep_json` (or a
-  dedicated projection) + `InterviewPrep` DTO.
+- **Projection/read model:** `job_detail_projections.interview_prep_json` +
+  `InterviewPrep` DTO.
 - **UI surface:** prep panel on the job/apply-review detail;
   `GenerateInterviewPrepButton`.
 - **Approving user action:** the user clicks "Generate interview prep"
@@ -583,12 +586,11 @@ no-live-assistance boundary.
      proving every rendered prep item exposes resolvable provenance and that the
      read model omits raw prompt/profile/job text (safe-exposure assertion),
      cross-runtime parity checked.
-  2. **No-live-assistance boundary:** a dedicated test asserting the API route
-     table and RPC method registry contain **only** the sanctioned prep endpoints
-     (one-shot generate + read) and **no** streaming/transcript/websocket/live
-     interview endpoint; and that `InterviewPrep` exposes no live/in-session
-     state and never launches a browser/agent session. This test is a parity-
-     style guard: adding a forbidden surface must fail it.
+  2. **No-live-assistance boundary:** the dedicated guard test was introduced in
+     P1. P2 keeps it green while adding only the sanctioned read UI and one-shot
+     generate action; any streaming/transcript/websocket/live interview endpoint,
+     live/in-session aggregate state, or browser/agent participation path still
+     fails the guard.
 - **Local QA path:** `pnpm api:test` + `pnpm --filter @jobhunter/web test` +
   `pnpm web:storybook:test` + `uv ... pytest -q`; an e2e spec
   (`apps/web/e2e/tests/interview-prep.spec.ts`) generating prep and inspecting a
@@ -696,9 +698,10 @@ workers/automation/tests/test_audit_projection_parity.py` and
 - [ ] E2 map UI renders usages/gaps/stories/freshness with navigable links; a11y
       + Storybook + e2e green.
 - [ ] P1 prep generation is user-initiated only, grounded, gated, and
-      generation-versioned; both mandated backend fixtures pass; no pipeline spend.
+      generation-versioned; backend fixtures pass, including the first-prep-PR
+      no-live-assistance guard; no pipeline spend.
 - [ ] P2 prep read model + UI expose provenance safely; the no-live-assistance
-      guard test passes; SSE/invalidation handlers added with parity green.
+      guard remains green; SSE/invalidation handlers added with parity green.
 - [ ] P3 reflections persist as `interview` outcomes with notes and never leak
       raw note text into events/projections/logs.
 - [ ] Every displayed map/prep claim has an explicit, cited source of truth.
@@ -759,31 +762,37 @@ Per `CLAUDE.md` documentation table, when each phase lands:
   the safe-exposure pattern and the outcome sensitivity rule must be enforced by
   tests, not conventions.
 
-## Open Owner Decisions (STOP and confirm)
+## Owner Decisions
 
-1. **Evidence-map read model: projection vs live read.** Recommended: a new
-   `evidence_usage_projections` (dual-builder, parity-tested, SSE-fresh).
-   Alternative: compute at read time in `read-model.ts` (simpler, no parity, but
-   no SSE freshness and heavier reads). Decide before E1.
+Resolved 2026-07-05 during implementation:
+
+1. **Evidence-map read model: projection vs live read.** Decision:
+   `evidence_usage_projections` (dual-builder, parity-tested, SSE-fresh). The
+   live-read alternative is rejected for this plan because it would make map
+   reads heavier and skip the existing parity/invalidation discipline.
 2. **Interview-prep read storage: `job_detail_projections.interview_prep_json`
-   vs a dedicated `interview_prep_projections` table.** Recommended: a
-   job-detail column for the latest accepted generation (parity with
-   `requirement_fit_report_json`), keeping canonical versioned rows for history.
+   vs a dedicated `interview_prep_projections` table.** Decision:
+   `job_detail_projections.interview_prep_json` for the latest accepted
+   generation, keeping canonical versioned prep rows as the history source.
 3. **Prep orchestration: sync RPC vs Temporal workflow vs a new
-   `PreparationWorkItemKind` + `JobPreparationWorkflow` step.** Recommended: a
-   workflow-mode `generate_interview_prep` RPC (mirrors `tailor_job`); a new
-   preparation kind is only warranted if prep should ride the durable
-   preparation queue.
+   `PreparationWorkItemKind` + `JobPreparationWorkflow` step.** Decision:
+   workflow-mode `generate_interview_prep` RPC, explicit user-trigger only. Do
+   not add prep to the automatic discovery/enrichment/scoring/tailoring
+   pipeline; do not create a parallel truthfulness pipeline.
 4. **New Interview Preparation context name and location of shared gates.**
-   Recommended: `domain/interview/`, importing the pure Materials
-   fabrication/grounding modules directly (no promotion to a shared kernel unless
-   a second consumer appears).
-5. **Reflection ↔ prep link.** Whether to add a nullable
+   Decision: `domain/interview/` owns the prep aggregate/use case and imports
+   the existing pure Materials fabrication, claim-grounding, and judge gates
+   directly. Do not promote the gates to a shared kernel unless another concrete
+   consumer appears.
+5. **STAR/theme generation model + spend posture.** Decision: use the existing
+   default LLM lane with the existing spend-budget controls. Generation is
+   explicit, user-triggered, and never unattended.
+
+Still open; STOP at the P3 boundary if unresolved:
+
+6. **Reflection ↔ prep link.** Whether to add a nullable
    `interview_prep_generation` column to `application_outcomes` (P3) or keep
    reflections as plain `interview` outcome notes.
-6. **STAR/theme generation model + spend posture.** Which SDK/model lane
-   generates prep, and confirmation that generation counts against the existing
-   spend controls and never runs unattended.
 
 ## References (in-repo)
 
