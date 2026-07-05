@@ -60,6 +60,10 @@ Use the Discovery page to set:
 - minimum fit score and automation preferences;
 - manual capture and quarantined source decisions.
 
+The optional browser extension's **Save job** action also lands here: it records
+the active page as a user-mediated manual capture, then the normal discovery
+import path dedupes, snapshots, and surfaces the job in Jobs.
+
 Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.

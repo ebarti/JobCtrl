@@ -45,6 +45,7 @@ import {
   ManualCaptureDismissSchema,
   ManualCaptureImportSchema,
   OutcomeSuggestionDecisionRequestSchema,
+  ExtensionCaptureIngestSchema,
   ProfileImportRequestSchema,
   type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
@@ -67,6 +68,8 @@ import {
   SettingsUpdateRequestSchema,
   type ExtensionCapabilityTokenResponse,
   type ExtensionAuthStatusResponse,
+  type ExtensionCaptureIngestRequest,
+  type ManualCaptureImportRequest,
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
@@ -102,6 +105,7 @@ import {
   promoteSourceLocatorCandidate,
   recordDiscoveryFeedback,
   rejectSourceLocatorCandidate,
+  seedExtensionManualCapture,
   upsertSourceRegistryEntry,
   writeDiscoverySettings,
 } from "./discovery-controls.js";
@@ -375,6 +379,37 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
   app.post("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
+
+  app.post("/v1/extension/captures", async (request, reply) => {
+    const body = parseBody(reply, ExtensionCaptureIngestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+    }
+    const seeded = await withWritableDb(reply, options.dbPath, (db) => seedExtensionManualCapture(db, body));
+    if (!seeded || "ok" in seeded) {
+      return seeded;
+    }
+    try {
+      return await manualCaptureImporter(seeded.itemId, extensionCaptureToManualCapture(body), {
+        appDir,
+        dbPath: options.dbPath,
+      });
+    } catch (error) {
+      if (error instanceof ManualCaptureImportError) {
+        void reply.code(error.statusCode);
+        return {
+          ok: false,
+          error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  });
 
   registerEventStreamRoute(app, { dbPath: options.dbPath });
 
@@ -2058,6 +2093,19 @@ function extensionAuthStatus(): ExtensionAuthStatusResponse {
     ok: true,
     authenticated: true,
     capabilities: ["capture", "autofill_read"],
+  };
+}
+
+function extensionCaptureToManualCapture(
+  input: ExtensionCaptureIngestRequest,
+): ManualCaptureImportRequest {
+  return {
+    captureMode: input.captureMode,
+    ...(input.capturedUrl ? { capturedUrl: input.capturedUrl } : {}),
+    ...(input.contentText ? { contentText: input.contentText } : {}),
+    ...(input.contentHtmlBase64 ? { contentHtmlBase64: input.contentHtmlBase64 } : {}),
+    ...(input.note ? { note: input.note } : {}),
+    futureManualActionRequired: input.futureManualActionRequired,
   };
 }
 

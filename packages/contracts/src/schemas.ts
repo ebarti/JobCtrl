@@ -3187,6 +3187,7 @@ export const MANUAL_ACTION_REASON_VALUES = [
   "rate_limit",
   "protected_internal_site",
   "ambiguous_career_system",
+  "browser_extension_capture",
 ] as const;
 export type ManualActionReasonValue = (typeof MANUAL_ACTION_REASON_VALUES)[number];
 
@@ -3772,8 +3773,61 @@ export interface ManualCaptureImportResponse {
     originatingUrl: string;
     captureMode: ManualCaptureModeValue;
     futureManualActionRequired: boolean;
+    captureClient?: string;
+    extensionVersion?: string;
   };
 }
+
+export const ExtensionCaptureIngestSchema = z
+  .object({
+    captureId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9._:-]+$/)
+      .optional(),
+    originatingUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "originatingUrl must be a valid http(s) URL"),
+    captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
+    capturedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "capturedUrl must be a valid http(s) URL")
+      .optional(),
+    contentText: z.string().trim().max(200_000).optional(),
+    contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
+    note: z.string().trim().max(400).optional(),
+    futureManualActionRequired: z.boolean().default(false),
+    captureClient: z.literal("browser_extension").default("browser_extension"),
+    extensionVersion: z.string().trim().min(1).max(80).default("unknown"),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.capturedUrl !== undefined ||
+      value.contentText !== undefined ||
+      value.contentHtmlBase64 !== undefined,
+    { message: "One of capturedUrl, contentText, or contentHtmlBase64 must be provided." },
+  );
+export type ExtensionCaptureIngestRequest = z.infer<typeof ExtensionCaptureIngestSchema>;
+
+export interface ExtensionCaptureDismissedReplayResponse {
+  ok: true;
+  itemId: string;
+  jobKey: null;
+  status: "dismissed";
+  dismissedAt: string | null;
+  message: string;
+}
+
+export type ExtensionCaptureIngestResponse =
+  | ManualCaptureImportResponse
+  | ExtensionCaptureDismissedReplayResponse;
 
 export const ManualCaptureDismissSchema = z
   .object({

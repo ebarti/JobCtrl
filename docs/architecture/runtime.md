@@ -260,7 +260,11 @@ mutating requests with a non-loopback `Origin`/`Referer` are rejected with
 `/v1/extension/*` routes still require a loopback Host and a local capability
 token, then allow a trusted `chrome-extension://` origin through route-scoped
 CORS and mutation-origin checks. Ordinary web and CLI routes keep the existing
-loopback posture.
+loopback posture. The browser-extension capture route seeds
+`manual_capture_queue` with extension provenance and then delegates to the
+same worker-backed manual-capture importer used by the web app, so discovery
+dedupe, snapshots, quarantine, and projections remain owned by the existing
+Job Discovery pipeline.
 
 ## Python Automation Engine
 

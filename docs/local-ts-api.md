@@ -875,6 +875,17 @@ event-history cap.
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
   `Host` check has passed.
+- `POST /v1/extension/captures` is the Phase 1 browser-extension capture
+  endpoint. It accepts the manual-capture import fields plus `originatingUrl`,
+  an optional stable `captureId` retry id, `captureClient:
+  "browser_extension"`, and `extensionVersion`, seeds a pending
+  `manual_capture_queue` row with reason `browser_extension_capture` and source
+  `manual_capture:extension`, then delegates to the existing manual-capture
+  worker importer. Re-sending the same `captureId` while import is still pending
+  updates the same queue row instead of creating a duplicate; replays of an
+  imported row return the original `ManualCaptureImportResponse`; replays of a
+  dismissed row return a terminal 2xx no-op so the extension can clear local
+  retry state without reopening the dismissed capture.
 
 ## Related Packages
 
@@ -884,6 +895,7 @@ event-history cap.
   re-exported `@jobhunter/domain-types`.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.
 - `packages/api-client`: typed API client.
+- `apps/extension`: Manifest V3 local capture extension.
 
 The dependency direction is:
 
@@ -905,6 +917,8 @@ pnpm api:test
 pnpm qa:test
 pnpm web:dev
 pnpm web:build
+pnpm extension:check
+pnpm extension:e2e
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to

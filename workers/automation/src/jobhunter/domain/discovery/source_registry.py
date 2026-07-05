@@ -65,6 +65,7 @@ class ManualActionReason(str, Enum):
     RATE_LIMIT = "rate_limit"
     PROTECTED_INTERNAL_SITE = "protected_internal_site"
     AMBIGUOUS_CAREER_SYSTEM = "ambiguous_career_system"
+    BROWSER_EXTENSION_CAPTURE = "browser_extension_capture"
 
 
 class ManualCaptureMode(str, Enum):
@@ -231,6 +232,8 @@ class ManualCaptureProvenance:
     captured_at: str
     capture_mode: ManualCaptureMode
     future_manual_action_required: bool
+    capture_client: str | None = None
+    extension_version: str | None = None
 
     def __post_init__(self) -> None:
         if self.source_kind != SourceKind.USER_MEDIATED_CAPTURE.value:

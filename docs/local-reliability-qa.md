@@ -25,14 +25,18 @@ uv --project workers/automation run --extra dev ruff check .
 git diff --check
 ```
 
-`pnpm test` runs the API Vitest suite, the web build, and the Python tests —
-it does not run the web unit/hook/component suite, the type-level tests, or
-the Playwright e2e specs. For frontend-touching changes, also run:
+`pnpm test` runs the API Vitest suite, the web build, the extension unit tests,
+the extension built-bundle privacy e2e, and the Python tests — it does not run
+the web unit/hook/component suite, the type-level tests, or the Playwright e2e
+specs. For frontend-touching changes, also run:
 
 ```bash
 pnpm web:test
 pnpm web:test-d
 pnpm web:e2e
+pnpm extension:check
+pnpm extension:test
+pnpm extension:e2e
 ```
 
 For browser smoke, run the TypeScript API and web app:
@@ -93,7 +97,8 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Workflow cancellation leaves a zombie activity thread, fails to set the cooperative source cancel event, drops the cancellation projection, or hides a thread that ignored cancellation instead of emitting `abandoned_thread` operational evidence | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_workflow_finalize.py` |
 | Worker lifecycle regresses: the reconciler stops terminalizing lost open workflow rows, the worker heartbeat loop stops writing `worker_runtime_heartbeats`, duplicate workflow starts overlap instead of reusing the open run, or the workflow starter drops its dispatch-time open row | `workers/automation/tests/test_worker_reconciler.py`; `workers/automation/tests/test_worker_heartbeat_loop.py`; `workers/automation/tests/test_workflow_id_overlap.py`; `workers/automation/tests/test_workflow_starter_cache.py` |
 | Discovery source cancellation reaches only JobSpy, leaving ATS, Workday, or Smart Extract in-flight after a workflow cancel | `workers/automation/tests/test_p1b_error_inversion.py` |
-| The TypeScript API drops its loopback `Host`-header allowlist (DNS-rebinding defense), lets browser-extension CORS/token trust escape `/v1/extension/*`, lets a valid extension token bypass the loopback Host gate, or serves/opens an artifact whose resolved path escapes the JobHunter app directory | `apps/api/test/server.test.ts` (`rejects requests whose Host header is not a loopback host`; `blocks foreign-Host mutations before the handler runs`; `keeps the Host gate mandatory for valid extension bearer tokens`; `allows CORS preflight only for authenticated extension API routes`; `trusts valid extension bearer tokens only on extension API routes without weakening CSRF`; `refuses to open an artifact whose path resolves outside the app directory`; `refuses to preview a PDF artifact whose path resolves outside the app directory`) |
+| The TypeScript API drops its loopback `Host`-header allowlist (DNS-rebinding defense), lets browser-extension CORS/token trust escape `/v1/extension/*`, lets a valid extension token bypass the loopback Host gate, fails to seed extension captures through `manual_capture_queue`, or serves/opens an artifact whose resolved path escapes the JobHunter app directory | `apps/api/test/server.test.ts` (`rejects requests whose Host header is not a loopback host`; `blocks foreign-Host mutations before the handler runs`; `keeps the Host gate mandatory for valid extension bearer tokens`; `allows CORS preflight only for authenticated extension API routes`; `trusts valid extension bearer tokens only on extension API routes without weakening CSRF`; `refuses to open an artifact whose path resolves outside the app directory`; `refuses to preview a PDF artifact whose path resolves outside the app directory`); `apps/api/test/discovery-controls.test.ts` (`seeds extension captures into the manual capture queue before worker import`) |
+| The browser extension broadens network permissions beyond loopback, ships a non-loopback network literal, loses the stack-down local queue bound, or stops sending captures with a local bearer token | `apps/extension/src/privacy.test.ts`; `apps/extension/src/privacy.e2e.test.ts`; `apps/extension/src/local-api.test.ts`; `apps/extension/src/queue.test.ts` |
 | The release privacy gate regresses: `scripts/release_check.py` stops catching a seeded violation class (owner-derived needles, secrets, prompt tripwires, blocked file types, publish-tag/distribution paths) or its CLI exit code stops failing CI | `workers/automation/tests/test_release_check.py` |
 | Operational metrics collapse scraper, manual abort, reload, harness, and unknown failures into one failed status | `workers/automation/tests/test_operational_metrics.py`; `apps/api/test/projections.test.ts` |
 | Discovery cancel-all-sources regresses, so stopping `DiscoverWorkflow` reaches JobSpy but leaves ATS, Workday, Smart Extract, or enrichment running without observing the cooperative cancel event | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_detects_activity_cancellation_cause`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_records_canceled_outcome`; manual QA: start Discover against all source families in a disposable workspace, cancel from Runs, and confirm no source-family activity continues writing progress after cancellation |
@@ -454,6 +459,17 @@ type system provides; each lives next to its subject:
 | --- | --- | --- | --- |
 | `every-event-has-handler.test.ts` | `apps/web/src/contexts/operations/` | Every `DomainEvent["eventType"]` variant has a registered handler in `invalidation-router.ts`, and the handler body is not the obvious empty stub `() => []`. | Backstop to `Record<DomainEvent["eventType"], InvalidationHandler>` — target §7.4. Mirrors the backend's `scripts/check-domain-type-parity.py` pattern. |
 | `every-stage-state-has-badge.test.tsx` | `apps/web/src/contexts/pipeline/components/` | Every `STAGE_STATE_KINDS` value is rendered by a non-default `<StageBadge>` arm. | Backstop to the exhaustive `switch (state.kind)` in `<StageBadge>` — target §10.2. |
+
+### Browser Extension QA
+
+Manual extension QA uses a disposable workspace. Start `pnpm dev`, build the
+extension with `pnpm extension:build`, load `dist/extension/` unpacked in
+Chrome/Chromium developer mode, pair it with the Settings token, save a
+synthetic posting, and confirm the job appears in Jobs and the Discovery Manual
+capture tab with `manual_capture:extension` provenance. Stop the stack, save
+another synthetic posting, restart the stack, save once more, and confirm the
+queued capture syncs locally. Do not use real applications or submit anything
+from this flow.
 
 ### Accessibility bar
 

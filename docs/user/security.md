@@ -78,6 +78,13 @@ accepted on `/v1/extension/*` routes that still target a loopback host. It does
 not grant application-submission authority; live submission remains behind
 Apply Review.
 
+In Phase 1, the extension can only capture the active http(s) page after you
+click **Save job** in the popup. It sends the page URL and visible text to the
+local API over loopback, where JobHunter records it through the same
+manual-capture importer used by the web app. If the local stack is down, the
+extension keeps a bounded local queue in browser extension storage. It does not
+send captures to third-party services and it has no submit/apply action.
+
 ## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive
