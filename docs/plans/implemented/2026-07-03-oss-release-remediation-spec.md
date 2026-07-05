@@ -67,7 +67,7 @@ means: start now, from `main`, in parallel with the temporal run.
 | W0.1–W0.6 | none | Only W0.2's fixture-data swaps touch files P2/P3/P4 also edit — data-only, trivial rebase. |
 | W1.1, W1.2, W1.3→W1.5→W1.6, W1.7 | temporal **P2** | Same files AND same semantics: they extend P2's gate/guard/intent/`needs_verification` substrate. |
 | W1.4 | temporal **P2** (soft — see note) | Semantically independent of P2; only file contention (`packages/contracts`, adapter result parse, apply-review UI). |
-| W2.1, W2.2 (docs), W2.5 | none | Disjoint. (P5 also edits `README.md`/`docs/**` — different sections, trivial.) |
+| W2.2 (docs), W2.5 | none | Disjoint. (P5 also edits `README.md`/`docs/**` — different sections, trivial.) |
 | W2.3 | PR **#233** (P0) | Same `server.ts`; P2 later touches other regions of it (trivial contention). |
 | W2.4 | temporal **P5** | P5 SHIPS the base spend system (`llm_spend`, `dailyBudgetUsd`, `check_spend_budget` preflight, dual-client recording). W2.4 is a delta on it — see the rewritten §W2.4. |
 | W2.6 + doctor parts of W2.2 | temporal **P5** | `cli.py` is P5-owned; P4 rewrites `discovery/**` including the board-fallback seams the doctor warning must reflect. |
@@ -80,7 +80,7 @@ Sequencing summary:
 
 ```
 now         ──► W0.1→W0.2→W0.5→W0.3→W0.4→W0.6   (first: privacy CI gates every later PR)
-            ──► W2.1, W2.2(docs), W2.5            (fully parallel)
+            ──► W2.2(docs), W2.5                  (fully parallel)
 #233 merged ──► W2.3
 P2 merged   ──► W1.1→W1.2→W1.3→W1.4→W1.5→W1.6→W1.7  (stacked; do NOT wait for P4/P5)
 P5 merged   ──► W2.4, W2.6, W2.2(doctor)
@@ -102,7 +102,9 @@ all merged  ──► §5 release flip
   lane {W1.3→W1.4→W1.5→W1.6} (adapter/prompt/owned tools), converging on
   W1.7. Prefer the single stacked series unless two implementers actively
   coordinate.
-- W2.1 (naming) can start any time; its publish re-enable step is last.
+- Naming and PyPI publishing are out of scope for this program — deferred
+  to the owner's pre-publication rename train (§1 "Naming", updated
+  2026-07-05).
 
 ### 0.2 Non-negotiable ground rules
 
@@ -163,8 +165,9 @@ PII-clean per §0.2.
 
 ### 0.5 Owner decision checkpoints (STOP and ask)
 
-1. **W2.1** — final PyPI distribution name (you propose candidates with
-   evidence; the owner picks).
+1. **W2.1** — removed 2026-07-05; naming and publishing are deferred to
+   the owner's pre-publication rename train (§1 "Naming"). No checkpoint
+   remains. (Number retained so §0.5.2–.4 references stay stable.)
 2. **W2.4** — default daily spend-ceiling values per lane (you propose
    defaults; the owner confirms).
 3. **W0.6** — any CONCERNS item you propose to classify as
@@ -188,10 +191,16 @@ PII-clean per §0.2.
   acceptance is recorded at the release gate (§5). The W0.6 disposition
   gate exists because one historical artifact is security-relevant, not
   merely private.
-- **Naming:** the GitHub repo and product name stay `JobHunter`. Only the
-  PyPI distribution name changes (W2.1) because `jobhunter` is taken on
-  PyPI. The import package `jobhunter` and the `jobhunter` console script
-  do not change.
+- **Naming (updated 2026-07-05, supersedes the original W2.1 plan):** the
+  product's final name is `JobCtl`. The full rename — repo name, product
+  strings, console script, PyPI distribution name `jobctl`, docs sweep —
+  is an owner-executed rename train that lands AFTER every W-item and
+  BEFORE the visibility flip, deliberately last because a rename
+  invalidates the path/symbol anchors this spec navigates by. Until that
+  train lands: the repo, product strings, import package `jobhunter`, and
+  `jobhunter` console script all stay unchanged, no W-item renames
+  anything, and nothing is published to PyPI (`publish.yml` stays
+  `workflow_dispatch`-only under the W0.3 structural guard).
 
 ---
 
@@ -323,7 +332,8 @@ Work items:
    tag trigger while `workers/automation/pyproject.toml` still declares the
    PyPI-blocked distribution name. W0.5 lands before this item, so the
    check is green on arrival; it exists to prevent a silent re-enable and
-   is retired by W2.1. Do not soften it with a bypass flag.
+   is retired by the pre-publication rename train (§1 "Naming"). Do not
+   soften it with a bypass flag.
 8. **Source tripwires** (pinned to specific files): fail if
    `workers/automation/src/jobhunter/apply/prompt.py` interpolates the
    CapSolver key env var into prompt text, contains the hardcoded
@@ -369,7 +379,8 @@ Python/TS CI workflows keep their path scoping.
 
 ### W0.5 — Disable tag publishing until rename
 
-**Objective:** no accidental PyPI publish before W2.1.
+**Objective:** no accidental PyPI publish before the pre-publication
+rename train (§1 "Naming"; originally gated on W2.1).
 
 **Branch:** `ci/w0-5-guard-publish` ·
 **PR title:** `ci(release): disable tag publishing until distribution rename`
@@ -384,9 +395,9 @@ resolve the conflict the other way (a bypass flag on item 7): the item-8
 W1, and this one's fix is the two-line edit right here.
 
 Work items: change `.github/workflows/publish.yml` trigger to
-`workflow_dispatch` only, with a header comment pointing at W2.1. The W0.3
-structural check (landing next in the stack) enforces this cannot
-silently revert.
+`workflow_dispatch` only, with a header comment pointing at the
+pre-publication rename train (originally W2.1). The W0.3 structural check
+(landing next in the stack) enforces this cannot silently revert.
 
 **Definition of Done**
 - [ ] No `push`/tag trigger remains in `publish.yml`.
@@ -921,28 +932,15 @@ email-application handling.
 
 ## 4. Workstream W2 — Public surface, naming, governance (from `main`)
 
-### W2.1 — PyPI distribution rename (owner checkpoint)
+### W2.1 — PyPI distribution rename *(removed 2026-07-05)*
 
-**Objective:** a publishable distribution name; product and repo names
-unchanged.
-
-Work items:
-1. Propose ≥5 candidate names with evidence per candidate: PyPI
-   availability (`https://pypi.org/pypi/<name>/json` → 404), GitHub
-   name-collision quick check, a note from a quick USPTO TESS search.
-   STOP: owner picks (§0.5.1).
-2. After the pick: `workers/automation/pyproject.toml` `[project] name`
-   → the new distribution name; import package `jobhunter` and console
-   script `jobhunter` unchanged; README install instructions updated
-   (`pip install <newname>` → `jobhunter` CLI).
-3. Re-enable the tag trigger in `publish.yml`; update the W0.3 structural
-   check to expect the new name (retire the block).
-
-**Definition of Done**
-- [ ] Owner-approved name in `pyproject.toml`; build produces the renamed
-      sdist/wheel; `python3 scripts/release_check.py` green.
-- [ ] `publish.yml` tag trigger restored, gated on the release-check
-      workflow passing (workflow-level dependency or job condition).
+Removed from this program: naming and PyPI publishing are deferred to the
+owner's pre-publication rename train — see §1 "Naming" and the §5
+checklist. Until that train lands, `publish.yml` stays
+`workflow_dispatch`-only and the W0.3 structural block stays in force. Do
+not implement anything here; if another item's Definition of Done appears
+to require this rename, STOP and report. (Section number retained so
+cross-references stay stable.)
 
 ### W2.2 — Responsible-use documentation and warnings
 
@@ -1093,8 +1091,12 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       is merged to `main`.
 - [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
-- [ ] W2.1 name chosen and live; `publish.yml` re-enabled and gated on the
-      privacy workflow.
+- [ ] Rename train executed (owner-side, after all W-items): full
+      `JobHunter` → `JobCtl` rename; `workers/automation/pyproject.toml`
+      distribution name `jobctl` (reserved on PyPI via owner placeholder;
+      re-verify before first publish); `publish.yml` tag trigger
+      re-enabled and gated on the release-check workflow; W0.3 structural
+      check updated/retired.
 - [ ] W2.2, W2.3, W2.5 merged; W2.4 and W2.6 merged or explicitly deferred
       by the owner in writing.
 - [x] W0.6 dispositions closed: every concern fixed, backlogged
