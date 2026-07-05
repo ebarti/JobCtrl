@@ -212,7 +212,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             INSERT INTO job_materials_artifacts (
                 job_url, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_url,
@@ -223,6 +223,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 artifact["path"],
                 artifact["render_format"],
                 artifact["size_bytes"],
+                artifact.get("metadata_json", "{}"),
                 created_at,
             ),
         )
@@ -381,6 +382,22 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
           created_by    TEXT NOT NULL DEFAULT 'user',
           PRIMARY KEY (tenant_id, outcome_id)
         );
+        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          suggestion_id TEXT NOT NULL,
+          job_key TEXT NOT NULL,
+          evidence_id TEXT,
+          suggested_kind TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          rationale TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          decided_at TEXT,
+          decision TEXT,
+          decision_reason TEXT,
+          decided_outcome_id TEXT,
+          PRIMARY KEY (tenant_id, suggestion_id)
+        );
         """
     )
     for job in rows["conversionJobs"]:
@@ -415,6 +432,23 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
                 outcome["kind"],
                 "2026-06-11T09:00:00+00:00",
                 "2026-06-11T09:00:00+00:00",
+            ),
+        )
+    for suggestion in rows["applicationOutcomeSuggestions"]:
+        conn.execute(
+            """
+            INSERT INTO application_outcome_suggestions (
+                tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+                status, created_at, decided_at, decision
+            ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+            """,
+            (
+                suggestion["suggestionId"],
+                suggestion["jobKey"],
+                suggestion["status"],
+                "2026-06-11T09:05:00+00:00",
+                "2026-06-11T09:05:00+00:00",
+                suggestion["status"],
             ),
         )
 

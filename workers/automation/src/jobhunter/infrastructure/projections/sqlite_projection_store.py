@@ -60,6 +60,9 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
     ("job_list_projections", "fit_band", "TEXT"),
     ("job_list_projections", "apply_mode", "TEXT"),
+    ("job_list_projections", "resume_template_id", "TEXT"),
+    ("job_list_projections", "resume_template_name", "TEXT"),
+    ("job_list_projections", "tailoring_policy_version", "INTEGER"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
     ("job_detail_projections", "compensation_summary_json", "TEXT"),
     ("job_detail_projections", "compensation_audit_json", "TEXT"),
@@ -129,6 +132,9 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             apply_status           TEXT,
             applied_at             TEXT,
             apply_mode             TEXT,
+            resume_template_id     TEXT,
+            resume_template_name   TEXT,
+            tailoring_policy_version INTEGER,
             artifact_count         INTEGER NOT NULL DEFAULT 0,
             deleted_at             TEXT,
             last_updated_at        TEXT,
@@ -409,11 +415,12 @@ class SqliteProjectionStore:
                 current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
-                apply_mode, artifact_count, deleted_at,
+                apply_mode, resume_template_id, resume_template_name,
+                tailoring_policy_version, artifact_count, deleted_at,
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -449,6 +456,9 @@ class SqliteProjectionStore:
                 apply_status          = excluded.apply_status,
                 applied_at            = excluded.applied_at,
                 apply_mode            = excluded.apply_mode,
+                resume_template_id    = excluded.resume_template_id,
+                resume_template_name  = excluded.resume_template_name,
+                tailoring_policy_version = excluded.tailoring_policy_version,
                 artifact_count        = excluded.artifact_count,
                 deleted_at            = excluded.deleted_at,
                 last_updated_at       = excluded.last_updated_at
@@ -489,6 +499,9 @@ class SqliteProjectionStore:
                 projection.apply_status,
                 projection.applied_at,
                 projection.apply_mode,
+                projection.resume_template_id,
+                projection.resume_template_name,
+                projection.tailoring_policy_version,
                 projection.artifact_count,
                 projection.deleted_at,
                 projection.last_updated_at,

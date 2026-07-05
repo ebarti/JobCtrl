@@ -3549,6 +3549,8 @@ function buildOutcomeAnalyticsFromConversion(
   const byBand = Array.isArray(record.byBand) ? record.byBand : [];
   const byFitBand = Array.isArray(record.byFitBand) ? record.byFitBand : [];
   const byApplyMode = Array.isArray(record.byApplyMode) ? record.byApplyMode : [];
+  const byTemplate = Array.isArray(record.byTemplate) ? record.byTemplate : [];
+  const byPolicy = Array.isArray(record.byPolicy) ? record.byPolicy : [];
   return {
     ok: true,
     generatedAt,
@@ -3570,6 +3572,21 @@ function buildOutcomeAnalyticsFromConversion(
       applyMode: outcomeAnalyticsApplyMode(group.applyMode),
       ...outcomeAnalyticsMetrics(group),
     })),
+    byTemplate: byTemplate.filter(isRecord).map((group) => ({
+      templateId: String(group.templateId ?? "unreported"),
+      templateName: nullableString(group.templateName),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byPolicy: byPolicy.filter(isRecord).map((group) => {
+      const tailoringPolicyVersion = nullableNumber(group.tailoringPolicyVersion);
+      return {
+        tailoringPolicyVersion,
+        policyLabel: String(group.policyLabel ?? policyLabel(tailoringPolicyVersion)),
+        ...outcomeAnalyticsMetrics(group),
+      };
+    }),
+    timeToResponse: outcomeAnalyticsTimeToResponse(record.timeToResponseMinutes),
+    suggestionAccuracy: outcomeAnalyticsSuggestionAccuracy(record.suggestionAccuracy),
   };
 }
 
@@ -3611,6 +3628,43 @@ function outcomeAnalyticsApplyMode(value: unknown): OutcomeAnalyticsSummary["byA
     return mode as OutcomeAnalyticsSummary["byApplyMode"][number]["applyMode"];
   }
   return "manual_marked";
+}
+
+function outcomeAnalyticsTimeToResponse(value: unknown): OutcomeAnalyticsSummary["timeToResponse"] {
+  const samples = Array.isArray(value)
+    ? value.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item >= 0)
+    : [];
+  return {
+    n: samples.length,
+    medianMinutes: samples.length >= MIN_CONVERSION_SAMPLE ? median(samples) : null,
+  };
+}
+
+function outcomeAnalyticsSuggestionAccuracy(value: unknown): OutcomeAnalyticsSummary["suggestionAccuracy"] {
+  const counts = isRecord(value) ? value : {};
+  const decided = Number(counts.decided ?? 0);
+  const accepted = Number(counts.accepted ?? 0);
+  const corrected = Number(counts.corrected ?? 0);
+  const ignored = Number(counts.ignored ?? 0);
+  return {
+    n: decided,
+    decided,
+    accepted,
+    corrected,
+    ignored,
+    acceptanceRate: conversionRate(accepted, decided),
+  };
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle] ?? 0;
+  return ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+}
+
+function policyLabel(version: number | null): string {
+  return version === null ? "Unreported" : `Policy v${version}`;
 }
 
 function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {

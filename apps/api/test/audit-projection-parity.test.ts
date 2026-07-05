@@ -65,6 +65,7 @@ interface Fixture {
     bulletProvenance: Array<Record<string, unknown>>;
     conversionJobs: Array<Record<string, unknown>>;
     applicationOutcomes: Array<Record<string, unknown>>;
+    applicationOutcomeSuggestions: Array<Record<string, unknown>>;
   };
   dashboardAggregateJobs: Array<{
     hidden: boolean;
@@ -282,6 +283,22 @@ function seedSchema(dbPath: string): void {
       created_by    TEXT NOT NULL DEFAULT 'user',
       PRIMARY KEY (tenant_id, outcome_id)
     );
+    CREATE TABLE application_outcome_suggestions (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      suggestion_id TEXT NOT NULL,
+      job_key TEXT NOT NULL,
+      evidence_id TEXT,
+      suggested_kind TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0,
+      rationale TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      decided_at TEXT,
+      decision TEXT,
+      decision_reason TEXT,
+      decided_outcome_id TEXT,
+      PRIMARY KEY (tenant_id, suggestion_id)
+    );
   `);
   db.close();
 }
@@ -372,10 +389,16 @@ function seedRows(dbPath: string): void {
        job_url, generation, artifact_type, artifact_id, status, path,
        render_format, size_bytes, metadata_json, created_at
      ) VALUES (@job_url, @generation, @artifact_type, @artifact_id, @status, @path,
-       @render_format, @size_bytes, '{}', @created_at)`,
+       @render_format, @size_bytes, @metadata_json, @created_at)`,
   );
   for (const artifact of fixture.rows.artifacts) {
-    insertArtifact.run({ job_url: jobUrl, generation, created_at: createdAt, ...artifact });
+    insertArtifact.run({
+      job_url: jobUrl,
+      generation,
+      created_at: createdAt,
+      metadata_json: "{}",
+      ...artifact,
+    });
   }
   const insertProvenance = db.prepare(
     `INSERT INTO job_bullet_provenance (
@@ -506,6 +529,21 @@ function seedRows(dbPath: string): void {
       job_key: outcome.jobKey,
       kind: outcome.kind,
       at: "2026-06-11T09:00:00+00:00",
+    });
+  }
+  const insertSuggestion = db.prepare(
+    `INSERT INTO application_outcome_suggestions (
+       tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+       status, created_at, decided_at, decision
+     ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+       @status, @at, @at, @status)`,
+  );
+  for (const suggestion of fixture.rows.applicationOutcomeSuggestions) {
+    insertSuggestion.run({
+      suggestion_id: suggestion.suggestionId,
+      job_key: suggestion.jobKey,
+      status: suggestion.status,
+      at: "2026-06-11T09:05:00+00:00",
     });
   }
   db.close();

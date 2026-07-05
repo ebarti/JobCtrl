@@ -1330,7 +1330,11 @@ vocabulary decision is explicit: keep the existing parity-guarded score-band
 breakdown as `byScoreBand`, and add a separate canonical requirement-fit
 breakdown as `byFitBand`. Apply mode is projected as
 `automated_live`, `manual_marked`, or `external_confirmed`; dry-runs are excluded
-from the applied denominator.
+from the applied denominator. Accepted resume template and tailoring policy are
+projected onto `job_list_projections` for `byTemplate` and `byPolicy`.
+Response-time medians are derived from `applied_at` and response-kind outcome
+timestamps; suggestion review counts come from decided
+`application_outcome_suggestions` rows.
 
 Rationale:
 
@@ -1339,8 +1343,8 @@ Rationale:
 - low-volume single-user data needs counts-only rendering below the sample floor
 - score band and fit band use different vocabularies, so merging them would make
   the read model ambiguous
-- analytics describe recorded outcomes and must not affect scoring, ranking,
-  thresholds, discovery scheduling, or apply eligibility
+- analytics describe recorded outcomes and stay outside scoring, ranking,
+  thresholds, discovery scheduling, and apply eligibility
 
 Consequences:
 
@@ -1348,7 +1352,7 @@ Consequences:
   parity fixture
 - clients consume already-gated rates and cannot compute sub-threshold
   percentages from the analytics response
-- future template/policy/time-to-response analytics must reuse the same
-  threshold and read-only boundary
+- template/policy/time-to-response analytics reuse the same threshold and
+  read-only boundary
 
 Cites: PR #273 (`MIN_CONVERSION_SAMPLE` baseline) and R4 outcome analytics.

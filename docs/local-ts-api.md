@@ -253,12 +253,16 @@ messages.
 `GET /v1/analytics/outcomes` returns the outcome analytics read model sourced
 from `dashboard_projections.outcome_conversion_json`. It exposes integer counts
 and read-time rates for totals plus `bySource`, `byScoreBand`, `byFitBand`, and
-`byApplyMode`. Every row carries `n` (`applied`) beside the rate fields, and all
-rates are `null` until `n >= MIN_CONVERSION_SAMPLE` (`5` by default in
-`apps/api/src/read-model.ts`). `byScoreBand` uses the existing score-band
-vocabulary, while `byFitBand` is a separate canonical requirement-fit breakdown.
-The endpoint is read-only and does not feed scoring, ranking, thresholds, or
-apply eligibility.
+`byApplyMode`, plus Phase 4 fields `byTemplate`, `byPolicy`, `timeToResponse`,
+and `suggestionAccuracy`. Every row carries `n` (`applied`) beside the rate
+fields, and all rates are `null` until `n >= MIN_CONVERSION_SAMPLE` (`5` by
+default in `apps/api/src/read-model.ts`). `byScoreBand` uses the existing
+score-band vocabulary, while `byFitBand` is a separate canonical requirement-fit
+breakdown. Template/policy groups come from accepted material artifact metadata;
+response-time minutes come from `applied_at` and response-kind
+`application_outcomes.occurred_at`; suggestion counts come from decided
+`application_outcome_suggestions` rows. The endpoint is read-only and stays
+outside scoring, ranking, thresholds, and apply eligibility.
 
 ## Discovery controls
 

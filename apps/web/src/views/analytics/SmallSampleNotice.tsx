@@ -10,7 +10,7 @@ export function SmallSampleNotice({ minSample }: SmallSampleNoticeProps) {
   return (
     <p className="analytics-caption">
       Recorded outcomes from canonical rows only. {sampleText}; smaller groups show counts only. Analytics never
-      affect scoring, ranking, or apply eligibility.
+      enter scoring, ranking, or apply eligibility.
     </p>
   );
 }

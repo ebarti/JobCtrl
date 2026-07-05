@@ -38,6 +38,14 @@ describe("<OutcomeRateTable>", () => {
     expect(within(row!).getAllByText("40% · n=5").length).toBeGreaterThan(0);
   });
 
+  it("maps template and policy dimensions into rows", () => {
+    const templateRows = outcomeRows(sampleOutcomeAnalyticsSummary, "template");
+    const policyRows = outcomeRows(sampleOutcomeAnalyticsSummary, "policy");
+
+    expect(templateRows.map((row) => row.label)).toContain("Modern compact");
+    expect(policyRows.map((row) => row.label)).toContain("Policy v3");
+  });
+
   it("keeps below-threshold rows last when sorting by a rate column", async () => {
     const user = userEvent.setup();
     render(

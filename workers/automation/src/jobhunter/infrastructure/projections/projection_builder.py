@@ -303,6 +303,115 @@ def _apply_mode(value: str | None) -> str:
     return normalized if normalized in APPLY_MODE_ORDER else "manual_marked"
 
 
+def _projection_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _projection_int(value: object) -> int | None:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _material_analytics_from_metadata(metadata_json: str | None) -> dict[str, object]:
+    metadata = _json_loads(metadata_json, {})
+    if not isinstance(metadata, dict):
+        return {}
+    template = metadata.get("resume_template")
+    if not isinstance(template, dict):
+        template = {}
+    return {
+        "resume_template_id": _projection_text(
+            template.get("templateId") or template.get("template_id")
+        ),
+        "resume_template_name": _projection_text(
+            template.get("templateName")
+            or template.get("template_name")
+            or template.get("displayName")
+        ),
+        "tailoring_policy_version": _projection_int(
+            metadata.get("tailoring_policy_version")
+            or metadata.get("tailoringPolicyVersion")
+        ),
+    }
+
+
+def _merge_material_analytics(metadata_jsons: list[str | None]) -> dict[str, object]:
+    merged: dict[str, object] = {
+        "resume_template_id": None,
+        "resume_template_name": None,
+        "tailoring_policy_version": None,
+    }
+    for metadata_json in metadata_jsons:
+        next_value = _material_analytics_from_metadata(metadata_json)
+        if merged["resume_template_id"] is None:
+            merged["resume_template_id"] = next_value.get("resume_template_id")
+        if merged["resume_template_name"] is None:
+            merged["resume_template_name"] = next_value.get("resume_template_name")
+        if merged["tailoring_policy_version"] is None:
+            merged["tailoring_policy_version"] = next_value.get(
+                "tailoring_policy_version"
+            )
+    return merged
+
+
+def _material_analytics_complete(value: dict[str, object]) -> bool:
+    return (
+        value.get("resume_template_id") is not None
+        and value.get("resume_template_name") is not None
+        and value.get("tailoring_policy_version") is not None
+    )
+
+
+def _material_metadata_references(
+    metadata_jsons: list[str | None],
+) -> tuple[int | None, list[str]]:
+    base_generation: int | None = None
+    base_artifact_ids: set[str] = set()
+    for metadata_json in metadata_jsons:
+        metadata = _json_loads(metadata_json, {})
+        if not isinstance(metadata, dict):
+            continue
+        if base_generation is None:
+            base_generation = _projection_int(
+                metadata.get("base_generation") or metadata.get("baseGeneration")
+            )
+        for key in (
+            "base_resume_text_artifact_id",
+            "baseResumeTextArtifactId",
+            "base_resume_pdf_artifact_id",
+            "baseResumePdfArtifactId",
+        ):
+            artifact_id = _projection_text(metadata.get(key))
+            if artifact_id:
+                base_artifact_ids.add(artifact_id)
+    return base_generation, sorted(base_artifact_ids)
+
+
+def _template_key(value: str | None) -> str:
+    return _projection_text(value) or "unreported"
+
+
+def _policy_key(value: int | None) -> str:
+    return "unreported" if value is None else str(int(value))
+
+
+def _policy_version_from_key(value: str) -> int | None:
+    if value == "unreported":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _policy_label(version: int | None) -> str:
+    return "Unreported" if version is None else f"Policy v{version}"
+
+
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -316,6 +425,30 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _has_any_kind(outcomes: tuple[dict[str, str | None], ...], target: frozenset[str]) -> bool:
+    return any(str(outcome.get("kind") or "") in target for outcome in outcomes)
+
+
+def _first_response_minutes(
+    applied_at: str | None,
+    outcomes: tuple[dict[str, str | None], ...],
+) -> int | None:
+    applied = _parse_iso_timestamp(applied_at)
+    if applied is None:
+        return None
+    earliest: datetime | None = None
+    for outcome in outcomes:
+        if str(outcome.get("kind") or "") not in _REPLY_OUTCOME_KINDS:
+            continue
+        occurred = _parse_iso_timestamp(outcome.get("occurredAt"))
+        if occurred is None or occurred < applied:
+            continue
+        earliest = occurred if earliest is None else min(earliest, occurred)
+    if earliest is None:
+        return None
+    return int((earliest - applied).total_seconds() // 60)
 
 
 def _starts_new_execution(
@@ -641,6 +774,7 @@ class ProjectionBuilder:
         stages = self._load_stage_projections(job_url)
         score = self._load_latest_score(job_url)
         materials = self._load_latest_materials(job_url)
+        material_analytics = self._load_material_analytics(job_url)
         employer_analysis_json = self._load_employer_analysis(job_url)
         requirement_fit_report_json = self._load_requirement_fit_report(job_url)
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
@@ -779,6 +913,9 @@ class ProjectionBuilder:
             apply_status=apply_status,
             applied_at=applied_at,
             apply_mode=apply_mode,
+            resume_template_id=material_analytics.get("resume_template_id"),  # type: ignore[arg-type]
+            resume_template_name=material_analytics.get("resume_template_name"),  # type: ignore[arg-type]
+            tailoring_policy_version=material_analytics.get("tailoring_policy_version"),  # type: ignore[arg-type]
             artifact_count=len(artifacts),
             deleted_at=deleted_at,
             last_updated_at=last_updated_at,
@@ -1107,7 +1244,30 @@ class ProjectionBuilder:
                 (job_url,),
             ).fetchone()
         except sqlite3.OperationalError:
-            return {}
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT artifact_id, generation, metadata_json,
+                           NULL AS material_metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND status = 'approved'
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             created_at DESC,
+                             rowid DESC
+                    LIMIT 1
+                    """,
+                    (job_url,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return {}
         if generation_row is None:
             return {}
         max_generation = generation_row[0]
@@ -1141,6 +1301,135 @@ class ProjectionBuilder:
             elif atype == "cover_letter_pdf":
                 result["cover_pdf_path"] = path
         return result
+
+    def _load_material_analytics(self, job_url: str) -> dict[str, object]:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT a.artifact_id, a.generation, a.metadata_json,
+                       m.metadata_json AS material_metadata_json
+                FROM job_materials_artifacts a
+                LEFT JOIN job_materials m
+                  ON m.job_url = a.job_url
+                 AND m.generation = a.generation
+                WHERE a.job_url = ?
+                  AND a.status = 'approved'
+                  AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                ORDER BY COALESCE(a.generation, -1) DESC,
+                         CASE a.artifact_type
+                           WHEN 'tailored_resume' THEN 0
+                           WHEN 'tailored_resume_txt' THEN 1
+                           WHEN 'resume_pdf' THEN 2
+                           ELSE 3
+                         END,
+                         a.created_at DESC,
+                         a.rowid DESC
+                LIMIT 1
+                """,
+                (job_url,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT artifact_id, generation, metadata_json,
+                           NULL AS material_metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND status = 'approved'
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             created_at DESC,
+                             rowid DESC
+                    LIMIT 1
+                    """,
+                    (job_url,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return {}
+        metadata_jsons = [
+            _row_nullable_str(row, "metadata_json"),
+            _row_nullable_str(row, "material_metadata_json"),
+        ]
+        current = _merge_material_analytics(metadata_jsons)
+        if _material_analytics_complete(current):
+            return current
+        return _merge_material_analytics(
+            metadata_jsons + self._load_base_material_metadata(job_url, metadata_jsons)
+        )
+
+    def _load_base_material_metadata(
+        self,
+        job_url: str,
+        metadata_jsons: list[str | None],
+    ) -> list[str | None]:
+        base_generation, base_artifact_ids = _material_metadata_references(metadata_jsons)
+        metadata: list[str | None] = []
+        if base_generation is not None:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT metadata_json
+                    FROM job_materials
+                    WHERE job_url = ? AND generation = ?
+                    LIMIT 1
+                    """,
+                    (job_url, base_generation),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            metadata.append(_row_nullable_str(row, "metadata_json"))
+            try:
+                rows = self._conn.execute(
+                    """
+                    SELECT metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND generation = ?
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             rowid DESC
+                    """,
+                    (job_url, base_generation),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
+        if base_artifact_ids:
+            placeholders = ", ".join("?" for _ in base_artifact_ids)
+            try:
+                rows = self._conn.execute(
+                    f"""
+                    SELECT metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND artifact_id IN ({placeholders})
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             rowid DESC
+                    """,
+                    (job_url, *base_artifact_ids),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
+        return metadata
 
     def _load_employer_analysis(self, job_url: str) -> str | None:
         """Project the latest canonical employer analysis read shape (Phase 1).
@@ -1759,7 +2048,8 @@ class ProjectionBuilder:
             if _row_nullable_str(row, "applied_at")
             or _row_nullable_str(row, "apply_status") == "applied"
         ]
-        outcomes_by_job = self._load_outcome_kinds_by_job()
+        outcomes_by_job = self._load_outcomes_by_job()
+        suggestion_accuracy = self._load_suggestion_accuracy()
 
         def blank() -> dict[str, int]:
             return {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0}
@@ -1769,27 +2059,52 @@ class ProjectionBuilder:
         by_band: dict[str, dict[str, int]] = {}
         by_fit_band: dict[str, dict[str, int]] = {}
         by_apply_mode: dict[str, dict[str, int]] = {}
+        by_template: dict[str, dict[str, object]] = {}
+        by_policy: dict[str, dict[str, int]] = {}
+        time_to_response_minutes: list[int] = []
         for row in applied_rows:
             source = _row_str(row, "source") or "unknown"
             band = _score_band(_row_nullable_int(row, "fit_score"))
             fit_band = _fit_band(_row_nullable_str(row, "fit_band"))
             apply_mode = _apply_mode(_row_nullable_str(row, "apply_mode"))
-            kinds = outcomes_by_job.get(_row_str(row, "job_id"), frozenset())
+            template_id = _template_key(_row_nullable_str(row, "resume_template_id"))
+            template_name = (
+                None
+                if template_id == "unreported"
+                else _projection_text(_row_nullable_str(row, "resume_template_name"))
+            )
+            policy = _policy_key(_row_nullable_int(row, "tailoring_policy_version"))
+            outcomes = outcomes_by_job.get(_row_str(row, "job_id"), ())
+            response_minutes = _first_response_minutes(
+                _row_nullable_str(row, "applied_at"),
+                outcomes,
+            )
+            if response_minutes is not None:
+                time_to_response_minutes.append(response_minutes)
+            template_bucket = by_template.setdefault(
+                template_id,
+                {"templateName": template_name, "counts": blank()},
+            )
+            if not template_bucket.get("templateName") and template_name:
+                template_bucket["templateName"] = template_name
             for bucket in (
                 totals,
                 by_source.setdefault(source, blank()),
                 by_band.setdefault(band, blank()),
                 by_fit_band.setdefault(fit_band, blank()),
                 by_apply_mode.setdefault(apply_mode, blank()),
+                template_bucket["counts"],
+                by_policy.setdefault(policy, blank()),
             ):
+                assert isinstance(bucket, dict)
                 bucket["applied"] += 1
-                if kinds & _REPLY_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _REPLY_OUTCOME_KINDS):
                     bucket["reply"] += 1
-                if kinds & _INTERVIEW_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _INTERVIEW_OUTCOME_KINDS):
                     bucket["interview"] += 1
-                if kinds & _OFFER_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _OFFER_OUTCOME_KINDS):
                     bucket["offer"] += 1
-                if kinds & _REJECTION_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _REJECTION_OUTCOME_KINDS):
                     bucket["rejection"] += 1
 
         by_source_list = [
@@ -1811,31 +2126,90 @@ class ProjectionBuilder:
             for mode in APPLY_MODE_ORDER
             if mode in by_apply_mode
         ]
+        by_template_list = [
+            {
+                "templateId": template_id,
+                "templateName": bucket.get("templateName"),
+                **bucket["counts"],  # type: ignore[arg-type]
+            }
+            for template_id, bucket in sorted(
+                by_template.items(),
+                key=lambda item: (
+                    -int(item[1]["counts"]["applied"]),  # type: ignore[index]
+                    str(item[1].get("templateName") or item[0]),
+                ),
+            )
+        ]
+        by_policy_list = []
+        for key, counts in sorted(
+            by_policy.items(),
+            key=lambda item: (
+                -item[1]["applied"],
+                _policy_version_from_key(item[0])
+                if _policy_version_from_key(item[0]) is not None
+                else 9007199254740991,
+            ),
+        ):
+            version = _policy_version_from_key(key)
+            by_policy_list.append(
+                {
+                    "tailoringPolicyVersion": version,
+                    "policyLabel": _policy_label(version),
+                    **counts,
+                }
+            )
         return {
-            "version": 1,
+            "version": 2,
             "totals": totals,
             "bySource": by_source_list,
             "byBand": by_band_list,
             "byFitBand": by_fit_band_list,
             "byApplyMode": by_apply_mode_list,
+            "byTemplate": by_template_list,
+            "byPolicy": by_policy_list,
+            "timeToResponseMinutes": sorted(time_to_response_minutes),
+            "suggestionAccuracy": suggestion_accuracy,
         }
 
-    def _load_outcome_kinds_by_job(self) -> dict[str, frozenset[str]]:
+    def _load_outcomes_by_job(self) -> dict[str, tuple[dict[str, str | None], ...]]:
         try:
             rows = self._conn.execute(
-                "SELECT job_key, kind FROM application_outcomes WHERE tenant_id = ?",
+                "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
-        grouped: dict[str, set[str]] = {}
+        grouped: dict[str, list[dict[str, str | None]]] = {}
         for row in rows:
             job_key = _row_str(row, "job_key")
             kind = _row_str(row, "kind")
             if not job_key or not kind:
                 continue
-            grouped.setdefault(job_key, set()).add(kind)
-        return {job_key: frozenset(kinds) for job_key, kinds in grouped.items()}
+            grouped.setdefault(job_key, []).append(
+                {"kind": kind, "occurredAt": _row_nullable_str(row, "occurred_at")}
+            )
+        return {job_key: tuple(outcomes) for job_key, outcomes in grouped.items()}
+
+    def _load_suggestion_accuracy(self) -> dict[str, int]:
+        counts = {"decided": 0, "accepted": 0, "corrected": 0, "ignored": 0}
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT status
+                FROM application_outcome_suggestions
+                WHERE tenant_id = ?
+                  AND status IN ('accepted', 'corrected', 'ignored')
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return counts
+        for row in rows:
+            status = _row_str(row, "status").strip().lower()
+            if status in {"accepted", "corrected", "ignored"}:
+                counts["decided"] += 1
+                counts[status] += 1
+        return counts
 
     def _rebuild_source_quality(self) -> None:
         placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)
