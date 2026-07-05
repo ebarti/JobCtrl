@@ -167,7 +167,7 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route("**/v1/artifacts/*/preview.html*", async (route) => {
     await route.fulfill({
       contentType: "text/html",
-      body: "<main><h1>Principal Platform Engineer</h1><p>Owned platform reliability improvements for incident response.</p></main>",
+      body: "<main><h1>Principal Platform Engineer</h1><p>Owned platform reliability work for incident response.</p></main>",
     });
   });
   await page.route("**/v1/artifacts/*", async (route) => {
