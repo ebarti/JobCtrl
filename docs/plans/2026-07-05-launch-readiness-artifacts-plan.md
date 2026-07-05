@@ -434,15 +434,15 @@ the owner executes the owner-only steps per OSS spec §5.
 | --- | --- | --- | --- |
 | 9.1 Repo visibility flip | Owner flips `github.com/ebarti/JobHunter` to public (owner-only, OSS spec §5) | `release-check` (`.github/workflows/release-check.yml`) green on `main` for every commit since W0.4; `python3 scripts/release_check.py` zero findings locally; OSS spec §5 final manual QA complete | Flip back to private. **Note honestly:** anything fetched while public cannot be recalled and git history remains reachable — the real mitigation is the pre-flip privacy gate, not rollback (OSS spec §1 records this acceptance). |
 | 9.2 Docs-site deploy | Set repo variable `DOCS_DEPLOY_ENABLED=true` and the two Cloudflare secrets so the `deploy` job in `.github/workflows/docs-site.yml` runs from `main` | On next `main` push, the deploy job runs (not skipped), the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on the built artifact | Unset `DOCS_DEPLOY_ENABLED` → the deploy job skips cleanly and the workflow stays green; redeploy the previous `docs-site-dist` artifact if a bad build shipped. |
-| 9.3 Repo-rename redirect | **Conditional** — OSS spec §1 locks the GitHub repo name as `JobHunter`; only if the owner decides to rename (§11.2) | After a rename, GitHub auto-redirects old URLs: verify old `github.com/ebarti/JobHunter` links resolve; update the absolute `REPO_URL` in `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run `pnpm docs:build` | Rename back (GitHub reserves the prior name); revert the `REPO_URL`/link edits. If not renaming, mark this step **N/A**. |
-| 9.4 Release tagging | Restore the tag trigger in `.github/workflows/publish.yml` (currently `workflow_dispatch` only) after the PyPI rename, then tag the first release | OSS spec **W2.1** merged (name chosen, `pyproject.toml` updated); `publish.yml` tag trigger gated on the release-check workflow passing; build produces the renamed sdist/wheel | Delete the tag; if a bad artifact published to PyPI, yank it. Keep the trigger `workflow_dispatch`-only until W2.1 is confirmed. |
+| 9.3 Repo-rename redirect | Runs after the pre-publication rename train (`docs/plans/2026-07-05-rename-jobctl-plan.md`) merges — the rename decision is made; only its execution is pending | After the rename, GitHub auto-redirects old URLs: verify old `github.com/ebarti/JobHunter` links resolve; update the absolute `REPO_URL` in `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run `pnpm docs:build` | Rename back (GitHub reserves the prior name); revert the `REPO_URL`/link edits. |
+| 9.4 Release tagging | Restore the tag trigger in `.github/workflows/publish.yml` (currently `workflow_dispatch` only) after the PyPI rename, then tag the first release | The pre-publication rename train merged (`docs/plans/2026-07-05-rename-jobctl-plan.md`: distribution name chosen, `pyproject.toml` updated); `publish.yml` tag trigger gated on the release-check workflow passing; build produces the renamed sdist/wheel | Delete the tag; if a bad artifact published to PyPI, yank it. Keep the trigger `workflow_dispatch`-only until the rename train is confirmed. |
 
 **Invariants.**
 
 - The checklist does not execute owner-only steps; it prepares and verifies
   them and cross-references OSS spec §5 as the authoritative gate.
-- Steps with a precondition (9.3 rename decision, 9.4 W2.1) are explicitly
-  conditional and never marked done while the precondition is unmet.
+- Steps with a precondition (9.3 and 9.4: the pre-publication rename train)
+  are never marked done while the precondition is unmet.
 
 **Acceptance criteria.**
 
@@ -484,8 +484,10 @@ Notes:
 1. **Claims-ledger location/publication** — proposed `docs/claims-ledger.md`,
    repo-only (registered in `UNPUBLISHED_FILES` + `srcExclude`). Confirm the
    path and repo-only status.
-2. **GitHub repo rename** — OSS spec §1 locks the repo name as `JobHunter`.
-   Confirm whether any rename happens at all; step 9.3 is conditional on this.
+2. **GitHub repo rename** — decided: the repo renames per the pre-publication
+   rename train (`docs/plans/2026-07-05-rename-jobctl-plan.md`), which
+   supersedes the OSS spec §1 name lock. Remaining owner action: perform the
+   GitHub rename at that train's cutover (step 9.3).
 3. **Alternatives-comparison** — which neutral capability categories are the
    rows, which external approaches are the columns (owner-supplied, kept
    private until facts-verified), the maintenance-cadence interval, and the
