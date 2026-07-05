@@ -539,6 +539,50 @@ describe("projection schema upgrades", () => {
       cleanup();
     }
   });
+
+  it("tolerates a concurrent process adding a column between check and ALTER", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      const db = new Database(dbPath);
+      try {
+        ensureProjectionTables(db);
+
+        // Simulate the Python worker winning the check-then-ALTER race on the
+        // shared SQLite file: the pre-ALTER check sees the column as missing,
+        // but the ALTER hits a table that already has it.
+        const realPrepare = db.prepare.bind(db);
+        const realExec = db.exec.bind(db);
+        let staleCheckArmed = true;
+        let duplicateAlterAttempted = false;
+        Reflect.set(db, "prepare", (sql: string) => {
+          const statement = realPrepare(sql);
+          if (staleCheckArmed && sql.includes("table_info(workflow_run_projections)")) {
+            return {
+              all: () =>
+                (statement.all() as Array<{ name: string }>).filter(
+                  (row) => row.name !== "input_summary_json",
+                ),
+            };
+          }
+          return statement;
+        });
+        Reflect.set(db, "exec", (sql: string) => {
+          if (sql.includes("ADD COLUMN input_summary_json")) {
+            staleCheckArmed = false;
+            duplicateAlterAttempted = true;
+          }
+          return realExec(sql);
+        });
+
+        expect(() => ensureProjectionTables(db)).not.toThrow();
+        expect(duplicateAlterAttempted).toBe(true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("apply_run_projections without legacy apply_runs table", () => {

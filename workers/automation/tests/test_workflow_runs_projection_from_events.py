@@ -31,6 +31,7 @@ from jobhunter.domain.events.workflow import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.infrastructure.projections.sqlite_projection_store import _ensure_column
 from jobhunter.state import record_job_event
 
 
@@ -413,3 +414,52 @@ def test_timeline_collected_and_rebuild_deterministic(conn: sqlite3.Connection) 
         "WorkflowStarted",
         "WorkflowCompleted",
     ]
+
+
+class _StaleCheckCursor:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list:
+        return self._rows
+
+
+class _StaleCheckConnection:
+    """Reproduces the cross-process check-then-ALTER race on the shared SQLite
+    file: the first ``PRAGMA table_info`` check reports the column missing
+    while the other process has already added it, so the ALTER fails with
+    "duplicate column"."""
+
+    def __init__(self, real: sqlite3.Connection, table: str, column: str) -> None:
+        self._real = real
+        self._table = table
+        self._column = column
+        self._stale_check_pending = True
+
+    def execute(self, sql: str, *args):
+        is_column_check = sql.strip().startswith(f"PRAGMA table_info({self._table})")
+        if self._stale_check_pending and is_column_check:
+            self._stale_check_pending = False
+            rows = self._real.execute(sql, *args).fetchall()
+            return _StaleCheckCursor([row for row in rows if row[1] != self._column])
+        return self._real.execute(sql, *args)
+
+
+def test_ensure_column_tolerates_concurrent_column_add(
+    conn: sqlite3.Connection,
+) -> None:
+    """The TS API and the Python worker both upgrade the schema at startup;
+    the loser of the ALTER race must not fail initialization."""
+    racing = _StaleCheckConnection(
+        conn, "workflow_run_projections", "input_summary_json"
+    )
+
+    assert (
+        _ensure_column(
+            racing,
+            "workflow_run_projections",
+            "input_summary_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        is True
+    )

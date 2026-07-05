@@ -668,14 +668,23 @@ function ensureProjectionColumn(
   columnName: string,
   definition: string,
 ): boolean {
-  const columns = new Set(
-    allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name),
-  );
-  if (!columns.has(columnName)) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
-    return true;
+  const existingColumns = () =>
+    new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name));
+  if (existingColumns().has(columnName)) {
+    return false;
   }
-  return false;
+  try {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  } catch (error) {
+    // The TS API and the Python worker both run this upgrade at startup against
+    // the same SQLite file; the loser of the check-then-ALTER race must treat
+    // "duplicate column" as an upgrade that already happened, not a failure.
+    if (existingColumns().has(columnName)) {
+      return true;
+    }
+    throw error;
+  }
+  return true;
 }
 
 /** Read the watermark; returns 0 when missing. */

@@ -357,14 +357,25 @@ def _ensure_column(
     column_name: str,
     definition: str,
 ) -> bool:
-    columns = {
-        row["name"] if isinstance(row, sqlite3.Row) else row[1]
-        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    }
-    if column_name not in columns:
+    def _existing_columns() -> set[str]:
+        return {
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+
+    if column_name in _existing_columns():
+        return False
+    try:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
-        return True
-    return False
+    except sqlite3.OperationalError:
+        # The Python worker and the TS API both run this upgrade at startup
+        # against the same SQLite file; the loser of the check-then-ALTER race
+        # must treat "duplicate column" as an upgrade that already happened,
+        # not a failed initialization.
+        if column_name in _existing_columns():
+            return True
+        raise
+    return True
 
 
 def _reset_score_evidence_projections(conn: sqlite3.Connection) -> None:
