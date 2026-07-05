@@ -1,5 +1,5 @@
 ---
-pageClass: jh-visual-doc jh-wide-diagram-page
+pageClass: jh-visual-doc
 aside: false
 ---
 

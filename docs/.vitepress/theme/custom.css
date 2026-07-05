@@ -107,7 +107,7 @@
    Visual documentation pages: keep prose readable while letting screenshots
    and diagrams use the available page width.
    -------------------------------------------------------------------------- */
-.Layout.jh-visual-doc .VPDoc .aside {
+.Layout.jh-visual-doc:not(.jh-outline-page) .VPDoc .aside {
   display: none;
 }
 

@@ -1,6 +1,5 @@
 ---
-pageClass: jh-user-guide-page jh-visual-doc jh-product-tour-page
-aside: false
+pageClass: jh-user-guide-page jh-visual-doc jh-product-tour-page jh-outline-page
 ---
 
 # Product Tour

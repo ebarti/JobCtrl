@@ -1,6 +1,5 @@
 ---
-pageClass: jh-user-guide-page jh-visual-doc jh-daily-workflow-page
-aside: false
+pageClass: jh-user-guide-page jh-visual-doc jh-daily-workflow-page jh-outline-page
 ---
 
 # Daily Workflow

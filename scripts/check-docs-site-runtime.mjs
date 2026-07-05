@@ -142,6 +142,12 @@ try {
   if (!/User Guide|Product Tour|Daily Workflow|Security/.test(tourSidebar)) {
     fail("/user/screenshots: user-guide sidebar hides the user navigation");
   }
+  const tourOutline = await page.locator(".VPDocAsideOutline").innerText();
+  if (!/On this page/.test(tourOutline) || !/Set Up Your Profile|Apply Review|Runs History/.test(tourOutline)) {
+    fail("/user/screenshots: desktop section outline is missing or incomplete");
+  } else {
+    console.log("ok    /user/screenshots section outline");
+  }
   const footerText = await page.locator(".VPFooter").innerText();
   if (!/AGPL-3\.0-only|synthetic data/.test(footerText)) {
     fail("/user/screenshots: copyright/license footer is missing or incomplete");
