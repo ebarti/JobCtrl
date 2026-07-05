@@ -195,6 +195,47 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
         close_connection(tmp_path / "jobs.db")
 
 
+def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        llm = _FakeLlm(
+            [
+                _candidate(
+                    "star_draft",
+                    "Planning story",
+                    "Led cross-team planning for Python service optimization.",
+                    evidence_ids=["ev-platform-latency"],
+                    requirement_ids=["req-python"],
+                )
+            ]
+        )
+
+        outcome = GenerateInterviewPrepUseCase(
+            repository=repository,
+            llm=llm,
+            publisher=_RecordingPublisher(),
+        ).execute(
+            tenant_id=LOCAL_TENANT,
+            job=_job(),
+            profile_snapshot=_profile_snapshot(),
+            evidence_entries=_evidence_entries(),
+            evidence_gaps=(),
+            requirements=_requirements("req-python", "Python service optimization"),
+        )
+
+        assert outcome.status == "failed"
+        assert any(
+            "claim-prep-1 ungrounded: text_not_in_shipped_resume" in error
+            for error in outcome.errors
+        )
+        assert [call["response_schema"] for call in llm.calls] == [
+            INTERVIEW_PREP_RESPONSE_SCHEMA
+        ]
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
 def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> None:
     conn = _init_conn(tmp_path)
     try:
