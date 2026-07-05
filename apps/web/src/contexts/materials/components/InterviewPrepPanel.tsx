@@ -1,5 +1,6 @@
 import type { InterviewPrep, InterviewPrepItem, InterviewPrepItemKind } from "@jobhunter/contracts";
 import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { GenerateInterviewPrepButton } from "./GenerateInterviewPrepButton.js";
@@ -7,6 +8,7 @@ import { GenerateInterviewPrepButton } from "./GenerateInterviewPrepButton.js";
 export interface InterviewPrepPanelProps {
   jobId: string;
   prep: InterviewPrep | null;
+  reflectionContent?: ReactNode;
 }
 
 const KIND_LABELS: Record<InterviewPrepItemKind, string> = {
@@ -111,7 +113,7 @@ function GateAudit({ prep }: { readonly prep: InterviewPrep }) {
   );
 }
 
-export function InterviewPrepPanel({ jobId, prep }: InterviewPrepPanelProps) {
+export function InterviewPrepPanel({ jobId, prep, reflectionContent }: InterviewPrepPanelProps) {
   return (
     <section className="section interview-prep-panel" aria-label="Interview preparation">
       <div className="interview-prep-heading">
@@ -126,6 +128,9 @@ export function InterviewPrepPanel({ jobId, prep }: InterviewPrepPanelProps) {
               <PrepItemCard item={item} jobId={jobId} key={item.itemId} />
             ))}
           </div>
+          {reflectionContent ? (
+            <div className="interview-prep-reflections">{reflectionContent}</div>
+          ) : null}
         </>
       ) : (
         <Empty title="No interview prep generated." />

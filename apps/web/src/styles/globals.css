@@ -2392,6 +2392,11 @@ textarea:focus-visible {
   padding: 10px;
 }
 
+.interview-reflection-form {
+  border: 0;
+  padding: 0;
+}
+
 .outcome-correction-fieldset {
   display: grid;
   grid-column: 1 / -1;
@@ -4112,6 +4117,17 @@ textarea:focus-visible {
 .interview-prep-warning-group {
   display: grid;
   gap: 8px;
+}
+
+.interview-prep-reflections,
+.interview-reflection-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.interview-prep-reflections {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
 }
 
 @media (min-width: 1180px) {

@@ -57,7 +57,9 @@ API. `apps/api/src/application-feedback.ts` owns idempotent SQLite table
 creation and read/write helpers for:
 
 - `application_review_decisions`: append-only user decisions for apply review.
-- `application_outcomes`: reviewed manual or suggestion-derived outcomes.
+- `application_outcomes`: reviewed manual or suggestion-derived outcomes. Manual
+  interview reflections may carry a nullable `interview_prep_generation` link to
+  the stored prep generation they followed.
 - `application_email_evidence`: linked Gmail evidence, including body storage
   and body hash columns for confidently linked messages.
 - `application_outcome_suggestions`: pending and decided classifier
@@ -72,7 +74,8 @@ on, no API or RPC dispatch path can submit without a committed
 (`applyApprovalRequired`, default on); a caller-supplied override can disable
 it for a run, which is why the Preferences form shows a persistent warning
 when it is off. Dry-run claims bypass this approval gate. Manual
-outcome notes are stored only in the local outcome table.
+outcome notes are stored only in the local outcome table; job events store
+presence flags and nullable prep-generation links, not the note text.
 
 ::: warning Live submission requires an explicit approval
 Live apply is blocked until an `approve_submit` decision exists for the job

@@ -562,7 +562,10 @@ verification-code MCP server:
   it does not dispatch the apply worker.
 - `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
   outcomes and any outcome suggestions.
-- `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome.
+- `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome. For
+  `kind: "interview"`, callers may include `interviewPrepGeneration` to link a
+  post-interview reflection to an accepted or superseded prep generation for the
+  same job. The link is nullable and invalid generations are rejected.
 - `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
   ignores a pending suggestion and writes a reviewed outcome for accepted or
   corrected suggestions.
@@ -579,7 +582,9 @@ before the decision row is written. The live-apply gate is enforced again at the
 Python worker's claim transaction. `approve_submit` does not dispatch browser
 submission, and `approve_dry_run` does not start a dry run.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
-`occurredAt` timestamps when the field is supplied.
+`occurredAt` timestamps when the field is supplied. Application outcome
+responses include nullable `interviewPrepGeneration`; it is set only for linked
+manual interview reflections.
 
 These routes create `application_review_decisions`, `application_outcomes`,
 `application_email_evidence`, and `application_outcome_suggestions`
@@ -589,8 +594,8 @@ title/company, application URL/domain, and application timing signals. Full
 Gmail bodies are read and stored only after metadata confidently links to a
 known application, with provider message ID dedupe. Outcome notes and linked
 email bodies may be stored locally, but `job_events.payload_json` stores only
-safe IDs, kinds, sources, timestamps, confidence values, link signals, and
-note/body presence flags.
+safe IDs, kinds, sources, timestamps, confidence values, prep-generation links,
+link signals, and note/body presence flags.
 
 ## Pipeline and preparation actions
 

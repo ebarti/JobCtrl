@@ -1073,6 +1073,11 @@ export const ManualApplicationOutcomeRequestSchema = z
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
+    interviewPrepGeneration: z.number().int().positive().optional(),
+  })
+  .refine((value) => value.interviewPrepGeneration === undefined || value.kind === "interview", {
+    message: "interviewPrepGeneration is only valid for interview outcomes.",
+    path: ["interviewPrepGeneration"],
   })
   .strict();
 export type ManualApplicationOutcomeRequest = z.infer<typeof ManualApplicationOutcomeRequestSchema>;
@@ -1087,6 +1092,7 @@ export interface ApplicationOutcome {
   recordedAt: string;
   suggestionId: string | null;
   evidenceId: string | null;
+  interviewPrepGeneration: number | null;
 }
 
 export interface ApplicationOutcomeWriteResponse {

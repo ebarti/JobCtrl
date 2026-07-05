@@ -172,6 +172,31 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   await expect(drawer.getByRole("heading", { name: "Platform ownership story" })).toBeVisible({
     timeout: 30_000,
   });
+
+  const reflectionNote = "Asked how the platform migration should be sequenced.";
+  await drawer.getByLabel("Interview date").fill("2026-06-01T13:20");
+  await drawer.getByLabel("Reflection note").fill(reflectionNote);
+  const [outcomeResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/outcomes") && response.request().method() === "POST",
+      { timeout: 30_000 },
+    ),
+    drawer.getByRole("button", { name: /record reflection/i }).click(),
+  ]);
+  expect(outcomeResponse.status()).toBe(200);
+  expect(await outcomeResponse.json()).toMatchObject({
+    ok: true,
+    outcome: {
+      kind: "interview",
+      interviewPrepGeneration: 1,
+      note: reflectionNote,
+    },
+  });
+  const reflections = drawer.getByLabel("Post-interview reflections");
+  await expect(reflections.getByText(reflectionNote)).toBeVisible();
+  await expect(reflections.getByText("prep generation 1")).toBeVisible();
+
   await expect(drawer.getByRole("link", { name: "ev_platform" })).toBeVisible();
   await drawer.getByRole("link", { name: "ev_platform" }).click();
   await expect(page).toHaveURL(/\/evidence-map\?.*entry=ev_platform/);

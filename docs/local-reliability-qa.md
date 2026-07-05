@@ -287,7 +287,7 @@ destructive profile/database actions, or worker-backed jobs for visual QA.
 | --- | --- | --- |
 | Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 10 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery`, `useWorkflowRunsListQuery`, and `useEvidenceMapQuery`, using typed test files in Vitest's typecheck runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 14 specs in `apps/web/e2e/tests/` — 13 flow specs (`dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the drawer renders a STAR draft with an evidence-map provenance link through the SSE realtime loop. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
+| End-to-end (Playwright headless) | 14 specs in `apps/web/e2e/tests/` — 13 flow specs (`dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the drawer renders a STAR draft, records a linked reflection through the existing outcome endpoint, and follows an evidence-map provenance link through the SSE realtime loop. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 14 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, command, and inspector components (`EmployerAnalysisPanel`, `BulletProvenanceList`, `InterviewPrepPanel`, `EvidenceMapView`) — fails on critical/serious violations (target §10.7). |
 
 ### Scoring Policy Feedback Smoke
@@ -378,12 +378,10 @@ reload the draft, reply to a JobHunter comment while keeping the source pointer
 and risk label visible, verify approval buttons stay blocked until the saved
 draft validates/renders, then render a replacement and confirm the final-file
 link points at the latest approved artifact while the existing accepted artifact
-was not deleted. Manual
-outcomes should save with a
-canonical timestamp, local notes render only in the outcome timeline, pending
-outcome suggestions can be accepted, corrected, or ignored, and the job audit
-history shows review/outcome entries without raw notes, email body text,
-debug statements, or raw event names.
+was not deleted. Manual outcomes should save with a canonical timestamp, local
+notes render only in the outcome timeline, pending outcome suggestions can be
+accepted, corrected, or ignored, and the job audit history shows review/outcome
+entries without raw notes, email body text, debug statements, or raw event names.
 
 For Gmail feedback changes, use fake Gmail clients or seeded worker fixtures.
 Do not scan a real mailbox for QA automation. Verify that the scan is bounded
@@ -429,9 +427,13 @@ accepted `job_interview_prep` / `job_interview_prep_items` rows plus an
 drawer renders STAR drafts, gap drills labelled as gaps, evidence-map links,
 requirement IDs, source snippets, gate/judge status, and accepted-residual
 warnings. Confirm a failed injected generation does not hide the last accepted
-prep. Boundary check: no streaming input, transcript upload, microphone,
-websocket, in-session state, or real-time answer surface should appear in the UI,
-API routes, JSON-RPC methods, workflow inputs, or aggregate statuses.
+prep. Record a post-interview reflection from the prep panel and confirm it posts
+through `POST /v1/jobs/:jobKey/outcomes`, appears in the normal outcome timeline
+with the linked prep generation, and keeps the note text out of
+`job_events.payload_json`. Boundary check: no streaming input, transcript
+upload, microphone, websocket, in-session state, or real-time answer surface
+should appear in the UI, API routes, JSON-RPC methods, workflow inputs, or
+aggregate statuses.
 
 ### Parity tests
 

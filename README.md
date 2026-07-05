@@ -67,9 +67,10 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - LLM work can spend money and send job, profile, and generated-material text to
   configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
   but it is an estimate rather than the provider bill.
-- Interview prep is stored pre-interview material only. Do not use JobHunter as
-  a live interview assistant; it has no transcript, microphone, streaming,
-  websocket, or real-time answer surface.
+- Interview prep is stored pre-interview material only. You can record
+  post-interview reflection notes against an accepted prep generation, but do
+  not use JobHunter as a live interview assistant; it has no transcript,
+  microphone, streaming, websocket, or real-time answer surface.
 - Profiles, generated materials, browser state, logs, SQLite databases, and
   local worker state are sensitive local artifacts. Public bug reports,
   screenshots, and reproduction cases should use synthetic data only; `pnpm
@@ -213,7 +214,7 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
 5. Open Evidence from the main nav, Profile, or a job detail drawer to inspect
    which profile evidence backs generated materials and requirement-fit gaps.
-6. Generate or inspect materials for promising jobs.
+6. Generate or inspect materials and stored interview prep for promising jobs.
 7. Use Apply Review to edit/approve the resume and review comments.
 8. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the

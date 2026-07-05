@@ -100,9 +100,11 @@ These boundaries are the operator's responsibility:
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
 - **Interview prep:** JobHunter can generate stored pre-interview notes for a
-  job from grounded profile/job/material evidence. It is not a live interview
-  assistant and has no transcript upload, microphone input, streaming,
-  websocket, in-session state, or real-time answer surface.
+  job from grounded profile/job/material evidence. Post-interview reflection
+  notes can be linked to an accepted prep generation, but they stay local manual
+  outcome notes. JobHunter is not a live interview assistant and has no
+  transcript upload, microphone input, streaming, websocket, in-session state, or
+  real-time answer surface.
 
 ## Auto-Apply Safety
 
@@ -119,8 +121,8 @@ in [Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 
-- manual outcomes can be recorded without browser automation, and web approval
-  facts do not submit by themselves;
+- manual outcomes, including interview-prep reflections, can be recorded without
+  browser automation, and web approval facts do not submit by themselves;
 - failed refreshes or invalid edited drafts must not destroy current accepted
   materials.
 
