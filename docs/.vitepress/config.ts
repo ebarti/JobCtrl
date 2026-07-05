@@ -212,7 +212,7 @@ export default withMermaid(
       socialLinks: [{ icon: "github", link: REPO_URL }],
       footer: {
         message: "Documentation screenshots and examples use synthetic data unless noted.",
-        copyright: `© 2026 Eloi Barti and contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>.`,
+        copyright: `Copyright © 2026 JobHunter contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>.`,
       },
       search: {
         provider: "local",
