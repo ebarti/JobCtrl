@@ -764,7 +764,10 @@ Per `CLAUDE.md` documentation table, when each phase lands:
 
 ## Owner Decisions
 
-Resolved 2026-07-05 during implementation:
+Resolved 2026-07-05 during implementation. Per owner instruction, proceed on
+the plan recommendations for decisions 1-5; decision 6 remains the only
+blocking owner decision and must stop the stack at the P3 boundary until
+resolved:
 
 1. **Evidence-map read model: projection vs live read.** Decision:
    `evidence_usage_projections` (dual-builder, parity-tested, SSE-fresh). The
