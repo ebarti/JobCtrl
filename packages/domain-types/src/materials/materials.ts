@@ -1,7 +1,7 @@
 /**
  * Materials Generation aggregate + value objects — TypeScript mirror.
  *
- * See ddd-target.md §4.5. The Python ``MaterialsSet`` aggregate
+ * See docs/architecture/domain-model/tactical.md §4.5. The Python ``MaterialsSet`` aggregate
  * (``workers/automation/src/jobhunter/domain/materials/aggregate.py``) is
  * the source of truth; both languages must stay structurally compatible.
  *

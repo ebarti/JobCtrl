@@ -7,7 +7,7 @@
  * and the Workflow Runs UI without a trigger-coupled reaper.
  *
  * @see docs/plans/2026-07-03-temporal-native-rearchitecture.md (P0)
- * @see ddd-target.md §4.7
+ * @see docs/architecture/domain-model/tactical.md §4.7
  */
 
 import type { TenantId } from "../tenant.js";

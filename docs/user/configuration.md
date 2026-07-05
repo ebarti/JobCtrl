@@ -1,8 +1,19 @@
+---
+pageClass: jh-user-guide-page
+---
+
 # Configuration
 
-JobHunter configuration is intentionally local. Some settings are stored in the
-local SQLite database through the web UI; secrets and runtime switches are read
-from environment variables.
+Most people never need this page. JobHunter ships with working defaults, and the
+Discovery targets and preferences you set in the web app cover day-to-day use.
+The two settings worth knowing first are an **LLM provider key** (required before
+scoring or materials can run) and the **daily LLM spend budget** (which caps
+cost) — both are covered below.
+
+JobHunter configuration is intentionally local. Some settings live in the local
+SQLite database, set through the web app; secrets and runtime switches are read
+from environment variables. Everything here is optional unless a feature you want
+depends on it.
 
 ## Configuration Sources
 
@@ -12,7 +23,7 @@ from environment variables.
 | `~/.jobhunter/.env` | Personal provider keys and runtime environment. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | One-off overrides for commands and CI. |
-| `workers/automation/src/jobhunter/config/*.yaml` | Packaged employer, source, ATS, and site behavior registries. |
+| `workers/automation/src/jobhunter/config/*.yaml` | Packaged employer and site behavior registries (`employers.yaml`, `sites.yaml`). The dynamic source registry lives in SQLite. |
 
 The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optional
 `JOBHUNTER_USER_ENV_PATH` file before starting local services.
@@ -22,15 +33,20 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JOBHUNTER_DIR` | `~/.jobhunter` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
-| `JOBHUNTER_DB_PATH` | `$JOBHUNTER_DIR/jobhunter.db` | TypeScript API database path. Use only when API and worker must point at a specific copy. |
-| `JOBHUNTER_DASHBOARD_CONFIG_PATH` | `$JOBHUNTER_DIR/dashboard.json` | Legacy settings-path override still used by local runtime compatibility surfaces. |
+| `JOBHUNTER_DB_PATH` | `$JOBHUNTER_DIR/jobhunter.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBHUNTER_DIR/jobhunter.db`, so overriding it desynchronizes the API from the worker — prefer `JOBHUNTER_DIR` to move both. |
+| `JOBHUNTER_DASHBOARD_CONFIG_PATH` | `$JOBHUNTER_DIR/dashboard.json` | Settings file read and written by the TypeScript API (preferences, apply approval gate, spend budget). |
 | `JOBHUNTER_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
 | `JOBHUNTER_API_PORT` / `PORT` | `8766` | Local API port. |
 | `JOBHUNTER_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
 | `JOBHUNTER_WEB_PORT` | `5173` | Requested Vite development port. |
 | `VITE_JOBHUNTER_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
-| `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal dev-server SQLite history store. |
-| `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local JobHunter worker runs at once. Set in the worker environment and restart the worker to apply changes. |
+| `JOBHUNTER_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
+| `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
+| `JOBHUNTER_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
+| `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
+| `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
 
 ## LLM Providers
 
@@ -39,10 +55,21 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 | `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials. |
 | `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. |
 | `LLM_URL` | Enables a local OpenAI-compatible HTTP endpoint. |
+| `LLM_API_KEY` | Optional bearer token for the `LLM_URL` endpoint. |
+| `GOOGLE_API_KEY` | Fallback for the Antigravity/Gemini analysis leg when `GEMINI_API_KEY` is unset. |
 | `LLM_MODEL` | Overrides the provider default model. |
 
 The pipeline default model spec is currently `gemini:gemini-3.5-flash` unless a
 stage or UI control overrides it.
+
+## LLM Spend Budget
+
+The daily LLM budget is a preference stored in SQLite (`dailyBudgetUsd`,
+default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
+budget preflight before their heavy activities and stop with a non-retryable
+budget error once the estimated daily spend reaches the ceiling.
+`GET /v1/health` reports today's estimated spend against the configured
+budget, and the Preferences form edits the value.
 
 ## Discovery
 
@@ -50,11 +77,20 @@ stage or UI control overrides it.
 | --- | --- | --- |
 | `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER` | `auto` | Uses an LLM to adjudicate loose role-title matches when an LLM provider is configured. Set `0` to force deterministic matching only. |
 | `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL` | configured LLM model | Optional model spec for discovery role adjudication. |
-| `PROXY` | unset | Optional scraping proxy in `host:port:user:pass` form. |
 
 Discovery target roles, locations, seniority, work models, source controls, and
 automation preferences are normally edited in the Discovery page and stored in
-SQLite.
+SQLite. A scraping proxy, when needed, is part of those SQLite discovery
+settings (`host:port:user:pass` form); there is no `PROXY` environment
+variable.
+
+![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
+*Target roles, locations, seniority floors, work models, and source controls are edited on the Discovery page and stored in SQLite.*
+
+Discovery scheduling is also a SQLite-backed setting: `scheduling_enabled`
+defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker
+startup reconciles the local Temporal schedule — creating it (with `SKIP`
+overlap semantics) when enabled and deleting it when disabled.
 
 ## Materials And Resume Rendering
 
@@ -104,6 +140,9 @@ uv --project workers/automation run jobhunter gmail-auth
 uv --project workers/automation run jobhunter doctor
 ```
 
+The first runs the Gmail sign-in and writes your local token; the second
+re-checks that the connector is now available.
+
 The connector requests Gmail read-only scope. Raw Gmail bodies stay local and are
 not copied into events, telemetry, broad projections, or logs.
 
@@ -126,6 +165,7 @@ Provider payloads and restricted datasets should never be committed.
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to Langfuse. |
 | `LANGFUSE_DISABLE=1` | Disable export even when credentials are present. |
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
+| `JOBHUNTER_ENV` | Environment attribute stamped on exported traces, default `local`. |
 
 When Langfuse export is enabled, LLM prompts and completions are exported to the
 configured Langfuse instance. Do not enable it for private runs unless that is

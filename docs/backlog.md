@@ -1,27 +1,35 @@
 # Backlog
 
 This is the detailed engineering backlog. The public roadmap lives in
-[`ROADMAP.md`](../ROADMAP.md). Keep active accepted or exploratory proposals
-under `docs/plans/proposed/`; move delivered or superseded plans to
-`docs/plans/implemented/` and summarize delivered work in `docs/delivered.md`.
+[`ROADMAP.md`](../ROADMAP.md). Keep active accepted plans at the top level of
+`docs/plans/`; move delivered or superseded plans to
+`docs/plans/implemented/`. Delivery history lives in the git log and the
+implemented plan records.
 
-## Current State Snapshot (2026-06-26)
+## Current State Snapshot (2026-07-04)
 
-Delivered work is archived in [`docs/delivered.md`](delivered.md) and the
-implemented plan directory. Discovery RFC production wiring and scoring
-intelligence are implemented via PR #61; the calibrated scoring policy stack,
-target-search recall, the single Discovery preparation stage, apply review and
-outcome feedback, resume-tailoring quality gates, the local Temporal stack, DDD
-/ hexagonal migration, frontend TanStack migration, HTML/CSS resume rendering,
-and the Plate-backed Apply Review surface are also implemented.
+Delivered work is recorded in the git log and the implemented plan directory.
+Discovery RFC production wiring and scoring intelligence are implemented via
+PR #61; the calibrated scoring policy stack, target-search recall, the single
+Discovery preparation stage, apply review and outcome feedback,
+resume-tailoring quality gates, DDD / hexagonal migration, frontend TanStack
+migration, HTML/CSS resume rendering, and the Plate-backed Apply Review
+surface are also implemented. The Temporal-native rearchitecture
+([`docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`](plans/implemented/2026-07-03-temporal-native-rearchitecture.md),
+P0–P5) landed 2026-07-03 → 2026-07-04: workflow loop closure with unified
+run projections and a reconciler, bounded LLM retries, classified errors
+raised into Temporal retry, at-most-once apply submission behind a binding
+approval gate with a browser-layer dry-run guard, per-job
+`JobPreparationWorkflow`, `DiscoverWorkflow` with per-source activities and
+schedules off by default, CLI-started workflows, and the daily LLM spend
+ceiling.
 
 The active local-product backlog is the remaining validation and hardening
-work below: realtime cache patching beyond apply-run timeline events,
-non-apply workflow-run / cancellation parity, cleanup of legacy `jobs.*`
-storage fallbacks, table/artifact/profile UX improvements, browser QA gaps,
-frontend a11y deferrals, and tooling / CI enforcement gaps. Hosted product,
-hosted data, hosted automation, packaging, and cloud-mode frontend adapters
-remain deferred until the local product is solid.
+work below: realtime cache patching beyond apply-run timeline events, cleanup
+of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
+browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
+Hosted product, hosted data, hosted automation, packaging, and cloud-mode
+frontend adapters remain deferred until the local product is solid.
 
 ## Release Hardening Follow-Ups
 
@@ -47,6 +55,13 @@ remain deferred until the local product is solid.
 
 ### Frontend/API Parity
 
+- BR-007 is partially unmet on the operations dashboard (2026-07-04
+  requirements audit): no "stuck" work bucket exists anywhere in the web app,
+  and the recent-activity feed renders on the Debug view while
+  `DashboardView.tsx` never consumes the `summary.activity` payload the API
+  already returns. Fix is product work — add the stuck bucket and move the
+  activity feed onto the dashboard; do not reword the requirement to match
+  the current UI.
 - Extend targeted row patching beyond the single `ApplyRunEventRecorded`
   handler. The SSE pipeline and invalidation router are live, and
   `ApplyRunEventRecorded` is the only handler that returns a
@@ -57,18 +72,13 @@ remain deferred until the local product is solid.
 
 ### Worker Reliability
 
-- Extend workflow-run projections beyond apply. Global `run_stage` now starts
-  `JobPipelineWorkflow` and returns a workflow ID to the API, and apply steps
-  inside that pipeline run as child `ApplyWorkflow` executions. However,
-  `/v1/workflow-runs` is still backed by apply-run projections. A uniform
-  workflow-run projection is still needed if the dashboard should list
-  discover/enrich/score/tailor/cover workflow lifecycle rows alongside
-  apply runs.
-- Add cancellation UX for queued or running non-apply local actions.
-  `run_stage` now has a Temporal workflow ID, so cooperative cancellation can
-  use `cancel_run`, but the UI still needs a first-class cancel control for
-  those pipeline runs. `profile_import` remains synchronous inside the JSON-RPC
-  handler and still has no cancel surface.
+- Parallelize search-combination execution inside a discovery source family.
+  `jobspy.py` runs the planned search combinations of one family in a plain
+  sequential loop; family-level activities stay sequential by design
+  (isolation), so the untapped parallelism is inside a family. Named as a
+  follow-up in PR #250's root-cause analysis alongside making projection
+  refresh non-critical to workflow execution.
+
 - Record `score_report` artifacts. PR 7 of the Temporal stack wired
   `state.record_job_artifact` into `apply.launcher.mark_result` so the
   per-worker agent log (`LOG_DIR/worker-{worker_id}.log`) lands in
@@ -79,14 +89,13 @@ remain deferred until the local product is solid.
   artifact requires a behaviour change (introducing a per-job report
   file) that PR 7 deliberately did not take. File this when an operator
   asks for an exportable score report.
-- Refactor non-apply stage runners to accept a single `job_url` so
-  `JobPipelineWorkflow` can drive per-job batches. Today the runners are
-  batch-only — they walk DB selectors over the entire `jobs` table — and
-  only `ApplyWorkflow` is truly per-job. Driver path: `discovery`,
-  `enrichment`, `scoring`, `materials/tailor`, `materials/cover`,
-  `materials/pdf`. Once the runners take a `job_url`, the workflow can
-  expose `(TenantId, JobId)` semantics and PR 4's `apply_runs → workflow
-  runs` collapse can extend uniformly to the non-apply stages.
+- Refactor the batch stage runners to accept a single `job_url` so
+  `JobPipelineWorkflow` can drive per-job batches. Today the batch runners
+  walk DB selectors over the entire `jobs` table; per-job execution exists
+  only through `ApplyWorkflow` and the `JobPreparationWorkflow`
+  score/tailor/cover/pdf steps. Once the batch runners take a `job_url`,
+  `JobPipelineWorkflow` can expose `(TenantId, JobId)` semantics for the
+  non-apply stages as well.
 
 ### Scoring Calibration
 
@@ -101,18 +110,17 @@ and jobs UI.
 ### Workflow Orchestration (Local Temporal)
 
 Delivered by
-[`docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md`](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md).
-The local Temporal foundation, activity registry, `ApplyWorkflow`, JSON-RPC
-workflow mode, `cancel_run`, `apply_runs` collapse, Workflow Runs view,
-canonical stage-state writer cleanup, apply-log artifact registration, and
-Langfuse/OpenTelemetry wiring have landed.
+[`docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md`](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md)
+and completed by the Temporal-native rearchitecture
+([`docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`](plans/implemented/2026-07-03-temporal-native-rearchitecture.md),
+P0–P5). Orchestration now lives entirely in Temporal: work-starting commands
+start workflows from the CLI and API, `/v1/workflow-runs` reads the unified
+`workflow_run_projections` table, workflow runs have a first-class UI cancel
+control, and `ProfileImportWorkflow` replaced the last synchronous heavy
+JSON-RPC path.
 
-Remaining local reliability work is tracked in the Worker Reliability bullets
-above: non-apply `run_stage` now uses Temporal but still needs workflow-run
-projection parity and UI cancellation; `profile_import` remains the synchronous
-JSON-RPC local action.
-
-Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
+Out of scope for the local stack (tracked under
+[SaaS And Commercialization](#saas-and-commercialization)):
 
 - Managed Temporal Cloud,
 - distributed worker fleet (multi-machine task queues),
@@ -260,6 +268,14 @@ These items are intentionally deferred until local validation is solid.
 - Per-tenant concurrency and rate limits.
 - Policy controls for auto-apply and CAPTCHA-adjacent behavior.
 
+### Hosted Observability
+
+- Central metrics.
+- Error tracking.
+- Worker dashboards.
+- Alerting.
+- Uptime monitoring.
+
 ### Packaging And Distribution
 
 - Signed local desktop package.
@@ -270,7 +286,7 @@ These items are intentionally deferred until local validation is solid.
 ## Frontend Cloud-Mode Adapters
 
 These are the named-not-built cloud adapters from
-[`docs/frontend-target.md`](frontend-target.md) §9. The seam exists today;
+[`docs/architecture/frontend/integration.md`](architecture/frontend/integration.md) §9. The seam exists today;
 the adapter swap is gated by the fitness function. Per the no-strangler
 memo, when a fitness function fires the adapter swap is rip-and-replace —
 no dual-mount, no compatibility shim.
@@ -289,12 +305,12 @@ no dual-mount, no compatibility shim.
   `useSession()` hook returning `{ tenantId, userId, roles, expiresAt }`.
   Fitness function: the API is exposed beyond `127.0.0.1` (also the
   trigger for the backend Identity & Access context per
-  `docs/ddd-target.md` §9.4).
+  `docs/architecture/domain-model/cloud.md` §9.4).
 - **Tenant-scoped routing prefix `/t/$tenantId/*`.** §9.4.
   TanStack Router layout route; tenant switcher in the AppShell;
   `<TenantProvider />` reads the path segment first, JWT default tenant
   second. Cache isolation is already free (query keys are tenant-first
-  per `docs/frontend-target.md` §4.1). Fitness function: a single user
+  per `docs/architecture/frontend/patterns.md` §4.1). Fitness function: a single user
   belongs to more than one tenant.
 - **`OpenTelemetryWebAdapter` for the `TelemetryPort`.** §9.5.
   Emits OTLP spans for route navigations, mutation calls, and error
@@ -404,14 +420,6 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   are `job_enrichments`, `jobhunter_deleted_jobs`, source-registry rows, and
   resume-review draft/comment tables when new E2E flows need those exact
   production schemas.
-- **Generate-materials backend enablement** — DONE (INSPECT-01). The
-  `POST /v1/jobs/:jobKey/actions/generate-materials` route now dispatches a
-  `run_stage` command over the canonical material stages (tailor → cover) and
-  returns 202 when the worker is ready; `useGenerateMaterialsMutation` calls it
-  with an optimistic queued patch + rollback, and `<GenerateMaterialsButton>` is
-  enabled. A dedicated targeted `GenerateMaterialsUseCase`/RPC (instead of
-  reusing the `run_stage` pickup path) remains a possible future refinement but
-  is not required for the per-job product surface.
 - **`DryRunCompleted` event addition to `DomainEventUnion`** — Phase 6
   reviewer note. The worker emits `DryRunCompleted`, and the apply-run
   projection maps it to `dry_run_complete`, but the frontend

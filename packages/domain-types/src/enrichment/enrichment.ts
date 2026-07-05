@@ -1,7 +1,7 @@
 /**
  * JobEnrichment aggregate + EnrichmentAttempt entity — TypeScript mirror.
  *
- * See ddd-target.md §4.2. The Python ``JobEnrichment`` aggregate
+ * See docs/architecture/domain-model/tactical.md §4.2. The Python ``JobEnrichment`` aggregate
  * (``workers/automation/src/jobhunter/domain/enrichment/aggregate.py``)
  * is the source of truth; both languages must stay structurally
  * compatible.

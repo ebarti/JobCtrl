@@ -1,7 +1,7 @@
 /**
  * Job Enrichment domain events.
  *
- * @see ddd-target.md §4.2
+ * @see docs/architecture/domain-model/tactical.md §4.2
  *
  * PR3 additions: PostingContentSnapshotCaptured, PostingContentSnapshotFailed,
  * JobActiveStateChanged, ContentDuplicateCandidateDetected. Each event shape

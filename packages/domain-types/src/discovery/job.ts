@@ -1,7 +1,7 @@
 /**
  * Job aggregate + discovery value objects — TypeScript mirror.
  *
- * See ddd-target.md §4.1. The Python ``Job`` aggregate
+ * See docs/architecture/domain-model/tactical.md §4.1. The Python ``Job`` aggregate
  * (``workers/automation/src/jobhunter/domain/discovery/aggregate.py``) is
  * the source of truth; both languages must stay structurally compatible.
  *

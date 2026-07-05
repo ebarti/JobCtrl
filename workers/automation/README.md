@@ -21,7 +21,7 @@ Useful docs:
 - root `README.md` for the public overview and quick start;
 - `docs/user/getting-started.md` for setup and local stack commands;
 - `docs/user/configuration.md` for environment variables;
-- `docs/architecture.md` and `docs/job-pipeline-architecture.md` for internal
+- `docs/architecture/` and `docs/architecture/pipeline/` for internal
   runtime ownership.
 
 Profile data, generated materials, browser state, logs, and SQLite databases

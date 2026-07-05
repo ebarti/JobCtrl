@@ -284,9 +284,9 @@ Work items:
    no longer in the working tree) — the owner first name, full
    name, username, personal domain, LinkedIn profile slug, the two real
    employer names that appear as owner evidence in the leaked fixtures, the
-   lowercase seed-marker token, private toolchain path fragments (the
-   owner's absolute home-directory prefix, `.codex/gsd-core`,
-   `.agents/skills`), and the private skill-banner prefix.
+   lowercase seed-marker token, private local-toolchain path fragments (the
+   owner's absolute home-directory prefix and private agent-runtime/skill
+   directories), and the private skill-banner prefix.
 3. **Collision rule:** the public maintainer byline (the GitHub handle in
    `package.json` / `pyproject.toml` / README author fields) is intended
    and allowed. Do NOT add the bare surname or the GitHub handle as

@@ -1,7 +1,7 @@
 /**
  * Scoring domain events.
  *
- * @see ddd-target.md §4.4
+ * @see docs/architecture/domain-model/tactical.md §4.4
  */
 
 import type { TenantId } from "../tenant.js";

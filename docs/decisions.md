@@ -1,7 +1,82 @@
-# Decisions
+# Decisions (ADRs)
 
-This file records architectural decisions. Keep entries short, dated, and
-append-only unless a decision is superseded.
+This is JobHunter's log of Architecture Decision Records (ADRs): short, dated,
+append-only notes on why the codebase is shaped the way it is. Once written, an
+entry stays verbatim — a reversed decision earns a new entry that supersedes the
+old one, and later refinements are appended inline as dated amendments.
+
+**Read this if** you are about to make an architectural change and want to know
+what was already decided, when, and why — or you are reviewing a change against
+prior decisions.
+
+The index below groups the records by area; the records themselves follow in
+chronological order. For the full inventory of every plan and spec that produced
+these decisions — tracked plans and the untracked private planning corpus — see
+the Historical Spec Ledger in `plans/README.md`.
+
+## Index
+
+**Product strategy & repository shape**
+
+- [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
+- [TypeScript Product API, Python Workers](#_2026-05-01-typescript-product-api-python-workers) · 2026-05-01
+- [pnpm Workspace With Python Automation Worker](#_2026-05-04-pnpm-workspace-with-python-automation-worker) · 2026-05-04
+
+**Local API & runtime**
+
+- [Fastify For The Local API](#_2026-05-02-fastify-for-the-local-api) · 2026-05-02
+- [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
+- [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
+- [Copyable Commands Stay, Buttons Use Structured Actions](#_2026-05-03-copyable-commands-stay-buttons-use-structured-actions) · 2026-05-03
+
+**Backend domain model (DDD + hexagonal)**
+
+- [DDD + Hexagonal Architecture Adopted](#_2026-05-06-ddd-hexagonal-architecture-adopted) · 2026-05-06
+- [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
+- [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
+- [JSON-RPC 2.0 for the TS API ↔ Python Worker](#_2026-05-06-json-rpc-2-0-for-the-ts-api-↔-python-worker) · 2026-05-06
+
+**Frontend architecture**
+
+- [React With Vite For The Frontend](#_2026-05-02-react-with-vite-for-the-frontend) · 2026-05-02
+- [TanStack Family Adopted For The Frontend](#_2026-05-06-tanstack-family-adopted-for-the-frontend) · 2026-05-06
+- [Frontend Hexagonal Ports With Local + Hosted Adapters Named](#_2026-05-06-frontend-hexagonal-ports-with-local-hosted-adapters-named) · 2026-05-06
+- [SSE Realtime Via `GET /v1/events/stream` + Invalidation Router](#_2026-05-06-sse-realtime-via-get-v1-events-stream-invalidation-router) · 2026-05-06
+- [View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror](#_2026-05-06-view-vs-context-dichotomy-1-1-backend-bounded-context-mirror) · 2026-05-06
+
+**Orchestration & workflow reliability (Temporal)**
+
+- [Collapse `apply_runs` into the Temporal workflow run](#_2026-05-07-collapse-apply-runs-into-the-temporal-workflow-run) · 2026-05-07
+- [Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs](#_2026-07-03-temporal-loop-closure-—-finalize-activities-describe-reconciler-deterministic-workflow-ids) · 2026-07-03
+- [DiscoverWorkflow And Default-Off Temporal Schedules](#_2026-07-03-discoverworkflow-and-default-off-temporal-schedules) · 2026-07-03
+- [One Temporal Execution Path For Long-Running Work](#_2026-07-03-one-temporal-execution-path-for-long-running-work) · 2026-07-03
+- [Heavy Sync RPC Handlers Become Workflows](#_2026-07-03-heavy-sync-rpc-handlers-become-workflows) · 2026-07-03
+- [Classified Errors Drive Temporal Retry; Bounded Attempts](#_2026-07-03-classified-errors-drive-temporal-retry-bounded-attempts) · 2026-07-03
+- [Per-Job JobPreparationWorkflow Replaces The Preparation Queue](#_2026-07-03-per-job-jobpreparationworkflow-replaces-the-preparation-queue) · 2026-07-03
+
+**Scoring, materials & tailoring**
+
+- [Resume Tailoring Quality Is A Product System, Not Prompt Wording](#_2026-06-03-resume-tailoring-quality-is-a-product-system-not-prompt-wording) · 2026-06-03
+- [Employer Analysis Via A 3-SDK Agent Ensemble](#_2026-06-09-employer-analysis-via-a-3-sdk-agent-ensemble) · 2026-06-09
+- [Generated-Materials Audit Is Served From Canonical Provenance Rows](#_2026-06-09-generated-materials-audit-is-served-from-canonical-provenance-rows) · 2026-06-09
+- [Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit](#_2026-06-15-requirement-fit-ledger-—-scores-resolve-from-weighted-requirement-fit) · 2026-06-15
+- [HTML/CSS Resume Rendering Replaces LaTeX](#_2026-06-24-html-css-resume-rendering-replaces-latex) · 2026-06-24
+- [Requirement-Led Resume Tailoring](#_2026-06-30-requirement-led-resume-tailoring) · 2026-06-30
+
+**Discovery & compensation**
+
+- [Compensation Is Warning-Only Evidence From Reported Company-Role Observations](#_2026-06-20-compensation-is-warning-only-evidence-from-reported-company-role-observations) · 2026-06-20
+- [Cross-Source Deduplication By Content Identity](#_2026-07-02-cross-source-deduplication-by-content-identity) · 2026-07-02
+
+**Apply safety & outcomes**
+
+- [Application-Outcome Feedback Loop With Bounded Gmail Ingestion](#_2026-06-01-application-outcome-feedback-loop-with-bounded-gmail-ingestion) · 2026-06-01
+- [At-Most-Once Apply With Binding Approval Gate](#_2026-07-03-at-most-once-apply-with-binding-approval-gate) · 2026-07-03
+
+**Data durability & spend**
+
+- [SQLite Backup Command + Schema-Version Guard](#_2026-07-02-sqlite-backup-command-schema-version-guard) · 2026-07-02
+- [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
 ## 2026-05-01: Local-First Before SaaS Hardening
 
@@ -165,7 +240,7 @@ Consequences:
 Status: accepted
 
 Decision: restructure the worker (and the read-side of the TS API) around the
-eight bounded contexts defined in `docs/ddd-target.md` — Job Discovery,
+eight bounded contexts defined in `docs/architecture/domain-model/` — Job Discovery,
 Job Enrichment, Candidate Profile, Scoring, Materials Generation, Apply
 Automation, Pipeline Orchestration, and Operations / Read-Side. Each context
 has an aggregate root, value objects, domain events, driving use cases, and
@@ -177,7 +252,7 @@ Rationale:
   was preventing meaningful refactor and making the TS↔Python seam fragile
 - explicit aggregates make invariants enforceable in one place per context
 - ports + adapters give us a clean evolution path to the hosted architecture
-  named in `docs/ddd-target.md` §5 / §9 (Postgres, S3, SQS, Browserbase,
+  named in `docs/architecture/domain-model/` §5 / §9 (Postgres, S3, SQS, Browserbase,
   Temporal) without dual-writes
 
 Consequences:
@@ -199,7 +274,7 @@ Decision: every aggregate root has a dedicated repository port (`JobRepository`,
 `ProfileRepository`, `ScoreRepository`, `MaterialsRepository`,
 `EnrichmentRepository`, `ApplyRunRepository`, `PipelineStateRepository`).
 Local adapters are SQLite-backed; hosted adapters (Postgres) are named in
-`docs/ddd-target.md` but not implemented yet.
+`docs/architecture/domain-model/` but not implemented yet.
 
 Rationale:
 
@@ -218,6 +293,11 @@ Consequences:
 - read-side joins were canonicalised through projection tables in Phase 9
   (see next ADR)
 
+Amended (2026-07-04): the bespoke `apply_runs` and `apply_run_events` tables
+listed above were dropped (see the 2026-05-07 apply-run decision below); apply
+lifecycle state now persists as domain events in `job_events` and is read back
+through `apply_run_projections`. The other per-aggregate tables remain.
+
 ## 2026-05-06: In-Process EventPublisher + Read-Model Projections
 
 Status: accepted
@@ -228,7 +308,7 @@ projections (`job_list_projections`, `dashboard_projections`,
 `job_detail_projections`, `artifact_list_projections`,
 `apply_run_projections`) that the TS read-model and dashboards query
 directly. The hosted-future cutover is a SQS-FIFO transactional outbox per
-`docs/ddd-target.md` §6.3.
+`docs/architecture/domain-model/` §6.3.
 
 Rationale:
 
@@ -252,6 +332,14 @@ Consequences:
   `_LATEST_MATERIALS_JOIN`, `_LATEST_ENRICHMENT_JOIN`,
   `_LATEST_APPLY_RUN_JOIN`) are deleted from `read-model.ts`
 
+Amended (2026-07-04): the projection set has grown from five to **seven**. The
+Temporal work added `workflow_run_projections` (Python-sole-writer; the unified
+Workflow Runs list) and `source_quality_stats` (per-source discovery health).
+The canonical list is `PROJECTION_TABLES` in
+`infrastructure/projections/sqlite_projection_store.py`: `job_list_projections`,
+`dashboard_projections`, `job_detail_projections`, `artifact_list_projections`,
+`apply_run_projections`, `workflow_run_projections`, `source_quality_stats`.
+
 ## 2026-05-06: JSON-RPC 2.0 for the TS API ↔ Python Worker
 
 Status: accepted
@@ -272,7 +360,7 @@ Rationale:
   (`sync`, `workflow`, `streaming`), and a single long-lived worker
   per API process
 - the protocol matches what we'd ship to a hosted gRPC / HTTP transport
-  later — Section 9 of `docs/ddd-target.md` names the swap
+  later — §9 of `docs/architecture/domain-model/cloud.md` names the swap
 
 Consequences:
 
@@ -352,9 +440,18 @@ Consequences:
   developers must run `pnpm web:dev` once after pulling new routes for
   the codegen to settle.
 - The hosted SSR / RSC evolution path (§9.1, §9.2 of
-  `docs/frontend-target.md`) is TanStack Start — same primitives, named
+  `docs/architecture/frontend/`) is TanStack Start — same primitives, named
   not built.
-- Cites: `docs/frontend-target.md` §4.1, §4.3, §4.5, §4.6.
+- Cites: `docs/architecture/frontend/` §4.1, §4.3, §4.5, §4.6.
+
+Amended (2026-07-04): three details above have drifted. (1) The router codegen
+plugin is `@tanstack/router-plugin` — the `@tanstack/router-vite-plugin` package
+was renamed; the Vite integration is imported from it. (2) `routeTree.gen.ts` is
+**committed** to the repo (`apps/web/src/routeTree.gen.ts`), not gitignored. (3)
+The invalidation router wires **seven** aggregate-context `DomainEvent` handlers
+(`contexts/{discovery,enrichment,profile,scoring,materials,apply,pipeline}/handlers.ts`);
+`operations/` hosts the router itself rather than a handler, so there are seven
+handlers across the eight context folders, not eight.
 
 ## 2026-05-06: Frontend Hexagonal Ports With Local + Hosted Adapters Named
 
@@ -379,7 +476,7 @@ adapter named-not-built per the cloud-evolution path:
 
 Rationale:
 
-- Mirrors the backend's hexagonal architecture (`docs/ddd-target.md` §3,
+- Mirrors the backend's hexagonal architecture (`docs/architecture/domain-model/` §3,
   §5) so the same vocabulary applies on both sides of the wire.
 - Cloud-evolution seams are in place from day one: every port that needs
   to swap when JobHunter goes hosted (auth, storage, telemetry, event
@@ -414,7 +511,7 @@ Consequences:
   *cannot* be the same as local-mode (browsers cannot open local files);
   the hosted adapter returns `Unsupported` and the UI surfaces a
   presigned-URL download affordance instead.
-- Cites: `docs/frontend-target.md` §6, §9.
+- Cites: `docs/architecture/frontend/` §6, §9.
 
 ## 2026-05-06: SSE Realtime Via `GET /v1/events/stream` + Invalidation Router
 
@@ -461,7 +558,7 @@ Rationale:
   polyfill).
 - The router is testable in isolation: `handleEvent(event,
   mockQueryClient)` for each event type, asserting the exact set of
-  `invalidateQueries` / `setQueryData` calls. Per `docs/frontend-target.md`
+  `invalidateQueries` / `setQueryData` calls. Per `docs/architecture/frontend/`
   §10.2, this is "the most important unit test in the app" — the
   contract surface between the backend's events and the frontend's cache.
 - The `Record<DomainEvent["eventType"], InvalidationHandler>` typing makes
@@ -487,7 +584,17 @@ Consequences:
   for a single-user local app; it would matter under hosted multi-tenant
   scale, which is exactly when the WebSocket adapter's fitness function
   fires.
-- Cites: `docs/frontend-target.md` §7, §8.4.
+- Cites: `docs/architecture/frontend/` §7, §8.4.
+
+Amended (2026-07-04): the `DomainEvent` type is a **plain TypeScript
+discriminated union**, not a Zod schema. It lives in
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, 68 event types
+in `DOMAIN_EVENT_TYPES`), mirrored by the Python registry — it is not in
+`packages/contracts`. The SSE adapter validates each frame by set-membership on
+the known event types plus `JSON.parse`
+(`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by Zod parsing. The
+`Record<DomainEvent["eventType"], InvalidationHandler>` typing and the
+`every-event-has-handler.test.ts` parity test still hold.
 
 ## 2026-05-06: View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror
 
@@ -555,7 +662,12 @@ Consequences:
   any import of `views/*` from a `contexts/*` file is a violation; any
   import of one `contexts/*` from another (other than `operations/`) is
   a violation.
-- Cites: `docs/frontend-target.md` §3.10, §11.
+- Cites: `docs/architecture/frontend/` §3.10, §11.
+
+Amended (2026-07-04): the view layer has grown from three folders to **eight**
+under `apps/web/src/views/`: `apply-review`, `artifacts`, `dashboard`, `debug`,
+`discovery`, `jobs`, `pipelines`, `runs`. The composer-not-context rule and the
+eight-context-folder mirror above are unchanged.
 
 ## 2026-05-07: Collapse `apply_runs` into the Temporal workflow run
 
@@ -594,6 +706,361 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
 
+Amended (2026-07-04): the decision above is accurate that the bespoke
+`apply_runs` / `apply_run_events` tables were dropped, but the Python
+`SqliteApplyRunRepository` class was **not** deleted — it is retained in
+`apply/launcher.py` and now persists apply lifecycle facts through
+`record_job_event` into the `job_events` event store (consistent with
+"persistence happens via `record_job_event`" above). Only the bespoke tables and
+the TS `apply_runs → apply_run_projections` projector were removed.
+
+## 2026-06-01: Application-Outcome Feedback Loop With Bounded Gmail Ingestion
+
+Status: accepted
+
+Decision: JobHunter tracks what happens to a submitted application and closes the
+loop with a bounded, Gmail-only email feedback path. A local review/outcome model
+(review decisions, reviewed outcomes, linked email evidence, outcome suggestions)
+lives in SQLite behind the existing Apply, Pipeline, Operations, and
+Profile/Gmail boundaries — no new CRM context. A dedicated Gmail feedback module
+(`infrastructure/gmail/feedback.py`, separate from the verification-only MCP
+server) searches for messages that match a known application, scores confidence,
+and fetches a full message body only after the message is linked to an
+application; deterministic v1 classification maps bodies to confirmation,
+recruiter reply, interview, assessment, rejection, offer, bounce, or unknown, and
+produces outcome suggestions the user accepts or declines.
+
+Rationale:
+
+- outcome data is the signal that shows whether discovery, scoring, and tailoring
+  are actually working; without it the pipeline is open-loop
+- reusing the existing bounded contexts avoids a premature CRM abstraction for a
+  single-user product
+- a bounded feedback scanner (not a general mailbox reader) plus
+  fetch-body-only-after-link keeps mailbox access proportionate to the feature
+
+Consequences:
+
+- raw Gmail bodies stay out of event payloads, telemetry, logs, and dashboard
+  projections; only safe evidence identifiers are written into `job_events`
+- email evidence is stored locally with body text and a body hash so duplicate
+  Gmail message ids dedupe
+- outcomes are suggestions until a user commits them; manual outcomes remain
+  available without any mailbox scan
+- the Apply Review queue (`views/apply-review/`) and the job drawer outcome
+  timeline read these local models through Operations hooks
+
+Cites: `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`;
+PRs #115, #116, #117.
+
+## 2026-06-03: Resume Tailoring Quality Is A Product System, Not Prompt Wording
+
+Status: accepted
+
+Decision: resume quality is controlled by typed evidence, deterministic checks,
+and a tiered review gate rather than by prompt wording alone. Achievement evidence
+becomes a typed profile value object with a claim mode (verified,
+evidence-reframing, adjacent translation, draft-requiring-confirmation); only
+verified and evidence-reframed claims may be auto-approved. Deterministic quality
+checks (`domain/materials/quality.py`) enforce standard sections, required
+evidence IDs, verified-metric sourcing, keyword coverage / anti-stuffing, and
+seniority-appropriate scope before and after generation. High-fit jobs
+(fit >= 8/10) additionally run a six-persona adversarial review
+(`domain/materials/adversarial.py`) after the normal judge; any blocker keeps the
+resume unapproved.
+
+Rationale:
+
+- "creativity" cannot be one boolean — the system needs claim modes so evidence
+  reframing is auto-approvable while adjacent/draft claims require confirmation
+- ATS readability, keyword stuffing, and seniority mismatch are partly
+  deterministic and should be caught without spending an LLM judge call
+- high-fit opportunities justify extra adversarial scrutiny; low-fit jobs should
+  not pay that latency and cost
+- quality needs golden failure fixtures (unsupported metric, AI voice, weak
+  seniority, ATS-unfriendly, keyword stuffing, missing evidence, high-fit blocker)
+  so regressions are caught locally without live LLM credentials
+
+Consequences:
+
+- profiles store typed achievement evidence and per-claim auto-approval policy;
+  profiles without it stay valid
+- deterministic quality failures feed the repair loop; warnings can trigger a
+  retry but never silently approve unsupported claims
+- the adversarial gate is skipped below the threshold and only runs after the
+  judge passes
+- a fixture-driven eval corpus under
+  `workers/automation/tests/fixtures/tailoring_quality/` runs with fake ports; no
+  fixture contains a real resume, profile, or application
+
+Cites: `docs/plans/implemented/2026-06-03-resume-tailoring-quality.md`;
+PRs #124, #125, #126, #127, #128.
+
+## 2026-06-09: Employer Analysis Via A 3-SDK Agent Ensemble
+
+Status: accepted
+
+Decision: canonical employer/company analysis that feeds scoring and materials
+is produced by a three-SDK agent ensemble behind the hexagonal
+`AnalysisDraftPort` / `AnalysisSynthesizerPort` (`domain/ports/materials.py`).
+`ClaudeAnalysisAdapter` (Claude Agent SDK), `CodexAnalysisAdapter` (Codex SDK),
+and `AntigravityAnalysisAdapter` (Google Antigravity / Gemini SDK) draft in
+parallel; `ClaudeAnalysisSynthesizer` merges them via `run_ensemble`
+(`infrastructure/analysis/`). This is a separate LLM path from the
+prefix-dispatched `LlmPort` used for scoring and tailoring generation.
+
+Rationale:
+
+- multiple independent drafts plus a synthesis pass reduce single-model
+  hallucination and improve grounding on employer facts
+- each adapter lazy-imports its SDK, so a missing SDK degrades to the available
+  legs instead of failing the run
+- an explicit port keeps the ensemble swappable and testable with fixtures
+
+Consequences:
+
+- the Codex leg isolates `CODEX_HOME` so ensemble runs do not pollute the user's
+  own Codex chats (#149)
+- ensemble legs, the synthesizer, and the voice pass are traced as Langfuse
+  generation spans (#213)
+- adding or removing a leg is an adapter change behind the port, not a change to
+  the materials domain
+
+Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
+
+## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
+
+Status: accepted
+
+Decision: every audit claim shown for a generated resume is computed against the
+shipped rendered text and served from canonical rows, never inferred from the job
+description or derived on read. Accepted generations record per-bullet provenance
+(`provenance_builder.py`) whose `generated_text` matches the rendered resume;
+keyword coverage is computed by a rendered-text audit (`coverage_audit.py`) so a
+keyword counts as covered only when a provenance-backed bullet demonstrates it;
+coverage-bearing claims are bound to shipped lines by `claim_grounding.py` before
+they count; and a formatting-tolerant grounding pass (normalize + snap-to-source)
+tolerates whitespace and markup drift. The read model serves this audit data from
+canonical rows only.
+
+Rationale:
+
+- the auditability discipline in `CLAUDE.md` requires every displayed claim to
+  have an explicit source of truth; inferring coverage from job keywords or from
+  LEFT-JOIN-derived guesses violates that
+- provenance computed against the same payload that ships to the user keeps the
+  audit faithful to the artifact, not to an intermediate draft
+- serving audit from canonical rows (rip-and-replace of the derived read paths)
+  removes the class of bug where the UI shows a value no source can defend
+
+Consequences:
+
+- failed re-tailor attempts never destroy the last accepted generation's artifact
+  or provenance rows; failures remain audit history
+- post-generation warnings are lifecycle-labeled (used-to-repair,
+  accepted-residual, or produced-after-acceptance) so the audit says whether a
+  warning influenced the shipped artifact
+- Apply Review labels the coverage basis (`grounded_shipped_text_v1` vs
+  `judge_claimed_legacy`) instead of hiding it
+- adding an audit field means persisting it at the owning layer first, then
+  projecting it — not computing it on read
+
+Cites: PRs #142 (per-bullet provenance), #143 (voice pass + final audit against
+rendered text), #144 (serve audit from canonical rows), #148 (formatting-tolerant
+grounding). See `docs/architecture/tailoring.md`.
+
+## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
+
+Status: accepted
+
+Decision: a job's fit score is derived deterministically from a per-requirement
+ledger, not from independent free-text signals. The Materials employer analysis
+supplies grounded requirements (tier, weight, verbatim job-evidence span); the
+Scoring context assesses candidate fit per requirement, resolves `FitScore` from
+the weighted requirement contributions (`domain/scoring/requirement_fit.py`), and
+persists a `RequirementFitReport` keyed by score version, employer-analysis
+generation, profile snapshot, and scoring policy. Employer analysis is a hard
+prerequisite: scoring requires it before it runs. The same requirement facts then
+drive tailoring directives and Apply Review coverage, so one requirement matrix
+explains score, tailoring action, and resume coverage across Jobs and Apply
+Review.
+
+Rationale:
+
+- the previous implementation had three overlapping truths (broad scoring
+  dimensions, canonical employer requirements, post-generation coverage) with no
+  single canonical answer for why a score happened or what the tailor should
+  optimize
+- deriving the score from a weighted, evidence-referenced ledger makes each score
+  explainable and makes high-weight missing requirements provably lower the score
+- reusing the same requirement IDs end to end lets tailoring optimize exactly what
+  scoring measured and lets Apply Review show coverage against the same
+  requirements
+
+Consequences:
+
+- legacy `matched` / `missing` / `transferable` signals become derived summaries
+  of the report rather than independent inputs
+- old jobs without a report show `not_assessed` with a re-score path; the
+  heuristic requirement matcher was retired once the report was available
+  everywhere (no dual read model retained)
+- unsupported missing requirements are prohibited claims for tailoring; hard
+  blockers cap the score independently of the weighted average
+- the report is projected onto job detail with Python/TypeScript projection parity
+
+Cites: `docs/plans/implemented/2026-06-15-requirement-fit-ledger.md`;
+PRs #162–#177, #189.
+
+## 2026-06-20: Compensation Is Warning-Only Evidence From Reported Company-Role Observations
+
+Status: accepted
+
+Decision: JobHunter surfaces compensation as auditable, warning-only evidence and
+never lets it change ranking, scoring, apply-readiness, or apply dispatch. A
+deterministic source-access policy registry gates which observation sources are
+usable; posted-salary facts are parsed from discovery text and stored canonically
+without mutating `jobs.salary`; market estimates are computed only from reported
+company-role observations (opt-in/licensed provider feeds and permitted public
+community data), keyed by company/role/level with freshness, sample count, source
+agreement, and company tier. Estimates are projected through the canonical read
+model (`compensationSummary` / `compensationAudit` on job list and detail) with
+EUR-normalized ranges, confidence intervals, and safe source attribution.
+
+Rationale:
+
+- compensation is decision-support, not an eligibility gate; letting weak salary
+  data silently move ranking or apply-readiness would be unsafe
+- estimating only from reported company-role observations (never title/location
+  public aggregates) keeps estimates defensible, per the auditability discipline
+- a source-access policy plus safe attribution keeps unlicensed scraping out and
+  keeps provider payloads out of events, projections, and logs
+
+Consequences:
+
+- no automated third-party provider scrape or cache path and no US salary
+  baseline; unavailable sources render as explicit unavailable-licensed seams
+- weak evidence degrades to wider intervals or non-range states instead of
+  overconfident precise ranges; fallback tiers are seniority-aware
+- `CompensationFactsUpdated` events carry safe state markers only and route
+  through Operations invalidation; event payloads never contain source text,
+  credentials, or local paths
+- a maintenance refresh (CLI `compensation-refresh`, plus job-scoped and all-jobs
+  web/API actions) reparses and re-estimates existing jobs without rerunning
+  discovery
+
+Cites: PRs #180, #181, #182, #183, #184, #185, #187.
+
+## 2026-06-24: HTML/CSS Resume Rendering Replaces LaTeX
+
+Status: accepted
+
+Decision: the default resume renderer is HTML/CSS printed to PDF through
+Playwright (`html_pdf`); LaTeX (`latex_pdf`, `pdflatex`) is retained only as an
+explicitly selected compatibility renderer via `JOBHUNTER_RESUME_RENDERER`.
+
+Rationale:
+
+- HTML/CSS + Playwright emits layout boxes that Apply Review consumes, so edits,
+  comments, validation, and final PDF rendering stay tied to one generation
+- the previous hand-rolled PDF writer truncated content; rendering through a real
+  HTML renderer keeps the PDF faithful to the reviewed text (#210)
+- TeX Live is large and awkward to ship; HTML/CSS avoids that dependency for the
+  default path and any future container
+
+Consequences:
+
+- Playwright Chromium is a runtime requirement for resume PDF rendering
+- LaTeX support remains for custom templates behind the explicit `latex_pdf`
+  mode; `PDFLATEX_PATH` overrides the binary location
+- tailoring fails closed if the resume PDF render fails, rather than shipping a
+  degraded artifact
+
+Cites: PRs #188, #210.
+
+## 2026-06-30: Requirement-Led Resume Tailoring
+
+Status: accepted
+
+Decision: resume tailoring is driven by the job's extracted requirements. The
+pipeline derives a requirement-fit view and grounds keyword coverage in the
+shipped resume text, surfacing a requirement-fit report in job detail and Apply
+Review. The change was designed and archived through the OpenSpec
+propose/implement/archive workflow.
+
+Rationale:
+
+- tailoring against concrete requirements produces more relevant, less generic
+  resumes than tailoring against the raw job description
+- coverage claims are only meaningful when computed over the actual generated
+  resume text, not inferred from job keywords (per the auditability discipline in
+  `CLAUDE.md`)
+- OpenSpec keeps the spec, tasks, and archive of a non-trivial materials change
+  reviewable
+
+Consequences:
+
+- job detail exposes a requirement-fit report when the data exists
+- keyword coverage is counted only when evidence-grounded in the shipped resume
+  (#216, #224, #228)
+- Apply Review labels coverage basis and revision semantics from the grounded
+  audit (#229)
+
+Cites: PRs #201 (proposal), #202 (implementation); follow-ups #216, #224, #228,
+#229.
+
+## 2026-07-02: SQLite Backup Command + Schema-Version Guard
+
+Status: accepted
+
+Decision: the local database ships a first-class backup command and a
+schema-version guard. `jobhunter backup` (`cli.py`) writes a consistent copy via
+`backup_database` (`database.py`); every connection runs `_ensure_schema_version`,
+which stamps `PRAGMA user_version` to the code's `SCHEMA_VERSION` and refuses to
+open a database whose schema is newer than the running code.
+
+Rationale:
+
+- the SQLite database is the single durable store of profile, jobs, events,
+  projections, and review drafts; it needs a safe backup path
+- opening a database written by newer code risks silent corruption, so the guard
+  fails fast instead
+- a stamped version gives future migrations a deterministic starting point
+
+Consequences:
+
+- users can snapshot the workspace before destructive or upgrade operations
+- a newer-than-code database raises a clear error rather than being written
+- an older or unstamped database is adopted by stamping the current version
+
+Cites: PR #206.
+
+## 2026-07-02: Cross-Source Deduplication By Content Identity
+
+Status: accepted
+
+Decision: discovered postings are deduplicated across all sources by content
+identity, not only within jobspy or by URL. `domain/job_content_identity.py`
+defines the content-match basis; the discovery repository resolves an incoming
+posting to an existing `Job` after native-id and URL misses
+(`infrastructure/discovery/sqlite_repository.py`).
+
+Rationale:
+
+- the same role is frequently posted on multiple boards with different URLs;
+  URL-only dedup created duplicate jobs
+- a genuine-employer-identity check avoids collapsing distinct roles that merely
+  share superficial text
+- dedup at discovery keeps duplicates out of enrichment, scoring, and materials
+
+Consequences:
+
+- a posting can resolve to an existing job by content identity and record how it
+  matched (`ContentMatchBasis`)
+- the discovery port surfaces the match basis for auditability
+- cross-board duplicates are collapsed before downstream stages run
+
+Cites: PR #212 (building on earlier dedup work #108).
+
 ## 2026-07-03: At-Most-Once Apply With Binding Approval Gate
 
 Status: accepted
@@ -626,6 +1093,8 @@ Consequences:
   confirmation evidence with conservative verification confidence
 
 ## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
+
+Status: accepted
 
 Decision: Temporal workflow execution becomes visible and self-terminalizing
 without a TypeScript Temporal SDK and without trigger-coupled reapers.
@@ -684,7 +1153,7 @@ Consequences:
   the unified runs list until they re-run (accepted cutover loss per
   `feedback_no_strangler.md`); the dashboard's recent-apply panel is unchanged.
 
-Cites: `docs/plans/2026-07-03-temporal-native-rearchitecture.md` (P0).
+Cites: `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md` (P0).
 
 ## 2026-07-03: DiscoverWorkflow And Default-Off Temporal Schedules
 
@@ -791,3 +1260,59 @@ Consequences:
   completion through the workflow-runs read model
 - the old synchronous handler body is not retained as a compatibility wrapper
 - tests cover the extracted compensation core separately from RPC dispatch
+
+## 2026-07-03: Classified Errors Drive Temporal Retry; Bounded Attempts
+
+Status: accepted
+
+Decision: worker activities raise classified domain errors that map to Temporal
+retry behaviour, and activities are interruptible. Retryable failures retry
+within the activity's policy; non-retryable failures (e.g. `budget_exceeded`
+from `BudgetExceededError`, `domain/errors.py`) fail fast without retry. LLM
+retries and per-stage score attempts are explicitly bounded.
+
+Rationale:
+
+- retrying a non-retryable failure (budget exceeded, permanent validation error)
+  wastes spend and hides the real cause
+- unbounded LLM retries and score attempts can run up cost after a broad
+  discovery run
+- interruptible activities let cancellation and timeouts take effect promptly
+
+Consequences:
+
+- Temporal retry policy is driven by error classification, not a blanket policy
+- score attempts are capped and LLM retries are bounded (P1a)
+- non-retryable errors surface as terminal workflow failures in the runs view
+
+Cites: PRs #231 (P1a: bound LLM retries, cap score attempts), #235 (P1b:
+classified errors into Temporal retry, interruptible activities).
+
+## 2026-07-03: Per-Job JobPreparationWorkflow Replaces The Preparation Queue
+
+Status: accepted
+
+Decision: per-job preparation (enrichment → scoring → tailoring eligibility →
+material generation or suppression) is a per-job Temporal workflow,
+`JobPreparationWorkflow` with deterministic id `prep-{jobKey}`, exposed behind a
+preparation port (`domain/ports/preparation.py`). It replaces the earlier
+in-process preparation queue. `DiscoverWorkflow` starts one preparation child per
+discovered job.
+
+Rationale:
+
+- a per-job workflow gives each job its own retry, timeout, heartbeat, and
+  finalize boundary instead of one coarse queue
+- deterministic ids make double-start idempotent (a live job returns the running
+  handle)
+- preparation lifecycle becomes visible in the runs read model like other
+  workflows
+
+Consequences:
+
+- preparation emits `PreparationWorkItem*` lifecycle events
+- per-job stage truth remains in `JobPipelineState`; preparation orchestrates, it
+  does not own stage-state invariants
+- the in-process preparation queue and its reaper are removed
+
+Cites: PR #237 (P3).

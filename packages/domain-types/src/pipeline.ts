@@ -5,7 +5,7 @@
  * Lowercase strings are the serialized form written to the database,
  * emitted in event payloads, and exposed through API DTOs.
  *
- * @see ddd-target.md §4.7 (Pipeline Orchestration), §8.5 (State Machine), §11 (Glossary)
+ * @see docs/architecture/domain-model/tactical.md §4.7 (Pipeline Orchestration), §8.5 (State Machine), §11 (Glossary)
  */
 
 // ---------------------------------------------------------------------------

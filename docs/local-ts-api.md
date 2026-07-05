@@ -1,6 +1,10 @@
 # Local TypeScript API
 
-The local TypeScript API is the runnable backend app under `apps/api`.
+The local TypeScript API (the process the web app talks to) is the runnable
+backend app under `apps/api`.
+
+**Read this if** you are wiring a UI feature to the backend, adding or changing
+a route, or tracing how a web action reaches the Python worker.
 
 It owns product-facing JSON endpoints, reads the local SQLite database, and
 invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
@@ -9,9 +13,36 @@ invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
 any request whose `Host` header is not a loopback host (`127.0.0.1`,
 `localhost`, or `[::1]`, with an optional port) with `403` `forbidden_host`;
 local browser and CLI callers always send a loopback `Host`, so legitimate
-access is unaffected. Full bearer-token authentication and keychain-to-worker
+access is unaffected. A second guard rejects cross-site mutations: `DELETE`,
+`PATCH`, `POST`, and `PUT` requests whose `Origin` or `Referer` is present but
+not loopback fail with `403` `cross_site_request` before any handler runs.
+Full bearer-token authentication and keychain-to-worker
 credential passing remain a deliberate follow-up that needs coordinated
 frontend and dev-launcher changes.
+
+## API at a glance
+
+Each route family below has its own heading on this page. Jump to the area you
+need:
+
+| Area | What it covers |
+| --- | --- |
+| [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
+| [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
+| [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, audit history, list filters, and delete / hide / restore routes. |
+| [Dashboard and operational metrics](#dashboard-and-operational-metrics) | `GET /v1/dashboard/summary` source health and operational attempt counters. |
+| [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
+| [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
+| [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
+| [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
+| [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
+| [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
+| [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
+| [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
+| [Settings and credentials](#settings-and-credentials) | `/v1/settings` and Keychain-backed `/v1/credentials`. |
+| [Server-Sent Events](#server-sent-events-—-get-v1-events-stream) | The `GET /v1/events/stream` realtime contract. |
+
+## Profile and preferences
 
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobhunter.db` as the source of truth. When the profile
@@ -46,6 +77,8 @@ Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,
 country, and postal-code profile fields; without the key, the field remains a
 normal editable street-address input.
+
+## Artifacts and tailoring audit
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -87,7 +120,8 @@ layout map return an empty array.
 
 Resume template editing is exposed through local JSON endpoints:
 `GET /v1/resume-templates` lists the built-in and saved templates plus the
-current default, `POST /v1/resume-templates` saves a style/layout-only template
+current default, `GET /v1/resume-templates/:templateId` returns one template,
+`POST /v1/resume-templates` saves a style/layout-only template
 version, `PATCH /v1/resume-templates/default` selects the default template, and
 `PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
@@ -131,6 +165,8 @@ buzzword-density / structural-variety proxy delta that justified it). Both are
 (and the derived `keywords` block) from the sibling tailored-resume projection
 row of the same generation.
 
+## Jobs read model and lifecycle
+
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, `scoredAt`, `scoreTrace`, and
@@ -165,7 +201,7 @@ mutations.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
-`CorrectScoreUseCase` policy update path because this local API mutation writes
+`CorrectScoreUseCase` policy update path because this TypeScript API mutation writes
 directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
 policy version changes, the API also marks comparable latest uncorrected scores
 stale in `job_score_staleness`; corrected score versions are not marked stale.
@@ -173,7 +209,7 @@ stale in `job_score_staleness`; corrected score versions are not marked stale.
 markers and resets their score stage to `pending` for an explicit rescore. The
 body accepts `jobKeys` for selected stale scores or an empty list for all active
 stale scores, plus optional `limit` for bounded resets. The backend command
-that consumes those reset jobs is `jobhunter run score --rescore` or the batch
+that consumes those reset jobs is `jobhunter score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
 The jobs list `deleted` filter accepts `active`, `closed`, `deleted`, `hidden`,
 or `all`. Closed jobs are non-deleted postings whose active-state verification
@@ -183,7 +219,10 @@ inspectable from the Closed tab. Deleted jobs are temporary removals: discovery
 clears the delete tombstone when the same posting is observed again. Hidden jobs
 use a separate `jobhunter_hidden_jobs` tombstone and remain suppressed from
 active/deleted/closed lists, dashboard totals, artifacts, workflow runs, and
-activity until an unhide mutation clears that hidden tombstone. The API exposes
+activity until an unhide mutation clears that hidden tombstone. Soft delete
+and restore are exposed at `DELETE /v1/jobs/:key` and
+`POST /v1/jobs/:key/restore`, plus bulk `POST /v1/jobs/bulk-delete` and
+`POST /v1/jobs/bulk-restore`. The API exposes
 bulk hide/unhide routes at `POST /v1/jobs/bulk-hide` and
 `POST /v1/jobs/bulk-unhide`, plus single-job `POST /v1/jobs/:key/hide` and
 `POST /v1/jobs/:key/unhide`. Permanent delete is
@@ -195,6 +234,8 @@ record, so rediscovery can add the same posting again later.
 all-matching bulk mutation body and resets each active failed or exhausted job's
 failed stage to `pending`; non-failed selected jobs are ignored.
 
+## Dashboard and operational metrics
+
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
 source-observation, duplicate, content snapshot, enrichment, apply-URL, and
@@ -204,6 +245,8 @@ web dashboard uses for source health. The same response also includes
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
 messages.
+
+## Discovery controls
 
 Discovery product-control endpoints are local-first and share DTOs from
 `packages/contracts`. The web Discovery page composes these endpoints and the
@@ -256,6 +299,8 @@ type and policy metadata are visible as columns instead of compact badges:
   declines a suggestion. Approved exact-title exclusions are visible in the
   Discovery page and are consumed by future discovery title matching; declined
   suggestions remain recorded but inactive.
+
+## Compensation
 
 `GET /v1/compensation/sources` returns the read-only compensation source policy
 registry used by the Settings compensation-source panel. The response contains
@@ -371,8 +416,9 @@ Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
 default. When no reported source matches, the estimator still falls back to the
 selected job's captured employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
-bonus-only or one-sided rows. The response is the standard action response with
-a synchronous `succeeded` result when the local JSON-RPC handler completes.
+bonus-only or one-sided rows. The refresh dispatches `refresh_compensation`,
+which starts `CompensationRefreshWorkflow`; the response is the standard
+action response with the queued workflow ID.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact
@@ -391,6 +437,8 @@ record/parse state, market record/estimate state, and timestamp. It does not
 contain source text, market source snapshots, profile compensation preferences,
 credentials, local paths, or provider payloads. The frontend Operations
 invalidation router uses the event to refresh job list/detail queries.
+
+## Workflow runs
 
 `/v1/workflow-runs` reads the unified `workflow_run_projections` table (the
 Python-sole-writer projection folded from the `Workflow*` lifecycle events) and
@@ -414,12 +462,16 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
+## Profile resume preview
+
 `GET /v1/profile/preview.html` renders the baseline Candidate Profile resume
 HTML used by the Profile page Plate editor. The renderer is the same HTML/CSS
 resume renderer used for generated materials. `GET /v1/profile/preview.pdf`
 remains a compatibility endpoint for callers that need a baseline PDF, but the
 Profile web route no longer uses a PDF iframe and no longer has a Profile-level
 LaTeX render override.
+
+## Apply review and outcomes
 
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
@@ -459,6 +511,8 @@ verification-code MCP server:
   deterministic JobHunter line-comment threads from audit pins, and
   `POST /v1/resume-review/comment-threads/:threadId/replies` records the user's
   reply without suppressing the original source pointer or risk label.
+  `GET /v1/jobs/:jobKey/resume-review/feedback` lists the bounded feedback
+  signals extracted from that job's draft edits.
 - `POST /v1/resume-review/drafts/:draftId/render` validates the latest saved
   draft, writes a new `job_materials` generation with `tailored_resume` and
   `resume_pdf` artifacts plus layout boxes, and marks the draft promoted. It
@@ -491,8 +545,11 @@ verification-code MCP server:
   plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
   never returns raw Gmail body text.
 
-The web review queue records approval facts only. It only offers submit
-approval after a completed dry run. `approve_submit` does not dispatch browser
+The web review queue records approval facts only, with no ordering
+constraint between decisions: `approve_submit` can be recorded at any time —
+the web app offers it as the primary gate action even before any dry run has
+run — and the live-apply gate is enforced later, at the Python worker's claim
+transaction, not by decision order. `approve_submit` does not dispatch browser
 submission, and `approve_dry_run` does not start a dry run.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied.
@@ -507,6 +564,8 @@ known application, with provider message ID dedupe. Outcome notes and linked
 email bodies may be stored locally, but `job_events.payload_json` stores only
 safe IDs, kinds, sources, timestamps, confidence values, link signals, and
 note/body presence flags.
+
+## Pipeline and preparation actions
 
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The product-facing stage order is `discover -> apply`: the stage
@@ -632,6 +691,16 @@ overrides the default low-fit auto-tailoring gate for the selected job without
 changing the batch `minScore` behavior, and immediately continues into cover
 generation when tailoring succeeds.
 
+Other per-job action routes: `POST /v1/jobs/:jobKey/actions/apply` dispatches
+the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
+`POST /v1/jobs/:jobKey/actions/generate-materials` dispatches the tailor →
+cover preparation stages for one job and returns `202` when the worker is
+ready; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
+cancellation of that job's in-flight work; and
+`POST /v1/jobs/:jobKey/actions/mark-applied` /
+`POST /v1/jobs/:jobKey/actions/mark-skipped` record manual pipeline outcomes
+without browser automation.
+
 The `analyze_job` JSON-RPC method (params `jobUrl`, optional `force`) produces or
 returns the canonical employer analysis for one job independently of a full
 tailor. Unlike the workflow-mode tailor methods, it runs synchronously: it
@@ -647,6 +716,8 @@ The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue
 `suppress_tailored_artifacts`. Neither threshold path invokes the scoring LLM.
+
+## Discovery target search
 
 Discover honors the profile Target search saved from the Discovery page.
 Target roles replace the active discovery query list with exact role queries;
@@ -693,19 +764,30 @@ The Pipelines tab uses the same source registry response to offer an optional
 source selector for manual Discover runs; leaving it blank keeps the existing
 all-runnable-source behavior.
 
+## Worker runtime and health
+
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. The API also passes `expectedAppDir` and
 `expectedDbPath` into worker-started workflows. Worker activities verify those
-runtime values before writing, and fail non-retryably if the automation worker
+runtime values before writing, and fail non-retryably if the Python worker
 is connected to a different local app directory or SQLite database. The worker
 writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
-returns the API app/database identity plus the latest automation worker
-heartbeat status and worker startup concurrency metadata
+returns the API app/database identity plus the latest Python worker
+heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
+when the worker points at a different app dir/database) and an `llmSpend`
+block (`status: ok | over_budget`, today's `estimatedUsd`, and the configured
+`dailyBudgetUsd` — default `25`, `0` = unlimited) read from the local
+`llm_spend` metering table, plus worker startup concurrency metadata
 (`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
 surfaces missing or stale worker heartbeats, the Settings page surfaces the
 worker activity-slot configuration, and the pipeline stage trigger blocks new
-worker-backed actions until the worker is healthy.
+worker-backed actions until the worker is healthy. Server-side, worker-backed action routes are
+gated by the same check and return
+`503 { ok: false, error: "worker_runtime_unavailable", worker }` while the
+heartbeat is missing, stale, or mismatched. Action routes share dispatch
+semantics: a queued Temporal workflow start returns `202` with the workflow
+ID, while synchronous local results return `200`.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,
@@ -730,19 +812,36 @@ no longer head-of-line-blocks `cancel_run` or other fast calls; the TS
 subprocess adapter applies a per-request timeout so a dead handler rejects
 instead of hanging forever; and the api-client wraps every fetch in an
 `AbortController` timeout so a stuck request fails cleanly rather than freezing
-the browser tab.
+the browser tab. (`POST /v1/_internal/rpc` is a separate internal seam that
+validates a JSON-RPC 2.0 envelope and acknowledges it with
+`{status: "accepted"}` without dispatching anything; malformed envelopes get
+a JSON-RPC error response.)
 
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
-`activity[].eventType` so the web UI can render started, completed, and failed
+`activity[].eventType` so the web app can render started, completed, and failed
 stage states from backend events instead of local button state alone. The
 top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
 paginated, sortable table; this keeps Dashboard lightweight without imposing an
 event-history cap.
 
+## Settings And Credentials
+
+- `GET /v1/settings` returns the runtime settings stored in the local
+  settings file (`dashboard.json` under the app dir): apply approval gate,
+  apply concurrency, discovery scheduling, LLM spend budget, and related
+  preferences. `PATCH /v1/settings` updates them; the web Preferences and
+  Settings forms use these routes.
+- `GET /v1/credentials` lists the supported provider credential keys
+  (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_URL`) with a label, storage kind,
+  and a `configured` presence flag only — values are never returned.
+  `PATCH /v1/credentials` stores a value in the macOS Keychain
+  (service `JobHunter`) and `DELETE /v1/credentials/:key` removes it; unknown
+  keys return `400 invalid_credential_key`.
+
 ## Related Packages
 
 - `apps/api`: Fastify API app.
-- `apps/web`: React/Vite frontend app.
+- `apps/web`: the React/Vite web app.
 - `packages/contracts`: shared schemas, DTOs, enums, JSON-RPC envelopes, and
   re-exported `@jobhunter/domain-types`.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.
@@ -756,7 +855,8 @@ apps/api -> packages/domain-types
 apps/web -> packages/api-client -> packages/contracts
 ```
 
-The API must not depend on `packages/api-client`.
+The API must not depend on `packages/api-client` at runtime (it appears only
+as a devDependency of `apps/api` for API tests).
 
 ## Commands
 
@@ -770,14 +870,17 @@ pnpm web:build
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to
-that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set.
+that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set. The Vite dev-server
+proxy target itself is controlled by `VITE_DEV_API_PROXY_TARGET` (default
+`http://127.0.0.1:8766`); isolated or multi-worktree stacks override it to
+point the proxy at a non-default API port.
 
 ## Server-Sent Events — `GET /v1/events/stream`
 
 The API exposes a Server-Sent Events endpoint that the frontend's
 `SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
 the browser's native `EventSource`. Per
-[`docs/frontend-target.md`](frontend-target.md) §7.1, this endpoint is the
+[`docs/architecture/frontend/realtime.md`](architecture/frontend/realtime.md) §7.1, this endpoint is the
 single realtime channel from the worker / API write-side to the frontend's
 TanStack Query cache; the frontend's `InvalidationRouter` translates each
 `DomainEvent` into the right `invalidateQueries` / `setQueryData` calls.
@@ -799,11 +902,15 @@ the server resolves `tenantId` from the JWT, the JWT-derived tenant is
 canonical, and a mismatched query-string value returns `403 Forbidden`.
 
 `since` is optional and is used only by the planned IndexedDB warm-start path
-(`docs/frontend-target.md` §9.7) to resume from a persisted watermark on
+(`docs/architecture/frontend/integration.md` §9.7) to resume from a persisted watermark on
 first connect; the browser's native `EventSource` auto-reconnect uses the
 `Last-Event-ID` header instead.
 
 ### Response framing
+
+The header block below is abbreviated; the live response also carries
+`charset=utf-8` on the Content-Type, `Cache-Control: no-cache, no-transform`,
+`Connection: keep-alive`, and CORS headers.
 
 ```
 HTTP/1.1 200 OK
@@ -855,7 +962,7 @@ guarantees that tenantless local rows still match the local-mode filter without
 a write-side backfill.
 
 Tenant scope is mandatory; there is no "all tenants" mode
-(`docs/frontend-target.md` §7.8).
+(`docs/architecture/frontend/realtime.md` §7.8).
 
 ### Resume-position precedence
 

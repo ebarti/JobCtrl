@@ -1,7 +1,7 @@
 /**
  * Job Discovery domain events.
  *
- * @see ddd-target.md §4.1
+ * @see docs/architecture/domain-model/tactical.md §4.1
  */
 
 import type { TenantId } from "../tenant.js";

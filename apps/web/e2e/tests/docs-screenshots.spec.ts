@@ -7,6 +7,14 @@ const repoRoot = path.resolve(
   fileURLToPath(new URL("../../../../", import.meta.url)),
 );
 const screenshotsDir = path.join(repoRoot, "docs", "assets", "screenshots");
+const publicHeroScreenshotsDir = path.join(
+  repoRoot,
+  "docs",
+  "public",
+  "assets",
+  "screenshots",
+);
+const heroScreenshotName = "dashboard.png";
 const platformJobUrl =
   "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const jobsFilterParams =
@@ -64,6 +72,7 @@ test.use({
 
 test.beforeAll(async () => {
   await fs.mkdir(screenshotsDir, { recursive: true });
+  await fs.mkdir(publicHeroScreenshotsDir, { recursive: true });
 });
 
 async function waitForRoute(page: Page, proof: Locator): Promise<void> {
@@ -73,11 +82,18 @@ async function waitForRoute(page: Page, proof: Locator): Promise<void> {
 }
 
 async function capture(page: Page, name: string): Promise<void> {
+  const outputPath = path.join(screenshotsDir, name);
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: path.join(screenshotsDir, name),
+    path: outputPath,
   });
+  if (name === heroScreenshotName) {
+    await fs.copyFile(
+      outputPath,
+      path.join(publicHeroScreenshotsDir, heroScreenshotName),
+    );
+  }
 }
 
 test("capture public documentation screenshots from synthetic seed data", async ({

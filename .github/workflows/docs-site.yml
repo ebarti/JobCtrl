@@ -1,0 +1,77 @@
+name: Docs Site
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/docs-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (dead-link gate)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so VitePress lastUpdated timestamps are real.
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build docs site
+        run: pnpm docs:build
+
+      - name: Upload site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site-dist
+          path: docs/.vitepress/dist
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Cloudflare Pages
+    needs: build
+    # Deploys only from main, and only once the repository variable
+    # DOCS_DEPLOY_ENABLED is set to "true" alongside the two Cloudflare
+    # secrets. Until then this job skips cleanly and the workflow stays green.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-site-dist
+          path: docs/.vitepress/dist
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs/.vitepress/dist --project-name=jobctl-docs --branch=main

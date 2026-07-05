@@ -1,7 +1,7 @@
 /**
  * Candidate Profile aggregate — TypeScript mirror.
  *
- * See ddd-target.md §4.3. Every type in this file is an immutable, readonly
+ * See docs/architecture/domain-model/tactical.md §4.3. Every type in this file is an immutable, readonly
  * structure intended for transport between the API and consumers. The
  * Python ``Profile`` aggregate (``workers/automation/src/jobhunter/domain/
  * profile/aggregate.py``) is the source of truth; both languages must stay
