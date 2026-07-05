@@ -493,7 +493,6 @@ class ProjectionBuilder:
         audit_backfill_pending = not self._score_audit_backfill_done()
         if audit_backfill_pending:
             dirty_jobs.update(self._jobs_missing_score_audit_projection())
-        workflow_runs_backfill_pending = self._workflow_runs_backfill_pending()
 
         # L5 (round-1 review): if there's nothing dirty AND we've already
         # synced past the latest event, skip the O(jobs × stages)
@@ -522,7 +521,6 @@ class ProjectionBuilder:
             and (source_quality_exists or not source_quality_history)
             and max_event_id == watermark
             and not audit_backfill_pending
-            and not workflow_runs_backfill_pending
         ):
             return 0
 
@@ -541,7 +539,7 @@ class ProjectionBuilder:
             # the watermark + ensure the dashboard row exists.
             if source_quality_dirty or (not source_quality_exists and source_quality_history):
                 self._rebuild_source_quality()
-            if workflow_runs_dirty or workflow_runs_backfill_pending:
+            if workflow_runs_dirty:
                 self._rebuild_workflow_runs()
             if max_event_id > watermark:
                 self._watermarks.set(
@@ -559,7 +557,7 @@ class ProjectionBuilder:
         # first so ``_rebuild_job`` can read the freshly derived apply
         # lifecycle status when it materialises ``job_list_projections``.
         self._rebuild_apply_runs()
-        if workflow_runs_dirty or workflow_runs_backfill_pending:
+        if workflow_runs_dirty:
             self._rebuild_workflow_runs()
         if source_quality_dirty or (not source_quality_exists and source_quality_history):
             self._rebuild_source_quality()
@@ -1714,40 +1712,6 @@ class ProjectionBuilder:
             tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchone()
         return bool(row and int(row[0]) > 0)
-
-    def _workflow_runs_backfill_pending(self) -> bool:
-        """Detect workflow-run rows missed by the incremental watermark.
-
-        ``workflow_run_projections`` is folded from canonical ``Workflow*``
-        events. The TypeScript API refresher shares the operations watermark but
-        does not write this Python-owned table, so an existing local DB can have
-        the watermark past workflow events while the workflow-run table is still
-        empty. A count mismatch is enough to trigger a deterministic rebuild.
-        """
-        placeholders = ", ".join("?" for _ in WORKFLOW_EVENT_TYPES)
-        try:
-            event_row = self._conn.execute(
-                f"""
-                SELECT COUNT(DISTINCT COALESCE(
-                    JSON_EXTRACT(payload_json, '$.workflowId'),
-                    JSON_EXTRACT(payload_json, '$.workflow_id')
-                ))
-                FROM job_events
-                WHERE event_type IN ({placeholders})
-                  AND payload_json IS NOT NULL
-                  AND json_valid(payload_json)
-                """,
-                WORKFLOW_EVENT_TYPES,
-            ).fetchone()
-            projection_row = self._conn.execute(
-                "SELECT COUNT(*) FROM workflow_run_projections WHERE tenant_id = ?",
-                (str(self._tenant_id),),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return False
-        event_count = int(event_row[0] or 0) if event_row else 0
-        projection_count = int(projection_row[0] or 0) if projection_row else 0
-        return event_count > projection_count
 
     # ----------------------------------------------------------- apply runs
 

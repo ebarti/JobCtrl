@@ -11,10 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobhunter import config
-from jobhunter.infrastructure.temporal.concurrency import (
-    activity_executor_max_workers,
-    max_concurrent_activities_from_env,
-)
 
 WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats"
 
@@ -80,21 +76,15 @@ def write_worker_heartbeat(
               db_path TEXT NOT NULL,
               task_queue TEXT NOT NULL,
               started_at TEXT NOT NULL,
-              last_seen_at TEXT NOT NULL,
-              max_concurrent_activities INTEGER,
-              activity_executor_max_workers INTEGER
+              last_seen_at TEXT NOT NULL
             )
             """
         )
-        _ensure_heartbeat_runtime_columns(conn)
-        max_concurrent_activities = max_concurrent_activities_from_env()
-        executor_max_workers = activity_executor_max_workers(max_concurrent_activities)
         conn.execute(
             f"""
             INSERT INTO {WORKER_HEARTBEAT_TABLE}
-              (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
-               max_concurrent_activities, activity_executor_max_workers)
-            VALUES (?, 'temporal-worker', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+            VALUES (?, 'temporal-worker', ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(worker_id) DO UPDATE SET
               component = excluded.component,
               pid = excluded.pid,
@@ -102,9 +92,7 @@ def write_worker_heartbeat(
               app_dir = excluded.app_dir,
               db_path = excluded.db_path,
               task_queue = excluded.task_queue,
-              last_seen_at = excluded.last_seen_at,
-              max_concurrent_activities = excluded.max_concurrent_activities,
-              activity_executor_max_workers = excluded.activity_executor_max_workers
+              last_seen_at = excluded.last_seen_at
             """,
             (
                 resolved_worker_id,
@@ -115,8 +103,6 @@ def write_worker_heartbeat(
                 task_queue,
                 timestamp,
                 timestamp,
-                max_concurrent_activities,
-                executor_max_workers,
             ),
         )
         conn.commit()
@@ -127,18 +113,6 @@ def write_worker_heartbeat(
 
 def _default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
-
-
-def _ensure_heartbeat_runtime_columns(conn: sqlite3.Connection) -> None:
-    columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({WORKER_HEARTBEAT_TABLE})")}
-    if "max_concurrent_activities" not in columns:
-        conn.execute(
-            f"ALTER TABLE {WORKER_HEARTBEAT_TABLE} ADD COLUMN max_concurrent_activities INTEGER"
-        )
-    if "activity_executor_max_workers" not in columns:
-        conn.execute(
-            f"ALTER TABLE {WORKER_HEARTBEAT_TABLE} ADD COLUMN activity_executor_max_workers INTEGER"
-        )
 
 
 def _normalize(value: str | Path) -> str:
