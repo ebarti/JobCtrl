@@ -4738,6 +4738,59 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("ignores a late terminal from a superseded execution while a newer run is live", async () => {
+    // Terminal-direction twin of the reopen guard: run A dies without a
+    // terminal, run B starts, THEN the reconciler's WorkflowTerminated for run
+    // A lands with a later occurredAt. The stale terminal belongs to the
+    // superseded execution and must not flip the live run B; B's own terminal
+    // must still apply afterwards.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: "2026-07-04T12:13:39.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: "2026-07-04T12:13:39.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: null,
+        startedAt: DISCOVER_NEW_START,
+      });
+
+      const followUp = new Database(options.dbPath);
+      try {
+        insertPipelineWorkflowEvent(followUp, { eventType: "WorkflowCompleted", occurredAt: "2026-07-04T12:45:00.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, finishedAt: "2026-07-04T12:45:00.000+00:00" });
+      } finally {
+        followUp.close();
+      }
+      const after = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(after.statusCode, after.body).toBe(200);
+      expect(after.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "succeeded",
+        finishedAt: "2026-07-04T12:45:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("keeps the first terminal verdict within a single execution (reconciler describe race)", async () => {
     // Regression guard for the M-1 backstop: a reconciler `describe` that
     // observes the closed run and emits COMPLETED after the real WorkflowFailed

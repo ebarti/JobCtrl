@@ -5079,8 +5079,15 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     if (event.eventType === "WorkflowStarted") {
       const eventRunId = workflowLifecycleRunId(payload);
       const eventStartedAt = nullableString(payload.startedAt) ?? event.occurredAt;
+      // A start carrying a NEW run id while the fold is still open means the
+      // previous execution died without a recorded terminal (Temporal id reuse
+      // only admits a new run once the old one closed server-side); the fold
+      // must adopt the live execution — Python fold parity.
+      const adoptsNewExecution =
+        phase === "in_progress" && eventRunId !== null && runId !== null && eventRunId !== runId;
       const reopens =
         phase === "none" ||
+        adoptsNewExecution ||
         (phase === "terminal" &&
           startsNewWorkflowExecution({
             foldedRunId: runId,
@@ -5111,6 +5118,13 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     if (!terminalStatus || phase === "terminal") {
       continue;
     }
+    const terminalRunId = workflowLifecycleRunId(payload);
+    // Run-scoped in the terminal direction too: a late terminal from a
+    // superseded execution (the reconciler closing a dead run after a newer
+    // WorkflowStarted already folded) must not clobber the live run.
+    if (terminalRunId && runId && terminalRunId !== runId) {
+      continue;
+    }
     status = terminalStatus;
     phase = "terminal";
     finishedAt = nullableString(payload.finishedAt) ?? event.occurredAt ?? finishedAt;
@@ -5118,7 +5132,7 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     errorCode = nullableString(payload.errorCode) ?? errorCode;
     errorMessage = nullableString(payload.errorMessage ?? payload.message) ?? errorMessage;
     retryable = "retryable" in payload ? Boolean(payload.retryable) : retryable;
-    runId = workflowLifecycleRunId(payload) ?? runId;
+    runId = terminalRunId ?? runId;
   }
   return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
 }

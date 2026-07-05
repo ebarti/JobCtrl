@@ -1910,6 +1910,16 @@ class ProjectionBuilder:
                 # failed -> succeeded (M-1 review).
                 if status in _WORKFLOW_TERMINAL_STATUSES:
                     continue
+                # Run-scoped in the terminal direction too: a late terminal
+                # from a superseded execution (the reconciler closing a dead
+                # run after a newer WorkflowStarted already folded) must not
+                # clobber the live run.
+                if (
+                    event_run_id
+                    and temporal_run_id
+                    and event_run_id != temporal_run_id
+                ):
+                    continue
                 if event_run_id:
                     temporal_run_id = event_run_id
                 status = _WORKFLOW_TERMINAL_STATUS[event_type]

@@ -819,3 +819,95 @@ def test_new_execution_reopen_falls_back_to_occurred_at_without_run_ids(
     assert _row_value(row, "status") == "failed"
     assert _row_value(row, "error_code") == "discovery_enrichment_failed"
     assert _row_value(row, "finished_at") == "2026-07-04T10:30:00+00:00"
+
+
+def test_late_terminal_from_superseded_run_does_not_clobber_live_run(
+    conn: sqlite3.Connection,
+) -> None:
+    """Terminal-direction twin of the run-scoped reopen guard.
+
+    Run A dies without a terminal, run B starts, THEN the reconciler's
+    ``WorkflowTerminated`` for run A lands (describe raced the new start).
+    The late terminal belongs to the superseded execution and must not flip
+    the live run B; B's own terminal must still apply afterwards.
+    """
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="discover-local",
+                workflow_type="DiscoverWorkflow",
+                started_at="2026-07-04T11:00:00+00:00",
+                temporal_run_id="temporal-A",
+            ),
+        ),
+        occurred_at="2026-07-04T11:00:00+00:00",
+    )
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="discover-local",
+                workflow_type="DiscoverWorkflow",
+                started_at="2026-07-04T12:00:00+00:00",
+                temporal_run_id="temporal-B",
+            ),
+        ),
+        occurred_at="2026-07-04T12:00:00+00:00",
+    )
+    _record(
+        conn,
+        create_workflow_terminated(
+            LOCAL_TENANT,
+            WorkflowTerminatedPayload(
+                workflow_id="discover-local",
+                workflow_type="DiscoverWorkflow",
+                error_code="reconciled_not_found",
+                error_message="closed by the describe reconciler",
+                finished_at="2026-07-04T12:00:05+00:00",
+                temporal_run_id="temporal-A",
+            ),
+        ),
+        occurred_at="2026-07-04T12:00:05+00:00",
+    )
+    conn.commit()
+
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+
+    row = conn.execute(
+        "SELECT status, temporal_run_id, error_code, finished_at"
+        " FROM workflow_run_projections WHERE workflow_id = ?",
+        ("discover-local",),
+    ).fetchone()
+    assert _row_value(row, "status") == "in_progress"
+    assert _row_value(row, "temporal_run_id") == "temporal-B"
+    assert _row_value(row, "error_code") is None
+    assert _row_value(row, "finished_at") is None
+
+    _record(
+        conn,
+        create_workflow_completed(
+            LOCAL_TENANT,
+            WorkflowCompletedPayload(
+                workflow_id="discover-local",
+                workflow_type="DiscoverWorkflow",
+                finished_at="2026-07-04T12:30:00+00:00",
+                duration_ms=1_800_000,
+                temporal_run_id="temporal-B",
+            ),
+        ),
+        occurred_at="2026-07-04T12:30:00+00:00",
+    )
+    conn.commit()
+    builder.refresh()
+
+    row = conn.execute(
+        "SELECT status, finished_at FROM workflow_run_projections"
+        " WHERE workflow_id = ?",
+        ("discover-local",),
+    ).fetchone()
+    assert _row_value(row, "status") == "succeeded"
+    assert _row_value(row, "finished_at") == "2026-07-04T12:30:00+00:00"
