@@ -274,6 +274,21 @@ class PolitenessSession:
         if callable(note):
             note(url, retry_after_seconds)
 
+    def record_server_rate_limit(self, url: str, retry_after_seconds: float | None = None) -> None:
+        """Record a server-issued 429/503 as a first-class rate-limit outcome."""
+        if self._recorder_conn is None:
+            return
+        decision = PolitenessDecision(
+            allowed=False,
+            outcome=PolitenessOutcome.RATE_LIMITED,
+            user_agent=self.user_agent,
+            retry_after_seconds=retry_after_seconds,
+            reason="server responded 429/503",
+        )
+        record_politeness_outcome(
+            self._recorder_conn, decision=decision, context=self._context, url=url
+        )
+
     def _record(self, decision: PolitenessDecision, url: str) -> None:
         if self._recorder_conn is None or decision.allowed:
             return
