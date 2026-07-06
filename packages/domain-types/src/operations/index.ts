@@ -7,6 +7,7 @@
  * Pure data shapes — no I/O.
  */
 import type { TenantId } from "../tenant.js";
+import type { InterviewPrep } from "../interview/index.js";
 import type { RequirementFitReport, ScoreBreakdown } from "../scoring/index.js";
 
 export interface StageProjection {
@@ -54,6 +55,10 @@ export interface JobListProjection {
   readonly hasPdf: boolean;
   readonly applyStatus: string | null;
   readonly appliedAt: string | null;
+  readonly applyMode: string | null;
+  readonly resumeTemplateId: string | null;
+  readonly resumeTemplateName: string | null;
+  readonly tailoringPolicyVersion: number | null;
   readonly artifactCount: number;
   readonly deletedAt: string | null;
   readonly lastUpdatedAt: string | null;
@@ -94,6 +99,7 @@ export interface JobDetailProjection {
   readonly scoredAt: string | null;
   readonly stages: readonly StageProjection[];
   readonly requirementFitReport: RequirementFitReport | null;
+  readonly interviewPrep: InterviewPrep | null;
   readonly lastUpdatedAt: string | null;
 }
 
@@ -135,6 +141,7 @@ export const PROJECTION_TABLES = [
   "dashboard_projections",
   "job_detail_projections",
   "artifact_list_projections",
+  "evidence_usage_projections",
   "apply_run_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];

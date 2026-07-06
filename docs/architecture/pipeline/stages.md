@@ -364,7 +364,8 @@ sequenceDiagram
 ```
 
 The launcher **orchestrates**; it does not fill or submit forms itself. A local
-**Claude Code CLI agent** drives the CDP-controlled Chrome through **Playwright
+**Claude apply runtime** (system `claude`, the pinned SDK-bundled binary, or
+`JOBHUNTER_CLAUDE_BIN`) drives the CDP-controlled Chrome through **Playwright
 MCP** and performs any form interaction. Terminal apply outcomes are
 `ApplicationSubmitted` (live submit), `DryRunCompleted` (dry-run),
 `ApplicationFailed`, or `ApplyManualSkip` (manual-ATS skip).

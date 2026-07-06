@@ -57,6 +57,12 @@ from jobhunter.domain.events.materials import (
     MaterialsExhaustedPayload,
     create_materials_exhausted,
 )
+from jobhunter.domain.events.interview import (
+    InterviewPrepFailedPayload,
+    InterviewPrepGeneratedPayload,
+    create_interview_prep_failed,
+    create_interview_prep_generated,
+)
 from jobhunter.domain.events.apply import (
     ApplicationSubmittedPayload,
     create_application_submitted,
@@ -346,6 +352,38 @@ class TestMaterialsEvents:
             MaterialsExhaustedPayload(job_id="j1", stage="tailor", attempt_count=3, max_attempts=3),
         )
         assert event.event_type == "MaterialsExhausted"
+
+
+class TestInterviewEvents:
+    def test_interview_prep_generated(self) -> None:
+        event = create_interview_prep_generated(
+            LOCAL_TENANT,
+            InterviewPrepGeneratedPayload(
+                job_id="https://example.test/job/1",
+                generation=1,
+                item_count=3,
+                generated_at="2026-07-05T12:00:00Z",
+            ),
+        )
+        assert event.event_type == "InterviewPrepGenerated"
+        assert event.tenant_id == "local"
+        assert event.payload["generation"] == 1
+        assert event.payload["item_count"] == 3
+
+    def test_interview_prep_failed(self) -> None:
+        event = create_interview_prep_failed(
+            LOCAL_TENANT,
+            InterviewPrepFailedPayload(
+                job_id="https://example.test/job/1",
+                generation=2,
+                failed_at="2026-07-05T12:10:00Z",
+                reason_count=1,
+            ),
+        )
+        assert event.event_type == "InterviewPrepFailed"
+        assert event.tenant_id == "local"
+        assert event.payload["generation"] == 2
+        assert event.payload["reason_count"] == 1
 
 
 class TestApplyEvents:

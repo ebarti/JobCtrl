@@ -21,12 +21,24 @@ from jobhunter.domain.operations.projections import (
     JobListProjection,
     StageProjection,
 )
+from jobhunter.domain.operations.evidence_map import (
+    EvidenceFreshness,
+    EvidenceGap,
+    EvidenceMapEntry,
+    EvidenceReusableStory,
+    EvidenceUsageRef,
+)
 
 __all__ = [
     "ApplyRunProjection",
     "ArtifactListProjection",
     "DashboardFunnelStage",
     "DashboardProjection",
+    "EvidenceFreshness",
+    "EvidenceGap",
+    "EvidenceMapEntry",
+    "EvidenceReusableStory",
+    "EvidenceUsageRef",
     "JobDetailProjection",
     "JobListProjection",
     "StageProjection",

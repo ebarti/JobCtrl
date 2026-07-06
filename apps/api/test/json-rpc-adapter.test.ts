@@ -484,6 +484,34 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
+  it("maps explicit interview prep generation to the workflow RPC", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      {
+        action: "generate_interview_prep",
+        jobKey: "https://example.com/jobs/current",
+        llmModel: "gpt-test",
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "generate_interview_prep",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          jobUrl: "https://example.com/jobs/current",
+          llmModel: "gpt-test",
+        },
+      },
+    ]);
+    expect(result).toMatchObject({ status: "queued", runId: "run-fake" });
+  });
+
   it("dispatches only RPC methods registered by the Python worker", async () => {
     const registeredWorkerMethods = new Set(
       [
@@ -516,6 +544,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher({ action: "cancel", jobKey: "pipeline", runId: "run-1" }, context);
     await dispatcher({ action: "rescore_job", jobKey: "https://example.com/jobs/current" }, context);
     await dispatcher({ action: "refresh_compensation", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "generate_interview_prep", jobKey: "https://example.com/jobs/current" }, context);
     await dispatcher(
       {
         action: "rescore_jobs_not_on_current_scoring_policy",

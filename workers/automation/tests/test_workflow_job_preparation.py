@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 from temporalio import activity
+from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
@@ -241,6 +242,98 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
             assert (await second.result()).steps_completed == ["score", "tailor", "cover", "pdf"]
 
     assert calls == ["score", "tailor", "cover", "pdf"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_nothing() -> None:
+    """I4 under streaming: a job fanned out mid-run after the daily spend cap is
+    hit fails fast at its OWN preflight with non-retryable ``budget_exceeded``
+    and runs zero spendful step activities. Each prep workflow is an independent
+    root workflow, so this bounds cost per discovered job no matter how many
+    per-family/per-job fan-outs streaming issues; earlier prep workflows that
+    already ran are unaffected."""
+    queue = f"prep-budget-{uuid.uuid4()}"
+    calls: list[str] = []
+
+    @activity.defn(name="check_spend_budget")
+    async def budget_exceeded(_payload):
+        from jobhunter.domain.errors import BudgetExceededError, to_application_error
+
+        raise to_application_error(
+            BudgetExceededError(
+                "LLM daily spend budget exceeded: $30.0000 spent of $25.00 for 2026-07-05."
+            )
+        )
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    @activity.defn(name="score_job")
+    async def score_job(_payload) -> dict[str, str]:
+        calls.append("score")
+        return {"status": "ok"}
+
+    @activity.defn(name="tailor_job")
+    async def tailor_job(_payload) -> dict[str, str]:
+        calls.append("tailor")
+        return {"status": "approved"}
+
+    @activity.defn(name="cover_letter")
+    async def cover_letter(_payload) -> dict[str, str]:
+        calls.append("cover")
+        return {"status": "ok"}
+
+    @activity.defn(name="render_pdf")
+    async def render_pdf(_payload) -> dict[str, object]:
+        calls.append("pdf")
+        return {"status": "ok", "rendered": []}
+
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_url="https://example.com/job/budget",
+        steps=["score", "tailor", "cover", "pdf"],
+        target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[JobPreparationWorkflow],
+            activities=[
+                budget_exceeded,
+                record_started,
+                record_outcome,
+                score_job,
+                tailor_job,
+                cover_letter,
+                render_pdf,
+            ],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as excinfo:
+                await env.client.execute_workflow(
+                    JobPreparationWorkflow.run,
+                    payload,
+                    id=f"prep-{payload.idempotency_key}",
+                    task_queue=queue,
+                )
+
+    # The preflight failure surfaces as an ActivityError wrapping the
+    # non-retryable budget ApplicationError.
+    cause = excinfo.value.cause
+    assert isinstance(cause, ActivityError)
+    app_error = cause.cause
+    assert isinstance(app_error, ApplicationError)
+    assert app_error.type == "budget_exceeded"
+    # No spendful step activity ran — the preflight blocked before score/tailor/cover/pdf.
+    assert calls == []
 
 
 @pytest.mark.asyncio

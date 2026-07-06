@@ -33,7 +33,7 @@ run the step that needs them and have configured the relevant provider:
 | Outbound call | When it happens | What is sent |
 | --- | --- | --- |
 | LLM provider APIs | Scoring, employer analysis, resume tailoring, and cover-letter generation | Job posting text, your profile evidence (experience, skills, verified metrics), and the generated resume/cover-letter text. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
-| The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers), the tailored resume and cover-letter text, and — when you have configured them — an account password for login fields and the CapSolver API key. The apply agent is a Claude Code CLI subprocess, so this prompt is sent to the model backing it. |
+| The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers), the tailored resume and cover-letter text, and — when you have configured them — an account password for login fields and the CapSolver API key. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
 | Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobHunter never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
 | Gmail (read-only) | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails. The connector requests read-only scope; raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
@@ -69,26 +69,51 @@ security. Treat `~/.jobhunter/` as sensitive: do not commit it, copy it into
 shared locations, or attach it to bug reports.
 :::
 
+## Browser Extension Pairing
+
+The browser-extension API surface uses a local capability token so an installed
+extension can prove it is paired with your local JobHunter stack. The token is
+generated under `~/.jobhunter/`, shown in Settings for pairing, and only
+accepted on `/v1/extension/*` routes that still target a loopback host. It does
+not grant application-submission authority; live submission remains behind
+Apply Review.
+
+In Phase 1, the extension can only capture the active http(s) page after you
+click **Save job** in the popup. It sends the page URL and visible text to the
+local API over loopback, where JobHunter records it through the same
+manual-capture importer used by the web app. If the local stack is down, the
+extension keeps a bounded local queue in browser extension storage. It does not
+send captures to third-party services and it has no submit/apply action.
+
+In deterministic autofill mode, the extension reads only a whitelisted profile
+field list from `/v1/extension/autofill/profile`; password and resume content
+are excluded. Content scripts are limited to supported ATS hosts and show a
+review panel before filling accepted values. The extension code does not call
+form submit, `requestSubmit`, or an apply route.
+
 ## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive
 a real browser and submit a real application. Several gates stand between a
-discovered job and a submitted one. In plain terms: you can rehearse any
-application with a dry run (recommended, but not an enforced prerequisite),
-nothing is submitted for real until you explicitly approve that exact job, and
-the same application is never submitted twice.
+discovered job and a submitted one. In plain terms: you rehearse the application
+with a dry run before live submission, nothing is submitted for real until you
+explicitly approve that exact job with current evidence, and the same application
+is never submitted twice.
 
 ### Apply Approval Is Required By Default
 
 Live submission is gated on an explicit decision. With the default
 `applyApprovalRequired: true`, a live apply run starts only when the latest Apply
-Review decision for that job is `approve_submit`; otherwise the backend claim
-rolls back and the browser never launches. The gate is enforced in the worker's
-claim transaction, not merely surfaced in the UI, so no UI or command path can
-submit without a recorded approval while the gate is on. You can turn the gate
-off in Preferences, which is why the settings form shows a persistent warning
-when it is off — with the gate off, the agent may submit immediately after
-claiming a job.
+Review decision for that job is `approve_submit`, that approval is bound to the
+current materials generation, profile version, and application URL, and matching
+dry-run evidence exists. Full dry-run evidence satisfies the gate. A partial dry
+run satisfies it only when you use the explicit partial-evidence approval action
+for that specific run. Otherwise the backend claim rolls back and the browser
+never launches. The gate is enforced in the worker's claim transaction, not
+merely surfaced in the UI, so no UI or command path can submit without a fresh
+recorded approval while the gate is on. You can turn the gate off in Preferences,
+which is why the settings form shows a persistent warning when it is off — with
+the gate off, the agent may submit immediately after claiming a job.
 
 ### Dry-Run Cannot Submit
 
@@ -155,8 +180,10 @@ secret commits (see the [developer Security page](../developer/security.md)).
 
 ## The Apply Agent
 
-The apply agent is a local Claude Code CLI subprocess that drives a real Chrome
-browser through Playwright. It runs with per-action permission prompts turned off
+The apply agent is a local Claude runtime subprocess that drives a real Chrome
+browser through Playwright. It uses a system `claude` when present, then the
+pinned Claude Agent SDK bundled binary unless `JOBHUNTER_CLAUDE_BIN` is set. It
+runs with per-action permission prompts turned off
 (`--permission-mode bypassPermissions`) because it needs that autonomy to fill
 the arbitrary, unpredictable forms real applications use.
 
@@ -170,8 +197,8 @@ Those controls:
 
 - the dry-run guard inside the browser makes it impossible to submit a form off
   your machine during a dry run;
-- the approval gate keeps live submission behind an explicit `approve_submit`
-  decision;
+- the approval gate keeps live submission behind a fresh `approve_submit`
+  decision bound to the reviewed materials, profile, URL, and dry-run evidence;
 - the spend ceiling caps how much LLM cost a runaway loop can incur;
 - credentials stay local — the LLM keys are not in the page's reach, and Gmail
   write tools (draft, send, delete, modify, label, filter) are explicitly
