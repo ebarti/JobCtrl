@@ -208,7 +208,7 @@ def _client_with_handler(handler) -> LLMClient:
 
 def test_chat_retries_5xx_then_succeeds(monkeypatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -230,7 +230,7 @@ def test_chat_retries_5xx_then_succeeds(monkeypatch) -> None:
 
 def test_chat_retries_connection_error_then_succeeds(monkeypatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -254,7 +254,7 @@ def test_chat_caps_hostile_retry_after_header(monkeypatch) -> None:
     """A 429 with an absurd ``Retry-After`` must not park the call for
     hours — the honored wait is capped at the ceiling."""
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -283,7 +283,7 @@ def test_chat_retries_on_negative_retry_after(monkeypatch) -> None:
     it with ValueError). The honored wait is floored to a finite, non-negative
     value and the request is retried."""
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -314,7 +314,7 @@ def test_chat_retries_on_nan_retry_after(monkeypatch) -> None:
     with ValueError). It is treated as an absent header, so the call falls back
     to bounded backoff and retries."""
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -342,7 +342,7 @@ def test_chat_retries_on_nan_retry_after(monkeypatch) -> None:
 
 def test_chat_does_not_retry_client_error(monkeypatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -362,7 +362,7 @@ def test_chat_does_not_retry_client_error(monkeypatch) -> None:
 
 def test_chat_bounds_retries_on_persistent_transient_failure(monkeypatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr(llm.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:

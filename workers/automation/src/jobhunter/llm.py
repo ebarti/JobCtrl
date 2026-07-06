@@ -295,6 +295,7 @@ _MAX_RETRY_WAIT = 60
 # Max random jitter (seconds) added to each retry sleep so concurrent workers
 # don't retry in lockstep.
 _RETRY_JITTER = 5
+_sleep = time.sleep
 
 
 def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
@@ -600,7 +601,7 @@ class LLMClient:
                         "or switching to a local model.",
                         status, wait, attempt + 1, _MAX_RETRIES,
                     )
-                    time.sleep(wait)
+                    _sleep(wait)
                     continue
                 raise
 
@@ -613,7 +614,7 @@ class LLMClient:
                         "LLM request failed (%s: %s), retrying in %.1fs (attempt %d/%d)",
                         type(exc).__name__, exc, wait, attempt + 1, _MAX_RETRIES,
                     )
-                    time.sleep(wait)
+                    _sleep(wait)
                     continue
                 raise
 
