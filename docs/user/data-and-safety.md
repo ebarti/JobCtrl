@@ -100,14 +100,12 @@ These boundaries are the operator's responsibility:
   employer submission. JobHunter's shipped Gmail connector is read-only; do not
   add or grant Gmail `gmail.send` unless you intentionally want JobHunter to send
   application email from your mailbox.
-- **Credential typing:** browser automation can type credentials you put in your
-  profile, and those credentials may appear in the apply agent prompt when a
-  login form needs them. Use a unique, dedicated job-site password. Do not reuse
-  email, banking, work, or primary personal passwords.
-- **CAPTCHA solving:** CAPTCHA solving is disabled unless `CAPSOLVER_API_KEY` is
-  configured. If you configure it, CAPTCHA site keys and page URLs are sent to a
-  paid third-party service, and you are responsible for the site's terms,
-  authorization requirements, and legal risk.
+- **Credential typing:** browser automation can type non-secret profile fields.
+  Profile passwords are not inserted into the apply agent prompt; if a password
+  login is required, the apply agent stops for operator handling.
+- **CAPTCHA solving:** CAPTCHA challenges fail closed in the apply agent. It does
+  not solve image/audio challenges manually, switch to stealth browsers, or send
+  a CAPTCHA-provider key through the model prompt.
 - **Scraping and source terms:** source access can violate provider or site
   terms. Default discovery options include LinkedIn and Indeed; disable any
   source you are not allowed to query automatically.

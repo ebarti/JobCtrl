@@ -25,7 +25,11 @@ import pytest
 from jobhunter.database import close_connection, init_db
 from jobhunter.enrichment import detail
 from jobhunter.enrichment.detail import scrape_detail_page, scrape_site_batch
-from jobhunter.infrastructure.network import PolitenessGateway, RunBudgetCounter
+from jobhunter.infrastructure.network import (
+    HostRateLimiter,
+    PolitenessGateway,
+    RunBudgetCounter,
+)
 
 from .politeness_helpers import (
     AllowAllRobots,
@@ -431,6 +435,35 @@ def test_owner_authenticated_robots_allows_but_budget_still_applies() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _GrantRecordingLimiter(HostRateLimiter):
+    """Records (host, virtual-time) at each granted slot.
+
+    Sleep-count assertions are racy under parallel workers: one host's virtual
+    sleep advances the shared clock, which can legitimately satisfy the other
+    host's min-interval without a second sleep. Grant times let a test assert
+    the actual pacing invariant per host, independent of thread interleaving.
+    """
+
+    def __init__(self, clock: VirtualClock) -> None:
+        super().__init__(clock=clock.now, sleep=clock.sleep)
+        self._virtual_clock = clock
+        self._granted_lock = threading.Lock()
+        self.granted: list[tuple[str, float]] = []
+
+    @contextmanager
+    def slot(
+        self, host: str, *, min_interval_seconds: float, max_concurrency: int
+    ) -> Iterator[None]:
+        with super().slot(
+            host,
+            min_interval_seconds=min_interval_seconds,
+            max_concurrency=max_concurrency,
+        ):
+            with self._granted_lock:
+                self.granted.append((host, self._virtual_clock.now()))
+            yield
+
+
 def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
 ) -> None:
@@ -445,9 +478,8 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
             _seed_pending(conn, url, "BuiltIn Remote")
 
         clock = VirtualClock()
-        shared_gateway = PolitenessGateway(
-            robots=AllowAllRobots(), rate_limiter=no_sleep_limiter(clock)
-        )
+        limiter = _GrantRecordingLimiter(clock)
+        shared_gateway = PolitenessGateway(robots=AllowAllRobots(), rate_limiter=limiter)
         # _run_detail_scraper builds the shared run gateway via PolitenessGateway();
         # hand it our virtual-clock, allow-all gateway so pacing is observable.
         monkeypatch.setattr(detail, "PolitenessGateway", lambda **_kw: shared_gateway)
@@ -464,10 +496,19 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         # Parallel enrichment across two hosts still processes every job.
         assert stats["processed"] == 4
         assert sorted(sink) == sorted(host_a + host_b)
-        # Per-host min-interval (2.0s) was applied to each host's second nav —
-        # this is the SITE_DELAYS replacement enforced by the shared limiter.
-        paced = [s for s in clock.sleeps if s >= 2.0]
-        assert len(paced) >= 2
+        # Per-host min-interval (2.0s) — the SITE_DELAYS replacement enforced by
+        # the shared limiter: each host's consecutive grants are >= 2.0s apart
+        # in virtual time, whatever the thread interleaving.
+        grants: dict[str, list[float]] = {}
+        for host, granted_at in limiter.granted:
+            grants.setdefault(host, []).append(granted_at)
+        assert sorted(grants) == ["host-a.test", "host-b.test"]
+        for times in grants.values():
+            times.sort()
+            assert len(times) == 2
+            assert times[1] - times[0] >= 2.0
+        # And honoring the interval required at least one virtual sleep.
+        assert clock.sleeps
     finally:
         close_connection(db_path)
 
