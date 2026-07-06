@@ -64,6 +64,8 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit](#_2026-06-15-requirement-fit-ledger-—-scores-resolve-from-weighted-requirement-fit) · 2026-06-15
 - [HTML/CSS Resume Rendering Replaces LaTeX](#_2026-06-24-html-css-resume-rendering-replaces-latex) · 2026-06-24
 - [Requirement-Led Resume Tailoring](#_2026-06-30-requirement-led-resume-tailoring) · 2026-06-30
+- [Career Evidence Map Is An Operations Read Model Over Existing Facts](#_2026-07-05-career-evidence-map-is-an-operations-read-model-over-existing-facts) · 2026-07-05
+- [Interview Preparation Is Grounded, Gated, Generation-Versioned Material](#_2026-07-05-interview-preparation-is-grounded-gated-generation-versioned-material) · 2026-07-05
 
 **Discovery & compensation**
 
@@ -1318,6 +1320,65 @@ Consequences:
 - the in-process preparation queue and its reaper are removed
 
 Cites: PR #237 (P3).
+
+## 2026-07-05: Career Evidence Map Is An Operations Read Model Over Existing Facts
+
+Status: accepted
+
+Decision: the Career Evidence Map is an Operations / Read-Side model that
+inverts existing canonical facts. It reads Candidate Profile proof points and
+skills, Materials bullet provenance, Scoring requirement-fit items, and
+generation-time coverage audits. It does not create profile facts, score facts,
+or materials facts.
+
+Rationale:
+
+- users need to inspect where a proof point was used across resumes and fit
+  reports, but those uses are already recorded per artifact and per job
+- Operations is the existing owner of projection-backed read models that compose
+  several bounded contexts for UI consumption
+- deriving the map from canonical rows preserves the auditability rule: every
+  displayed claim has one source of truth
+
+Consequences:
+
+- the public DTO uses camelCase read-model fields and deep-link-ready usage refs
+- the implementation must not infer missing or covered evidence from job
+  keywords alone; gaps come from recorded fit/coverage facts
+- if the index is projected, both the Python and TypeScript builders must emit
+  the same shape and parity fixtures must cover it
+
+Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
+
+## 2026-07-05: Interview Preparation Is Grounded, Gated, Generation-Versioned Material
+
+Status: accepted
+
+Decision: Interview Preparation is a generated-materials capability for
+before-interview preparation only. Prep items are generated from existing
+grounded data, carry evidence and requirement provenance, pass the existing
+fabrication/claim-grounding/judge gates, and are persisted as
+generation-versioned material. The product has no live, in-session, streaming,
+transcript, microphone, or real-time answer-assistance state or endpoint.
+
+Rationale:
+
+- interview prep is only useful if the candidate can defend every claim from
+  their real profile evidence and accepted materials
+- the Materials context already has the truthfulness gates needed to reject
+  invented metrics, titles, employers, and named technologies
+- a dedicated no-live-assistance invariant prevents boundary drift into
+  unethical in-interview assistance
+
+Consequences:
+
+- prep generation is explicit and user-initiated; it is not part of discovery or
+  per-job preparation auto-spend
+- failed or regenerated prep never destroys the last accepted generation
+- post-interview reflection remains an Apply outcome note, not an interview
+  assistant transcript or live-session artifact
+
+Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
 
 ## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
 
