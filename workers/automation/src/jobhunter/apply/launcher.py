@@ -174,10 +174,12 @@ def _attempt_count_for(conn, url: str) -> int:
     return int(row[0] or 0) if row else 0
 
 
-def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> str | None:
+def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT decision FROM application_review_decisions
+        SELECT decision, materials_generation, profile_version, application_url,
+               partial_override_run_id
+        FROM application_review_decisions
         WHERE tenant_id = ? AND job_key = ?
         ORDER BY decided_at DESC, decision_id DESC
         LIMIT 1
@@ -186,7 +188,260 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> str 
     ).fetchone()
     if row is None:
         return None
-    return str(row["decision"] if hasattr(row, "keys") else row[0])
+    return dict(row) if hasattr(row, "keys") else {
+        "decision": row[0],
+        "materials_generation": row[1],
+        "profile_version": row[2],
+        "application_url": row[3],
+        "partial_override_run_id": row[4],
+    }
+
+
+def _current_profile_version(conn, *, tenant_id: str = "local") -> int | None:
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()
+    }
+    if "version" not in columns:
+        return None
+    row = conn.execute(
+        "SELECT version FROM candidate_profiles WHERE tenant_id = ? AND profile_id = 'default'",
+        (tenant_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    value = row["version"] if hasattr(row, "keys") else row[0]
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _payload_from_row(row) -> dict[str, Any]:
+    payload_json = row["payload_json"] if hasattr(row, "keys") else row[0]
+    if not payload_json:
+        return {}
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _payload_value(payload: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in payload:
+            return payload[name]
+    return None
+
+
+def _payload_int(payload: dict[str, Any], *names: str) -> int | None:
+    value = _payload_value(payload, *names)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dry_run_evidence_exists(
+    conn,
+    *,
+    job_key: str,
+    materials_generation: int,
+    profile_version: int,
+    application_url: str,
+    coverage: str,
+    run_id: str | None = None,
+) -> bool:
+    rows = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        ORDER BY event_id DESC
+        LIMIT 24
+        """,
+        (job_key,),
+    ).fetchall()
+    for row in rows:
+        payload = _payload_from_row(row)
+        payload_run_id = str(_payload_value(payload, "run_id", "runId") or "")
+        if not payload_run_id:
+            continue
+        if run_id and payload_run_id != run_id:
+            continue
+        if str(_payload_value(payload, "coverage", "dry_run_coverage") or "") != coverage:
+            continue
+        payload_generation = _payload_int(payload, "materials_generation", "materialsGeneration")
+        payload_profile_version = _payload_int(payload, "profile_version", "profileVersion")
+        payload_url = str(_payload_value(payload, "application_url", "applicationUrl") or "")
+        started_rows = conn.execute(
+            """
+            SELECT payload_json FROM job_events
+            WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+            ORDER BY event_id DESC
+            LIMIT 48
+            """,
+            (job_key,),
+        ).fetchall()
+        for started_row in started_rows:
+            started_payload = _payload_from_row(started_row)
+            if str(_payload_value(started_payload, "run_id", "runId") or "") != payload_run_id:
+                continue
+            if (
+                (
+                    payload_generation
+                    if payload_generation is not None
+                    else _payload_int(
+                        started_payload,
+                        "materials_generation",
+                        "materialsGeneration",
+                    )
+                )
+                == materials_generation
+                and (
+                    payload_profile_version
+                    if payload_profile_version is not None
+                    else _payload_int(
+                        started_payload,
+                        "profile_version",
+                        "profileVersion",
+                    )
+                )
+                == profile_version
+                and (
+                    payload_url
+                    or str(
+                        _payload_value(
+                            started_payload,
+                            "application_url",
+                            "applicationUrl",
+                        )
+                        or ""
+                    )
+                )
+                == application_url
+            ):
+                return True
+    return False
+
+
+def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+        WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+        ORDER BY event_id DESC
+        LIMIT 48
+        """,
+        (job_key,),
+    ).fetchall()
+    for row in rows:
+        payload = _payload_from_row(row)
+        if str(_payload_value(payload, "run_id", "runId") or "") == run_id:
+            return payload
+    return {}
+
+
+def _dry_run_completion_binding(
+    conn,
+    *,
+    job_key: str,
+    run_id: str,
+    run_ctx: dict | None,
+) -> dict[str, Any]:
+    ctx = run_ctx or {}
+    started_payload = _apply_run_started_payload(conn, job_key=job_key, run_id=run_id)
+    materials_generation = _payload_int(ctx, "materials_generation", "materialsGeneration")
+    if materials_generation is None:
+        materials_generation = _payload_int(
+            started_payload,
+            "materials_generation",
+            "materialsGeneration",
+        )
+    application_url = str(
+        _payload_value(ctx, "application_url", "applicationUrl")
+        or _payload_value(started_payload, "application_url", "applicationUrl")
+        or ""
+    )
+    profile_version = _payload_int(ctx, "profile_version", "profileVersion")
+    if profile_version is None:
+        profile_version = _payload_int(started_payload, "profile_version", "profileVersion")
+    coverage = str(_payload_value(ctx, "coverage", "dry_run_coverage") or "full")
+    if coverage not in {"full", "partial"}:
+        coverage = "full"
+    blocked_channels = _payload_value(ctx, "blocked_channels", "blockedChannels") or []
+    if not isinstance(blocked_channels, list):
+        blocked_channels = [str(blocked_channels)]
+    return {
+        "materials_generation": materials_generation,
+        "application_url": application_url or None,
+        "profile_version": profile_version,
+        "coverage": coverage,
+        "blocked_channels": [
+            str(channel)
+            for channel in blocked_channels
+            if channel is not None and str(channel)
+        ],
+    }
+
+
+def _approval_refusal_reason(
+    conn,
+    *,
+    tenant_id: str,
+    job_key: str,
+    materials_generation: Any,
+    profile_version: int | None,
+    application_url: str,
+) -> str | None:
+    decision = _latest_apply_review_decision(
+        conn,
+        tenant_id=tenant_id,
+        job_key=job_key,
+    )
+    if not decision or decision.get("decision") != "approve_submit":
+        return "awaiting_approval"
+    try:
+        current_materials_generation = int(materials_generation)
+    except (TypeError, ValueError):
+        return "approval_stale_materials"
+    try:
+        decision_materials_generation = int(decision.get("materials_generation"))
+    except (TypeError, ValueError):
+        return "approval_stale_materials"
+    if decision_materials_generation != current_materials_generation:
+        return "approval_stale_materials"
+    try:
+        decision_profile_version = int(decision.get("profile_version"))
+    except (TypeError, ValueError):
+        return "approval_stale_profile"
+    if profile_version is None or decision_profile_version != profile_version:
+        return "approval_stale_profile"
+    if str(decision.get("application_url") or "") != application_url:
+        return "approval_stale_url"
+    if _dry_run_evidence_exists(
+        conn,
+        job_key=job_key,
+        materials_generation=current_materials_generation,
+        profile_version=decision_profile_version,
+        application_url=application_url,
+        coverage="full",
+    ):
+        return None
+    partial_override_run_id = str(decision.get("partial_override_run_id") or "")
+    if partial_override_run_id:
+        if _dry_run_evidence_exists(
+            conn,
+            job_key=job_key,
+            materials_generation=current_materials_generation,
+            profile_version=decision_profile_version,
+            application_url=application_url,
+            coverage="partial",
+            run_id=partial_override_run_id,
+        ):
+            return None
+        return "override_evidence_invalid"
+    return "awaiting_dry_run"
 
 
 def _load_blocked():
@@ -373,21 +628,24 @@ def acquire_job(
             return None
         dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
         if approval_required and not dry_run:
-            decision = _latest_apply_review_decision(
+            refusal_reason = _approval_refusal_reason(
                 conn,
                 tenant_id=LOCAL_TENANT,
                 job_key=url,
+                materials_generation=row["materials_generation"],
+                profile_version=_current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                application_url=apply_url,
             )
-            if decision != "approve_submit":
+            if refusal_reason:
                 conn.rollback()
                 add_event(
-                    f"[W{worker_id}] Awaiting apply approval for "
-                    f"{(row['title'] or url)[:40]}"
+                    f"[W{worker_id}] Awaiting apply approval "
+                    f"({refusal_reason}) for {(row['title'] or url)[:40]}"
                 )
                 logger.info(
-                    "Apply approval required for %s; latest decision=%s",
+                    "Apply approval required for %s; refusal_reason=%s",
                     url,
-                    decision or "none",
+                    refusal_reason,
                 )
                 return None
 
@@ -440,6 +698,9 @@ def acquire_job(
                 "headless": bool(run_ctx.get("headless")) if run_ctx else False,
                 "attempts": attempts + 1,
                 "workflow_id": run_ctx.get("workflow_id") if run_ctx else None,
+                "materials_generation": row["materials_generation"],
+                "application_url": apply_url,
+                "profile_version": _current_profile_version(conn, tenant_id=LOCAL_TENANT),
             },
         )
         conn.commit()
@@ -447,6 +708,12 @@ def acquire_job(
         if run_ctx is not None:
             run_ctx["run_id"] = str(run_id)
             run_ctx.setdefault("worker_id", worker_id)
+            run_ctx["materials_generation"] = row["materials_generation"]
+            run_ctx["application_url"] = apply_url
+            run_ctx["profile_version"] = _current_profile_version(
+                conn,
+                tenant_id=LOCAL_TENANT,
+            )
 
         return _row_to_job_dict(row, run_id=run_id)
     except Exception:
@@ -538,6 +805,12 @@ def mark_result(
             },
         )
     elif status == "dry_run":
+        binding = _dry_run_completion_binding(
+            conn,
+            job_key=url,
+            run_id=str(run_id),
+            run_ctx=run_ctx,
+        )
         # Launcher owns lock-release policy: Running -> Skipped is a launcher
         # convention (dry-run completed), not in the canonical §8.5 table.
         set_stage_state(
@@ -567,6 +840,11 @@ def mark_result(
                 "worker_id": worker_id,
                 "model": model,
                 "dry_run": True,
+                "coverage": binding["coverage"],
+                "blocked_channels": binding["blocked_channels"],
+                "materials_generation": binding["materials_generation"],
+                "application_url": binding["application_url"],
+                "profile_version": binding["profile_version"],
             },
         )
     else:

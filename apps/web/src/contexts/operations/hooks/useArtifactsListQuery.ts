@@ -5,14 +5,20 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { artifactsKeys } from "../artifactsKeys.js";
 import type { ArtifactsListInput, ArtifactSummary, PaginatedResponse } from "../types.js";
 
+export interface UseArtifactsListQueryOptions {
+  readonly enabled?: boolean;
+}
+
 export function useArtifactsListQuery(
   input: ArtifactsListInput,
+  options: UseArtifactsListQueryOptions = {},
 ): UseQueryResult<PaginatedResponse<ArtifactSummary>> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
     queryKey: artifactsKeys.list(tenantId, input),
     queryFn: () => api.artifacts(input),
+    enabled: options.enabled ?? true,
     staleTime: 60_000,
   });
 }

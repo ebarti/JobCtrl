@@ -79,6 +79,33 @@ export const CostPerInterviewAvailable: Story = {
   },
 };
 
+export const SmallSample: Story = {
+  args: {
+    summary: {
+      ...sampleDashboardSummary,
+      conversion: {
+        // Below MIN_CONVERSION_SAMPLE: the read model returns null rates, so the
+        // panel shows raw counts, "n/a" instead of a fabricated percentage, and an
+        // insufficient-data note.
+        totals: {
+          applied: 1,
+          reply: 1,
+          interview: 0,
+          offer: 0,
+          rejection: 0,
+          replyRate: null,
+          interviewRate: null,
+          offerRate: null,
+          rejectionRate: null,
+          costPerInterview: null,
+        },
+        bySource: [],
+        byBand: [],
+      },
+    },
+  },
+};
+
 export const Empty: Story = {
   args: {
     summary: {

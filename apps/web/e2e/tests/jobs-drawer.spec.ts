@@ -8,6 +8,7 @@ const PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-d
 const PROHIBITED_PRODUCT_PATH_REQUESTS = [
   /\/v1\/jobs\/.+\/actions\/apply$/i,
   /\/v1\/jobs\/.+\/actions\/generate-materials$/i,
+  /\/v1\/jobs\/.+\/actions\/generate-interview-prep$/i,
   /\/v1\/jobs\/.+\/actions\/tailor$/i,
   /\/v1\/jobs\/.+\/actions\/retailor-current-policy$/i,
   /\/v1\/jobs\/.+\/actions\/run-stage$/i,
