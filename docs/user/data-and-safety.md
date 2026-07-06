@@ -99,9 +99,11 @@ These boundaries are the operator's responsibility:
   focused field without returning the value to the model. If the tool is
   unavailable or the focused field is not a password field, login fails closed
   for operator handling.
-- **CAPTCHA solving:** CAPTCHA challenges fail closed in the apply agent. It does
-  not solve image/audio challenges manually, switch to stealth browsers, or send
-  a CAPTCHA-provider key through the model prompt.
+- **CAPTCHA solving:** supported CAPTCHA widgets are handled only through the
+  owned local solver tool when configured. The apply agent does not solve
+  image/audio challenges manually, switch to stealth browsers, or receive a
+  CAPTCHA-provider key or solver token through the model prompt. Unsupported or
+  unconfigured CAPTCHA flows fail closed.
 - **Scraping and source terms:** source access can violate provider or site
   terms. Default discovery options include LinkedIn and Indeed; disable any
   source you are not allowed to query automatically.

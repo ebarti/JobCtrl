@@ -255,8 +255,8 @@ def _build_captcha_section() -> str:
     """Build the CAPTCHA detection and solving instructions.
 
     The model must never receive CAPTCHA provider secrets or call third-party
-    CAPTCHA APIs directly. Until an owned CAPTCHA tool exists, CAPTCHA paths
-    fail closed for manual/operator handling.
+    CAPTCHA APIs directly. CAPTCHA solving is available only through the owned
+    apply tool, which resolves provider credentials locally and fails closed.
     """
     return """== CAPTCHA ==
 Do not solve CAPTCHAs manually. Do not click through image/audio challenges, switch to stealth browsers, or call third-party CAPTCHA APIs from the page or model context.
@@ -265,7 +265,8 @@ After navigation, Apply/Submit/Login clicks, or when a page appears blocked, ins
 
 Result actions:
 - No CAPTCHA -> continue normally.
-- Any CAPTCHA or bot-check challenge -> output RESULT:CAPTCHA and stop."""
+- Supported visible hCaptcha, reCAPTCHA, or Turnstile widget -> call solve_captcha(kind, sitekey, page_url) exactly once with the visible widget kind, sitekey, and current page URL. If it succeeds, continue from the current page.
+- Image/audio challenge, unsupported bot-check, solver unavailable, or solve_captcha failure -> output RESULT:CAPTCHA and stop."""
 
 
 def _build_email_verification_section(profile: dict) -> str:
@@ -482,7 +483,7 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 - Multi-page forms (Workday, Taleo, iCIMS): snapshot each new page, fill all fields, click Next/Continue. Repeat until final review page.
 - Fill ALL fields in ONE browser_fill_form call. Not one at a time.
 - Keep your thinking SHORT. Don't repeat page structure back.
-- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck, inspect for CAPTCHA/bot-check text or widgets and stop if present. Do not run custom JavaScript or third-party CAPTCHA APIs.
+- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck, inspect for CAPTCHA/bot-check text or widgets. Use solve_captcha only for supported visible widgets; otherwise stop. Do not run custom JavaScript or third-party CAPTCHA APIs.
 
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.

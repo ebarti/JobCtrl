@@ -37,7 +37,7 @@ run the step that needs them and have configured the relevant provider:
 | Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobHunter never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
 | Gmail (read-only) | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails. The connector requests read-only scope; raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
-| CAPTCHA solving service | Not used by the apply agent until an owned solver tool ships | CAPTCHA challenges fail closed; no CAPTCHA-provider key is sent through the model prompt. |
+| CAPTCHA solving service | Only when `CAPSOLVER_API_KEY` is configured and a supported apply-page widget is detected | The owned local solver tool sends the site key and page URL to the configured provider; provider keys and solver tokens are not sent through the model prompt. Unsupported or unconfigured CAPTCHA flows fail closed. |
 | Langfuse / OpenTelemetry | Only if you configure Langfuse credentials | LLM prompts and completions, workflow spans, and JSON-RPC spans. Export is off unless configured, and `LANGFUSE_DISABLE=1` opts out even when credentials are present. |
 
 The apply prompt is the largest single batch of personal data that leaves your
@@ -156,8 +156,9 @@ actions, or bypass third-party controls unless you explicitly authorize that
 behavior. This includes CAPTCHA, paywall, login, rate-limit, and bot-control
 bypass. The apply agent is instructed to stop on single sign-on and third-party login
 screens (SSO/OAuth), decline browser permission prompts, refuse ID or biometric
-verification, and never enter payment or bank details. When CapSolver is not configured, the agent is told not
-to attempt CAPTCHAs at all.
+verification, and never enter payment or bank details. CAPTCHA solving is limited
+to the owned local solver tool for supported widgets; unsupported or unconfigured
+challenges fail closed.
 
 ### Crawl Politeness
 
@@ -205,7 +206,9 @@ Different secrets live in different places, and it is worth knowing which:
   `~/.jobhunter/.env`. When stored in the Keychain they are never written to
   SQLite, logs, traces, or artifacts.
 - **The CapSolver key** is the `CAPSOLVER_API_KEY` environment variable
-  (`.env`). The apply agent no longer receives this key in its model prompt.
+  (`.env`). The apply agent does not receive this key in its model prompt; the
+  owned solver tool reads it locally and never returns provider keys or solver
+  tokens to the model.
 - **Account passwords for login autofill** are profile data if you store them,
   but the apply agent does not receive profile passwords in its prompt. For a
   regular job-site password field, it can call a local credential tool that

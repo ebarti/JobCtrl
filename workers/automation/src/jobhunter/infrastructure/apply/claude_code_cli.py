@@ -90,9 +90,13 @@ PLAYWRIGHT_APPLY_TOOLS = frozenset(
     for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
 )
 GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
-OWNED_APPLY_TOOLS = frozenset(
-    {"mcp__apply_tools__type_credential", "mcp__apply_tools__upload_artifact"}
+BASE_OWNED_APPLY_TOOLS = frozenset(
+    {
+        "mcp__apply_tools__type_credential",
+        "mcp__apply_tools__upload_artifact",
+    }
 )
+CAPTCHA_APPLY_TOOL = "mcp__apply_tools__solve_captcha"
 DISALLOWED_CLAUDE_TOOLS = (
     "Bash",
     "Edit",
@@ -102,7 +106,7 @@ DISALLOWED_CLAUDE_TOOLS = (
     "WebSearch",
 )
 _ALLOWED_TOOLS = ",".join(
-    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | OWNED_APPLY_TOOLS)
+    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
 )
 _DISALLOWED_TOOLS = ",".join(DISALLOWED_CLAUDE_TOOLS)
 
@@ -206,11 +210,12 @@ class ClaudeCodeCliAdapter:
             cmd.extend(["--model", model_label])
         if _claude_supports_budget_flag(claude_bin):
             cmd.extend(["--max-budget-usd", f"{config.get_apply_max_budget_usd():.2f}"])
+        allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
         cmd.extend([
             "-p",
             "--mcp-config", str(mcp_config_path),
             "--no-session-persistence",
-            "--allowedTools", _ALLOWED_TOOLS,
+            "--allowedTools", allowed_tools,
             "--disallowedTools", _DISALLOWED_TOOLS,
             "--output-format", "stream-json",
             "--verbose", "-",
@@ -470,6 +475,15 @@ class ClaudeCodeCliAdapter:
             return Failed(error="unknown", retryable=True)
 
         return Failed(error="no_result_line", retryable=True)
+
+
+def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
+    tools = set(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
+    apply_tools = ((mcp_config.get("mcpServers") or {}).get("apply_tools") or {})
+    env = apply_tools.get("env") if isinstance(apply_tools, Mapping) else {}
+    if isinstance(env, Mapping) and str(env.get("CAPSOLVER_API_KEY") or "").strip():
+        tools.add(CAPTCHA_APPLY_TOOL)
+    return ",".join(sorted(tools))
 
 
 def _apply_subprocess_env() -> dict[str, str]:

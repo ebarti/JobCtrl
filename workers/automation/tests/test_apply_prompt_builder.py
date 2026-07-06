@@ -8,6 +8,7 @@ import sys
 from jobhunter.apply import prompt as prompt_mod
 from jobhunter.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
 from jobhunter.domain.apply.value_objects import ApplyPrompt
+from jobhunter.infrastructure.apply import claude_code_cli
 
 
 class _FakeSnapshot:
@@ -144,7 +145,8 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     assert 'upload_artifact(kind="resume")' in rendered
     assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
-    assert "RESULT:CAPTCHA and stop" in rendered
+    assert "call solve_captcha(kind, sitekey, page_url) exactly once" in rendered
+    assert "solve_captcha failure -> output RESULT:CAPTCHA and stop" in rendered
     assert "missing_profile_data:<field>" in rendered
     assert "missing_attestation" not in rendered
     assert "answer YES only when" in rendered
@@ -194,6 +196,7 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "DistinctivePasswordShouldNeverRender" not in rendered
     assert "capsolver-secret-never-render" not in rendered
     assert "API key:" not in rendered
+    assert "CAPSOLVER_API_KEY" not in rendered
     assert "browser_evaluate" not in rendered
     assert "browser_file_upload" not in rendered
     assert "send_email" not in rendered
@@ -241,7 +244,8 @@ def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
     assert prompt_mod._build_profile_attestation_lines(empty) == []
 
 
-def test_default_mcp_config_includes_scoped_owned_connectors() -> None:
+def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> None:
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
     config = _default_mcp_config(
         9222,
         job={
@@ -265,4 +269,24 @@ def test_default_mcp_config_includes_scoped_owned_connectors() -> None:
     assert apply_tools["env"]["JOBHUNTER_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
     assert apply_tools["env"]["JOBHUNTER_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
     assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
+    assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
+
+
+def test_default_mcp_config_scopes_capsolver_key_to_apply_tools(monkeypatch) -> None:
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-private-key")
+
+    config = _default_mcp_config(
+        9222,
+        job={"application_url": "https://apply.example.com/job"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    apply_tools = config["mcpServers"]["apply_tools"]
+    assert apply_tools["env"]["CAPSOLVER_API_KEY"] == "capsolver-private-key"
+    assert "mcp__apply_tools__solve_captcha" in claude_code_cli._allowed_tools_for_mcp_config(config)
+    captcha_section = prompt_mod._build_captcha_section()
+    assert "capsolver-private-key" not in captcha_section
+    assert "CAPSOLVER_API_KEY" not in captcha_section

@@ -25,6 +25,7 @@ stays separable from the eligibility/prompt logic.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -236,6 +237,14 @@ def _default_mcp_config(
         upload_dir
         or (_config.APPLY_WORKER_DIR / "current")
     )
+    apply_tools_env = {
+        "JOBHUNTER_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
+        "JOBHUNTER_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
+        "JOBHUNTER_APPLY_UPLOAD_DIR": upload_root,
+    }
+    captcha_key = os.environ.get("CAPSOLVER_API_KEY", "").strip()
+    if captcha_key:
+        apply_tools_env["CAPSOLVER_API_KEY"] = captcha_key
     return {
         "mcpServers": {
             "playwright": {
@@ -262,11 +271,7 @@ def _default_mcp_config(
             "apply_tools": {
                 "command": sys.executable,
                 "args": ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"],
-                "env": {
-                    "JOBHUNTER_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
-                    "JOBHUNTER_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
-                    "JOBHUNTER_APPLY_UPLOAD_DIR": upload_root,
-                },
+                "env": apply_tools_env,
             },
         },
     }
