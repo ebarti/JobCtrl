@@ -1,10 +1,13 @@
-"""Minimal stdio MCP server exposing read-only Gmail verification tools."""
+"""Minimal stdio MCP server exposing scoped Gmail verification values."""
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from typing import Any
+from urllib.parse import urlparse
 
 from jobhunter import __version__
 from jobhunter.infrastructure.gmail.client import GmailClient
@@ -22,9 +25,26 @@ def main() -> None:
 
 
 class GmailMcpServer:
-    def __init__(self, *, client: GmailClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        client: GmailClient | None = None,
+        allowed_sender_domains: tuple[str, ...] | None = None,
+        earliest_internal_ms: int | None = None,
+        to_email: str | None = None,
+    ) -> None:
         self._client = client or GmailClient()
-        self._readable_message_ids: set[str] = set()
+        self._allowed_sender_domains = (
+            allowed_sender_domains
+            if allowed_sender_domains is not None
+            else _domains_from_env()
+        )
+        self._earliest_internal_ms = (
+            earliest_internal_ms
+            if earliest_internal_ms is not None
+            else _int_env("JOBHUNTER_GMAIL_AFTER_MS")
+        )
+        self._to_email = to_email if to_email is not None else os.environ.get("JOBHUNTER_GMAIL_TO_EMAIL", "")
 
     def handle_json(self, line: str) -> dict[str, Any] | None:
         try:
@@ -58,27 +78,9 @@ class GmailMcpServer:
     def _call_tool(self, params: dict[str, Any]) -> dict[str, Any]:
         name = str(params.get("name") or "")
         args = params.get("arguments") or {}
-        if name == "search_emails":
-            payload = self._client.search_emails(
-                query=str(args.get("query") or ""),
-                to_email=str(args.get("to_email") or args.get("to") or ""),
-                newer_than_minutes=int(args.get("newer_than_minutes") or 30),
-                max_results=int(args.get("max_results") or 10),
-            )
-            self._readable_message_ids = {
-                str(item.get("id"))
-                for item in payload
-                if isinstance(item, dict) and item.get("id")
-            }
-        elif name == "read_email":
-            message_id = str(args.get("message_id") or args.get("id") or "")
-            if not message_id:
-                raise ValueError("read_email requires message_id")
-            if message_id not in self._readable_message_ids:
-                raise ValueError("read_email requires a message_id returned by search_emails in this session")
-            payload = self._client.read_email(message_id=message_id)
-        else:
+        if name != "get_verification_code":
             raise ValueError(f"Unknown Gmail tool: {name}")
+        payload = self._get_verification_code(hint=str(args.get("hint") or ""))
         return {
             "content": [
                 {
@@ -88,33 +90,62 @@ class GmailMcpServer:
             ]
         }
 
+    def _get_verification_code(self, *, hint: str = "") -> dict[str, Any]:
+        if not self._to_email:
+            return _empty_result("recipient email is not configured")
+        if not self._allowed_sender_domains:
+            return _empty_result("allowed sender domain is not configured")
+        messages = self._client.search_emails(
+            query=hint,
+            to_email=self._to_email,
+            newer_than_minutes=30,
+            max_results=10,
+        )
+        codes: list[str] = []
+        links: list[str] = []
+        scanned = 0
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            if not _message_in_scope(
+                item,
+                allowed_domains=self._allowed_sender_domains,
+                earliest_internal_ms=self._earliest_internal_ms,
+            ):
+                continue
+            message_id = str(item.get("id") or "")
+            if not message_id:
+                continue
+            message = self._client.read_email(message_id=message_id)
+            scanned += 1
+            text = " ".join(
+                str(message.get(key) or "")
+                for key in ("snippet", "body_text")
+            )
+            codes.extend(_extract_codes(text))
+            links.extend(_extract_links(text))
+        return {
+            "codes": _dedupe(codes),
+            "links": _dedupe(links),
+            "source_count": scanned,
+            "note": "verification values extracted; raw email content withheld",
+        }
+
 
 def _tools() -> list[dict[str, Any]]:
     return [
         {
-            "name": "search_emails",
-            "description": "Search recent Gmail messages for application verification codes. Read-only.",
+            "name": "get_verification_code",
+            "description": "Return scoped application verification codes or links. Raw email content is never returned.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {
+                    "hint": {
                         "type": "string",
-                        "description": "Optional employer or ATS hint words, not a raw Gmail query.",
+                        "description": "Optional application or sender hint.",
                     },
-                    "to_email": {"type": "string"},
-                    "newer_than_minutes": {"type": "integer", "default": 30},
-                    "max_results": {"type": "integer", "default": 10},
                 },
-                "required": ["to_email"],
-            },
-        },
-        {
-            "name": "read_email",
-            "description": "Read one Gmail message body by message ID. Read-only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"message_id": {"type": "string"}},
-                "required": ["message_id"],
+                "additionalProperties": False,
             },
         },
     ]
@@ -126,6 +157,83 @@ def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
         "id": request_id,
         "error": {"code": code, "message": message},
     }
+
+
+def _domains_from_env() -> tuple[str, ...]:
+    raw = os.environ.get("JOBHUNTER_GMAIL_ALLOWED_DOMAINS", "")
+    return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def _int_env(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _message_in_scope(
+    message: dict[str, Any],
+    *,
+    allowed_domains: tuple[str, ...],
+    earliest_internal_ms: int | None,
+) -> bool:
+    if earliest_internal_ms is not None:
+        try:
+            if int(message.get("internalDate") or 0) < earliest_internal_ms:
+                return False
+        except (TypeError, ValueError):
+            return False
+    sender_domain = _email_domain(str(message.get("from") or ""))
+    return any(
+        sender_domain == domain or sender_domain.endswith(f".{domain}")
+        for domain in allowed_domains
+    )
+
+
+def _email_domain(value: str) -> str:
+    match = re.search(r"@([A-Za-z0-9.-]+)", value)
+    return match.group(1).lower() if match else ""
+
+
+def _extract_codes(text: str) -> list[str]:
+    patterns = (
+        r"\b(?:code|otp|one[- ]?time|verification)[^\w]{0,20}([A-Z0-9][A-Z0-9 -]{4,18}[A-Z0-9])\b",
+        r"\b([0-9]{6,10})\b",
+    )
+    out: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            code = re.sub(r"[\s-]+", "", match.group(1)).upper()
+            if 6 <= len(code) <= 12:
+                out.append(code)
+    return out
+
+
+def _extract_links(text: str) -> list[str]:
+    links: list[str] = []
+    for raw in re.findall(r"https?://[^\s<>'\"]+", text):
+        parsed = urlparse(raw.rstrip(").,;"))
+        if parsed.scheme and parsed.netloc:
+            links.append(parsed.geturl())
+    return links
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _empty_result(note: str) -> dict[str, Any]:
+    return {"codes": [], "links": [], "source_count": 0, "note": note}
 
 
 if __name__ == "__main__":

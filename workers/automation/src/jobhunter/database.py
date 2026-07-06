@@ -259,7 +259,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             materials_generation INTEGER,
             profile_version     INTEGER,
             application_url     TEXT,
-            partial_override_run_id TEXT
+            partial_override_run_id TEXT,
+            email_recipient TEXT,
+            email_attachment_artifact_id TEXT
         )
     """)
     ensure_application_review_decision_columns(conn)
@@ -807,6 +809,8 @@ def ensure_application_review_decision_columns(
         "profile_version": "INTEGER",
         "application_url": "TEXT",
         "partial_override_run_id": "TEXT",
+        "email_recipient": "TEXT",
+        "email_attachment_artifact_id": "TEXT",
     }
     added: list[str] = []
     for column, definition in additions.items():
@@ -3145,7 +3149,7 @@ _LATEST_MATERIALS_JOIN: str = (
     "m.status AS jm_status, "
     "tr.path AS jm_tailored_path, tr.created_at AS jm_tailored_at, "
     "cl.path AS jm_cover_path, cl.created_at AS jm_cover_at, "
-    "rpdf.path AS jm_resume_pdf_path, "
+    "rpdf.path AS jm_resume_pdf_path, rpdf.artifact_id AS jm_resume_pdf_artifact_id, "
     "cpdf.path AS jm_cover_pdf_path "
     "FROM (SELECT DISTINCT job_url FROM job_materials) history "
     "LEFT JOIN ("

@@ -119,5 +119,25 @@ describe("buildApplyAudit", () => {
       status: "unknown",
     });
   });
-});
 
+  it("surfaces incomplete profile attestations as review warnings", () => {
+    const audit = buildApplyAudit({
+      ...READY_INPUT,
+      missingProfileData: ["age_18_plus", "felony_conviction"],
+    });
+
+    expect(audit.state).toBe("preparing");
+    expect(audit.missingPrerequisites).toEqual([
+      expect.objectContaining({
+        code: "missing_profile_attestations",
+        label: "Profile attestations incomplete",
+        detail: "Application attestations missing: age_18_plus, felony_conviction.",
+        source: "profile_attestations",
+        severity: "warning",
+      }),
+    ]);
+    expect(audit.sources.find((source) => source.kind === "profile_attestations")).toMatchObject({
+      status: "missing",
+    });
+  });
+});

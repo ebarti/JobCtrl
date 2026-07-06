@@ -29,6 +29,7 @@ export interface BuildApplyAuditInput {
   latestApplyRun: ApplyAuditLatestRun | null;
   scoreBreakdown: ScoreBreakdown | null;
   reviewEvidenceAvailable?: boolean;
+  missingProfileData?: readonly string[];
 }
 
 const REPAIR_STATES = new Set<StageState>([
@@ -92,6 +93,14 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
       "Score eligibility",
       input.scoreBreakdown ? "present" : "unknown",
       scoreEligibilityDetail(input.scoreBreakdown),
+    ),
+    source(
+      "profile_attestations",
+      "Application attestations",
+      input.missingProfileData?.length ? "missing" : "present",
+      input.missingProfileData?.length
+        ? `Application attestations missing: ${input.missingProfileData.join(", ")}.`
+        : "Typed application attestations are complete.",
     ),
   ];
 
@@ -186,6 +195,18 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
         "No score eligibility data is recorded for this job.",
         "unknown",
         "score_eligibility",
+      ),
+    );
+  }
+
+  if (input.missingProfileData?.length) {
+    missingPrerequisites.push(
+      fact(
+        "missing_profile_attestations",
+        "Profile attestations incomplete",
+        `Application attestations missing: ${input.missingProfileData.join(", ")}.`,
+        "warning",
+        "profile_attestations",
       ),
     );
   }
