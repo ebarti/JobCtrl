@@ -7,6 +7,7 @@ import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import {
   JobOutcomePanel,
+  InterviewReflectionForm,
   ManualOutcomeForm,
   OutcomeSuggestionsPanel,
 } from "./ApplicationOutcomes.js";
@@ -35,6 +36,7 @@ describe("application outcome components", () => {
         recordedAt: "2026-05-06T08:36:00.000Z",
         suggestionId: null,
         evidenceId: null,
+        interviewPrepGeneration: null,
       },
     }));
 
@@ -53,6 +55,47 @@ describe("application outcome components", () => {
       expect.objectContaining({
         kind: "interview",
         note: "Talked to recruiting.",
+        occurredAt: expect.stringMatching(/Z$/),
+      }),
+    );
+  });
+
+  it("records an interview reflection linked to the prep generation", async () => {
+    const user = userEvent.setup();
+    const recordManualApplicationOutcome = vi.fn(async () => ({
+      ok: true as const,
+      outcome: {
+        outcomeId: "outcome-reflection",
+        jobKey: "job-2",
+        kind: "interview" as const,
+        source: "manual" as const,
+        note: "Asked about platform migration tradeoffs.",
+        occurredAt: "2026-05-06T09:35:00.000Z",
+        recordedAt: "2026-05-06T09:36:00.000Z",
+        suggestionId: null,
+        evidenceId: null,
+        interviewPrepGeneration: 2,
+      },
+    }));
+
+    renderWithProviders(<InterviewReflectionForm jobId="job-2" prepGeneration={2} />, {
+      ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
+    });
+
+    await user.type(screen.getByLabelText(/interview date/i), "2026-05-06T09:35");
+    await user.type(
+      screen.getByLabelText(/reflection note/i),
+      "Asked about platform migration tradeoffs.",
+    );
+    await user.click(screen.getByRole("button", { name: /record reflection/i }));
+
+    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(1));
+    expect(recordManualApplicationOutcome).toHaveBeenCalledWith(
+      "job-2",
+      expect.objectContaining({
+        kind: "interview",
+        interviewPrepGeneration: 2,
+        note: "Asked about platform migration tradeoffs.",
         occurredAt: expect.stringMatching(/Z$/),
       }),
     );
@@ -145,6 +188,7 @@ describe("application outcome components", () => {
         recordedAt: "2026-05-06T08:40:00Z",
         suggestionId: "suggestion-1",
         evidenceId: "evidence-1",
+        interviewPrepGeneration: null,
       },
     }));
 

@@ -7,6 +7,7 @@ import type {
   ApplySubmitIntended,
 } from "@jobhunter/domain-types";
 
+import { analyticsKeys } from "../operations/analyticsKeys.js";
 import { applyRunsKeys } from "../operations/applyRunsKeys.js";
 import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
@@ -56,6 +57,7 @@ export const applicationEmailFeedbackIngestedHandler = (
   invalidate(outcomesKeys.lists(event.tenantId)),
   invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
   invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(analyticsKeys.all(event.tenantId)),
 ];
 
 export const applicationSubmittedHandler = (
@@ -68,6 +70,7 @@ export const applicationSubmittedHandler = (
   invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(analyticsKeys.all(event.tenantId)),
 ];
 
 export const applicationFailedHandler = (
@@ -80,4 +83,5 @@ export const applicationFailedHandler = (
   invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(analyticsKeys.all(event.tenantId)),
 ];

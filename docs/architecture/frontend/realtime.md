@@ -154,7 +154,7 @@ The event taxonomy lives in `@jobhunter/domain-types` at
 `packages/domain-types/src/events/`. It is a **plain TypeScript
 discriminated union** — there is no Zod. `DomainEvent<T, P>` is the generic
 base interface (its `eventType` field is the discriminant); the union of
-all 68 concrete events is `DomainEventUnion`, with
+all 69 concrete events is `DomainEventUnion`, with
 `DomainEventType = DomainEventUnion["eventType"]` and a runtime companion
 array `DOMAIN_EVENT_TYPES` (kept exhaustive against `DomainEventType` by a
 compile-time assertion). `@jobhunter/domain-types` has no `zod` dependency.

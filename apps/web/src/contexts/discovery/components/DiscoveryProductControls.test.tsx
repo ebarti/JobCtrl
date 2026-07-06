@@ -66,6 +66,15 @@ describe("DiscoveryProductControls", () => {
                 requiredAt: "2026-05-15T10:00:00+00:00",
                 status: "pending" as const,
               },
+              {
+                itemId: "manual-extension",
+                originatingUrl: "https://example.com/jobs/browser-extension",
+                sourceId: "manual_capture:extension",
+                reason: "browser_extension_capture" as const,
+                retryContext: { source: "browser_extension" },
+                requiredAt: "2026-05-15T10:05:00+00:00",
+                status: "pending" as const,
+              },
             ],
           })),
         },
@@ -88,6 +97,10 @@ describe("DiscoveryProductControls", () => {
     expect(screen.getByText(/Unconfirmed careers page/i)).toBeInTheDocument();
     expect(
       screen.getByText(/cannot confirm which careers system/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Browser extension capture/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/saved this posting from the browser extension/i),
     ).toBeInTheDocument();
   });
 
