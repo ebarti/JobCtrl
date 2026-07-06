@@ -7,6 +7,7 @@ import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutc
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
+import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
@@ -172,6 +173,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   className="section job-detail-role-analysis"
                   requirementFitReport={detail.requirementFitReport}
                 />
+                <InterviewPrepPanel jobId={detail.job.jobKey} prep={detail.interviewPrep} />
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>

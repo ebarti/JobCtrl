@@ -7,6 +7,7 @@
  * Pure data shapes — no I/O.
  */
 import type { TenantId } from "../tenant.js";
+import type { InterviewPrep } from "../interview/index.js";
 import type { RequirementFitReport, ScoreBreakdown } from "../scoring/index.js";
 
 export interface StageProjection {
@@ -98,6 +99,7 @@ export interface JobDetailProjection {
   readonly scoredAt: string | null;
   readonly stages: readonly StageProjection[];
   readonly requirementFitReport: RequirementFitReport | null;
+  readonly interviewPrep: InterviewPrep | null;
   readonly lastUpdatedAt: string | null;
 }
 

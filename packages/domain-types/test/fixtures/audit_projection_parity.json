@@ -230,6 +230,76 @@
         "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
       }
     ],
+    "jobInterviewPrep": [
+      {
+        "generation": 1,
+        "status": "superseded",
+        "model": "gpt-test-old",
+        "generated_at": "2026-06-08T12:20:00+00:00",
+        "gate_status": "passed",
+        "fabrication_findings_json": "[]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "grounded",
+        "warnings_json": "[]",
+        "failure_reason": ""
+      },
+      {
+        "generation": 2,
+        "status": "accepted",
+        "model": "gpt-test",
+        "generated_at": "2026-06-08T12:25:00+00:00",
+        "gate_status": "passed",
+        "fabrication_findings_json": "[]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "grounded",
+        "warnings_json": "[\"Mention Kubernetes scope without adding new metrics.\"]",
+        "failure_reason": ""
+      },
+      {
+        "generation": 3,
+        "status": "failed",
+        "model": "gpt-test",
+        "generated_at": "2026-06-08T12:30:00+00:00",
+        "gate_status": "failed",
+        "fabrication_findings_json": "[\"Invented Kafka production ownership.\"]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "blocked",
+        "warnings_json": "[\"Rejected by fabrication gate.\"]",
+        "failure_reason": "Invented Kafka production ownership."
+      }
+    ],
+    "jobInterviewPrepItems": [
+      {
+        "generation": 2,
+        "item_id": "prep-star-platform",
+        "kind": "star_draft",
+        "title": "Developer platform ownership",
+        "generated_text": "Use the developer platform story to explain how you owned paved paths across product teams.",
+        "evidence_ids_json": "[\"ev_platform\"]",
+        "requirement_ids_json": "[\"r1\"]",
+        "source_text_json": "[\"Owned the developer platform across the fleet.\"]",
+        "transform_type": "grounded_prep",
+        "control": "never_fabricate",
+        "grounding_audit_json": "[\"ev_platform supports the STAR draft.\"]",
+        "warnings_json": "[]",
+        "position": 0
+      },
+      {
+        "generation": 2,
+        "item_id": "prep-gap-kafka",
+        "kind": "gap_drill",
+        "title": "Kafka gap",
+        "generated_text": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+        "evidence_ids_json": "[]",
+        "requirement_ids_json": "[\"r1\"]",
+        "source_text_json": "[]",
+        "transform_type": "grounded_gap_drill",
+        "control": "honest_gap",
+        "grounding_audit_json": "[\"Gap drill avoids unsupported Kafka ownership.\"]",
+        "warnings_json": "[\"Accepted residual gap: Kafka is only adjacent.\"]",
+        "position": 1
+      }
+    ],
     "conversionJobs": [
       {
         "url": "https://example.com/jobs/parity-conversion-offer",
@@ -351,7 +421,8 @@
         "score_correction_json",
         "stages_json",
         "employer_analysis_json",
-        "requirement_fit_report_json"
+        "requirement_fit_report_json",
+        "interview_prep_json"
       ],
       "dashboard": [
         "funnel_json",
@@ -608,6 +679,66 @@
       },
       "job_id": "https://example.com/jobs/parity-developer-platform",
       "requirement_fit_report_json": null,
+      "interview_prep_json": {
+        "gateAudit": {
+          "fabricationFindings": [],
+          "groundingFindings": [],
+          "judgeVerdict": "grounded",
+          "status": "passed",
+          "warnings": [
+            "Mention Kubernetes scope without adding new metrics."
+          ]
+        },
+        "generatedAt": "2026-06-08T12:25:00+00:00",
+        "generation": 2,
+        "items": [
+          {
+            "control": "never_fabricate",
+            "evidenceIds": [
+              "ev_platform"
+            ],
+            "generatedText": "Use the developer platform story to explain how you owned paved paths across product teams.",
+            "groundingAudit": [
+              "ev_platform supports the STAR draft."
+            ],
+            "itemId": "prep-star-platform",
+            "kind": "star_draft",
+            "position": 0,
+            "requirementIds": [
+              "r1"
+            ],
+            "sourceText": [
+              "Owned the developer platform across the fleet."
+            ],
+            "title": "Developer platform ownership",
+            "transformType": "grounded_prep",
+            "warnings": []
+          },
+          {
+            "control": "honest_gap",
+            "evidenceIds": [],
+            "generatedText": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+            "groundingAudit": [
+              "Gap drill avoids unsupported Kafka ownership."
+            ],
+            "itemId": "prep-gap-kafka",
+            "kind": "gap_drill",
+            "position": 1,
+            "requirementIds": [
+              "r1"
+            ],
+            "sourceText": [],
+            "title": "Kafka gap",
+            "transformType": "grounded_gap_drill",
+            "warnings": [
+              "Accepted residual gap: Kafka is only adjacent."
+            ]
+          }
+        ],
+        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "model": "gpt-test",
+        "status": "accepted"
+      },
       "score_breakdown_json": {
         "confidence": "high",
         "eligibility": {
@@ -1035,6 +1166,66 @@
           "model_id": "gpt-5.4",
           "error": "codex app-server timeout",
           "raw_output": null
+        }
+      ]
+    },
+    "interviewPrepJson": {
+      "jobKey": "https://example.com/jobs/parity-developer-platform",
+      "generation": 2,
+      "status": "accepted",
+      "generatedAt": "2026-06-08T12:25:00+00:00",
+      "model": "gpt-test",
+      "gateAudit": {
+        "status": "passed",
+        "fabricationFindings": [],
+        "groundingFindings": [],
+        "judgeVerdict": "grounded",
+        "warnings": [
+          "Mention Kubernetes scope without adding new metrics."
+        ]
+      },
+      "items": [
+        {
+          "itemId": "prep-star-platform",
+          "kind": "star_draft",
+          "title": "Developer platform ownership",
+          "generatedText": "Use the developer platform story to explain how you owned paved paths across product teams.",
+          "evidenceIds": [
+            "ev_platform"
+          ],
+          "requirementIds": [
+            "r1"
+          ],
+          "sourceText": [
+            "Owned the developer platform across the fleet."
+          ],
+          "transformType": "grounded_prep",
+          "control": "never_fabricate",
+          "groundingAudit": [
+            "ev_platform supports the STAR draft."
+          ],
+          "warnings": [],
+          "position": 0
+        },
+        {
+          "itemId": "prep-gap-kafka",
+          "kind": "gap_drill",
+          "title": "Kafka gap",
+          "generatedText": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+          "evidenceIds": [],
+          "requirementIds": [
+            "r1"
+          ],
+          "sourceText": [],
+          "transformType": "grounded_gap_drill",
+          "control": "honest_gap",
+          "groundingAudit": [
+            "Gap drill avoids unsupported Kafka ownership."
+          ],
+          "warnings": [
+            "Accepted residual gap: Kafka is only adjacent."
+          ],
+          "position": 1
         }
       ]
     },

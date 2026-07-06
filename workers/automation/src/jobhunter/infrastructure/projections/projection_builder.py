@@ -792,6 +792,7 @@ class ProjectionBuilder:
         employer_analysis_json = self._load_employer_analysis(job_url)
         requirement_fit_report_json = self._load_requirement_fit_report(job_url)
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
+        interview_prep_json = self._load_interview_prep(job_url)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
@@ -956,6 +957,7 @@ class ProjectionBuilder:
             stages=tuple(stages),
             employer_analysis_json=employer_analysis_json,
             requirement_fit_report_json=requirement_fit_report_json,
+            interview_prep_json=interview_prep_json,
             last_updated_at=last_updated_at,
         )
         self._store.upsert_job_detail(detail_proj)
@@ -1879,6 +1881,24 @@ class ProjectionBuilder:
         try:
             record = SqliteRequirementFitReportRepository(self._conn).load(
                 self._tenant_id, JobId(job_url)
+            )
+        except sqlite3.OperationalError:
+            return None
+        if record is None:
+            return None
+        return json.dumps(record.to_read_model(), ensure_ascii=False)
+
+    def _load_interview_prep(self, job_url: str) -> str | None:
+        """Project the latest accepted interview-prep read shape.
+
+        Failed generations stay in canonical history but never replace the
+        accepted prep shown on job detail.
+        """
+        from jobhunter.infrastructure.interview import SqliteInterviewPrepRepository
+
+        try:
+            record = SqliteInterviewPrepRepository(self._conn).load_latest(
+                self._tenant_id, JobId(job_url), status="accepted"
             )
         except sqlite3.OperationalError:
             return None

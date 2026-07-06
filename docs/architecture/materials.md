@@ -219,6 +219,13 @@ truthfulness pipeline.
   remains audit history and never destroys the last accepted prep. Accepted and
   failed outcomes publish `InterviewPrepGenerated` /
   `InterviewPrepFailed` events for projection invalidation.
+- **Read model and UI**: the Operations projection builders expose the latest
+  accepted generation as `job_detail_projections.interview_prep_json`, served by
+  the TypeScript API as `JobDetail.interviewPrep`. The Jobs detail drawer renders
+  the stored prep panel with themes, STAR drafts, honest gap drills, company
+  notes, evidence-map links, requirement IDs, source snippets, gate/judge status,
+  and accepted-residual warnings. Re-generation is an explicit button action;
+  failed generations never hide the last accepted prep.
 - **Safety boundary**: prep is not live interview assistance. There is no
   in-session, transcript, microphone, streaming, websocket, or real-time answer
   surface on the domain model, workflow input, or JSON-RPC contract.

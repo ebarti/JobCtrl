@@ -25,6 +25,8 @@ because it can drive browser automation and submit applications.
 - Review and edit generated resumes in Apply Review before approval.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
+- Generate stored interview prep for a selected job from grounded JobHunter
+  data, with evidence links and gap drills kept inspectable before the interview.
 - Edit resume PDF style templates in Preferences, choose a default template, and
   override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
@@ -69,6 +71,9 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - LLM work can spend money and send job, profile, and generated-material text to
   configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
   but it is an estimate rather than the provider bill.
+- Interview prep is stored pre-interview material only. Do not use JobHunter as
+  a live interview assistant; it has no transcript, microphone, streaming,
+  websocket, or real-time answer surface.
 - Profiles, generated materials, browser state, logs, SQLite databases, and
   local worker state are sensitive local artifacts. Public bug reports,
   screenshots, and reproduction cases should use synthetic data only; `pnpm

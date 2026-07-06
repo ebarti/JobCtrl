@@ -38,6 +38,7 @@ import type {
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
   EvidenceMapResponse,
+  GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
   GmailOutcomeScanRequest,
   GmailOutcomeScanResponse,
@@ -650,6 +651,13 @@ export class JobHunterApiClient {
 
   generateMaterials(jobKey: string, body: Partial<GenerateMaterialsRequest> = {}): Promise<ActionRunResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-materials`, body);
+  }
+
+  generateInterviewPrep(
+    jobKey: string,
+    body: Partial<GenerateInterviewPrepRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-interview-prep`, body);
   }
 
   applyJob(jobKey: string, body: Partial<ApplyJobRequest> = {}): Promise<ActionRunResponse> {

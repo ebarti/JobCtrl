@@ -334,6 +334,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   generateMaterials(jobKey: string, body: Parameters<JobHunterApiClient["generateMaterials"]>[1] = {}) {
     return this.client.generateMaterials(jobKey, body);
   }
+  generateInterviewPrep(jobKey: string, body: Parameters<JobHunterApiClient["generateInterviewPrep"]>[1] = {}) {
+    return this.client.generateInterviewPrep(jobKey, body);
+  }
   applyJob(jobKey: string, body: Parameters<JobHunterApiClient["applyJob"]>[1] = {}) {
     return this.client.applyJob(jobKey, body);
   }

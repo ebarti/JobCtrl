@@ -513,6 +513,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       stages_json            TEXT NOT NULL DEFAULT '[]',
       employer_analysis_json TEXT,
       requirement_fit_report_json TEXT,
+      interview_prep_json    TEXT,
       last_updated_at        TEXT,
       PRIMARY KEY (tenant_id, job_id)
     );
@@ -675,6 +676,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     ensureProjectionColumn(db, "job_detail_projections", "employer_analysis_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "requirement_fit_report_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_detail_projections", "interview_prep_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "artifact_list_projections", "layout_boxes_json", "TEXT") || schemaChanged;
@@ -1167,6 +1170,34 @@ interface RequirementFitItemRow extends Record<string, unknown> {
   artifact_coverage_json: string | null;
 }
 
+interface InterviewPrepRow extends Record<string, unknown> {
+  job_url: string;
+  generation: number;
+  status: string;
+  model: string | null;
+  generated_at: string;
+  gate_status: string;
+  fabrication_findings_json: string;
+  grounding_findings_json: string;
+  judge_verdict: string | null;
+  warnings_json: string;
+}
+
+interface InterviewPrepItemRow extends Record<string, unknown> {
+  item_id: string;
+  kind: string;
+  title: string;
+  generated_text: string;
+  evidence_ids_json: string;
+  requirement_ids_json: string;
+  source_text_json: string;
+  transform_type: string;
+  control: string;
+  grounding_audit_json: string;
+  warnings_json: string;
+  position: number;
+}
+
 interface BulletProvenanceRow extends Record<string, unknown> {
   job_url: string;
   artifact_id: string;
@@ -1368,6 +1399,67 @@ function loadLatestRequirementFitBand(
     [tenantId, jobUrl],
   );
   return nullableString(row?.fit_band);
+}
+
+function loadInterviewPrepJson(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): string | null {
+  if (!tableExists(db, "job_interview_prep")) return null;
+  if (!tableExists(db, "job_interview_prep_items")) return null;
+  const row = getRow<InterviewPrepRow>(
+    db,
+    `SELECT job_url, generation, status, model, generated_at, gate_status,
+            fabrication_findings_json, grounding_findings_json, judge_verdict,
+            warnings_json
+       FROM job_interview_prep
+      WHERE tenant_id = ? AND job_url = ? AND status = 'accepted'
+      ORDER BY generation DESC
+      LIMIT 1`,
+    [tenantId, jobUrl],
+  );
+  if (!row) return null;
+  const generation = Number(row.generation);
+  const items = allRows<InterviewPrepItemRow>(
+    db,
+    `SELECT item_id, kind, title, generated_text, evidence_ids_json,
+            requirement_ids_json, source_text_json, transform_type, control,
+            grounding_audit_json, warnings_json, position
+       FROM job_interview_prep_items
+      WHERE tenant_id = ? AND job_url = ? AND generation = ?
+      ORDER BY position ASC, item_id ASC`,
+    [tenantId, jobUrl, generation],
+  );
+  const readModel = {
+    jobKey: row.job_url,
+    generation,
+    status: row.status,
+    generatedAt: row.generated_at,
+    model: row.model ?? null,
+    gateAudit: {
+      status: row.gate_status,
+      fabricationFindings: parseStringList(parseJsonArray(row.fabrication_findings_json)),
+      groundingFindings: parseStringList(parseJsonArray(row.grounding_findings_json)),
+      judgeVerdict: row.judge_verdict ?? null,
+      warnings: parseStringList(parseJsonArray(row.warnings_json)),
+    },
+    items: items.map((item) => ({
+      itemId: item.item_id,
+      kind: item.kind,
+      title: item.title,
+      generatedText: item.generated_text,
+      evidenceIds: parseStringList(parseJsonArray(item.evidence_ids_json)),
+      requirementIds: parseStringList(parseJsonArray(item.requirement_ids_json)),
+      sourceText: parseStringList(parseJsonArray(item.source_text_json)),
+      transformType: item.transform_type,
+      control: item.control,
+      groundingAudit: parseStringList(parseJsonArray(item.grounding_audit_json)),
+      warnings: parseStringList(parseJsonArray(item.warnings_json)),
+      position: Number(item.position ?? 0),
+    })),
+  };
+  return JSON.stringify(readModel);
 }
 
 function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {
@@ -2480,6 +2572,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
   const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
   const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobUrl));
+  const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobUrl);
   const enrichment = loadEnrichment(db, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
@@ -2628,8 +2721,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        score_reasoning, score_version, scored_at,
        score_criteria_json, score_trace_json, score_correction_json,
        stages_json, employer_analysis_json, requirement_fit_report_json,
+       interview_prep_json,
        last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        description_preview    = excluded.description_preview,
        compensation_summary_json = excluded.compensation_summary_json,
@@ -2645,6 +2739,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        stages_json            = excluded.stages_json,
        employer_analysis_json = excluded.employer_analysis_json,
        requirement_fit_report_json = excluded.requirement_fit_report_json,
+       interview_prep_json    = excluded.interview_prep_json,
        last_updated_at        = excluded.last_updated_at`,
   ).run(
     tenantId,
@@ -2663,6 +2758,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     JSON.stringify(stages),
     employerAnalysisJson,
     requirementFitReportJson,
+    interviewPrepJson,
     lastUpdatedAt,
   );
 

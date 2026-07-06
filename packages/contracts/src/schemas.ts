@@ -320,6 +320,13 @@ export const GenerateMaterialsRequestSchema = z
   .strict();
 export type GenerateMaterialsRequest = z.infer<typeof GenerateMaterialsRequestSchema>;
 
+export const GenerateInterviewPrepRequestSchema = z
+  .object({
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
+
 export const ApplyJobRequestSchema = z
   .object({
     dryRun: z.boolean().default(true),
@@ -2753,6 +2760,9 @@ export interface JobDetail {
   // Requirement-led fit audit served from projection rows, or null when this
   // job has not been scored with requirement-level assessments yet.
   requirementFitReport: RequirementFitReport | null;
+  // Accepted interview-prep artifact served from projection rows, or null when
+  // the user has not explicitly generated prep for this job yet.
+  interviewPrep: InterviewPrep | null;
   // Projection-backed compensation facts from canonical posted-fact and
   // reported company-role estimate rows. Null only when the projection row is
   // absent or contains invalid JSON.
@@ -3098,6 +3108,7 @@ export interface ActionCommandPayload {
     | "analyze_job"
     | "refresh_compensation"
     | "generate_materials"
+    | "generate_interview_prep"
     | "apply"
     | "cancel"
     | "mark_applied"
