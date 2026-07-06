@@ -278,3 +278,30 @@ resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
 automation, mailbox scans, real crawling, or real LLM calls for screenshots;
 keep output deterministic (fixed viewport, synthetic database, seeded
 heartbeat, no external providers).
+
+### Launch Demo Asset Inventory
+
+The launch demo assets each prove one product invariant from synthetic data.
+Each asset is classified **A** (static, already covered), **B** (static, new seed
+state), or **C** (dynamic/lifecycle — a driven flow that is *defined* here, not
+executed by CI), and maps to a `Current` row in the repository-only claims ledger
+(`docs/claims-ledger.md`), which is the committed source of truth for every claim
+below.
+
+| # | Asset | Class | Claim(s) | Regeneration / proof | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | First run → empty dashboard | B | `CL-060`, `CL-072` | Empty-workspace seed variant + a `docs-screenshots.spec.ts` onboarding surface | Deferred — needs an empty-workspace seed variant + capture surface |
+| 2 | Resume / profile import | B/C | `CL-080` | Profile-import wizard capture from a synthetic resume | Deferred — needs an import-flow capture surface |
+| 3 | Discovery → scored jobs + requirement fit + provenance | A | `CL-001`, `CL-010`, `CL-011`, `CL-020` | `pnpm docs:screenshots` → `jobs.png`, `job-detail.png` (seed: scored job, `job_requirement_fit_items`, `job_bullet_provenance`) | Covered |
+| 4 | Apply-review audit surfaces | A | `CL-023`, `CL-024`, `CL-030` | `pnpm docs:screenshots` → `apply-review.png` (seed: approved generation, evidence, `change_annotations`) | Covered |
+| 5 | Failed refresh preserves last accepted artifact | B | `CL-025` | Regression tests `apps/api/test/resume-templates.test.ts` ("keeps the last accepted resume artifact when the PDF render fails"; "reports refresh unavailable without hiding the last accepted artifact") and `apps/api/test/resume-review-drafts.test.ts` ("fails the render and preserves prior approved artifacts …"); run `pnpm api:test` | Covered — invariant proven from fixture |
+| 6 | Tailoring gate rejects an unsupported claim | B | `CL-021` | Grounding-gate regression `workers/automation/tests/test_claim_grounding.py` (a claim whose text is absent from the shipped resume is flagged `ungrounded` with an inspectable reason — the CL-021 fail-closed behaviour) and `workers/automation/tests/test_coverage_audit.py` (fabricated/stuffed keywords fall into `missing`); the apply-review rendering of the resulting blocker is seeded in `apps/api/test/qa-seed.ts` and asserted by `apps/api/test/application-feedback.test.ts` | Covered — gate + surface proven from fixtures |
+| 7 | Dry-run apply completes + live-approval gate + blocked-channel evidence | B / C | `CL-030`–`CL-034` | Approval card + dry-run run (`qa-run-1`) via `pnpm docs:screenshots`; live blocked-channel evidence via a driven dry-run (capability shipped: approval binding + dry-run evidence) | Approval card + dry-run run Covered; live blocked-channel evidence Defined (class C) |
+| 8 | Spend-ceiling stop + health surface | B / C | `CL-040`, `CL-041` | Health surface with an `llm_spend`-at/over-budget seed fixture + capture; stop lifecycle via a driven run (spend ceiling shipped) | Deferred — needs an `llm_spend` seed fixture + health capture; stop lifecycle Defined (class C) |
+| 9 | Reliability demo — kill worker, restart, resume | C | `CL-050` (`TR-008`) | `scripts/reliability-demo.sh` drives `DurabilityProbeWorkflow` (a hermetic durable-timer probe — no crawl/LLM) on an isolated stack; kills the worker by captured PID tree and asserts the same run ids resume in Temporal + the read-model projection. Probe covered by `workers/automation/tests/test_workflow_durability_probe.py`; see [Reliability & QA → Durable-Execution Recovery Demo](local-reliability-qa.md#durable-execution-recovery-demo) | Defined — self-asserting, re-runnable script (verified locally) |
+
+Deferred assets (1, 2, 8 health capture) are launch-set follow-ups: they need a
+new synthetic seed variant or capture surface, not a missing product capability.
+Class-C assets (7 live evidence, 8 stop lifecycle, 9) are defined driven flows,
+never faked with a staged static image. No asset regenerates from a real
+workspace.
