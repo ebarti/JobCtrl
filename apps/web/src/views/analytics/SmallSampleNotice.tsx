@@ -9,8 +9,9 @@ export function SmallSampleNotice({ minSample }: SmallSampleNoticeProps) {
       : `A rate appears once a group has at least ${minSample} applications`;
   return (
     <p className="analytics-caption">
-      Recorded outcomes from canonical rows only. {sampleText}; smaller groups show counts only. Analytics never
-      affect scoring, ranking, or apply eligibility.
+      Descriptive associations from your own recorded outcomes — not causal claims. Recorded outcomes from
+      canonical rows only. {sampleText}; smaller groups show counts only. Analytics never affect scoring, ranking,
+      or apply eligibility.
     </p>
   );
 }

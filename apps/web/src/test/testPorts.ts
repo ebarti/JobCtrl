@@ -20,6 +20,7 @@ import {
   makeArtifactDetail,
   makeArtifactsPage,
   sampleArtifact,
+  sampleExtensionCapabilityTokenResponse,
   sampleResumeTemplateListResponse,
 } from "./fixtures/projections.js";
 
@@ -240,6 +241,12 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       attempt: null,
       generation: null,
       message: "Resume materials already use the effective template.",
+    })),
+    extensionCapabilityToken: vi.fn(async () => sampleExtensionCapabilityTokenResponse),
+    rotateExtensionCapabilityToken: vi.fn(async () => ({
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
     })),
   };
   const api = overrides.api

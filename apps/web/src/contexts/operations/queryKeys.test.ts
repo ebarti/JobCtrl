@@ -7,6 +7,7 @@ import { activityKeys } from "./activityKeys.js";
 import { analyticsKeys } from "./analyticsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
+import { digestKeys } from "./digestKeys.js";
 import { healthKeys } from "./healthKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
@@ -48,6 +49,16 @@ describe("operations queryKeys", () => {
       "analytics",
       "outcomes",
       { dimension: "fit_band" },
+    ]);
+  });
+
+  it("scopes digest keys under tenant + digest prefix", () => {
+    expect(digestKeys.all(LOCAL_TENANT)).toEqual(["tenant", LOCAL_TENANT, "digest"]);
+    expect(digestKeys.summary(LOCAL_TENANT)).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "digest",
+      "summary",
     ]);
   });
 

@@ -59,6 +59,7 @@ test("analytics view keeps small samples count-only", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Outcome analytics" })).toBeVisible();
   await expect(page.getByText("Recorded outcomes from canonical rows only")).toBeVisible();
+  await expect(page.getByText("not causal claims")).toBeVisible();
 
   const leverRow = page.getByRole("row").filter({ hasText: "lever" });
   await expect(leverRow).toContainText("n=1");
