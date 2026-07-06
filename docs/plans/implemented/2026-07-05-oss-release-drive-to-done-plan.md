@@ -1,10 +1,9 @@
 # OSS Release — Drive-to-Done and Completion Verification Plan
 
 > **Closeout status (2026-07-05 R1):** #274 executed this plan's inventory
-> method against current `main` and found **NO-GO**, not release-ready. W1.2–W1.7,
-> W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints remain
-> open. This plan is archived as executed, not as proof that the release gate
-> passed.
+> method against current `main` and found **NO-GO**, not release-ready. That
+> first inventory is historical; §10 restamps the W1 apply-safety residual after
+> the W1 remediation train merged.
 >
 > **Owner decision (2026-07-06):** the spec's former W1.8 dry-run-by-default
 > requirement is withdrawn. Non-dry-run remains the default unless callers pass
@@ -33,6 +32,12 @@
 > is not a release gate. W2.1 is open, W2.2 and W2.4 are partial, W0.6 is
 > repo-side only until owner disposition closure, and D-6/R11 guarded submission
 > must wait.
+>
+> **Latest refresh (2026-07-06, after W1 remediation):** §10 restamps the W1
+> residual against `main` @ `660c4f22e64f0be13d7901584b399ba9fd364451`.
+> W1.1-W1.7 are complete and W1.8 is withdrawn. The W1 apply-safety
+> precondition is now satisfied, but the overall R1 release gate remains
+> **NO-GO** until the non-W1 release/owner checkpoints in §10.4 close.
 
 ---
 
@@ -554,6 +559,64 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
 | Browser extension D-8: target browser/engine for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:388`. |
 | Browser extension D-9: whether to ship LLM-assisted free-text drafts or keep deterministic-only for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:389`. |
 | Claims-ledger `TODO(owner)` cells. | None found by `rg -n "TODO\\(owner\\)" docs/claims-ledger.md`; remaining claims-ledger owner actions are listed above instead. |
+
+## 10. Refreshed W1 residual inventory after remediation (2026-07-06)
+
+### 10.1 Snapshot and decision
+
+- **Tree checked:** `main` @ `660c4f22e64f0be13d7901584b399ba9fd364451`
+  after the W1 remediation train merged (#336, #337, #338, #340, #342, #345).
+- **Scope:** this section re-derives W1.2-W1.8 only. It supersedes the W1
+  rows in §9.2 and §9.3; it does not claim the non-W1 release gates are done.
+- **Read constraints honored:** no forbidden local-only planning documents were
+  read or cited.
+- **Decision:** W1 apply-safety hardening is **COMPLETE**. The overall R1
+  release gate remains **NO-GO** because non-W1 release and owner checkpoints
+  remain open; see §10.4.
+
+### 10.2 W1 apply hardening status
+
+| Item | Status | Evidence on `main` |
+| --- | --- | --- |
+| W1.1 approval bindings + partial-evidence gate | done | Unchanged from §9.2. Approval decisions bind material/profile/application state and reject stale partial overrides before a live submit. |
+| W1.2 dry-run violation must fail closed | done | The apply adapter now converts `RESULT:APPLIED` during dry-run into non-retryable `dry_run_violation` instead of `DryRunComplete` (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:443`-`:448`), and the saga regression proves the violation records no dry-run completion evidence (`workers/automation/tests/test_apply_saga.py:486`-`:515`). Adapter coverage: `workers/automation/tests/test_claude_code_cli_adapter.py:354`-`:365`. |
+| W1.3 reduce Claude permissions / owned MCP tools / env allowlist | done | The Claude subprocess now starts with explicit `--allowedTools`, `--disallowedTools`, `--no-session-persistence`, and filtered environment (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:210`-`:227`, `:495`-`:500`). The allowlist excludes unsafe Playwright/Gmail tools and includes only owned apply tools (`:47`-`:100`, `:486`-`:492`). Regressions prove no permission bypass, no secret env forwarding, and pinned allowlist parity (`workers/automation/tests/test_claude_code_cli_adapter.py:167`-`:220`, `:298`-`:321`). |
+| W1.4 remove hardcoded legal attestations | done | The apply prompt now renders only typed profile `application_attestations` and requires `RESULT:FAILED:missing_profile_data:<field>` for required missing legal/screening facts (`workers/automation/src/jobhunter/apply/prompt.py:78`-`:82`, `:210`-`:217`). Prompt tests prove hardcoded defaults are absent and typed attestations render explicitly (`workers/automation/tests/test_apply_prompt_builder.py:196`-`:206`, `:209`-`:235`). |
+| W1.5 keep profile password out of prompt | done | The prompt tells the agent to focus the password field and call `type_credential(kind="job_site_password")`, never to ask for, print, or type the password itself (`workers/automation/src/jobhunter/apply/prompt.py:455`). The owned MCP tool resolves and types the credential without returning it (`workers/automation/src/jobhunter/infrastructure/apply_tools/mcp_server.py:112`-`:125`), and tests prove the secret is not returned or rendered (`workers/automation/tests/test_apply_tools_mcp_server.py:79`-`:97`, `workers/automation/tests/test_apply_prompt_builder.py:196`-`:203`). |
+| W1.6 keep CapSolver key out of prompt | done | CAPTCHA handling is now an owned `solve_captcha` tool that requires a configured key server-side and never returns provider keys or solver tokens (`workers/automation/src/jobhunter/infrastructure/apply_tools/mcp_server.py:127`-`:145`, `:216`-`:235`). The prompt tells the agent to call `solve_captcha` for supported widgets and fail closed otherwise (`workers/automation/src/jobhunter/apply/prompt.py:268`-`:269`, `:486`). Tests prove no key in prompt/config exposed to the model, key-scoped tool availability, fail-closed missing-key behavior, and no secret leakage in usage events (`workers/automation/tests/test_apply_prompt_builder.py:196`-`:199`, `:277`-`:292`; `workers/automation/tests/test_apply_tools_mcp_server.py:152`-`:199`, `:201`-`:215`). |
+| W1.7 quarantine email application sending | done | The agent can only report a page-visible recipient as `RESULT:EMAIL_ONLY:<address>` (`workers/automation/src/jobhunter/apply/prompt.py:450`; parser at `workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:437`-`:439`). The saga verifies the recipient against stored posting text, records `EmailApplicationCandidateRecorded`, blocks dry-run sends with `blocked_channels=("email_application",)`, requires a matching Apply Review decision before live send, and sends only through the owned email sender (`workers/automation/src/jobhunter/domain/apply/process_manager.py:451`-`:489`, `:501`-`:526`). Regressions prove unverified recipients are rejected, dry-runs never send, approval binding is required, and missing send scope fails closed (`workers/automation/tests/test_apply_saga.py:360`-`:430`, `:480`-`:483`). |
+| W1.8 dry-run-by-default surface defaults | withdrawn | Owner decision #328 removed W1.8 from the release plan. Live/non-dry-run remains the default unless callers pass `--dry-run` / `dryRun: true`; W1.8 is not a release requirement, gate, or acceptance criterion. |
+
+### 10.3 Verification gates for the W1 train
+
+The W1 train was validated locally with the repository gate, independent of
+GitHub CI status:
+
+- `corepack pnpm check` — passed.
+- `corepack pnpm test` — passed: API Vitest, web build, extension unit/e2e, and
+  Python pytest (`2002 passed, 1 warning`).
+- `corepack pnpm --filter @jobhunter/web test` — passed (`169` files,
+  `998` tests).
+- `uv --project workers/automation run --extra dev pytest -q` — passed
+  (`2002 passed, 1 warning`).
+- `uv --project workers/automation run --extra dev ruff check .` — passed.
+- `corepack pnpm docs:build` — passed (`4705` references across `233` files).
+- `python3 scripts/release_check.py --strict-prompt` and
+  `python3 scripts/release_check.py` — passed.
+- `git diff --check`, local-only-doc touch scan, added-line competitor-name
+  scan, and conflict-marker scan — clean.
+
+### 10.4 Current release gate
+
+The W1 apply-safety hard precondition is now satisfied. Overall R1 is still
+**NO-GO** until at least these non-W1 release gates close:
+
+| Gate | Current status | Evidence |
+| --- | --- | --- |
+| W0.6 dispositions / owner acceptance | not complete | §9.5 still lists owner disposition and historical-blob acceptance actions that cannot be proven from code alone. |
+| W2.1 final distribution name and publish re-enable | not complete | PR #257 remains open; `.github/workflows/publish.yml` is still manual-only and `workers/automation/pyproject.toml` still uses the current distribution name. |
+| W2.4 per-lane token ceilings and owner-confirmed defaults | not complete | The base daily spend cap exists, but the spec still requires lane-attributed ceilings, owner-confirmed defaults, doctor visibility, and health-surface breakdown before release. |
+| Final release/visibility owner actions | not complete | §9.5 still requires the owner-only release flip, first tag, and final sign-offs. |
 
 ## Delivery Model: Stacked PRs On This Plan
 
