@@ -133,6 +133,16 @@ profiles, logs, SQLite databases, screenshots containing real data, or local
 worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
 and [SECURITY.md](SECURITY.md).
 
+Discovery and enrichment fetch politely: every request runs through one gateway
+that honors `robots.txt` (failing closed when it is unreachable), paces each host
+and bounds each run's request budget, and sends an honest `User-Agent`
+(`JobHunter/<version> (+<repo url>)`) that never impersonates a browser. Review
+or override that identity before crawling real sites via
+`JOBHUNTER_CRAWL_UA_PRODUCT` / `JOBHUNTER_CRAWL_UA_CONTACT`
+([Configuration → Crawl Politeness](docs/user/configuration.md#crawl-politeness));
+`jobhunter doctor` prints the effective value. JobHunter never bypasses login,
+paywall, CAPTCHA, rate-limit, or bot-control gates.
+
 ### Back Up And Restore
 
 All product state lives in `jobhunter.db`. Take a consistent snapshot at any

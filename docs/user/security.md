@@ -134,6 +134,37 @@ screens (SSO/OAuth), decline browser permission prompts, refuse ID or biometric
 verification, and never enter payment or bank details. When CapSolver is not configured, the agent is told not
 to attempt CAPTCHAs at all.
 
+### Crawl Politeness
+
+Every discovery and enrichment fetch — `urllib` API calls and Playwright
+navigations alike — routes through one crawl-politeness gateway. It:
+
+- **Honors `robots.txt`** for page-rendering fetches. An unreachable
+  `robots.txt` (a `5xx` or timeout) fails **closed** — the path is treated as
+  disallowed until robots can be re-checked — while a definitive `404` allows,
+  per RFC 9309. (JobHunter uses the standard-library `robotparser`, which is
+  first-match rather than RFC 9309 longest-match; it can over-block an `Allow`
+  exception, which is the safe direction.)
+- **Stamps one honest `User-Agent`** — `JobHunter/<version> (+<repo url>)` by
+  default — that **never impersonates a browser** on a surface it controls. You
+  can override the product token and contact via
+  [configuration](configuration.md#crawl-politeness); review it before real
+  crawls.
+- **Paces requests per host** (a minimum interval + a concurrency cap) and
+  **bounds each run's request budget**, so parallel crawls cannot hammer a host.
+  A server `Retry-After` is honored but clamped, so a hostile header cannot
+  freeze a worker.
+
+A blocked fetch is recorded as a first-class **outcome** — robots-disallowed,
+rate-limited, or budget-exhausted — never a scrape error, and is surfaced per
+source in the Source Health card (`SourcePolitenessBadges`) and discovery
+controls. Broad job boards fetched through `python-jobspy` own their internal
+per-board transport, so JobHunter cannot robots-gate those individual requests;
+it applies budget + pacing at its own invocation boundary, and `jobhunter
+doctor` discloses when broad boards are active. The authenticated LinkedIn path
+uses your own logged-in browser session and presents its real browser identity —
+an owner-scoped exception that is still rate- and budget-limited.
+
 ## Credentials
 
 Different secrets live in different places, and it is worth knowing which:
