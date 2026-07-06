@@ -2292,6 +2292,99 @@ textarea:focus-visible {
   padding: 8px 10px;
 }
 
+.artifact-comparison {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.artifact-comparison-head,
+.artifact-comparison-delta-head,
+.artifact-comparison-side-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: safe center;
+  justify-content: space-between;
+}
+
+.artifact-comparison-head h3,
+.artifact-comparison-delta h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.artifact-comparison-head > span,
+.artifact-comparison-delta-head > span {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.artifact-comparison-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.artifact-comparison-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.artifact-comparison-side,
+.artifact-comparison-delta {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.artifact-comparison-side-head b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.artifact-comparison-side .detail-list.compact {
+  margin: 0;
+}
+
+.artifact-comparison-tag-group {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.artifact-comparison-tag-group > span {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.artifact-comparison-tag-group > div,
+.artifact-comparison-delta-grid {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.artifact-comparison-delta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.artifact-comparison-picker {
+  margin: 0;
+}
+
 .artifact-risk-summary {
   display: flex;
   flex-wrap: wrap;
@@ -6578,6 +6671,11 @@ textarea:focus-visible {
     color: var(--muted-foreground);
     font-family: var(--font-mono);
     font-size: 11px;
+  }
+
+  .artifact-comparison-sides,
+  .artifact-comparison-delta-grid {
+    grid-template-columns: 1fr;
   }
 
   .drawer {

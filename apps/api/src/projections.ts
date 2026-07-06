@@ -1169,11 +1169,13 @@ function requirementFitSummaryToReadModel(value: Record<string, unknown>): Recor
 }
 
 /**
- * Phase 2 — load the latest per-bullet provenance read shape keyed by artifact.
+ * Phase 2 — load per-bullet provenance read shapes keyed by artifact.
  *
  * Mirrors the Python ``BulletProvenanceSet.to_read_model()`` projection so the
  * TS API and Python builder materialise the SAME read shape — the cross-runtime
  * parity test asserts both agree. Returns an empty map when no provenance exists.
+ * Artifact detail pages can inspect historical generations, so project every
+ * artifact_id row set instead of only the latest job generation.
  */
 function loadBulletProvenanceByArtifact(
   db: SqliteDatabase,
@@ -1182,28 +1184,14 @@ function loadBulletProvenanceByArtifact(
 ): Map<string, string> {
   const result = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return result;
-  // Tenant-scope BOTH the MAX(generation) probe and the row fetch so this matches
-  // the Python repo (``bullet_provenance_repository.py`` filters job_url AND
-  // tenant_id AND generation). Benign today under LOCAL_TENANT, but keeps the
-  // cross-runtime read path symmetric before any multi-tenant work.
-  const genRow = getRow<{ generation: number | null }>(
-    db,
-    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ?`,
-    [jobUrl, tenantId],
-  );
-  const generation = genRow?.generation;
-  if (generation === null || generation === undefined) return result;
   const rows = allRows<BulletProvenanceRow>(
     db,
     `SELECT * FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ? AND generation = ?
-      ORDER BY position, bullet_id`,
-    [jobUrl, tenantId, Number(generation)],
+      WHERE job_url = ? AND tenant_id = ?
+      ORDER BY generation, position, bullet_id`,
+    [jobUrl, tenantId],
   );
   if (rows.length === 0) return result;
-  // All rows of one generation share the artifact they explain (the writer binds
-  // the whole set to one artifact_id). Group defensively by artifact_id anyway.
   const byArtifact = new Map<string, Record<string, unknown>[]>();
   for (const row of rows) {
     const entry = {
@@ -1229,15 +1217,15 @@ function loadBulletProvenanceByArtifact(
 }
 
 /**
- * Phase 3 — load the latest generation's set-level coverage + voice read shapes,
+ * Phase 3 — load set-level coverage + voice read shapes,
  * keyed by artifact.
  *
  * Coverage (GROUND-06) and the voice-pass audit (VOICE-02) are set-level facts
  * denormalised onto every ``job_bullet_provenance`` row (the Python repo writes
- * the same value on every row of a generation), so we read them off ANY row of the
- * latest generation. Returns ``{ coverage, voice }`` maps mirroring the Python
- * projection builder so the cross-runtime parity test asserts both agree. Empty
- * maps when no provenance exists or the columns predate Phase 3.
+ * the same value on every row of a generation), so we read the first non-empty
+ * row for each artifact_id. Returns ``{ coverage, voice }`` maps mirroring the
+ * Python projection builder so the cross-runtime parity test asserts both agree.
+ * Empty maps when no provenance exists or the columns predate Phase 3.
  */
 function loadProvenanceAuxByArtifact(
   db: SqliteDatabase,
@@ -1247,31 +1235,27 @@ function loadProvenanceAuxByArtifact(
   const coverage = new Map<string, string>();
   const voice = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return { coverage, voice };
-  const genRow = getRow<{ generation: number | null }>(
-    db,
-    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ?`,
-    [jobUrl, tenantId],
-  );
-  const generation = genRow?.generation;
-  if (generation === null || generation === undefined) return { coverage, voice };
-  let row: { artifact_id: string; coverage_json: string | null; voice_json: string | null } | undefined;
+  let rows: Array<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }> = [];
   try {
-    row = getRow<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
+    rows = allRows<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
       db,
       `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
-        WHERE job_url = ? AND tenant_id = ? AND generation = ?
-        ORDER BY position, bullet_id
-        LIMIT 1`,
-      [jobUrl, tenantId, Number(generation)],
+        WHERE job_url = ? AND tenant_id = ?
+        ORDER BY generation, position, bullet_id`,
+      [jobUrl, tenantId],
     );
   } catch {
     // Columns predate Phase 3 (a DB written before this migration ran) — no aux data.
     return { coverage, voice };
   }
-  if (!row) return { coverage, voice };
-  if (row.coverage_json && row.coverage_json.trim()) coverage.set(row.artifact_id, row.coverage_json);
-  if (row.voice_json && row.voice_json.trim()) voice.set(row.artifact_id, row.voice_json);
+  for (const row of rows) {
+    if (!coverage.has(row.artifact_id) && row.coverage_json && row.coverage_json.trim()) {
+      coverage.set(row.artifact_id, row.coverage_json);
+    }
+    if (!voice.has(row.artifact_id) && row.voice_json && row.voice_json.trim()) {
+      voice.set(row.artifact_id, row.voice_json);
+    }
+  }
   return { coverage, voice };
 }
 

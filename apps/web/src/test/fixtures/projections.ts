@@ -1,5 +1,6 @@
 import type {
   ArtifactDetail,
+  ArtifactTailoringExplanation,
   ArtifactSummary,
   ActivityEventSummary,
   ApplyAudit,
@@ -13,9 +14,11 @@ import type {
   JobCompensationSummary,
   JobDetail,
   JobSummary,
+  BulletCoverageAudit,
   OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ResumeTemplateState,
   ResumeTemplateListResponse,
   SettingsResponse,
   WorkflowRunDetail,
@@ -856,6 +859,43 @@ export const sampleArtifact: ArtifactSummary = {
   size: "63.9 KB",
 };
 
+export const sampleAcceptedResumeArtifact: ArtifactSummary = {
+  ...sampleArtifact,
+  artifactId: "resume-text-accepted",
+  type: "tailored_resume",
+  status: "approved",
+  localPath: "/tmp/jobhunter-test/artifacts/resume-text-accepted.md",
+  resumeTemplate: makeResumeTemplateState("classic", "Classic"),
+};
+
+export const sampleDraftResumeArtifact: ArtifactSummary = {
+  ...sampleAcceptedResumeArtifact,
+  artifactId: "resume-text-draft",
+  status: "candidate",
+  localPath: "/tmp/jobhunter-test/artifacts/resume-text-draft.md",
+  resumeTemplate: makeResumeTemplateState("compact", "Compact"),
+};
+
+export function makeResumeTemplateState(
+  templateId: string,
+  templateName: string,
+): ResumeTemplateState {
+  return {
+    effective: {
+      templateId,
+      templateVersionId: `${templateId}:v1`,
+      templateVersionNumber: 1,
+      templateName,
+      templateHash: `hash-${templateId}`,
+      assignmentSource: "job_override",
+    },
+    snapshot: null,
+    state: "template_current",
+    reason: null,
+    lastRefreshAttempt: null,
+  };
+}
+
 export function makeArtifactsPage(items: readonly ArtifactSummary[] = [sampleArtifact]):
   PaginatedResponse<ArtifactSummary> {
   return {
@@ -892,8 +932,120 @@ export function makeActivityPage(
   };
 }
 
-export function makeArtifactDetail(artifact: ArtifactSummary = sampleArtifact): ArtifactDetail {
-  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation: null };
+export function makeCoverageAudit(
+  overrides: Partial<BulletCoverageAudit> = {},
+): BulletCoverageAudit {
+  const covered = overrides.covered ?? ["platform reliability", "typescript"];
+  const declared = overrides.declared ?? [];
+  const missing = overrides.missing ?? ["incident response"];
+  const planned = overrides.planned ?? [...covered, ...declared, ...missing];
+  return {
+    computedAgainst: overrides.computedAgainst ?? "rendered_voiced_resume_text_v1",
+    planned,
+    covered,
+    declared,
+    missing,
+    coveredBy: overrides.coveredBy ?? Object.fromEntries(covered.map((keyword) => [keyword, "bullet-1"])),
+    declaredBy: overrides.declaredBy ?? Object.fromEntries(declared.map((keyword) => [keyword, "skills-1"])),
+    counts: overrides.counts ?? {
+      planned: planned.length,
+      covered: covered.length,
+      declared: declared.length,
+      missing: missing.length,
+    },
+  };
+}
+
+export function makeArtifactTailoringExplanation(
+  coverageAudit: BulletCoverageAudit | null = makeCoverageAudit(),
+  overrides: Partial<ArtifactTailoringExplanation> = {},
+): ArtifactTailoringExplanation {
+  return {
+    targetSeniority: "senior",
+    claimMode: "evidence_reframing",
+    validationMode: "normal",
+    safety: {
+      autoApprovableClaimModes: ["verified_only"],
+      allowAdjacentAchievementDrafts: false,
+      qualityPassed: true,
+    },
+    keywords: {
+      coverageRecorded: Boolean(coverageAudit),
+      planned: coverageAudit?.planned ?? [],
+      covered: coverageAudit?.covered ?? [],
+      declared: coverageAudit?.declared ?? [],
+      missing: coverageAudit?.missing ?? [],
+      filtered: {
+        planned: [],
+        covered: [],
+        missing: [],
+      },
+      counts: {
+        planned: coverageAudit?.counts.planned ?? 0,
+        covered: coverageAudit?.counts.covered ?? 0,
+        declared: coverageAudit?.counts.declared ?? 0,
+        missing: coverageAudit?.counts.missing ?? 0,
+        displayedPlanned: coverageAudit?.counts.planned ?? 0,
+        displayedCovered: coverageAudit?.counts.covered ?? 0,
+        displayedDeclared: coverageAudit?.counts.declared ?? 0,
+        displayedMissing: coverageAudit?.counts.missing ?? 0,
+        filteredPlanned: 0,
+        filteredCovered: 0,
+        filteredMissing: 0,
+      },
+    },
+    evidence: {
+      requiredIds: [],
+      seniorityIds: [],
+      representedIds: [],
+      missingIds: [],
+      verifiedMetricCount: null,
+    },
+    quality: {
+      passed: true,
+      errors: [],
+      warnings: [],
+      notes: [],
+      metricClaims: [],
+      repeatedKeywords: [],
+    },
+    judge: {
+      passed: true,
+      verdict: "PASS",
+      score: 0.91,
+      minScore: 0.82,
+      issues: [],
+      unsupportedClaims: [],
+      fabrications: [],
+      missingRequiredEvidence: [],
+      repairInstructions: [],
+    },
+    adversarialReview: null,
+    reviewFeedback: {
+      warningRepairAttempted: null,
+      acceptedWithResidualWarnings: null,
+      acceptedWarnings: [],
+    },
+    annotatedChanges: [],
+    bulletProvenance: [],
+    coverageAudit,
+    voicePass: null,
+    models: {
+      candidateModels: [],
+      selectedModel: null,
+      selectedCandidate: null,
+      judgeModel: null,
+      attempts: null,
+    },
+    ...overrides,
+  };
+}
+
+export function makeArtifactDetail(
+  artifact: ArtifactSummary = sampleArtifact,
+  tailoringExplanation: ArtifactTailoringExplanation | null = null,
+): ArtifactDetail {
+  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {

@@ -17,6 +17,9 @@ import type {
 } from "../shared/ports/index.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
 import {
+  makeArtifactDetail,
+  makeArtifactsPage,
+  sampleArtifact,
   sampleExtensionCapabilityTokenResponse,
   sampleResumeTemplateListResponse,
 } from "./fixtures/projections.js";
@@ -175,6 +178,13 @@ export interface BuildTestPortsOptions {
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
   const baseApi = new FetchApiClientAdapter();
   const templateApiDefaults: Partial<Ports["api"]> = {
+    artifacts: vi.fn(async () => makeArtifactsPage()),
+    artifact: vi.fn(async (artifactId: string) =>
+      makeArtifactDetail({
+        ...sampleArtifact,
+        artifactId,
+      }),
+    ),
     discoverySources: vi.fn(async () => sampleDiscoverySourceRegistry),
     resumeTemplates: vi.fn(async () => sampleResumeTemplateListResponse),
     saveResumeTemplate: vi.fn(async (body) => ({
