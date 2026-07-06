@@ -38,6 +38,7 @@ from jobhunter.workflow_specs import (
     apply_workflow_id,
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
+    build_interview_prep_workflow_spec,
     build_pipeline_workflow_spec,
     build_profile_import_workflow_spec,
     build_run_stage_workflow_spec,
@@ -326,6 +327,14 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     return build_apply_workflow_spec(params)
 
 
+def generate_interview_prep(params: dict[str, Any]) -> WorkflowStartSpec:
+    """Build a workflow spec for user-triggered stored interview prep."""
+    try:
+        return build_interview_prep_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
 def make_cancel_run(canceler: WorkflowCanceler):
     """Build a ``cancel_run`` handler bound to *canceler*.
 
@@ -367,6 +376,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
+    server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

@@ -1,4 +1,5 @@
 import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { Link } from "@tanstack/react-router";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -87,6 +88,13 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           }
         />
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+        {section === "profile" ? (
+          <div className="toolbar profile-evidence-toolbar">
+            <Link className="tab" to="/evidence-map">
+              Open evidence map
+            </Link>
+          </div>
+        ) : null}
         {profileQuery.data && (section !== "preferences" || settingsQuery.data) ? (
           section === "preferences" && settingsQuery.data ? (
             <>
