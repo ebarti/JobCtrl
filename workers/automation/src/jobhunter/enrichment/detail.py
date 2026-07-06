@@ -576,6 +576,7 @@ def _apply_authenticated_linkedin_apply_url(
     cascade_result: dict,
     resolver: object | None,
     page: object | None = None,
+    session: PolitenessSession | None = None,
 ) -> dict:
     """Resolve a missing LinkedIn apply URL with an authenticated browser.
 
@@ -601,10 +602,26 @@ def _apply_authenticated_linkedin_apply_url(
             # Fresh navigation in the owner's authenticated persistent Chrome
             # session (retry pre-pass). This is an owner-scoped, user-authorized
             # session (§Owner decisions D1/D3): robots is an owner decision and
-            # is not enforced on the owner's own account, and pacing/budget for
-            # the authenticated session are deferred to owner config (P5). It is
-            # not anonymous crawling and must never be used for one.
-            resolution = resolver.resolve(url)  # type: ignore[attr-defined]
+            # is not enforced on the owner's own account. Pacing + the per-run
+            # request budget DO apply, so route this fresh navigation through the
+            # owner-authenticated gateway session (robots-off, rate + budget on),
+            # exactly like the batch path's gated goto. It is not anonymous
+            # crawling and must never be used for one. The recovery pre-pass
+            # always supplies the session.
+            if session is not None:
+                with session.guard(url) as decision:
+                    if not decision.allowed:
+                        # Host in rate-limit cooldown or the run budget drained:
+                        # defer this recovery navigation to a future run rather
+                        # than bypass the gate. The guard already recorded the
+                        # outcome; the enriched description is left untouched.
+                        return {
+                            **cascade_result,
+                            "authenticated_apply_url_method": "politeness_deferred",
+                        }
+                    resolution = resolver.resolve(url)  # type: ignore[attr-defined]
+            else:
+                resolution = resolver.resolve(url)  # type: ignore[attr-defined]
         else:
             return cascade_result
     except Exception as exc:  # noqa: BLE001 - resolver is best-effort
@@ -708,6 +725,42 @@ def _record_enrich_robots_blocked(
         },
     )
     conn.commit()
+
+
+def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None:
+    """Unblock a previously robots-blocked enrich stage before re-enrichment.
+
+    A robots-disallowed job folds into ``enrich = blocked`` (see
+    :func:`_record_enrich_robots_blocked`) while its aggregate stays
+    enrichment-pending, so a later run re-selects it once robots allows again.
+    The stage state machine has no ``Blocked -> Running`` edge, so the running
+    transition would raise ``ValueError`` and the job would be recorded as
+    ``ENRICH_INTERNAL_ERROR`` and then excluded from the pending queue —
+    stranding it forever. Running the state machine's ``Unblock``
+    (``Blocked -> Pending``) first makes the subsequent ``Pending -> Running``
+    valid, honoring this feature's "a later run re-evaluates robots" promise.
+    No-op unless the stage is currently ``blocked``.
+    """
+    from jobhunter.state import record_job_event, set_stage_state
+
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+        (url,),
+    ).fetchone()
+    if row is None:
+        return
+    current = row[0] if not isinstance(row, dict) else row["state"]
+    if current != "blocked":
+        return
+    set_stage_state(conn, url, "enrich", "pending")
+    record_job_event(
+        conn,
+        url,
+        "enrich",
+        "StageReset",
+        message="Re-evaluating robots for a previously robots-blocked job",
+        payload={"reason": "robots_recheck", "previousState": "blocked"},
+    )
 
 
 def _record_enrich_politeness_deferral(
@@ -997,6 +1050,11 @@ def scrape_site_batch(
                 try:
                     started_at = utc_now()
                     ensure_job_stage_rows(conn, url)
+                    # A previously robots-blocked job re-enters here once robots
+                    # allows again; Unblock (Blocked->Pending) before the running
+                    # transition, which has no Blocked->Running edge and would
+                    # otherwise strand the job as ENRICH_INTERNAL_ERROR.
+                    _unblock_enrich_stage_if_blocked(conn, url)
                     set_stage_state(conn, url, "enrich", "running", started_at=started_at)
                     record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
 
@@ -1628,6 +1686,8 @@ def _reset_authenticated_linkedin_retry_candidates(
     job_urls: tuple[str, ...] = (),
     limit: int | None = None,
     resolver_factory: Callable[[], object] | None = None,
+    run_budget: RunBudgetCounter | None = None,
+    session: PolitenessSession | None = None,
 ) -> int:
     """Retry LinkedIn rows that need authenticated enrichment follow-up.
 
@@ -1653,6 +1713,22 @@ def _reset_authenticated_linkedin_retry_candidates(
     """
     if not linkedin_apply_resolver_enabled():
         return 0
+
+    if session is None:
+        # Owner-authenticated recovery navigations are robots-off (D1/D3), but the
+        # shared per-host limiter + the run's request budget still pace and bound
+        # them, exactly like the batch path — so build (or reuse) an
+        # owner-authenticated gateway session and route every resolve() goto
+        # through it. Sharing ``run_budget`` keeps the whole run under one budget.
+        session = _enrichment_session(
+            PolitenessGateway(
+                robots=_OwnerAuthenticatedRobots(),
+                rate_limiter=get_shared_rate_limiter(),
+            ),
+            run_budget or _new_enrichment_budget(),
+            conn,
+            site="linkedin",
+        )
 
     selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
     where = [
@@ -1730,7 +1806,15 @@ def _reset_authenticated_linkedin_retry_candidates(
                         },
                         resolver=resolver,
                         page=None,
+                        session=session,
                     )
+                    if resolved.get("authenticated_apply_url_method") == "politeness_deferred":
+                        # The run budget drained (or the host is in a rate-limit
+                        # cooldown) before this authenticated navigation could
+                        # run. Defer the row to a future run WITHOUT burning a
+                        # retry attempt — the navigation never happened, and the
+                        # gate already recorded the budget/rate outcome.
+                        continue
                     apply_url_value = resolved.get("application_url")
                     recovered = (
                         ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
@@ -1905,12 +1989,18 @@ def _run_detail_scraper(
         where_parts.append(f"jobs.url IN ({placeholders})")
         params.extend(selected_urls)
 
+    # One run budget spans the whole enrichment run: the authenticated LinkedIn
+    # recovery pre-pass below and every site batch share it, so the per-run
+    # navigation budget bounds them all together.
+    run_budget = _new_enrichment_budget()
+
     if reset_linkedin_candidates:
         _reset_authenticated_linkedin_retry_candidates(
             conn,
             job_urls=selected_urls,
             limit=max_per_site,
             resolver_factory=_default_linkedin_apply_resolver_factory,
+            run_budget=run_budget,
         )
 
     rows = conn.execute(
@@ -1970,11 +2060,11 @@ def _run_detail_scraper(
         }
         log.exception("Enrichment site batch failed: %s", site)
 
-    # One gateway + one run budget shared by every site batch in this run: the
-    # process-wide host limiter + robots cache are reused, and the per-run
-    # navigation budget is a single counter across sequential and parallel modes.
+    # One gateway shared by every anonymous site batch in this run (the
+    # process-wide host limiter + robots cache are reused); ``run_budget``
+    # created above is the single counter shared across the recovery pre-pass and
+    # every site batch, in both sequential and parallel modes.
     gateway = PolitenessGateway()
-    run_budget = _new_enrichment_budget()
 
     if workers > 1 and len(order) > 1:
         def _scrape_site(site: str) -> dict:
