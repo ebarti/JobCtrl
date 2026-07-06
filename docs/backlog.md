@@ -352,16 +352,6 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   exit criteria) but never landed. There is no ESLint config in
   `apps/web/` today, and no `lint` script in either the web package or
   the root. Lands together with the ESLint setup item above.
-- **CI does not run `web:test`, `web:test-d`, or `web:e2e`.**
-  `.github/workflows/typescript.yml` runs `pnpm -r check`,
-  `pnpm --filter @jobhunter/api test`, `pnpm --filter @jobhunter/web build`,
-  `pnpm --filter @jobhunter/web storybook:build`, and
-  `pnpm --filter @jobhunter/web storybook:test` (with Playwright Chromium
-  installed for the Storybook test runner). The Vitest unit / hook /
-  component suite, the type-level tests, and the standalone Playwright e2e
-  specs at `apps/web/e2e/` are developer-local only — a regression in any
-  of those does not fail CI today. Wire the three root aliases into
-  `typescript.yml`.
 - **Frontend ACL `JobId` is unbranded** —
   `apps/web/src/contexts/operations/types.ts` exports
   `type JobId = string` rather than re-exporting the branded
