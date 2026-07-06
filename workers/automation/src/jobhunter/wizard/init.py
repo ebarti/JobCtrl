@@ -4,7 +4,7 @@ Interactive flow that creates ~/.jobhunter/ with:
   - resume.txt (and optionally resume.pdf)
   - candidate profile in jobhunter.db
   - discovery settings in jobhunter.db
-  - .env (LLM API key)
+  - .env (LLM provider config)
 """
 
 from __future__ import annotations
@@ -441,25 +441,28 @@ def _setup_ai_features() -> None:
 # ---------------------------------------------------------------------------
 
 def _setup_auto_apply() -> None:
-    """Configure autonomous job application (requires Claude Code CLI)."""
+    """Configure autonomous job application (requires a Claude apply runtime)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
         "JobHunter can autonomously fill and submit job applications\n"
-        "using Claude Code as the browser agent."
+        "using a local Claude runtime as the browser agent."
     ))
 
     if not Confirm.ask("Enable autonomous job applications?", default=True):
         console.print("[dim]You can apply manually using the tailored resumes JobHunter generates.[/dim]")
         return
 
-    # Check for Claude Code CLI
-    if shutil.which("claude"):
-        console.print("[green]Claude Code CLI detected.[/green]")
+    # Check for the apply runtime. A system Claude CLI is accepted, but setup
+    # can also use the pinned Claude Agent SDK bundled binary.
+    from jobhunter.infrastructure.setup_probes import resolve_claude_apply_binary
+
+    claude_runtime = resolve_claude_apply_binary()
+    if shutil.which(claude_runtime) or Path(claude_runtime).expanduser().exists():
+        console.print(f"[green]Claude apply runtime detected:[/green] {claude_runtime}")
     else:
         console.print(
-            "[yellow]Claude Code CLI not found on PATH.[/yellow]\n"
-            "Install it from: [bold]https://claude.ai/code[/bold]\n"
-            "Auto-apply won't work until Claude Code is installed."
+            "[yellow]Claude apply runtime was not found.[/yellow]\n"
+            "Run [bold]jobhunter setup[/bold] after dependency sync or set [bold]JOBHUNTER_CLAUDE_BIN[/bold]."
         )
 
     # Optional: CapSolver for CAPTCHAs
@@ -517,7 +520,7 @@ def run_wizard() -> None:
     _setup_ai_features()
     console.print()
 
-    # Step 5: Auto-apply (Claude Code detection)
+    # Step 5: Auto-apply (Claude runtime detection)
     _setup_auto_apply()
     console.print()
 
@@ -539,9 +542,9 @@ def run_wizard() -> None:
 
     unlock_hint = ""
     if tier == 1:
-        unlock_hint = "\n[dim]To unlock Tier 2: configure an LLM API key (re-run [bold]jobhunter init[/bold]).[/dim]"
+        unlock_hint = "\n[dim]To unlock Tier 2: configure an LLM provider (re-run [bold]jobhunter init[/bold]).[/dim]"
     elif tier == 2:
-        unlock_hint = "\n[dim]To unlock Tier 3: install Claude Code CLI + Chrome.[/dim]"
+        unlock_hint = "\n[dim]To unlock Tier 3: configure a Claude apply runtime + Chrome.[/dim]"
 
     console.print(
         Panel.fit(

@@ -15,6 +15,7 @@ from jobhunter.discovery.workflow import (
 )
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline.runner import PRIMARY_STAGE_ORDER
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
@@ -159,6 +160,23 @@ def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,), workflow_id=workflow_id)
 
 
+def build_interview_prep_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
+    tenant_id = _tenant_id(params)
+    job_url = str(_require(params, "jobUrl"))
+    payload = InterviewPrepWorkflowInput(
+        tenant_id=tenant_id,
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+        job_url=job_url,
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+    )
+    return WorkflowStartSpec(
+        workflow=InterviewPrepWorkflow,
+        args=(payload,),
+        workflow_id=interview_prep_workflow_id(tenant_id, job_url),
+    )
+
+
 def build_single_job_workflow_spec(
     url: str,
     *,
@@ -244,6 +262,10 @@ def build_profile_import_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
 
 def apply_workflow_id(tenant_id: str, job_key: str) -> str:
     return f"apply-{tenant_id}-{job_key}"
+
+
+def interview_prep_workflow_id(tenant_id: str, job_key: str) -> str:
+    return f"interview-prep-{tenant_id}-{job_key}"
 
 
 async def start_workflow_spec_and_wait(spec: WorkflowStartSpec) -> StartedWorkflowResult:

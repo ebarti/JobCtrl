@@ -1,4 +1,4 @@
-"""Claude Code CLI adapter subprocess command behavior."""
+"""Claude apply-runtime adapter subprocess command behavior."""
 
 from __future__ import annotations
 

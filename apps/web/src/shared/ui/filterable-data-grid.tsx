@@ -6,6 +6,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import {
+  Fragment,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -66,6 +67,24 @@ export interface DataGridSortState {
   direction: DataGridSortDirection;
 }
 
+export type DataGridDensity = "compact" | "regular" | "comfy";
+export type DataGridColumnVisibilityState = Record<string, boolean>;
+export type DataGridColumnWidthsState = Record<string, number>;
+export type DataGridColorTone = "success" | "warning" | "danger" | "info";
+
+export interface DataGridGroupingState {
+  columnId: string;
+}
+
+export interface DataGridColorRule {
+  columnId: string;
+  predicate: {
+    op: "eq" | "neq" | "gte" | "lte" | "contains";
+    value: string | number;
+  };
+  tone: DataGridColorTone;
+}
+
 export interface DataGridHeaderContext<TData> {
   pageRows: readonly TData[];
   visibleRows: readonly TData[];
@@ -112,6 +131,13 @@ export interface FilterableDataGridProps<TData> {
   toolbarActions?: ReactNode;
   tableClassName?: string;
   resizableColumns?: boolean;
+  columnVisibility?: DataGridColumnVisibilityState;
+  columnOrder?: readonly string[];
+  columnWidths?: DataGridColumnWidthsState;
+  onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
+  density?: DataGridDensity | null;
+  grouping?: DataGridGroupingState | null;
+  colorRules?: readonly DataGridColorRule[];
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
@@ -184,6 +210,109 @@ function classNames(...values: Array<string | undefined | false>): string | unde
 
 function clampWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function orderColumns<TData>(
+  columns: Array<DataGridColumn<TData>>,
+  order: readonly string[] | undefined,
+): Array<DataGridColumn<TData>> {
+  if (!order?.length) return columns;
+  const byId = new Map(columns.map((column) => [column.id, column]));
+  const ordered: Array<DataGridColumn<TData>> = [];
+  const seen = new Set<string>();
+  for (const columnId of order) {
+    const column = byId.get(columnId);
+    if (!column || seen.has(columnId)) continue;
+    ordered.push(column);
+    seen.add(columnId);
+  }
+  for (const column of columns) {
+    if (!seen.has(column.id)) {
+      ordered.push(column);
+    }
+  }
+  return ordered;
+}
+
+function filterVisibleColumns<TData>(
+  columns: Array<DataGridColumn<TData>>,
+  visibility: DataGridColumnVisibilityState | undefined,
+): Array<DataGridColumn<TData>> {
+  if (!visibility) return columns;
+  return columns.filter((column) => visibility[column.id] !== false);
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function columnRuleValue<TData>(
+  row: TData,
+  column: DataGridColumn<TData>,
+): string | number {
+  const filterValue =
+    column.getFilterSearchValue?.(row) ?? column.getFilterValue?.(row);
+  if (filterValue !== undefined) return filterValue;
+  return column.getSortValue?.(row) ?? "";
+}
+
+function groupLabelFor<TData>(
+  row: TData,
+  column: DataGridColumn<TData>,
+): string {
+  const value = column.getFilterValue?.(row) ?? column.getSortValue?.(row);
+  const label = String(value ?? "").trim();
+  return label || "Unspecified";
+}
+
+function matchesColorRule<TData>(
+  row: TData,
+  column: DataGridColumn<TData>,
+  rule: DataGridColorRule,
+): boolean {
+  const left = columnRuleValue(row, column);
+  const right = rule.predicate.value;
+  if (rule.predicate.op === "gte" || rule.predicate.op === "lte") {
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) {
+      return false;
+    }
+    return rule.predicate.op === "gte"
+      ? leftNumber >= rightNumber
+      : leftNumber <= rightNumber;
+  }
+  const leftText = normalize(String(left));
+  const rightText = normalize(String(right));
+  if (rule.predicate.op === "eq") return leftText === rightText;
+  if (rule.predicate.op === "neq") return leftText !== rightText;
+  return leftText.includes(rightText);
+}
+
+function firstMatchingTone<TData>(
+  row: TData,
+  columnsById: ReadonlyMap<string, DataGridColumn<TData>>,
+  colorRules: readonly DataGridColorRule[],
+  columnId?: string,
+): DataGridColorTone | null {
+  for (const rule of colorRules) {
+    if (columnId && rule.columnId !== columnId) continue;
+    const column = columnsById.get(rule.columnId);
+    if (column && matchesColorRule(row, column, rule)) {
+      return rule.tone;
+    }
+  }
+  return null;
+}
+
+function toneClass(
+  target: "row" | "cell",
+  tone: DataGridColorTone | null,
+): string | undefined {
+  return tone ? `data-grid-${target}-tone-${tone}` : undefined;
 }
 
 export function isActiveDataGridFilter(
@@ -359,6 +488,13 @@ export function FilterableDataGrid<TData>({
   toolbarActions,
   tableClassName,
   resizableColumns = true,
+  columnVisibility,
+  columnOrder,
+  columnWidths: controlledColumnWidths,
+  onColumnWidthsChange,
+  density,
+  grouping,
+  colorRules = [],
   rowClassName,
   rowAriaSelected,
   onRowActivate,
@@ -371,20 +507,38 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [localColumnWidths, setLocalColumnWidths] =
+    useState<DataGridColumnWidthsState>({});
   const tableRef = useRef<HTMLTableElement | null>(null);
   const stopColumnResizeRef = useRef<(() => void) | null>(null);
+  const lastPageRowIdsRef = useRef<string[]>([]);
   const sort = controlledSort ?? localSort;
   const filters = controlledFilters ?? localFilters;
+  const columnWidths = controlledColumnWidths ?? localColumnWidths;
   const paginationEnabled = paginate || Boolean(pagination);
   const page = pagination?.page ?? localPage;
   const pageSize = pagination?.pageSize ?? localPageSize;
   const effectivePageSizeOptions =
     pagination?.pageSizeOptions ?? pageSizeOptions;
+  const orderedColumns = useMemo(
+    () => orderColumns(columns, columnOrder),
+    [columns, columnOrder],
+  );
+  const displayColumns = useMemo(
+    () => filterVisibleColumns(orderedColumns, columnVisibility),
+    [columnVisibility, orderedColumns],
+  );
+  const columnsById = useMemo(
+    () => new Map(columns.map((column) => [column.id, column])),
+    [columns],
+  );
+  const groupColumn = grouping?.columnId
+    ? columnsById.get(grouping.columnId)
+    : undefined;
   const activationColumnIndex = useMemo(() => {
-    const rowHeaderIndex = columns.findIndex((column) => column.rowHeader);
+    const rowHeaderIndex = displayColumns.findIndex((column) => column.rowHeader);
     return rowHeaderIndex >= 0 ? rowHeaderIndex : 0;
-  }, [columns]);
+  }, [displayColumns]);
 
   const filterableColumns = useMemo(
     () => columns.filter((column) => Boolean(column.getFilterValue)),
@@ -462,6 +616,34 @@ export function FilterableDataGrid<TData>({
     const offset = (safePage - 1) * pageSize;
     return visibleRows.slice(offset, offset + pageSize);
   }, [pageSize, pagination, paginationEnabled, safePage, visibleRows]);
+  const pageRowIndexById = useMemo(() => {
+    const next = new Map<string, number>();
+    pageRows.forEach((row, index) => {
+      next.set(getRowId(row), index);
+    });
+    return next;
+  }, [getRowId, pageRows]);
+  const pageRowGroups = useMemo(() => {
+    if (!groupColumn) {
+      return [{ key: "all", label: null, rows: pageRows }];
+    }
+    const groups = new Map<string, TData[]>();
+    for (const row of pageRows) {
+      const label = groupLabelFor(row, groupColumn);
+      const key = `${groupColumn.id}:${label}`;
+      const rows = groups.get(key);
+      if (rows) {
+        rows.push(row);
+      } else {
+        groups.set(key, [row]);
+      }
+    }
+    return Array.from(groups, ([key, rows]) => ({
+      key,
+      label: key.slice(groupColumn.id.length + 1),
+      rows,
+    }));
+  }, [groupColumn, pageRows]);
 
   const headerContext = useMemo<DataGridHeaderContext<TData>>(
     () => ({ pageRows, visibleRows, allRows: data }),
@@ -473,8 +655,14 @@ export function FilterableDataGrid<TData>({
     .filter(({ filter }) => isActiveDataGridFilter(filter));
 
   useEffect(() => {
-    onPageRowsChange?.(pageRows);
-  }, [onPageRowsChange, pageRows]);
+    if (!onPageRowsChange) return;
+    const nextIds = pageRows.map(getRowId);
+    if (sameStrings(lastPageRowIdsRef.current, nextIds)) {
+      return;
+    }
+    lastPageRowIdsRef.current = nextIds;
+    onPageRowsChange(pageRows);
+  }, [getRowId, onPageRowsChange, pageRows]);
 
   useEffect(() => {
     setColumnWidths((current) => {
@@ -492,6 +680,22 @@ export function FilterableDataGrid<TData>({
     },
     [],
   );
+
+  function setColumnWidths(
+    updater: (
+      current: DataGridColumnWidthsState,
+    ) => DataGridColumnWidthsState,
+  ) {
+    const next = updater(columnWidths);
+    if (next === columnWidths) {
+      return;
+    }
+    if (onColumnWidthsChange) {
+      onColumnWidthsChange(next);
+    } else {
+      setLocalColumnWidths(next);
+    }
+  }
 
   const setFilters = (
     updater: (current: DataGridFilterState) => DataGridFilterState,
@@ -663,14 +867,17 @@ export function FilterableDataGrid<TData>({
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
       : `${visibleRows.length} shown / ${data.length} loaded`;
   const columnWidthTotal = resizableColumns
-    ? columns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
+    ? displayColumns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
     : 0;
   const tableStyle = columnWidthTotal
     ? { width: `max(100%, ${columnWidthTotal}px)` }
     : undefined;
 
   return (
-    <div className="filterable-data-grid">
+    <div
+      className="filterable-data-grid"
+      data-density={density ?? undefined}
+    >
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
           <IconTable size={15} aria-hidden="true" />
@@ -716,7 +923,7 @@ export function FilterableDataGrid<TData>({
         >
           {resizableColumns ? (
             <colgroup>
-              {columns.map((column) => {
+              {displayColumns.map((column) => {
                 const width = columnWidths[column.id] ?? column.width;
                 return (
                   <col
@@ -730,7 +937,7 @@ export function FilterableDataGrid<TData>({
           ) : null}
           <thead>
             <tr>
-              {columns.map((column) => {
+              {displayColumns.map((column) => {
                 const active = sort.columnId === column.id;
                 const SortIcon = sort.direction === "desc" ? IconSortDescending : IconSortAscending;
                 const sortable =
@@ -839,65 +1046,95 @@ export function FilterableDataGrid<TData>({
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((row, rowIndex) => {
-              const rowId = getRowId(row);
-              const baseRowClassName = rowClassName?.(row);
-              const effectiveRowClassName = onRowActivate
-                ? [baseRowClassName, "data-grid-row-activatable"].filter(Boolean).join(" ")
-                : baseRowClassName;
-              const activationLabel = rowActivationLabel?.(row) ?? `Open row ${rowId}`;
-              return (
-                <tr
-                  key={rowId}
-                  className={effectiveRowClassName}
-                  aria-selected={rowAriaSelected?.(row)}
-                  onClick={
-                    onRowActivate
-                      ? (event) => {
-                          if (shouldIgnoreRowActivation(event)) {
-                            return;
-                          }
-                          onRowActivate(row);
-                        }
-                      : undefined
-                  }
-                >
-                  {columns.map((column, columnIndex) => {
-                    const content = column.render(row, { pageRows, rowId, rowIndex });
-                    const isActivationCell =
-                      Boolean(onRowActivate) && columnIndex === activationColumnIndex;
-                    const activationButton = isActivationCell ? (
-                      <button
-                        type="button"
-                        className="data-grid-row-activation-button"
-                        aria-label={activationLabel}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onRowActivate?.(row);
-                        }}
-                      >
-                        <span aria-hidden="true">Open</span>
-                      </button>
-                    ) : null;
-                    return column.rowHeader ? (
-                      <th
-                        key={column.id}
-                        className={column.className}
-                        scope="row"
-                      >
-                        {content}
-                        {activationButton}
-                      </th>
-                    ) : (
-                      <td key={column.id} className={column.className}>
-                        {content}
-                        {activationButton}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
+            {pageRowGroups.map((group) => (
+              <Fragment key={group.key}>
+                {group.label ? (
+                  <tr className="data-grid-group-row">
+                    <th colSpan={Math.max(1, displayColumns.length)}>
+                      <span>{group.label}</span>
+                      <span>{group.rows.length}</span>
+                    </th>
+                  </tr>
+                ) : null}
+                {group.rows.map((row) => {
+                  const rowId = getRowId(row);
+                  const rowIndex = pageRowIndexById.get(rowId) ?? 0;
+                  const baseRowClassName = rowClassName?.(row);
+                  const rowTone = firstMatchingTone(
+                    row,
+                    columnsById,
+                    colorRules,
+                  );
+                  const effectiveRowClassName = classNames(
+                    baseRowClassName,
+                    toneClass("row", rowTone),
+                    onRowActivate && "data-grid-row-activatable",
+                  );
+                  const activationLabel = rowActivationLabel?.(row) ?? `Open row ${rowId}`;
+                  return (
+                    <tr
+                      key={rowId}
+                      className={effectiveRowClassName}
+                      aria-selected={rowAriaSelected?.(row)}
+                      onClick={
+                        onRowActivate
+                          ? (event) => {
+                              if (shouldIgnoreRowActivation(event)) {
+                                return;
+                              }
+                              onRowActivate(row);
+                            }
+                          : undefined
+                      }
+                    >
+                      {displayColumns.map((column, columnIndex) => {
+                        const content = column.render(row, { pageRows, rowId, rowIndex });
+                        const cellTone = firstMatchingTone(
+                          row,
+                          columnsById,
+                          colorRules,
+                          column.id,
+                        );
+                        const cellClassName = classNames(
+                          column.className,
+                          toneClass("cell", cellTone),
+                        );
+                        const isActivationCell =
+                          Boolean(onRowActivate) && columnIndex === activationColumnIndex;
+                        const activationButton = isActivationCell ? (
+                          <button
+                            type="button"
+                            className="data-grid-row-activation-button"
+                            aria-label={activationLabel}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onRowActivate?.(row);
+                            }}
+                          >
+                            <span aria-hidden="true">Open</span>
+                          </button>
+                        ) : null;
+                        return column.rowHeader ? (
+                          <th
+                            key={column.id}
+                            className={cellClassName}
+                            scope="row"
+                          >
+                            {content}
+                            {activationButton}
+                          </th>
+                        ) : (
+                          <td key={column.id} className={cellClassName}>
+                            {content}
+                            {activationButton}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </Fragment>
+            ))}
           </tbody>
         </table>
         {loading && !data.length ? <Empty title={loadingMessage} /> : null}

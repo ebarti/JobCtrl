@@ -1,19 +1,19 @@
 """Workday ATS direct API scraper: searches employer career portals.
 
-Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.)
-via the undocumented CXS JSON API. Zero LLM, zero browser -- pure HTTP.
+Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.) via the
+Workday CXS JSON API -- the stable JSON endpoint the public career-site UI itself
+calls, treated as a documented-API-class source (robots-exempt, D2). Zero LLM,
+zero browser -- pure HTTP through the shared politeness gateway.
 
 Employer registry is loaded from config/employers.yaml instead of being
 hardcoded. Supports sequential search + detail fetching with proxy.
 """
 
-import json
 import logging
 import re
 import sqlite3
 import threading
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -22,6 +22,7 @@ from jobhunter import config
 from jobhunter.config import CONFIG_DIR
 from jobhunter.database import get_connection, init_db
 from jobhunter.domain.discovery.identity import AtsKind
+from jobhunter.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobhunter.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobhunter.domain.errors import TransientNetworkError
@@ -31,6 +32,13 @@ from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobhunter.infrastructure.network import (
+    GatewayHttpClient,
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+    build_opener,
 )
 from jobhunter.discovery.target_queries import query_specs_for_source, title_matches_any_query
 from jobhunter.discovery.title_filter import title_matches_query
@@ -113,44 +121,102 @@ def strip_html(html: str) -> str:
     return stripper.get_text()
 
 
-# -- Proxy -------------------------------------------------------------------
+# -- Politeness gateway routing (R10) ---------------------------------------
+#
+# The Workday CXS API is treated as a documented-API-class source (robots-exempt,
+# D2): the stable JSON endpoint the public career-site UI calls, not an ad-hoc
+# scrape target. Every fetch still routes through the shared politeness gateway
+# for the honest UA, per-host rate/concurrency pacing, and a per-employer request
+# budget. Configured once per run (mirroring the old global-opener pattern); the
+# per-employer client is built lazily on the employer's own worker thread so
+# recording uses that thread's SQLite connection (get_connection is thread-local),
+# and is cached by employer_key (1:1 with the fan-out task/thread) so two
+# employers that resolve to the same source_id can never share one thread-bound
+# recorder connection across threads.
 
-_opener = None
+
+class _WorkdayPoliteness:
+    def __init__(self, gateway: PolitenessGateway, run_id: str | None, opener) -> None:
+        self.gateway = gateway
+        self.run_id = run_id
+        self.opener = opener
+        self.clients: dict[str, GatewayHttpClient] = {}
+        self.lock = threading.Lock()
 
 
-def setup_proxy(proxy_str: str | None) -> None:
-    """Configure a global urllib opener with proxy support."""
-    global _opener
-    if not proxy_str:
-        _opener = urllib.request.build_opener()
-        return
+_politeness: _WorkdayPoliteness | None = None
 
-    parts = proxy_str.split(":")
-    if len(parts) == 4:
-        host, port, user, passwd = parts
-        proxy_url = f"http://{user}:{passwd}@{host}:{port}"
-    elif len(parts) == 2:
-        proxy_url = f"http://{parts[0]}:{parts[1]}"
-    else:
-        log.warning("Proxy format not recognized: %s (expected host:port:user:pass or host:port)", proxy_str)
-        _opener = urllib.request.build_opener()
-        return
 
-    proxy_handler = urllib.request.ProxyHandler(
-        {
-            "http": proxy_url,
-            "https": proxy_url,
-        }
+def configure_workday_politeness(
+    *,
+    gateway: PolitenessGateway | None = None,
+    run_id: str | None = None,
+    proxy: str | None = None,
+) -> None:
+    """Configure the politeness gateway for a Workday run (optional proxy)."""
+    global _politeness
+    opener = build_opener(proxy)
+    _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, opener)
+
+
+def _workday_source_id(*, configured: object = "", employer_key: object = "", name: object = "") -> str:
+    """Single source-of-truth for a Workday source_id.
+
+    Both the politeness client (:func:`_employer_source_id`) and the storage
+    posting rows (:func:`_source_id`) derive their source_id here so a source's
+    politeness outcomes join to its posting rows. Prefer a configured
+    ``_source_id``; otherwise slug the ``employer_key`` (the storage basis),
+    falling back to ``name`` only when no key is available.
+    """
+    configured_str = str(configured or "").strip()
+    if configured_str:
+        return configured_str
+    basis = str(employer_key or "").strip() or str(name or "").strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", basis.lower()).strip("-")
+    return f"workday:{slug or 'unknown'}"
+
+
+def _employer_source_id(employer: dict) -> str:
+    return _workday_source_id(
+        configured=employer.get("_source_id"),
+        employer_key=employer.get("employer_key"),
+        name=employer.get("name"),
     )
-    _opener = urllib.request.build_opener(proxy_handler)
-    log.info("Proxy configured: %s:%s", parts[0], parts[1])
 
 
-def _urlopen(req, timeout=30):
-    """Open a URL using the configured opener (with or without proxy)."""
-    if _opener:
-        return _opener.open(req, timeout=timeout)
-    return urllib.request.urlopen(req, timeout=timeout)
+def _employer_client(employer: dict) -> GatewayHttpClient:
+    politeness = _politeness
+    if politeness is None:
+        configure_workday_politeness()
+        politeness = _politeness
+    assert politeness is not None
+    source_id = _employer_source_id(employer)
+    # Cache by the fan-out employer_key (1:1 with the task/thread), not by
+    # source_id: two distinct employers that resolve to the same source_id would
+    # otherwise share one client whose recorder_conn is bound to the first
+    # thread, causing cross-thread SQLite use. Falls back to source_id when no
+    # key is stamped (e.g. direct workday_search callers in tests).
+    cache_key = str(employer.get("employer_key") or "").strip() or source_id
+    with politeness.lock:
+        client = politeness.clients.get(cache_key)
+        if client is None:
+            session = PolitenessSession(
+                politeness.gateway,
+                policy=WORKDAY_API_POLICY,
+                budget=politeness.gateway.new_run_budget(WORKDAY_API_POLICY.max_requests_per_run),
+                context=PolitenessSourceContext(
+                    stage="discover",
+                    source_id=source_id,
+                    source_kind="ats_api",
+                    source_role="workday",
+                    adapter="workday_api",
+                    run_id=politeness.run_id,
+                ),
+                recorder_conn=get_connection(),
+            )
+            client = GatewayHttpClient(session, default_timeout=30.0, opener=politeness.opener)
+            politeness.clients[cache_key] = client
+        return client
 
 
 # -- Workday API -------------------------------------------------------------
@@ -159,34 +225,24 @@ def _urlopen(req, timeout=30):
 def workday_search(employer: dict, search_text: str, limit: int = 20, offset: int = 0) -> dict:
     """Search jobs via Workday CXS API. Returns JSON with total + jobPostings."""
     url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}/jobs"
-    payload = json.dumps(
-        {
+    payload = _employer_client(employer).fetch_json(
+        url,
+        method="POST",
+        json_body={
             "appliedFacets": {},
             "limit": limit,
             "offset": offset,
             "searchText": search_text,
-        }
-    ).encode()
-
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-    with _urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+        },
+    )
+    return payload or {}
 
 
 def workday_detail(employer: dict, external_path: str) -> dict:
     """Fetch full job detail via Workday CXS API."""
     url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}{external_path}"
-
-    req = urllib.request.Request(url)
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-    with _urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    payload = _employer_client(employer).fetch_json(url)
+    return payload or {}
 
 
 # -- Search + paginate -------------------------------------------------------
@@ -366,11 +422,8 @@ def _job_url(job: dict, employers: dict) -> str:
 def _source_id(job: dict, employers: dict) -> str:
     employer_key = str(job.get("employer_key") or "").strip()
     employer = employers.get(employer_key, {}) if employer_key else {}
-    configured = str(employer.get("_source_id") or "").strip() if isinstance(employer, dict) else ""
-    if configured:
-        return configured
-    slug = re.sub(r"[^a-z0-9]+", "-", employer_key.lower()).strip("-")
-    return f"workday:{slug or 'unknown'}"
+    configured = employer.get("_source_id") if isinstance(employer, dict) else ""
+    return _workday_source_id(configured=configured, employer_key=employer_key)
 
 
 def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
@@ -538,6 +591,9 @@ def _search_and_fetch_one(
 ) -> dict:
     """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
+    # Stamp the fan-out key so the per-employer politeness client caches by it
+    # (1:1 with this task/thread) and derives a source_id that joins to storage.
+    emp.setdefault("employer_key", employer_key)
 
     try:
         jobs = search_employer(
@@ -794,8 +850,7 @@ def run_workday_discovery(
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
 
     proxy = search_cfg.get("proxy")
-    if proxy:
-        setup_proxy(proxy)
+    configure_workday_politeness(run_id=run_id, proxy=proxy)
 
     location_filter = search_cfg.get("workday_location_filter", True)
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)

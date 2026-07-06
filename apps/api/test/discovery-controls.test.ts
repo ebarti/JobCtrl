@@ -6,7 +6,9 @@ import path from "node:path";
 
 import { buildApp } from "../src/server.js";
 import type { ManualCaptureImportRequest } from "../src/contracts.js";
-import type { ManualCaptureImporter } from "../src/manual-capture-worker.js";
+import { ManualCaptureImportError, type ManualCaptureImporter } from "../src/manual-capture-worker.js";
+
+const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-discovery-controls-"));
@@ -311,6 +313,61 @@ describe("discovery product controls API", () => {
       expect(sourceIds).not.toContain("smart_extract:job-bank-canada");
       expect(sourceIds).not.toContain("smart_extract:dice");
       expect(sourceIds).toContain("smart_extract:welcome-to-the-jungle");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("surfaces per-source politeness outcomes in the source registry list", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      // Ensure projection tables (including operational_attempt_metrics) exist.
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const now = "2026-05-16T10:00:00+00:00";
+      const db = new Database(dbPath);
+      db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "greenhouse:acme",
+        "ats_api",
+        "Acme",
+        "system",
+        "canonical",
+        "active",
+        "local:greenhouse:acme",
+        "https://boards.greenhouse.io/acme",
+        now,
+        now,
+      );
+      const insertBlocked = db.prepare(
+        `INSERT INTO operational_attempt_metrics (
+           tenant_id, occurred_at, stage, source_id, attempt_kind, outcome,
+           failure_category, is_operational_failure, is_scrape_failure
+         ) VALUES ('local', ?, ?, ?, 'politeness_gate', 'blocked', ?, 0, 0)`,
+      );
+      insertBlocked.run("2026-05-16T09:00:00Z", "discover", "greenhouse:acme", "robots_disallowed");
+      insertBlocked.run("2026-05-16T09:05:00Z", "discover", "greenhouse:acme", "robots_disallowed");
+      insertBlocked.run("2026-05-16T09:10:00Z", "discover", "greenhouse:acme", "budget_exhausted");
+      db.close();
+
+      const list = await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      expect(list.statusCode, list.body).toBe(200);
+      const source = list
+        .json()
+        .sources.find((entry: { sourceId: string }) => entry.sourceId === "greenhouse:acme");
+      expect(source.politeness).toEqual({
+        robotsDisallowedCount: 2,
+        rateLimitedCount: 0,
+        budgetExhaustedCount: 1,
+        lastBlockedReason: "budget_exhausted",
+        lastBlockedAt: "2026-05-16T09:10:00Z",
+      });
     } finally {
       await app.close();
       cleanup();
@@ -806,6 +863,358 @@ describe("discovery product controls API", () => {
       expect(row.content_length).toBeNull();
       expect(row.captured_url).toBeNull();
       expect(events.count).toBe(0);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("seeds extension captures into the manual capture queue before worker import", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const calls: Array<{
+      itemId: string;
+      input: ManualCaptureImportRequest;
+      retryContext: Record<string, unknown>;
+    }> = [];
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId, input, context) => {
+      const db = new Database(context.dbPath);
+      const row = db
+        .prepare(
+          `SELECT originating_url, source_id, reason, retry_context_json, status
+           FROM manual_capture_queue
+           WHERE tenant_id = ? AND item_id = ?`,
+        )
+        .get("local", itemId) as {
+        originating_url: string;
+        source_id: string;
+        reason: string;
+        retry_context_json: string;
+        status: string;
+      };
+      const source = db
+        .prepare(
+          `SELECT source_id, kind, display_name, state
+           FROM source_registry_entries
+           WHERE tenant_id = ? AND source_id = ?`,
+        )
+        .get("local", "manual_capture:extension") as {
+        source_id: string;
+        kind: string;
+        display_name: string;
+        state: string;
+      };
+      db.close();
+      const retryContext = JSON.parse(row.retry_context_json) as Record<string, unknown>;
+      calls.push({ itemId, input, retryContext });
+      expect(row).toMatchObject({
+        originating_url: "https://example.com/jobs/extension?utm_source=newsletter",
+        source_id: "manual_capture:extension",
+        reason: "browser_extension_capture",
+        status: "pending",
+      });
+      expect(source).toMatchObject({
+        source_id: "manual_capture:extension",
+        kind: "user_mediated_capture",
+        display_name: "Browser extension",
+        state: "active",
+      });
+      expect(retryContext).toMatchObject({
+        source: "browser_extension",
+        capture_client: "browser_extension",
+        extension_version: "0.3.0",
+      });
+      return {
+        ok: true,
+        itemId,
+        jobKey: input.capturedUrl ?? null,
+        importedAt: "2026-07-05T10:05:00+00:00",
+        provenance: {
+          sourceKind: "user_mediated_capture",
+          originatingUrl: row.originating_url,
+          captureMode: input.captureMode,
+          futureManualActionRequired: input.futureManualActionRequired,
+          captureClient: "browser_extension",
+          extensionVersion: "0.3.0",
+        },
+      };
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+    try {
+      const unauthorized = await app.inject({
+        method: "POST",
+        url: "/v1/extension/captures",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: {
+          originatingUrl: "https://example.com/jobs/extension",
+          captureMode: "current_page",
+          capturedUrl: "https://example.com/jobs/extension",
+          contentText: "Visible user-provided posting text.",
+        },
+      });
+      expect(unauthorized.statusCode, unauthorized.body).toBe(403);
+      expect(calls).toHaveLength(0);
+
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/extension/captures",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: {
+          originatingUrl: "https://example.com/jobs/extension?utm_source=newsletter",
+          captureMode: "current_page",
+          capturedUrl: "https://example.com/jobs/extension?utm_source=newsletter",
+          contentText: "Visible user-provided posting text.",
+          extensionVersion: "0.3.0",
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(response.json()).toMatchObject({
+        jobKey: "https://example.com/jobs/extension?utm_source=newsletter",
+        provenance: {
+          sourceKind: "user_mediated_capture",
+          captureMode: "current_page",
+          futureManualActionRequired: false,
+          captureClient: "browser_extension",
+          extensionVersion: "0.3.0",
+        },
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.input).toEqual({
+        captureMode: "current_page",
+        capturedUrl: "https://example.com/jobs/extension?utm_source=newsletter",
+        contentText: "Visible user-provided posting text.",
+        futureManualActionRequired: false,
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("keeps extension capture retries idempotent when import fails after seeding", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const itemIds: string[] = [];
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId) => {
+      itemIds.push(itemId);
+      throw new ManualCaptureImportError("simulated importer failure", 500);
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const request = {
+        method: "POST" as const,
+        url: "/v1/extension/captures",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: {
+          captureId: "retry-capture-1",
+          originatingUrl: "https://example.com/jobs/retry",
+          captureMode: "current_page",
+          capturedUrl: "https://example.com/jobs/retry",
+          contentText: "Visible user-provided posting text.",
+          extensionVersion: "0.3.0",
+        },
+      };
+
+      const first = await app.inject(request);
+      const second = await app.inject(request);
+
+      expect(first.statusCode, first.body).toBe(500);
+      expect(second.statusCode, second.body).toBe(500);
+      expect(itemIds).toHaveLength(2);
+      expect(new Set(itemIds).size).toBe(1);
+
+      const verifyDb = new Database(dbPath);
+      const rows = verifyDb
+        .prepare(
+          `SELECT item_id, status, originating_url
+           FROM manual_capture_queue
+           WHERE source_id = ?
+           ORDER BY item_id`,
+        )
+        .all("manual_capture:extension") as Array<{
+        item_id: string;
+        status: string;
+        originating_url: string;
+      }>;
+      verifyDb.close();
+      expect(rows).toEqual([
+        {
+          item_id: itemIds[0],
+          status: "pending",
+          originating_url: "https://example.com/jobs/retry",
+        },
+      ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("returns imported extension capture replays without calling the pending importer", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const itemIds: string[] = [];
+    const importedAt = "2026-07-05T10:05:00+00:00";
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId, input, context) => {
+      itemIds.push(itemId);
+      const db = new Database(context.dbPath);
+      const retryContext = {
+        source: "browser_extension",
+        capture_client: "browser_extension",
+        extension_version: "0.3.0",
+        manual_capture_provenance: {
+          source_kind: "user_mediated_capture",
+          originating_url: "https://example.com/jobs/replay",
+          source_id: "manual_capture:extension",
+          capture_mode: input.captureMode,
+          captured_at: importedAt,
+          future_manual_action_required: input.futureManualActionRequired,
+          capture_client: "browser_extension",
+          extension_version: "0.3.0",
+        },
+      };
+      db.prepare(
+        `UPDATE manual_capture_queue
+         SET status = 'imported',
+             imported_at = ?,
+             capture_mode = ?,
+             captured_url = ?,
+             content_sha256 = ?,
+             content_length = ?,
+             future_manual_action_required = ?,
+             retry_context_json = ?,
+             job_key = ?
+         WHERE tenant_id = ? AND item_id = ?`,
+      ).run(
+        importedAt,
+        input.captureMode,
+        input.capturedUrl,
+        "a".repeat(64),
+        input.contentText?.length ?? 0,
+        input.futureManualActionRequired ? 1 : 0,
+        JSON.stringify(retryContext),
+        input.capturedUrl,
+        "local",
+        itemId,
+      );
+      db.close();
+      return {
+        ok: true,
+        itemId,
+        jobKey: input.capturedUrl ?? null,
+        importedAt,
+        provenance: {
+          sourceKind: "user_mediated_capture",
+          originatingUrl: "https://example.com/jobs/replay",
+          captureMode: input.captureMode,
+          futureManualActionRequired: input.futureManualActionRequired,
+          captureClient: "browser_extension",
+          extensionVersion: "0.3.0",
+        },
+      };
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const request = {
+        method: "POST" as const,
+        url: "/v1/extension/captures",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: {
+          captureId: "successful-replay-capture-1",
+          originatingUrl: "https://example.com/jobs/replay",
+          captureMode: "current_page",
+          capturedUrl: "https://example.com/jobs/replay",
+          contentText: "Visible user-provided posting text.",
+          extensionVersion: "0.3.0",
+        },
+      };
+
+      const first = await app.inject(request);
+      const second = await app.inject(request);
+
+      expect(first.statusCode, first.body).toBe(200);
+      expect(second.statusCode, second.body).toBe(200);
+      expect(itemIds).toHaveLength(1);
+      expect(second.json()).toEqual(first.json());
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("returns dismissed extension capture replays without reopening or calling the importer", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const itemIds: string[] = [];
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId) => {
+      itemIds.push(itemId);
+      throw new ManualCaptureImportError("simulated importer failure", 500);
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const request = {
+        method: "POST" as const,
+        url: "/v1/extension/captures",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: {
+          captureId: "dismissed-replay-capture-1",
+          originatingUrl: "https://example.com/jobs/dismissed",
+          captureMode: "current_page",
+          capturedUrl: "https://example.com/jobs/dismissed",
+          contentText: "Visible user-provided posting text.",
+          extensionVersion: "0.3.0",
+        },
+      };
+
+      const seeded = await app.inject(request);
+      expect(seeded.statusCode, seeded.body).toBe(500);
+      expect(itemIds).toHaveLength(1);
+      const dismissedAt = "2026-07-05T10:10:00+00:00";
+      const db = new Database(dbPath);
+      db.prepare(
+        `UPDATE manual_capture_queue
+         SET status = 'dismissed', dismissed_at = ?
+         WHERE tenant_id = ? AND item_id = ?`,
+      ).run(dismissedAt, "local", itemIds[0]);
+      db.close();
+
+      const replay = await app.inject(request);
+
+      expect(replay.statusCode, replay.body).toBe(200);
+      expect(replay.json()).toEqual({
+        ok: true,
+        itemId: itemIds[0],
+        jobKey: null,
+        status: "dismissed",
+        dismissedAt,
+        message: "Capture was already dismissed in JobHunter.",
+      });
+      expect(itemIds).toHaveLength(1);
     } finally {
       await app.close();
       cleanup();

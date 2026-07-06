@@ -20,7 +20,6 @@ from jobhunter.infrastructure.discovery.ats_adapters import (
     LeverBoardAdapter,
     WorkdayBoardAdapter,
     WorkdayEmployer,
-    default_http_fetcher,
 )
 from jobhunter.infrastructure.discovery.sqlite_repository import (
     SqliteJobRepository,
@@ -55,7 +54,6 @@ __all__ = [
     "WorkdayBoardAdapter",
     "WorkdayEmployer",
     "build_discovery_acceptance_report",
-    "default_http_fetcher",
     "enqueue_manual_action_for_sources",
     "import_manual_capture_item",
     "run_scheduled_ats_sources",

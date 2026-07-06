@@ -151,6 +151,127 @@ def _parse_tailor_models(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
+def _repo_root() -> Path:
+    """Find the repository root from the installed source tree."""
+
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "package.json").exists() and (parent / "workers" / "automation" / "pyproject.toml").exists():
+            return parent
+    return current.parents[4]
+
+
+def _shell_join(cmd: list[str]) -> str:
+    import shlex
+
+    return shlex.join(cmd)
+
+
+def _run_setup_step(cmd: list[str], *, dry_run: bool, cwd: Path | None = None, quiet: bool = False) -> int:
+    import subprocess
+
+    if not quiet:
+        console.print(f"[dim]+ {_shell_join(cmd)}[/dim]")
+    if dry_run:
+        return 0
+    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=False).returncode
+
+
+def _env_file_updates(path: Path, updates: dict[str, str]) -> str:
+    """Return .env contents with ``updates`` replaced/appended, preserving comments."""
+
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else ["# JobHunter configuration"]
+    seen: set[str] = set()
+    rendered: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            rendered.append(line)
+            continue
+        key, _sep, _value = line.partition("=")
+        key = key.strip()
+        if key in updates:
+            rendered.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            rendered.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            rendered.append(f"{key}={value}")
+    return "\n".join(rendered).rstrip() + "\n"
+
+
+def _write_env_updates(path: Path, updates: dict[str, str], *, dry_run: bool, quiet: bool = False) -> None:
+    if not updates:
+        return
+    if dry_run:
+        if not quiet:
+            console.print(f"[yellow]Would update {path}:[/yellow] {', '.join(sorted(updates))}")
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(_env_file_updates(path, updates), encoding="utf-8")
+    path.chmod(0o600)
+    for key, value in updates.items():
+        import os
+
+        os.environ[key] = value
+    if not quiet:
+        console.print(f"[green]Updated setup configuration:[/green] {path}")
+
+
+def _confirm_setup_action(prompt: str, *, yes: bool, non_interactive: bool, default: bool = False) -> bool:
+    if yes:
+        return True
+    if non_interactive:
+        return default
+    return typer.confirm(prompt, default=default)
+
+
+def _tool_available(name: str) -> tuple[bool, str]:
+    import shutil
+
+    found = shutil.which(name)
+    return (True, found) if found else (False, "not found")
+
+
+def _node_status() -> tuple[bool, str]:
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        return False, "not found"
+    try:
+        version = subprocess.check_output(["node", "-p", "process.versions.node"], text=True, timeout=3).strip()
+    except Exception as exc:  # noqa: BLE001 - setup diagnostic
+        return False, f"version check failed: {exc}"
+    parts = tuple(int(p) for p in version.split(".")[:3])
+    return parts >= (20, 19, 0), version
+
+
+def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
+    from jobhunter.config import get_chrome_path
+    from jobhunter.infrastructure.preflight import check_playwright_chromium
+
+    rows: list[tuple[str, bool, str]] = []
+    node_ok, node_note = _node_status()
+    rows.append(("Node.js 20.19+", node_ok, node_note))
+    for command, label in (
+        ("corepack", "Corepack"),
+        ("uv", "uv"),
+        ("temporal", "Temporal CLI"),
+        ("pdftoppm", "Poppler pdftoppm"),
+    ):
+        ok, note = _tool_available(command)
+        rows.append((label, ok, note))
+    try:
+        rows.append(("Chrome/Chromium", True, get_chrome_path()))
+    except FileNotFoundError as exc:
+        rows.append(("Chrome/Chromium", False, str(exc)))
+    chromium_ok, chromium_note = check_playwright_chromium()
+    rows.append(("Playwright Chromium", chromium_ok, chromium_note))
+    return rows
+
+
 def _run_workflow_spec_from_cli(spec, *, label: str) -> dict[str, Any]:
     workflow_name = getattr(spec.workflow, "__name__", str(spec.workflow))
     console.print(f"[cyan]Starting {workflow_name} via Temporal:[/cyan] {label}")
@@ -656,6 +777,231 @@ def init() -> None:
 
 
 @app.command()
+def setup(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Accept safe defaults for prompts."),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Do not prompt; use env/config only."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print setup actions without changing files."),
+    skip_system: bool = typer.Option(False, "--skip-system", help="Skip local toolchain checks."),
+    skip_dependencies: bool = typer.Option(False, "--skip-dependencies", help="Skip pnpm/uv dependency sync."),
+    skip_browsers: bool = typer.Option(False, "--skip-browsers", help="Skip Playwright Chromium installs."),
+    skip_doctor: bool = typer.Option(False, "--skip-doctor", help="Skip the final doctor run."),
+    json_output: bool = typer.Option(False, "--json", help="Print a machine-readable summary."),
+    launch_logins: bool = typer.Option(
+        False,
+        "--launch-logins",
+        help="Launch vendor login/enrollment commands when setup can do so safely.",
+    ),
+) -> None:
+    """Install/check local dependencies and configure vendor analysis auth."""
+
+    import os
+    import subprocess
+
+    from jobhunter.config import ENV_PATH, ensure_dirs, load_env
+    from jobhunter.infrastructure.setup_probes import (
+        ANALYSIS_LEGS_ENV,
+        antigravity_auth_kwargs,
+        enabled_analysis_legs,
+        probe_analysis_setup,
+        probe_antigravity_auth,
+        probe_claude_auth,
+        probe_claude_synthesis_auth,
+        probe_codex_auth,
+        resolve_bundled_codex_path,
+    )
+
+    ensure_dirs()
+    load_env()
+    root = _repo_root()
+    summary: dict[str, Any] = {
+        "toolchain": [],
+        "commands": [],
+        "analysis": [],
+        "envUpdates": [],
+    }
+
+    if not json_output:
+        console.print("[bold]JobHunter Setup[/bold]")
+
+    if not skip_system:
+        rows = _setup_toolchain_rows()
+        summary["toolchain"] = [
+            {"name": name, "ok": ok, "note": note} for name, ok, note in rows
+        ]
+        if not json_output:
+            console.print("\n[bold]Toolchain[/bold]")
+            for name, ok, note in rows:
+                status = "[green]OK[/green]" if ok else "[yellow]WARN[/yellow]"
+                console.print(f"  {name:<22} {status}  [dim]{note}[/dim]")
+
+    commands: list[list[str]] = []
+    if not skip_dependencies:
+        commands.extend([
+            ["corepack", "pnpm", "install", "--frozen-lockfile"],
+            ["uv", "--project", "workers/automation", "sync", "--extra", "dev"],
+        ])
+    if not skip_browsers:
+        commands.extend([
+            ["corepack", "pnpm", "--filter", "@jobhunter/web", "exec", "playwright", "install", "chromium"],
+            ["uv", "--project", "workers/automation", "run", "playwright", "install", "chromium"],
+        ])
+
+    if commands:
+        if not json_output:
+            console.print("\n[bold]Repository Dependencies[/bold]")
+        for command in commands:
+            summary["commands"].append(command)
+            rc = _run_setup_step(command, dry_run=dry_run, cwd=root, quiet=json_output)
+            if rc != 0:
+                console.print(f"[red]Setup command failed:[/red] {_shell_join(command)}")
+                raise typer.Exit(code=rc)
+
+    env_updates: dict[str, str] = {}
+    try:
+        configured_legs = list(enabled_analysis_legs())
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    authenticated_legs: list[str] = []
+
+    if not json_output:
+        console.print("\n[bold]Analysis Vendor Auth[/bold]")
+    for probe in probe_analysis_setup():
+        summary["analysis"].append({
+            "name": probe.name,
+            "ok": probe.ok,
+            "note": probe.note,
+        })
+        if not json_output:
+            status = "[green]OK[/green]" if probe.ok else "[yellow]WARN[/yellow]"
+            console.print(f"  {probe.name:<28} {status}  [dim]{probe.note}[/dim]")
+
+    if "claude" in configured_legs:
+        claude_probe = probe_claude_auth()
+        if claude_probe.ok:
+            authenticated_legs.append("claude")
+        elif _confirm_setup_action(
+            "Paste ANTHROPIC_API_KEY for the Claude analysis leg?",
+            yes=False,
+            non_interactive=non_interactive or yes,
+            default=False,
+        ):
+            key = typer.prompt("ANTHROPIC_API_KEY", hide_input=True)
+            if key.strip():
+                env_updates["ANTHROPIC_API_KEY"] = key.strip()
+                authenticated_legs.append("claude")
+        elif _confirm_setup_action("Skip the Claude analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True):
+            pass
+        else:
+            authenticated_legs.append("claude")
+
+    if "codex" in configured_legs:
+        codex_probe = probe_codex_auth()
+        if codex_probe.ok:
+            authenticated_legs.append("codex")
+        else:
+            key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
+            if key and launch_logins and _confirm_setup_action(
+                "Enroll the current OpenAI key into CODEX_HOME/auth.json now?",
+                yes=yes,
+                non_interactive=non_interactive,
+                default=False,
+            ):
+                command = [str(resolve_bundled_codex_path()), "login", "--with-api-key"]
+                summary["commands"].append(command)
+                if not json_output:
+                    console.print(f"[dim]+ {_shell_join(command)}[/dim]")
+                if dry_run:
+                    authenticated_legs.append("codex")
+                else:
+                    proc = subprocess.run(command, input=key + "\n", text=True, check=False, cwd=str(root))
+                    if proc.returncode == 0:
+                        authenticated_legs.append("codex")
+            elif not json_output:
+                console.print(
+                    "  [dim]Codex enrollment: run `codex login` or "
+                    "`printenv OPENAI_API_KEY | codex login --with-api-key`, then rerun setup.[/dim]"
+                )
+            if "codex" not in authenticated_legs and _confirm_setup_action(
+                "Skip the Codex analysis leg for now?",
+                yes=yes,
+                non_interactive=non_interactive,
+                default=True,
+            ):
+                pass
+            elif "codex" not in authenticated_legs:
+                authenticated_legs.append("codex")
+
+    if "antigravity" in configured_legs:
+        antigravity_probe = probe_antigravity_auth()
+        if antigravity_probe.ok:
+            authenticated_legs.append("antigravity")
+        elif _confirm_setup_action(
+            "Paste GEMINI_API_KEY for the Antigravity analysis leg?",
+            yes=False,
+            non_interactive=non_interactive or yes,
+            default=False,
+        ):
+            key = typer.prompt("GEMINI_API_KEY", hide_input=True)
+            if key.strip():
+                env_updates["GEMINI_API_KEY"] = key.strip()
+                authenticated_legs.append("antigravity")
+        elif _confirm_setup_action("Skip the Antigravity analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True):
+            pass
+        else:
+            authenticated_legs.append("antigravity")
+
+    # Validate an ADC-only Antigravity setup before persisting the leg. API-key
+    # paths were already handled by the probe; this catches malformed Vertex env.
+    if "antigravity" in authenticated_legs and not (
+        os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or env_updates.get("GEMINI_API_KEY")
+    ):
+        try:
+            antigravity_auth_kwargs({**os.environ, **env_updates})
+        except RuntimeError:
+            authenticated_legs.remove("antigravity")
+
+    if authenticated_legs:
+        env_updates[ANALYSIS_LEGS_ENV] = ",".join(authenticated_legs)
+    elif configured_legs:
+        if not json_output:
+            console.print("[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]")
+    _write_env_updates(ENV_PATH, env_updates, dry_run=dry_run, quiet=json_output)
+    summary["envUpdates"] = sorted(env_updates)
+
+    # Employer-analysis synthesis ALWAYS reconciles with the Claude Agent SDK
+    # (ClaudeAnalysisSynthesizer), regardless of the enabled leg set, so Claude
+    # synthesis auth is a hard requirement even when the claude draft leg is
+    # disabled. Report readiness against the post-update env so a freshly entered
+    # key counts, and never present a green analysis state without it.
+    synthesis_probe = probe_claude_synthesis_auth({**os.environ, **env_updates})
+    summary["analysisReady"] = synthesis_probe.ok
+    if not synthesis_probe.ok:
+        summary["analysisNotReadyReason"] = synthesis_probe.note
+        if not json_output:
+            console.print(
+                f"[red]Employer analysis is NOT ready:[/red] {synthesis_probe.note}"
+            )
+    elif not json_output:
+        console.print("[green]Employer analysis synthesis auth ready.[/green]")
+
+    if not skip_doctor:
+        if not json_output:
+            console.print("\n[bold]Doctor[/bold]")
+        rc = _run_setup_step(
+            ["uv", "--project", "workers/automation", "run", "jobhunter", "doctor"],
+            dry_run=dry_run,
+            cwd=root,
+            quiet=json_output,
+        )
+        if rc != 0:
+            raise typer.Exit(code=rc)
+
+    if json_output:
+        console.print_json(data=summary)
+
+
+@app.command()
 def run(
     stages: Optional[list[str]] = typer.Argument(
         None,
@@ -960,7 +1306,7 @@ def apply(
 
     # --- Full apply mode ---
 
-    # Check 1: Tier 3 required (Claude Code CLI + Chrome)
+    # Check 1: Tier 3 required (Claude apply runtime + Chrome)
     check_tier(3, "auto-apply")
 
     # Check 2: Profile exists
@@ -1132,6 +1478,173 @@ def job(
             console.print(f"  - {err}")
     else:
         console.print("\n[green]Done.[/green]")
+
+
+@app.command()
+def digest(
+    acknowledge: bool = typer.Option(
+        False,
+        "--acknowledge",
+        help="Mark the generated digest as reviewed after printing it.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    min_fit_score: Optional[int] = typer.Option(
+        None,
+        "--min-fit-score",
+        min=1,
+        max=10,
+        help="Override the high-fit score threshold for this digest.",
+    ),
+) -> None:
+    """Show the local daily digest."""
+    _bootstrap()
+
+    from jobhunter.database import get_connection
+    from jobhunter.digest import acknowledge_digest, build_digest
+    from jobhunter.infrastructure.scoring.criteria_provider import read_min_fit_score
+
+    threshold = min_fit_score if min_fit_score is not None else read_min_fit_score()
+    conn = get_connection()
+    digest_payload = build_digest(conn, min_fit_score=threshold)
+    acknowledge_payload = None
+    if acknowledge:
+        acknowledge_payload = acknowledge_digest(
+            conn,
+            acknowledged_at=str(digest_payload["generatedAt"]),
+        )
+
+    if json_output:
+        payload = (
+            {"digest": digest_payload, "acknowledge": acknowledge_payload}
+            if acknowledge_payload
+            else digest_payload
+        )
+        console.print_json(data=payload)
+        return
+
+    since = digest_payload.get("since") or "first run"
+    console.print("\n[bold]Daily digest[/bold]")
+    console.print(
+        "[dim]"
+        f"Since {since} · generated {digest_payload.get('generatedAt')} · "
+        f"high-fit {digest_payload.get('highFitThreshold')}+"
+        "[/dim]\n"
+    )
+    console.print(_render_digest_table(digest_payload))
+    links_table = _render_digest_links_table(digest_payload)
+    if links_table:
+        console.print()
+        console.print(links_table)
+    if acknowledge_payload:
+        state = acknowledge_payload.get("state", {})
+        console.print(f"\n[green]Marked reviewed:[/green] {state.get('lastAcknowledgedAt')}")
+    else:
+        console.print("\n[dim]Run with --acknowledge after reviewing to move the digest watermark.[/dim]")
+
+
+def _render_digest_table(digest_payload: dict[str, Any]) -> Table:
+    new_matches = _dict(digest_payload.get("newMatches"))
+    blocked_sources = _dict(digest_payload.get("blockedSources"))
+    follow_ups = _dict(digest_payload.get("followUpsDue"))
+    budget = _dict(digest_payload.get("budget"))
+    table = Table(title="Review Queue", show_lines=False)
+    table.add_column("Area", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Notes")
+    table.add_row(
+        "New matches",
+        str(new_matches.get("count", 0)),
+        f"{new_matches.get('highFitCount', 0)} at high-fit threshold",
+    )
+    table.add_row(
+        "Blocked sources",
+        str(blocked_sources.get("count", 0)),
+        _blocked_source_note(blocked_sources),
+    )
+    table.add_row(
+        "Materials review",
+        str(_dict(digest_payload.get("reviewNeededMaterials")).get("count", 0)),
+        "Candidates needing resume or cover-letter review",
+    )
+    table.add_row(
+        "Pending approvals",
+        str(_dict(digest_payload.get("pendingApprovals")).get("count", 0)),
+        "Apply-review decisions waiting on the user",
+    )
+    table.add_row(
+        "Stale scores",
+        str(_dict(digest_payload.get("staleScores")).get("count", 0)),
+        "Jobs needing current-policy score refresh",
+    )
+    table.add_row(
+        "Follow-ups due",
+        str(follow_ups.get("count", 0)),
+        f"{follow_ups.get('thresholdDays', 7)} days, {follow_ups.get('dayBoundary', 'UTC')} boundary",
+    )
+    table.add_row("Budget", _budget_status_label(budget), _budget_note(budget))
+    return table
+
+
+def _render_digest_links_table(digest_payload: dict[str, Any]) -> Table | None:
+    links = _dict(digest_payload.get("deepLinks"))
+    if not links:
+        return None
+    table = Table(title="Open In Web App", show_lines=False)
+    table.add_column("Area", style="bold")
+    table.add_column("Path")
+    labels = {
+        "newMatches": "New matches",
+        "blockedSources": "Blocked sources",
+        "reviewNeededMaterials": "Materials review",
+        "staleScores": "Stale scores",
+        "pendingApprovals": "Pending approvals",
+        "followUpsDue": "Follow-ups due",
+        "budget": "Budget",
+    }
+    for key, label in labels.items():
+        value = links.get(key)
+        if value:
+            table.add_row(label, str(value))
+    return table
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _blocked_source_note(blocked_sources: dict[str, Any]) -> str:
+    sources = blocked_sources.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return "No blocked or failing sources"
+    names = [
+        str(_dict(source).get("sourceId") or "")
+        for source in sources[:3]
+        if str(_dict(source).get("sourceId") or "")
+    ]
+    extra = len(sources) - len(names)
+    if extra > 0:
+        names.append(f"+{extra} more")
+    return ", ".join(names)
+
+
+def _budget_status_label(budget: dict[str, Any]) -> str:
+    status = str(budget.get("status") or "unknown")
+    if status == "over_budget":
+        return "[red]over budget[/red]"
+    if status == "ok":
+        return "[green]ok[/green]"
+    return status
+
+
+def _budget_note(budget: dict[str, Any]) -> str:
+    if budget.get("unlimited"):
+        return "Unlimited local daily budget"
+    estimated = float(budget.get("estimatedUsd") or 0.0)
+    daily = float(budget.get("dailyBudgetUsd") or 0.0)
+    remaining = budget.get("remainingUsd")
+    if remaining is None:
+        return f"${estimated:.2f} estimated of ${daily:.2f}"
+    return f"${estimated:.2f} estimated, ${float(remaining):.2f} remaining of ${daily:.2f}"
 
 
 @app.command()
@@ -1777,6 +2290,75 @@ def backup(
     console.print(f"[green]Database backup written:[/green] {destination} ({size:,} bytes)")
 
 
+# Broad job boards whose internal per-board transport is owned by python-jobspy
+# (R10, D3): we cannot robots-gate or count their individual requests, only pace
+# and budget at our invocation boundary. ``doctor`` discloses when they are on.
+_BROAD_BOARDS = frozenset({"indeed", "linkedin", "glassdoor", "zip_recruiter"})
+
+
+def _politeness_blocked_source_ids(conn) -> set[str]:
+    """Distinct source_ids with a recorded robots/rate-limit block (empty on any error)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT source_id FROM operational_attempt_metrics
+            WHERE outcome = 'blocked'
+              AND failure_category IN ('robots_disallowed', 'rate_limited')
+              AND source_id IS NOT NULL
+            """
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - doctor discloses posture; a missing table is not fatal.
+        return set()
+    return {str(row[0]) for row in rows if row[0]}
+
+
+def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, str]]:
+    """Crawl-politeness disclosure rows as ``(check, level, note)``.
+
+    ``level`` is ``"ok"`` or ``"warn"``. Pure and side-effect-free (no printing,
+    no network) so it is unit-testable with an in-memory connection and a
+    search-config dict. ``doctor`` maps the levels to its status marks.
+    """
+    from jobhunter.config import resolve_jobspy_boards
+    from jobhunter.infrastructure.network import resolve_honest_user_agent
+
+    rows: list[tuple[str, str, str]] = []
+
+    user_agent = resolve_honest_user_agent().header_value()
+    rows.append((
+        "crawl user-agent",
+        "ok",
+        f"{user_agent} — review before real crawls; override via "
+        "JOBHUNTER_CRAWL_UA_PRODUCT / JOBHUNTER_CRAWL_UA_CONTACT",
+    ))
+
+    boards = resolve_jobspy_boards(search_cfg, warn=False)
+    active_broad = [board for board in boards if board in _BROAD_BOARDS]
+    if active_broad:
+        rows.append((
+            "broad-board discovery",
+            "warn",
+            f"active: {', '.join(active_broad)} — python-jobspy owns their transport; "
+            "only invocation-boundary budget + pacing apply (D3)",
+        ))
+    else:
+        rows.append(("broad-board discovery", "ok", "no broad boards active"))
+
+    blocked = _politeness_blocked_source_ids(conn)
+    if blocked:
+        preview = ", ".join(sorted(blocked)[:5])
+        extra = "" if len(blocked) <= 5 else f" (+{len(blocked) - 5} more)"
+        rows.append((
+            "robots/rate-limited sources",
+            "warn",
+            f"{len(blocked)} source(s) recently blocked: {preview}{extra}",
+        ))
+    else:
+        rows.append(("robots/rate-limited sources", "ok", "none recently blocked"))
+
+    return rows
+
+
 @app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
@@ -1788,6 +2370,10 @@ def doctor() -> None:
     )
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.profile import get_profile_repository
+    from jobhunter.infrastructure.setup_probes import (
+        probe_analysis_setup,
+        resolve_claude_apply_binary,
+    )
 
     load_env()
 
@@ -1899,24 +2485,32 @@ def doctor() -> None:
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
         model = os.environ.get("LLM_MODEL", DEFAULT_GEMINI_MODEL)
-        results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
+        results.append(("LLM provider", ok_mark, f"Gemini ({model})"))
     elif has_openai:
         model = os.environ.get("LLM_MODEL", DEFAULT_OPENAI_MODEL)
-        results.append(("LLM API key", ok_mark, f"OpenAI ({model})"))
+        results.append(("LLM provider", ok_mark, f"OpenAI ({model})"))
     elif has_local:
-        results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
+        results.append(("LLM provider", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
     else:
-        results.append(("LLM API key", fail_mark,
-                        "Set GEMINI_API_KEY in ~/.jobhunter/.env (run 'jobhunter init')"))
+        results.append((
+            "LLM provider",
+            fail_mark,
+            "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL; ensemble auth is checked below",
+        ))
+
+    for probe in probe_analysis_setup():
+        results.append((probe.name, ok_mark if probe.ok else fail_mark, probe.note))
 
     # --- Tier 3 checks ---
-    # Claude Code CLI
-    claude_bin = shutil.which("claude")
-    if claude_bin:
-        results.append(("Claude Code CLI", ok_mark, claude_bin))
-    else:
-        results.append(("Claude Code CLI", fail_mark,
-                        "Install from https://claude.ai/code (needed for auto-apply)"))
+    # Claude apply runtime
+    try:
+        claude_bin = resolve_claude_apply_binary()
+        if shutil.which(claude_bin) or Path(claude_bin).expanduser().exists():
+            results.append(("Claude apply runtime", ok_mark, claude_bin))
+        else:
+            results.append(("Claude apply runtime", fail_mark, "set JOBHUNTER_CLAUDE_BIN or install dependencies"))
+    except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
+        results.append(("Claude apply runtime", fail_mark, f"unavailable: {exc}"))
 
     # Chrome
     try:
@@ -2002,6 +2596,25 @@ def doctor() -> None:
             except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
                 results.append(("Langfuse", fail_mark, "unreachable"))
 
+    # --- Crawl politeness disclosure (R10) ---
+    try:
+        from jobhunter.config import load_search_config as _load_search_config
+        from jobhunter.database import get_connection as _get_connection
+
+        try:
+            politeness_cfg = _load_search_config()
+        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+            politeness_cfg = {}
+        try:
+            politeness_conn = _get_connection()
+        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+            politeness_conn = None
+        mark_for = {"ok": ok_mark, "warn": warn_mark}
+        for check, level, note in politeness_doctor_notices(politeness_conn, politeness_cfg):
+            results.append((check, mark_for.get(level, warn_mark), note))
+    except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+        pass
+
     # --- Render results ---
     console.print()
     console.print("[bold]JobHunter Doctor[/bold]\n")
@@ -2019,10 +2632,10 @@ def doctor() -> None:
     console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
 
     if tier == 1:
-        console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs an LLM provider)[/dim]")
+        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude apply runtime + Chrome + Node.js)[/dim]")
     elif tier == 2:
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude apply runtime + Chrome + Node.js)[/dim]")
 
     console.print()
 

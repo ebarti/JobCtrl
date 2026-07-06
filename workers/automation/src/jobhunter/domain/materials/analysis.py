@@ -47,9 +47,10 @@ from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 # with the JD snapshot hash and the SDK-set version.
 PROMPT_VERSION = "employer-analysis-v1"
 
-# Identifies the ensemble's model/SDK set. Bump when a leg is added/removed or a
-# model id changes so the cache invalidates (D-12). 3 legs: Claude + Codex +
-# Antigravity/Gemini (the Google-diverse leg, wired 2026-06-09 per D-03).
+# Identifies the default ensemble model/SDK set. Bump when the default leg set
+# or model ids change so the cache invalidates (D-12). The local composition
+# root overrides this with ``JOBHUNTER_ANALYSIS_LEGS`` when a user intentionally
+# disables a leg, so cache keys also reflect degraded-mode setup choices.
 SDK_SET_VERSION = "claude+codex+antigravity-v1"
 
 RequirementTier = Literal["must_have", "nice_to_have"]

@@ -17,6 +17,8 @@ export { useDryRunApplyMutation } from "./hooks/useDryRunApplyMutation.js";
 export { ApplyButton, type ApplyButtonProps } from "./components/ApplyButton.js";
 export { ApplyHistory, type ApplyHistoryProps } from "./components/ApplyHistory.js";
 export {
+  InterviewReflectionForm,
+  InterviewReflectionPanel,
   JobOutcomePanel,
   ManualOutcomeForm,
   OutcomeSuggestionsPanel,

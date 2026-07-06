@@ -8,10 +8,11 @@ result off ``TurnResult.final_response``.
 
 CODEX_HOME isolation: the live factory redirects the Codex SDK's ``CODEX_HOME``
 to an isolated dir under the JobHunter runtime root (``~/.jobhunter/codex_home``)
-seeded with a copy of the user's ``~/.codex/auth.json``, so Codex session
-rollouts never land in — and pollute — the user's real ``~/.codex`` chat
-history. The SDK merges ``CodexConfig.env`` over the parent environment, so only
-``CODEX_HOME`` is overridden; PATH/HOME/etc. are preserved.
+seeded with a copy of the user's effective ``CODEX_HOME/auth.json`` (default
+``~/.codex/auth.json``), so Codex session rollouts never land in — and pollute
+— the user's real Codex chat history. The SDK merges ``CodexConfig.env`` over
+the parent environment, so only ``CODEX_HOME`` is overridden; PATH/HOME/etc.
+are preserved.
 
 Test-mockability (no live auth in tests — D-04): the ``AsyncCodex`` class is
 resolved through an injectable factory that defaults to a lazy import, so tests
@@ -35,6 +36,7 @@ from jobhunter.domain.materials.analysis import (
 )
 from jobhunter.infrastructure.analysis.strict_schema import strict_json_schema
 from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+from jobhunter.infrastructure.setup_probes import codex_auth_path, resolve_codex_binary
 
 AsyncCodexFactory = Callable[[], Any]
 
@@ -87,8 +89,9 @@ def _prepare_isolated_codex_home() -> Path:
     home = _isolated_codex_home()
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     home.chmod(0o700)
-    # The copied auth token is sensitive; lock it to 0600.
-    _copy_newer_file(Path.home() / ".codex" / "auth.json", home / "auth.json", mode=0o600)
+    # The copied auth token is sensitive; lock it to 0600. Honor CODEX_HOME
+    # for users who enrolled Codex outside the default ~/.codex directory.
+    _copy_newer_file(codex_auth_path(), home / "auth.json", mode=0o600)
     return home
 
 
@@ -111,9 +114,10 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
             "env": _isolated_codex_env(codex_home),
             "config_overrides": _CODEX_CONFIG_OVERRIDES,
         }
-        codex_bin = shutil.which("codex")
-        if codex_bin:
-            config_kwargs["codex_bin"] = codex_bin
+        # Prefer the SDK-pinned bundled runtime. A system ``codex`` on PATH may
+        # speak a different app-server protocol; JOBHUNTER_CODEX_BIN is the
+        # explicit escape hatch for setup-managed platform fallbacks.
+        config_kwargs["codex_bin"] = str(resolve_codex_binary())
         return AsyncCodex(config=CodexConfig(**config_kwargs))
 
     return _make
