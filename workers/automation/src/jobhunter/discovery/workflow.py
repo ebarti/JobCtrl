@@ -13,6 +13,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 with workflow.unsafe.imports_passed_through():
     from jobhunter.discovery.activities import (
         DiscoveryEnrichmentActivityInput,
+        DiscoveryEnrichmentActivityOutput,
         DiscoveryPreparationFanoutInput,
         DiscoverySourceActivityInput,
         PlanDiscoverySourcesInput,
@@ -164,6 +165,19 @@ class DiscoverWorkflow:
         completed: list[str] = []
         failed: list[str] = []
         failures: list[str] = []
+        # R9 Phase 1 — score-as-you-discover. After each family COMPLETES we
+        # drain that family's fresh jobs through enrichment and fan out their
+        # preparation immediately, instead of waiting for the whole run. These
+        # streaming passes are progress-silent (``progress_total=0``); the Runs
+        # progress bar advances on the family spine + the terminal reconcile
+        # below, so it stays monotonic. Scores still surface incrementally via
+        # ``job_events`` -> projections -> SSE. ``stragglers_swept`` tracks
+        # whether the one-time ``pending_tailor`` sweep has run: the first
+        # successful fan-out derives the full set (fresh + pre-existing
+        # stragglers); every later pass is score-only so a fresh job that
+        # crosses ``pending_score`` -> ``pending_tailor`` mid-tailor is never
+        # double-fanned (I1/I4).
+        stragglers_swept = False
         for index, family in enumerate(plan.families):
             try:
                 await workflow.execute_activity(
@@ -190,30 +204,27 @@ class DiscoverWorkflow:
                     raise CancelledError() from exc
                 failed.append(family)
                 failures.append(f"{family}: {exc.cause if exc.cause else exc}")
+                continue
+            stragglers_swept = await self._stream_family_preparation(
+                payload, stragglers_swept=stragglers_swept
+            )
 
-        # Legacy semantics: per-source failures are tolerated. Enrichment and
-        # preparation ALWAYS run so the healthy sources' jobs still flow through
-        # the pipeline; the workflow only fails as a source failure when EVERY
-        # family failed.
+        # Legacy semantics: per-source failures are tolerated. The TERMINAL
+        # reconcile enrichment + preparation below ALWAYS run so the healthy
+        # sources' jobs still flow through the pipeline (and any job a streaming
+        # pass missed is swept up); the workflow only fails as a source failure
+        # when EVERY family failed. This terminal pass is authoritative for the
+        # failure folding and the progress finalization — the streaming passes
+        # above are additive and best-effort.
         enrichment_failure: str | None = None
         enrichment_error_code: str | None = None
         enrichment_status = "ok"
         enrichment_site_errors: dict[str, Any] = {}
         try:
-            enrichment_result = await workflow.execute_activity(
-                discovery_enrichment_activity,
-                DiscoveryEnrichmentActivityInput(
-                    tenant_id=payload.tenant_id,
-                    expected_app_dir=payload.expected_app_dir,
-                    expected_db_path=payload.expected_db_path,
-                    workers=payload.workers,
-                    limit=payload.limit,
-                    progress_completed=len(plan.families),
-                    progress_total=plan.progress_total,
-                ),
-                start_to_close_timeout=_DISCOVERY_TIMEOUT,
-                heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-                retry_policy=_ENRICH_RETRY,
+            enrichment_result = await _run_enrichment_activity(
+                payload,
+                progress_completed=len(plan.families),
+                progress_total=plan.progress_total,
             )
             enrichment_status = enrichment_result.status
             enrichment_site_errors = dict(enrichment_result.site_errors)
@@ -228,6 +239,7 @@ class DiscoverWorkflow:
         try:
             preparation_started = await _start_preparation_workflows(
                 payload,
+                include_pending_tailor=not stragglers_swept,
                 progress_completed=len(plan.families) + 1,
                 progress_total=plan.progress_total,
             )
@@ -275,10 +287,69 @@ class DiscoverWorkflow:
             enrichment_site_errors=enrichment_site_errors,
         )
 
+    async def _stream_family_preparation(
+        self, payload: DiscoverWorkflowInput, *, stragglers_swept: bool
+    ) -> bool:
+        """Drain + fan out the just-completed family's jobs now (R9 Phase 1).
+
+        Progress-silent (``progress_total=0``) so the Runs bar stays monotonic
+        on the terminal spine; scores still stream via ``job_events``. This is
+        best-effort: any non-cancellation failure is left for the authoritative
+        terminal reconcile pass (which re-drains and re-derives, deduped by the
+        deterministic ``prep-{idempotency_key}`` id), so streaming never changes
+        the run's terminal status or folding. Cancellation always propagates.
+
+        Returns the (possibly updated) ``stragglers_swept`` flag: the first
+        successful fan-out sweeps ``pending_tailor`` stragglers once; thereafter
+        fan-out is score-only.
+        """
+        try:
+            await _run_enrichment_activity(payload, progress_completed=0, progress_total=0)
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            return stragglers_swept
+        try:
+            await _start_preparation_workflows(
+                payload,
+                include_pending_tailor=not stragglers_swept,
+                progress_completed=0,
+                progress_total=0,
+            )
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            return stragglers_swept
+        return True
+
+
+async def _run_enrichment_activity(
+    payload: DiscoverWorkflowInput,
+    *,
+    progress_completed: int,
+    progress_total: int,
+) -> DiscoveryEnrichmentActivityOutput:
+    return await workflow.execute_activity(
+        discovery_enrichment_activity,
+        DiscoveryEnrichmentActivityInput(
+            tenant_id=payload.tenant_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+            workers=payload.workers,
+            limit=payload.limit,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        ),
+        start_to_close_timeout=_DISCOVERY_TIMEOUT,
+        heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
+        retry_policy=_ENRICH_RETRY,
+    )
+
 
 async def _start_preparation_workflows(
     payload: DiscoverWorkflowInput,
     *,
+    include_pending_tailor: bool = True,
     progress_completed: int = 0,
     progress_total: int = 0,
 ) -> int:
@@ -298,6 +369,7 @@ async def _start_preparation_workflows(
             llm_model=payload.llm_model,
             progress_completed=progress_completed,
             progress_total=progress_total,
+            include_pending_tailor=include_pending_tailor,
         ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

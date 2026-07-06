@@ -260,8 +260,46 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
         "tailor_judge_model": "judge",
         "tailor_judge_min_score": 8.5,
         "tenant_id": "local",
+        # R9 Phase 1: the fan-out activity forwards the score-only vs
+        # full-derive selector; default preserves the pre-streaming behavior.
+        "include_pending_tailor": True,
     }
     assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
+
+
+@pytest.mark.asyncio
+async def test_discovery_preparation_fanout_activity_forwards_score_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 1: ``include_pending_tailor=False`` reaches the fan-out so
+    streaming passes after the first derive score-only targets."""
+    captured: dict[str, Any] = {}
+
+    async def fake_run_blocking(fn, **kwargs):
+        return fn()
+
+    def fake_start_fanout(**kwargs):
+        captured["fanout_kwargs"] = kwargs
+        return {"started": {"job_preparation": 0}, "queued": {"job_preparation": 0}, "targets": 0}
+
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_discovery_preparation_workflows",
+        fake_start_fanout,
+    )
+
+    await discovery_preparation_fanout_activity(
+        DiscoveryPreparationFanoutInput(tenant_id="local", include_pending_tailor=False)
+    )
+
+    assert captured["fanout_kwargs"]["include_pending_tailor"] is False
 
 
 @pytest.mark.asyncio
@@ -300,16 +338,36 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
+    # R9 Phase 1 — score-as-you-discover. Enrichment + fan-out now interleave
+    # AFTER EACH completed family (streaming), instead of once at the end, so a
+    # family's jobs are prepared before the next family runs. A terminal
+    # reconcile enrichment + fan-out still runs last (authoritative for folding
+    # + progress) — plan option (b).
     assert [event[0] for event in _EVENTS] == [
         "workflow_started",
         "plan",
-        "source",
-        "source",
-        "source",
+        "source",  # jobspy
         "enrichment",
+        "fanout",
+        "source",  # workday
+        "enrichment",
+        "fanout",
+        "source",  # smartextract
+        "enrichment",
+        "fanout",
+        "enrichment",  # terminal reconcile
         "fanout",
         "workflow_outcome",
     ]
+    # Prove the interleaving structurally: the first family's enrichment + fan-out
+    # both happen before the second family's source activity runs (the TTFS
+    # structural proxy — a job discovered early is prepared while later families
+    # are still discovering).
+    kinds = [event[0] for event in _EVENTS]
+    first_source = kinds.index("source")
+    second_source = kinds.index("source", first_source + 1)
+    assert "enrichment" in kinds[first_source:second_source]
+    assert "fanout" in kinds[first_source:second_source]
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 
@@ -353,6 +411,21 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
     assert result.preparation_started == 1
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
+    # I2 under streaming: jobspy completed first and its jobs were fanned out
+    # (enrichment + fanout) BEFORE the workday family ran and failed. A later
+    # family's failure must not undo the earlier family's streaming fan-out.
+    kinds = [event[0] for event in _EVENTS]
+    first_fanout = kinds.index("fanout")
+    workday_source = next(
+        index
+        for index, event in enumerate(_EVENTS)
+        if event[0] == "source" and event[1] == "workday"
+    )
+    assert first_fanout < workday_source
+    # A failed family produces no streaming enrichment/fanout of its own: with
+    # two completed families + one terminal reconcile there are exactly three
+    # fan-outs, not four.
+    assert kinds.count("fanout") == 3
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 
@@ -453,6 +526,13 @@ async def test_discover_workflow_fails_only_when_every_source_fails() -> None:
 
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
+    # No family completed, so no streaming enrichment/fanout ran; only the
+    # terminal reconcile pass runs (one enrichment + one fanout). The terminal
+    # fanout still sweeps pre-existing pending_tailor stragglers because none
+    # were swept during the (empty) streaming phase.
+    kinds = [event[0] for event in _EVENTS]
+    assert kinds.count("enrichment") == 1
+    assert kinds.count("fanout") == 1
     assert ("workflow_outcome", "failed") in _EVENTS
     cause = excinfo.value.cause
     assert isinstance(cause, ApplicationError)

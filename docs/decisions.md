@@ -55,6 +55,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Heavy Sync RPC Handlers Become Workflows](#_2026-07-03-heavy-sync-rpc-handlers-become-workflows) · 2026-07-03
 - [Classified Errors Drive Temporal Retry; Bounded Attempts](#_2026-07-03-classified-errors-drive-temporal-retry-bounded-attempts) · 2026-07-03
 - [Per-Job JobPreparationWorkflow Replaces The Preparation Queue](#_2026-07-03-per-job-jobpreparationworkflow-replaces-the-preparation-queue) · 2026-07-03
+- [Score-As-You-Discover Streaming In DiscoverWorkflow](#_2026-07-05-score-as-you-discover-streaming-in-discoverworkflow) · 2026-07-05
 
 **Scoring, materials & tailoring**
 
@@ -1320,6 +1321,67 @@ Consequences:
 - the in-process preparation queue and its reaper are removed
 
 Cites: PR #237 (P3).
+
+## 2026-07-05: Score-As-You-Discover Streaming In DiscoverWorkflow
+
+Status: accepted
+
+Decision: `DiscoverWorkflow` scores jobs as it discovers them. After **each
+source family completes** it runs enrichment + preparation fan-out for that
+family's jobs immediately, instead of once after every family. Three sub-choices
+resolve the streaming plan's open decisions:
+
+1. **Progress model.** The denominator stays fixed at plan time
+   (`progress_total = len(families) + 2`) and the counter is monotonic: family
+   source activities advance it, and a terminal reconcile enrichment +
+   preparation finalize it to 100%. The per-family streaming passes are
+   **progress-silent** (`progress_total=0`), so the Runs bar never oscillates or
+   shrinks. Incremental scores reach the UI through the independent
+   `JobScored` → projections → SSE path, not the progress bar. No new
+   `discovery_runs` columns, so both projection builders stay in parity.
+2. **Phase-1 shape.** Per-family streaming passes **plus** a terminal reconcile
+   enrichment + fan-out (plan option (b)). The terminal pass remains
+   authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
+   completed; fail as `discovery_source_failed` only if all failed) and for
+   progress finalization; the streaming passes are additive and best-effort (any
+   non-cancellation failure is left for the terminal pass to sweep up, deduped by
+   the deterministic id). This keeps the existing folding + progress semantics
+   unchanged and low-risk.
+3. **Race-free repeated fan-out.** The per-job workflow id
+   `prep-{idempotency_key}` + `WorkflowIDConflictPolicy.USE_EXISTING` make N
+   fan-out invocations start exactly one workflow per job. Because the
+   idempotency key includes `kind`, a fresh job that crosses
+   `pending_score` → `pending_tailor` mid-tailor would otherwise be re-derived as
+   a second `TAILOR_RESUME` workflow racing its own in-flight `SCORE_JOB`
+   workflow. To prevent that double-tailor, the fan-out gains an
+   `include_pending_tailor` flag: the **first** fan-out sweeps pre-existing
+   `pending_tailor` stragglers once (the only moment when `pending_tailor` cannot
+   contain a job already owned by a this-run `SCORE_JOB` workflow); every later
+   pass is score-only.
+
+Rationale:
+
+- Time To First Score drops materially: an early family's jobs are scored while
+  later families are still crawling, instead of after the whole run.
+- Every prior invariant holds — fan-out idempotence (I1), tolerated
+  partial-source failure (I2), determinism/replay (I3), the daily spend ceiling
+  and per-job preflight (I4), the `min_score` gate (I5), cancellation/heartbeats
+  (I6), and honest monotonic progress (I7).
+- Reusing the existing terminal pass for folding + progress keeps the blast
+  radius small and the read-model parity intact.
+
+Consequences:
+
+- `DiscoveryPreparationFanoutInput` / `start_discovery_preparation_workflows` /
+  `derive_preparation_targets` gain an `include_pending_tailor` flag (default
+  `True` preserves the pre-streaming full derive).
+- Fan-out and enrichment activities now run per completed family plus once at the
+  terminal reconcile; repeated invocation is safe by construction (I1).
+- Parallel source families remain **out of scope** here — that is R9 Phase 3,
+  gated behind an explicit browser-concurrency bound.
+
+Cites: R9 streaming-pipeline-latency plan
+(`docs/plans/2026-07-05-streaming-pipeline-latency-plan.md`), Phase 1.
 
 ## 2026-07-05: Career Evidence Map Is An Operations Read Model Over Existing Facts
 

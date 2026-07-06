@@ -78,6 +78,110 @@ def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(
     assert targets[2].target_version == "7"
 
 
+def test_derive_targets_score_only_skips_pending_tailor(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 1 race guard: with ``include_pending_tailor=False`` a job that
+    has crossed ``pending_score`` -> ``pending_tailor`` (mid-tailor under its
+    own SCORE_JOB workflow) is NOT re-derived as a duplicate TAILOR_RESUME
+    target. Score-only passes only start fresh SCORE_JOB work."""
+
+    def fake_jobs(*, stage: str, **_kwargs):
+        if stage == "pending_score":
+            return [{"url": "https://example.com/job/fresh"}]
+        if stage == "pending_tailor":
+            # A job scored earlier this run, now mid-tailor.
+            return [{"url": "https://example.com/job/mid-tailor"}]
+        return []
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "get_jobs_by_stage", fake_jobs)
+    monkeypatch.setattr(preparation, "_suppress_ineligible_artifacts", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_args, **_kwargs: 3)
+    monkeypatch.setattr(preparation, "current_tailoring_policy_version", lambda *_args, **_kwargs: 5)
+    monkeypatch.setattr(preparation, "_latest_source_event_id", lambda _conn, url: f"event:{url.rsplit('/', 1)[-1]}")
+
+    full = preparation.derive_preparation_targets(
+        preparation.DerivePreparationTargetsInput(tenant_id=str(LOCAL_TENANT), min_score=7)
+    )
+    score_only = preparation.derive_preparation_targets(
+        preparation.DerivePreparationTargetsInput(
+            tenant_id=str(LOCAL_TENANT), min_score=7, include_pending_tailor=False
+        )
+    )
+
+    # The default (first-pass) derive sweeps both the fresh job and the straggler.
+    assert {target.job_url for target in full} == {
+        "https://example.com/job/fresh",
+        "https://example.com/job/mid-tailor",
+    }
+    # Score-only (every subsequent streaming pass) never touches pending_tailor,
+    # so the mid-tailor job cannot get a second, racing prep workflow.
+    assert [target.job_url for target in score_only] == ["https://example.com/job/fresh"]
+    assert score_only[0].steps == ["score", "tailor", "cover", "pdf"]
+
+
+class _FakeUseExistingStarter:
+    """Simulate ``WorkflowIDConflictPolicy.USE_EXISTING`` for fan-out tests.
+
+    A repeated start of an already-open deterministic id returns the existing
+    handle instead of launching a second execution — exactly what keeps the
+    streaming multi-pass fan-out idempotent (I1)."""
+
+    def __init__(self) -> None:
+        self.open_ids: set[str] = set()
+        self.requested: list[str] = []
+        self.new_starts: list[str] = []
+
+    async def __call__(self, spec):
+        self.requested.append(spec.workflow_id)
+        if spec.workflow_id not in self.open_ids:
+            self.open_ids.add(spec.workflow_id)
+            self.new_starts.append(spec.workflow_id)
+        return SimpleNamespace(id=spec.workflow_id)
+
+
+def test_streaming_fanout_dedups_repeated_passes_via_deterministic_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 1 fixture #3 — per-family fan-out across two families where the
+    second adds no new eligible jobs requests the SAME deterministic
+    ``prep-{idempotency_key}`` ids and (with USE_EXISTING) starts ZERO duplicate
+    executions."""
+    targets = [
+        preparation.PreparationTarget(
+            job_url="https://example.com/job/a",
+            idempotency_key="preparation:key-a",
+            target_version="3",
+            steps=["score", "tailor", "cover", "pdf"],
+        ),
+        preparation.PreparationTarget(
+            job_url="https://example.com/job/b",
+            idempotency_key="preparation:key-b",
+            target_version="3",
+            steps=["score", "tailor", "cover", "pdf"],
+        ),
+    ]
+    monkeypatch.setattr(preparation, "derive_preparation_targets", lambda _payload: list(targets))
+    starter = _FakeUseExistingStarter()
+
+    stats_pass1 = preparation.start_discovery_preparation_workflows(workflow_starter=starter)
+    started_after_pass1 = list(starter.new_starts)
+    stats_pass2 = preparation.start_discovery_preparation_workflows(workflow_starter=starter)
+
+    # Both passes request the identical deterministic ids.
+    expected_ids = ["prep-preparation:key-a", "prep-preparation:key-b"]
+    assert sorted(set(starter.requested)) == expected_ids
+    assert starter.requested == expected_ids * 2
+    # Pass 1 launches both executions; pass 2 (no new eligible jobs) launches
+    # zero new executions — USE_EXISTING returns the open handles.
+    assert started_after_pass1 == expected_ids
+    assert starter.new_starts == expected_ids
+    assert stats_pass1["queued"] == {"job_preparation": 2}
+    assert stats_pass2["queued"] == {"job_preparation": 2}
+
+
 def test_preparation_fan_out_starts_batches_of_at_most_25(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
