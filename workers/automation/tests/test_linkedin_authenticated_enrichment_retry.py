@@ -26,6 +26,8 @@ from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
 )
 
+from .politeness_helpers import offline_session
+
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
@@ -210,7 +212,9 @@ def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
     resolver = _RecoveryResolver(LinkedInApplyResolution(None, "external_url_missing"))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
-        conn, resolver_factory=lambda: resolver
+        conn,
+        resolver_factory=lambda: resolver,
+        session=offline_session(conn, site="linkedin"),
     )
 
     assert reset_count == 0
@@ -237,7 +241,9 @@ def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
     resolver = _RecoveryResolver(RuntimeError("login wall"))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
-        conn, resolver_factory=lambda: resolver
+        conn,
+        resolver_factory=lambda: resolver,
+        session=offline_session(conn, site="linkedin"),
     )
 
     assert reset_count == 0
@@ -260,7 +266,9 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     resolver = _RecoveryResolver(LinkedInApplyResolution(apply_target, "click"))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
-        conn, resolver_factory=lambda: resolver
+        conn,
+        resolver_factory=lambda: resolver,
+        session=offline_session(conn, site="linkedin"),
     )
 
     assert reset_count == 0
@@ -286,7 +294,9 @@ def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
     # Drive many enrichment runs against a row whose resolver never resolves.
     for _ in range(5):
         _reset_authenticated_linkedin_retry_candidates(
-            conn, resolver_factory=lambda: resolver
+            conn,
+            resolver_factory=lambda: resolver,
+            session=offline_session(conn, site="linkedin"),
         )
 
     # The authenticated browser is driven only until the attempt-count bound is
@@ -312,7 +322,9 @@ def test_failed_row_still_reset_for_authenticated_retry(
     resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
-        conn, resolver_factory=lambda: resolver
+        conn,
+        resolver_factory=lambda: resolver,
+        session=offline_session(conn, site="linkedin"),
     )
 
     assert reset_count == 1
@@ -340,3 +352,70 @@ def test_retry_candidates_skip_nonretryable_and_exhausted_rows(
     repo = SqliteEnrichmentRepository(conn)
     assert repo.load(LOCAL_TENANT, JobId(nonretryable_url)).is_failed  # type: ignore[union-attr]
     assert repo.load(LOCAL_TENANT, JobId(exhausted_url)).is_enriched  # type: ignore[union-attr]
+
+
+def test_recovery_pass_navigation_consumes_run_budget(
+    conn: sqlite3.Connection,
+) -> None:
+    """#314 Medium: the authenticated recovery goto is rate + budget gated.
+
+    The owner-authenticated recovery pass is robots-off (D1/D3), but the per-run
+    request budget still bounds it — so a single ``resolve()`` navigation
+    consumes exactly one budget unit, matching the batch path's gated goto.
+    """
+    url = "https://www.linkedin.com/jobs/view/gated"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
+    session = offline_session(conn, budget=5, site="linkedin")
+
+    _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver, session=session
+    )
+
+    # The navigation happened AND went through the gate: exactly one budget unit
+    # was consumed for the single authenticated goto.
+    assert resolver.calls == [url]
+    assert session.budget.remaining() == 4
+
+
+def test_recovery_pass_defers_when_run_budget_exhausted(
+    conn: sqlite3.Connection,
+) -> None:
+    """#314 Medium: an exhausted run budget defers the recovery goto (no bypass).
+
+    When the shared run budget is drained, the gate blocks the authenticated
+    navigation: ``resolve()`` is never called, no retry attempt is burned, the
+    enriched description is preserved, and the deferral is recorded as a
+    first-class ``budget_exhausted`` outcome (never a scrape failure).
+    """
+    url = "https://www.linkedin.com/jobs/view/nobudget"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
+    session = offline_session(conn, budget=1, site="linkedin")
+    assert session.budget.try_consume(1) is True  # drain to zero
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn, resolver_factory=lambda: resolver, session=session
+    )
+
+    # The gate blocked the navigation: no ungated authenticated goto happened …
+    assert resolver.calls == []
+    assert reset_count == 0
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    assert aggregate is not None
+    assert aggregate.is_enriched
+    assert aggregate.application_url is None
+    # … and the deferral did not burn a retry attempt (the goto never ran).
+    assert aggregate.attempt_count == 1
+    # The deferral is a first-class budget-exhausted outcome, not a scrape error.
+    row = conn.execute(
+        "SELECT failure_category, is_scrape_failure FROM operational_attempt_metrics "
+        "WHERE job_url = ? AND outcome = 'blocked'",
+        (url,),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "budget_exhausted"
+    assert row[1] == 0

@@ -119,6 +119,38 @@ def test_browser_ua_constants_resolve_to_the_honest_identity() -> None:
         assert "Mozilla" not in ua
 
 
+# Browser surfaces that drive ``page.goto`` and must route every navigation
+# through the politeness gateway's ``guard`` (P3). The behavioral proof — a
+# robots-disallowed page performing zero navigation — lives in
+# ``test_enrichment_politeness_gate.py``; this is the structural tripwire that a
+# new ungated navigation surface (or a removed guard) can't slip through.
+BROWSER_NAV_SURFACES = [
+    "enrichment/detail.py",
+    "infrastructure/enrichment/playwright_fetcher.py",
+    "discovery/smartextract.py",
+]
+
+
+def _goto_calls(source: str) -> list[ast.Call]:
+    tree = ast.parse(source)
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "goto"
+    ]
+
+
+def test_browser_nav_surfaces_route_through_the_politeness_gate() -> None:
+    for rel in BROWSER_NAV_SURFACES:
+        source = (SRC_ROOT / rel).read_text(encoding="utf-8")
+        assert _goto_calls(source), f"{rel} unexpectedly has no page.goto"
+        # Every nav surface wires the gateway session and holds a guard slot.
+        assert "PolitenessSession" in source, f"{rel} does not wire a politeness session"
+        assert ".guard(" in source, f"{rel} does not guard its navigation"
+
+
 def test_ats_adapter_uses_gateway_client_when_no_http_injected() -> None:
     source = SimpleNamespace(
         source_id="greenhouse:acme",
