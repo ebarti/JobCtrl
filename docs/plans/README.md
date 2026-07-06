@@ -54,6 +54,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory; **not release-ready** — W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints remain open |
 | 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Closed by #274 inventory; **no-go** — remaining items are W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints |
+| 2026-07-05 | [Contact Research And Outreach Planner](implemented/2026-07-05-outreach-planner-plan.md) | Implemented — #266 (plan), #325, #331, #332, #333, #335, #347; ADR 2026-07-06 |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

@@ -1688,7 +1688,7 @@ Consequences:
 - later phases (supervised research, outreach drafts, send logging + follow-ups)
   build on this context; the no-auto-send invariant holds for all of them
 
-Delivered (2026-07-06, Phase 4): send logging + follow-ups landed and the
+Delivered (2026-07-06, Phases 4-5): send logging + follow-ups landed and the
 no-auto-send invariant is held by **four enforcement layers** (plan §8.3): (a) the
 `OutreachThread` aggregate can only reach a "sent" state through a user-attested
 `OutreachSendLog` over an *approved* draft — mirroring the `ApplyRun`
@@ -1702,9 +1702,13 @@ never auto-acted, and never sent; the `due_follow_up_projections` read model
 computes "due" over schedule + clock at read time, and any optional recurring
 reminder defaults OFF (mirroring discovery `scheduling_enabled = false`). No send
 transport, `gmail.send` scope, or dependency on the OSS spec §W1.7 owned-send was
-added.
+added. Product QA landed a seeded Playwright smoke for the full contact/outreach
+path (job drawer contacts, supervised candidate review, `/outreach` draft review,
+user-attested send log, due follow-up reminders) plus a regression-matrix row for
+the event/projection no-value-leak boundary.
 
-Cites: plan `docs/plans/2026-07-05-outreach-planner-plan.md` (§1.1 invariants,
-§3 owning context, §8 no-auto-send, §9 follow-ups, §16 resolved decisions 1 / 2b /
-4 / 5); domain model `docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
+Cites: plan `docs/plans/implemented/2026-07-05-outreach-planner-plan.md`
+(§1.1 invariants, §3 owning context, §8 no-auto-send, §9 follow-ups, §16
+resolved decisions 1 / 2b / 4 / 5); domain model
+`docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
 `docs/architecture/read-model.md`; `docs/local-ts-api.md`.
