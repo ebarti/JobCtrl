@@ -22,19 +22,21 @@ in one hop.
 ## Freeze status
 
 > **PROVISIONAL FREEZE — not yet owner-signed.** Re-anchored and verified
-> against `main` @ `fec1940f` on **2026-07-06**, after the R10 crawl-politeness
-> train (#297–#316), the I0 vendor-auth setup train (#254/#317), and the R7a
-> launch-asset train (#262–#305) merged. This pass added CL-006/CL-007/CL-008
-> for the crawl-politeness capabilities now claimed on the README, Security, and
-> Configuration surfaces, and CL-073 for first-run vendor-auth setup (including
-> the always-required Claude synthesis auth), and extended CL-061's surfaces
-> with the README's own "What Leaves Your Machine" section. The R9
-> streaming-latency train also merged but introduced no public-surface claim
-> (internal latency work), so no row was added for it. (The prior pass @
-> `e54dd903` added CL-028, CL-029, CL-056 and renumbered the autofill handle to
-> `BR-056`; the pass before that @ `a4001862` added CL-005, CL-027, CL-038,
-> CL-055.) Every `Current` and `Beta` row's verification pointer resolved at
-> `fec1940f`. GATE G1 is satisfied only
+> against `main` @ `48714f95` on **2026-07-06**, after the R10
+> crawl-politeness train (#297–#316), the I0 vendor-auth setup train
+> (#254/#317), the R7a launch-asset train (#262–#305), and the post-freeze
+> currency set merged. Since the prior `fec1940f` stamp, web quality and test
+> stabilization landed without new public-surface claims (#321/#322/#323,
+> #327/#329/#334); #328 hardened apply prompt boundaries and updated safety
+> docs, strengthening the existing apply/privacy rows without adding a new
+> claim row; #326 recorded the R1 post-train NO-GO inventory and owner-action
+> checklist; #339 recorded owner launch decisions; #318 recorded R9 decision
+> resolutions without adding a public-surface claim; and #324 refreshed this
+> ledger's politeness/setup currency. This pass applies the owner's §11.6
+> decision by reclassifying CL-029 to `Beta`, records the "synthetic may
+> illustrate, never measure" evidence rule, and updates stale #328 apply
+> boundary pointers. Every `Current` and `Beta` row's verification pointer
+> resolved at `48714f95`. GATE G1 is satisfied only
 > once the repository owner reviews this ledger, assigns per-claim sign-off
 > owners (§11.7 of the plan), and re-stamps this line with the dated `main` sha
 > at actual freeze time. `main` is advancing quickly while the launch trains
@@ -43,7 +45,7 @@ in one hop.
 > source/test paths) that resolve at any recent `main`.
 >
 > Unless a row's `Last verified` says otherwise, every row was last verified in
-> this pass (2026-07-06 @ `fec1940f`).
+> this pass (2026-07-06 @ `48714f95`).
 
 ## How to read this ledger
 
@@ -60,13 +62,13 @@ in one hop.
   labelled roadmap sections (`ROADMAP.md`); they never gate a demo asset and
   never appear above a README boundary or on the hero.
 
-**Current-vs-Beta threshold (proposed default; owner decision, plan §11.6).**
-The bar above is the proposed threshold. At sign-off the owner confirms it and
-resolves the reclassification candidates listed under
-[Owner decisions](#owner-decisions-for-this-ledger). Today every shipped public
-claim clears the `Current` bar because each honest qualifier is a *scope* note
-(e.g. spend is an estimate, prompt-injection is mitigated-not-eliminated) rather
-than a *reliability* gap, and the qualifier is carried in the claim text.
+**Current-vs-Beta threshold (owner decision, plan §11.6).**
+The owner set the bar on 2026-07-06: a brand-new LLM-generated user-facing
+surface without real-usage validation is `Beta` in public copy even when its
+truthfulness gates pass, because those gates prove a no-fabrication floor, not
+output quality. Other shipped claims stay `Current` only when their honest
+qualifiers are scope notes carried in the claim text, not load-bearing
+reliability, maturity, or measurement caveats.
 
 **Owner column.** Defaults to `repo owner` pending per-claim sign-off assignment
 (plan §11.7). Assign named owners at freeze.
@@ -74,6 +76,12 @@ than a *reliability* gap, and the qualifier is carried in the claim text.
 **Verification pointer.** Prefers an existing requirement handle in
 [`requirements.md`](requirements.md); otherwise an architecture doc, source
 path, or test path that resolves on `main`.
+
+**Synthetic evidence standard (owner decision, plan §11.6).** Synthetic data may
+illustrate product behavior, drive screenshots/GIFs, and prove deterministic QA
+invariants, but it may never measure public performance, speed, accuracy, or
+outcome claims. Any public measurement claim needs a non-synthetic measurement
+source and a resolving pointer.
 
 ## Claims
 
@@ -133,7 +141,12 @@ path, or test path that resolves on `main`.
 
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| CL-029 | Grounded, stored interview prep is generated per job, reusing the resume-tailoring fabrication, claim-grounding, and adversarial-review gates behind a spend preflight; generation is a durable workflow (deterministic id, heartbeats, run-scoped retry idempotency via `origin_run_id`) and a failed refresh preserves the last accepted prep. It is stored pre-interview material with inspectable evidence links — explicitly not a live interview assistant (no transcript, no real-time copilot). | README (What It Does; Responsible Use); Normal Flows (Generate Interview Prep) | Current | repo owner | [materials](architecture/materials.md) (Stored Interview Preparation); `workers/automation/src/jobhunter/interview/workflow.py` (spend preflight, deterministic id); `.../interview/activities.py` (`origin_run_id` idempotency, heartbeats); `.../domain/interview/use_cases.py` (materials gates reused, preserve-on-failure) | 2026-07-06 |
+| CL-029 | Grounded, stored interview prep is generated per job, reusing the resume-tailoring fabrication, claim-grounding, and adversarial-review gates behind a spend preflight; generation is a durable workflow (deterministic id, heartbeats, run-scoped retry idempotency via `origin_run_id`) and a failed refresh preserves the last accepted prep. It is stored pre-interview material with inspectable evidence links — explicitly not a live interview assistant (no transcript, no real-time copilot). | README (What It Does; Responsible Use); Normal Flows (Generate Interview Prep) | Beta | repo owner | [materials](architecture/materials.md) (Stored Interview Preparation); `workers/automation/src/jobhunter/interview/workflow.py` (spend preflight, deterministic id); `.../interview/activities.py` (`origin_run_id` idempotency, heartbeats); `.../domain/interview/use_cases.py` (materials gates reused, preserve-on-failure) | 2026-07-06 |
+
+> **Why Beta.** CL-029 is shipped and pointer-backed, and its reused gates prove
+> the no-fabrication floor. Per the owner's 2026-07-06 §11.6 bar, it remains
+> `Beta` because it is a brand-new LLM-generated user-facing surface carried
+> into high-stakes interview preparation without real-usage validation.
 
 ### Apply safety
 
@@ -146,7 +159,7 @@ path, or test path that resolves on `main`.
 | CL-034 | No application is ever submitted twice: claiming excludes runs already in progress / succeeded / parked for verification, a submit-intent checkpoint is recorded before submit, and a crash after that intent parks the run for manual verification instead of retrying. | Hero (Supervised Apply); README; Security (Applications Submit At Most Once); Data & Safety | Current | repo owner | `BR-054` (requirements.md); `workers/automation/src/jobhunter/apply/launcher.py` (`_has_apply_submit_intent`, needs_verification) | 2026-07-06 |
 | CL-035 | JobHunter never submits applications, runs destructive profile/database actions, or bypasses third-party controls (CAPTCHA, paywall, login, rate-limit, bot-control) without explicit user authorization; the apply agent stops on SSO, declines permission prompts, refuses ID/biometric verification, and never enters payment details. | README (Responsible Use); Security (No Third-Party Bypass; The Apply Agent) | Current | repo owner | `BR-001` (requirements.md); [security](user/security.md) | 2026-07-06 |
 | CL-036 | Application outcomes can be recorded manually without browser automation, and web approval facts do not submit anything by themselves. | Data & Safety (Auto-Apply Safety) | Current | repo owner | [security](user/security.md); `apps/api/src/application-feedback.ts` | 2026-07-06 |
-| CL-037 | The apply agent is a local Claude Code CLI subprocess that reads untrusted job pages; prompt injection is a real exposure that the listed controls limit but do not remove. | Security (The Apply Agent) | Current | repo owner | [security](user/security.md) (`--permission-mode bypassPermissions`, prompt-injection controls) | 2026-07-06 |
+| CL-037 | The apply agent is a local Claude runtime subprocess that reads untrusted job pages; prompt injection is a real exposure that the explicit tool allowlist, reduced environment, and model instructions limit but do not remove. | Security (The Apply Agent) | Current | repo owner | [security](user/security.md) (prompt-injection controls and owned tool allowlist); `workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py` (`_ALLOWED_TOOLS`, `_ENV_ALLOWLIST`) | 2026-07-06 |
 | CL-038 | On supported ATS pages the browser extension offers deterministic, profile-backed field suggestions and shows each value's profile source; the user chooses what to fill, the extension generates no free-text answers, and it has no submission path (it prevents the form's own submit and never submits on the user's behalf). | README (Browser Extension Capture And Autofill); Security (Browser Extension Pairing) | Current | repo owner | `BR-056` (requirements.md); [local TS API](local-ts-api.md) (`GET /v1/extension/autofill/profile`); `apps/extension/src/content-script.ts` (submit prevented) | 2026-07-06 |
 
 ### LLM spend
@@ -185,7 +198,7 @@ path, or test path that resolves on `main`.
 | CL-061 | The outbound calls that can carry private data are enumerated and each is opt-in / configuration-gated: LLM providers, the apply-agent prompt, job boards/ATS/posting pages, Gmail (read-only), Google Maps autocomplete, CAPTCHA solving, and Langfuse telemetry. | README (What Leaves Your Machine); Security (What Leaves Your Machine); Data & Safety (External Services) | Current | repo owner | [security](user/security.md) (What Leaves Your Machine table); [data & safety](user/data-and-safety.md) | 2026-07-06 |
 | CL-062 | The shipped Gmail connector is read-only (it does not request `gmail.send`); raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. | README (Responsible Use); Security; Data & Safety | Current | repo owner | [security](user/security.md); `workers/automation/src/jobhunter/infrastructure/gmail/feedback.py` | 2026-07-06 |
 | CL-063 | The local API defaults to a loopback bind (`127.0.0.1`); browser-extension routes additionally require a local capability token stored under `~/.jobhunter/` and accepted only on loopback `/v1/extension/*` routes, and that token does not grant application-submission authority. | README (Responsible Use); Security (Browser Extension Pairing) | Current | repo owner | `TR-005` (requirements.md); [security](user/security.md) | 2026-07-06 |
-| CL-064 | LLM provider keys can be stored in the macOS Keychain (never written to SQLite, logs, traces, or artifacts) or in `.env`; a profile password is used only for login autofill and enters the apply-agent prompt only when a login form needs it. | Security (Credentials) | Current | repo owner | [security](user/security.md) | 2026-07-06 |
+| CL-064 | LLM provider keys can be stored in the macOS Keychain (never written to SQLite, logs, traces, or artifacts) or in `.env`; a profile password, if configured, is used only by local autofill/login handling and does not enter the apply-agent model prompt. | Security (Credentials) | Current | repo owner | [security](user/security.md) | 2026-07-06 |
 | CL-065 | Langfuse/OpenTelemetry export is off unless configured; `LANGFUSE_DISABLE=1` opts out even when credentials are present. | Data & Safety (Telemetry); Security; Configuration | Current | repo owner | [observability](architecture/observability.md); [configuration](user/configuration.md) | 2026-07-06 |
 | CL-066 | The local database, `.env`, and generated artifacts are not encrypted at rest; their protection is the operating-system account and disk security. | Security (Local data is not encrypted) | Current | repo owner | [security](user/security.md) | 2026-07-06 |
 
@@ -195,7 +208,7 @@ path, or test path that resolves on `main`.
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-070 | A local `jobhunter backup` command produces a consistent copy of the SQLite database via `VACUUM INTO` without deleting anything, and schema migrations are guarded by a schema-version check. | README (Back Up And Restore) | Current | repo owner | `BR-053` (requirements.md); [storage](architecture/storage.md) | 2026-07-06 |
 | CL-071 | The daily digest is local-only: `jobhunter digest` and the Dashboard digest read from the database without sending notifications or advancing review state, and only the explicit acknowledge action advances the digest watermark. | README (Local Data And Safety) | Current | repo owner | [read model](architecture/read-model.md); `jobhunter digest` (README CLI Reference) | 2026-07-06 |
-| CL-072 | Documentation screenshots and QA fixtures use synthetic data only, and `scripts/release_check.py` enforces this on every push/PR (scanning for real-profile needles, secrets, prompt tripwires, blocked file types, and blocked distribution paths). | README (Screenshots); Data & Safety (Public Bug Reports); Tour (info callouts) | Current | repo owner | `scripts/release_check.py`; [local development](local-development.md#documentation-screenshots) | 2026-07-06 |
+| CL-072 | Documentation screenshots and QA fixtures use synthetic data only for illustration and deterministic invariant tests, never as the source for public performance, speed, accuracy, or outcome measurements; `scripts/release_check.py` enforces synthetic/public hygiene on every push/PR (scanning for real-profile needles, secrets, prompt tripwires, blocked file types, and blocked distribution paths). | README (Screenshots); Data & Safety (Public Bug Reports); Tour (info callouts) | Current | repo owner | `scripts/release_check.py`; [local development](local-development.md#documentation-screenshots) | 2026-07-06 |
 | CL-073 | First-run setup (`jobhunter setup`, reached from the guided installer) detects local vendor auth, persists intentionally enabled or skipped employer-analysis legs, and hands off to `doctor`; employer-analysis readiness always requires Claude synthesis auth — every ensemble run reconciles through the Claude synthesis pass — even when the `claude` draft leg is disabled, with `setup` warning that analysis is not ready and `doctor` reporting a dedicated `Claude synthesis auth` row. | README (Get Started; CLI Reference `setup`); Getting Started; Configuration (Employer-Analysis Ensemble) | Current | repo owner | `workers/automation/src/jobhunter/infrastructure/setup_probes.py` (`probe_analysis_setup`, `probe_claude_synthesis_auth`); `workers/automation/tests/test_setup_synthesis_auth.py`; [configuration](user/configuration.md) (Employer-Analysis Ensemble) | 2026-07-06 |
 
 ### Profile
@@ -215,7 +228,8 @@ release**. The review process:
    `docs/user/normal-flows.md`, `docs/user/data-and-safety.md`,
    `docs/user/security.md`).
 2. For each, confirm Status + owner + verification pointer and resolve every
-   `Current` pointer.
+   `Current` pointer. Treat synthetic fixtures as illustrative or invariant-test
+   evidence only; never use them to substantiate public measurement claims.
 3. Reconcile against `ROADMAP.md` so nothing labelled `Current` is actually a
    "Now / Next / Later" roadmap item.
 4. Re-record the freeze `main` sha and date on the [Freeze status](#freeze-status)
@@ -230,24 +244,20 @@ Carried from the plan's open owner decisions (§11); resolve at sign-off:
 
 - **§11.1 Location/publication.** Proposed: this file at `docs/claims-ledger.md`,
   repository-only (registered in `UNPUBLISHED_FILES` + `srcExclude`). Confirm.
-- **§11.6 Current-vs-Beta threshold.** Confirm the proposed threshold under
-  [How to read this ledger](#how-to-read-this-ledger). Reclassification
-  candidates to review: **CL-030/CL-031/CL-032/CL-033/CL-034/CL-037** (live
-  apply automation is the highest-risk surface — the owner may choose to present
-  live auto-apply as `Beta` even though each gate is shipped and pointer-backed);
-  **CL-040** (the spend ceiling's "estimate, not billing truth" and
-  "per-workflow preflight, not mid-call interrupt" qualifiers are load-bearing);
-  **CL-005/CL-038** (the browser extension ships but is loaded unpacked in
-  developer mode, not from a browser store — the owner may treat "unpacked
-  developer-mode only" as a maturity qualifier warranting `Beta`); and
-  **CL-029** (grounded interview-prep generation is a new LLM-generated surface a
-  user takes into an interview — the owner may prefer `Beta` despite the reused
-  fabrication / grounding / adversarial gates); and **CL-008** (the
-  `python-jobspy` invocation-boundary caveat — JobHunter cannot robots-gate the
-  library's individual per-board requests — is carried in the claim text as a
-  scope note, but the owner may judge it load-bearing enough to present the
-  politeness claim as `Beta` while broad boards are enabled). **CL-055** is already classified
-  `Beta` (see its "Why Beta" note); confirm at sign-off. The earlier `BR-052`
+- **§11.6 Current-vs-Beta threshold.** Resolved on 2026-07-06 by owner decision:
+  brand-new LLM-generated user-facing surfaces without real-usage validation are
+  `Beta` even when truthfulness gates pass, because those gates prove a
+  no-fabrication floor, not output quality. This pass applies the recorded
+  verdict by reclassifying **CL-029** to `Beta`. The same owner decision records
+  the evidence rule that synthetic data may illustrate, never measure. Remaining
+  candidates to review at freeze sign-off under this bar: **CL-030/CL-031/CL-032/CL-033/CL-034/CL-037** (live
+  apply automation is the highest-risk surface); **CL-040** (the spend ceiling's
+  "estimate, not billing truth" and "per-workflow preflight, not mid-call
+  interrupt" qualifiers may be load-bearing); **CL-005/CL-038** (the browser
+  extension ships unpacked in developer mode, not from a browser store); and
+  **CL-008** (the `python-jobspy` invocation-boundary caveat — JobHunter cannot
+  robots-gate the library's individual per-board requests). **CL-055** is
+  already classified `Beta` (see its "Why Beta" note). The earlier `BR-052`
   duplicate-handle defect was resolved on `main` by #309 (autofill renumbered to
   `BR-056`), so CL-024 and CL-038 now carry clean one-hop citations.
 - **§11.7 Sign-off owners.** Replace the `repo owner` default in the Owner column
