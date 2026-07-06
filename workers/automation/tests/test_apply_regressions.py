@@ -15,6 +15,8 @@ import threading
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from jobhunter.apply import launcher as launcher_module
 from jobhunter.apply.launcher import (
     _kill_claude_processes_for_interrupt,
@@ -130,15 +132,104 @@ def _insert_review_decision(
     decision: str = "approve_submit",
     decided_at: str = "2026-01-01T00:00:00+00:00",
     decision_id: str | None = None,
+    materials_generation: int | None = None,
+    profile_version: int | None = None,
+    application_url: str | None = None,
+    partial_override_run_id: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO application_review_decisions (
-            tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at
-        ) VALUES ('local', ?, ?, ?, 'test', 'pytest', ?)
+            tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+            materials_generation, profile_version, application_url, partial_override_run_id
+        ) VALUES ('local', ?, ?, ?, 'test', 'pytest', ?, ?, ?, ?, ?)
         """,
-        (decision_id or f"decision-{decision}-{decided_at}", job_key, decision, decided_at),
+        (
+            decision_id or f"decision-{decision}-{decided_at}",
+            job_key,
+            decision,
+            decided_at,
+            materials_generation,
+            profile_version,
+            application_url,
+            partial_override_run_id,
+        ),
     )
+    conn.commit()
+
+
+def _seed_current_apply_binding(
+    conn: sqlite3.Connection,
+    *,
+    job_key: str = "https://example.com/job",
+    application_url: str = "https://example.com/apply",
+    generation: int = 1,
+    profile_version: int = 1,
+    coverage: str | None = "full",
+    run_id: str = "dry-run-full",
+) -> None:
+    now = "2026-01-01T00:00:00+00:00"
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO candidate_profiles (
+            tenant_id, profile_id, version, updated_at
+        ) VALUES ('local', 'default', ?, ?)
+        """,
+        (profile_version, now),
+    )
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at
+        ) VALUES (?, ?, 'local', 'approved', ?, ?)
+        """,
+        (job_key, generation, now, now),
+    )
+    for artifact_type, artifact_id, path in (
+        ("tailored_resume", "resume-text-1", "/tmp/resume.txt"),
+        ("resume_pdf", "resume-pdf-1", "/tmp/resume.pdf"),
+    ):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO job_materials_artifacts (
+                job_url, generation, artifact_type, artifact_id, status, path,
+                render_format, created_at
+            ) VALUES (?, ?, ?, ?, 'approved', ?, 'text', ?)
+            """,
+            (job_key, generation, artifact_type, artifact_id, path, now),
+        )
+    if coverage is not None:
+        record_job_event(
+            conn,
+            job_key,
+            "apply",
+            "ApplyRunStarted",
+            message="Apply dry-run started",
+            payload={
+                "run_id": run_id,
+                "dry_run": True,
+                "materials_generation": generation,
+                "profile_version": profile_version,
+                "application_url": application_url,
+            },
+        )
+        record_job_event(
+            conn,
+            job_key,
+            "apply",
+            "DryRunCompleted",
+            message="Dry run completed",
+            payload={
+                "run_id": run_id,
+                "result": "dry_run_complete",
+                "dry_run": True,
+                "coverage": coverage,
+                "materials_generation": generation,
+                "application_url": application_url,
+                "profile_version": profile_version,
+                "finished_at": now,
+            },
+        )
     conn.commit()
 
 
@@ -258,11 +349,15 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_ready_job(conn)
+    _seed_current_apply_binding(conn)
     _insert_review_decision(
         conn,
         decision="approve_submit",
         decided_at="2026-01-01T00:00:00+00:00",
         decision_id="decision-old-approve",
+        materials_generation=1,
+        profile_version=1,
+        application_url="https://example.com/apply",
     )
     _insert_review_decision(
         conn,
@@ -281,8 +376,271 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
             decision="approve_submit",
             decided_at="2026-01-03T00:00:00+00:00",
             decision_id="decision-new-approve",
+            materials_generation=1,
+            profile_version=1,
+            application_url="https://example.com/apply",
         )
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
+    finally:
+        close_connection(db_path)
+
+
+def test_apply_approval_gate_requires_matching_full_dry_run(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, coverage=None)
+    _insert_review_decision(
+        conn,
+        decision="approve_submit",
+        materials_generation=1,
+        profile_version=1,
+        application_url="https://example.com/apply",
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        prior_event_count = len(get_recent_events())
+        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
+        assert any(
+            "awaiting_dry_run" in event
+            for event in get_recent_events()[prior_event_count:]
+        )
+    finally:
+        close_connection(db_path)
+
+
+def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, coverage=None)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        run_ctx: dict = {"dry_run": True}
+        dry_run_job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=1,
+            run_ctx=run_ctx,
+            approval_required=True,
+        )
+        assert dry_run_job is not None
+        mark_result(
+            "https://example.com/job",
+            "dry_run",
+            duration_ms=123,
+            task_id=run_ctx["run_id"],
+            run_ctx=run_ctx,
+        )
+        completion = conn.execute(
+            "SELECT payload_json FROM job_events "
+            "WHERE job_url = ? AND event_type = 'DryRunCompleted' "
+            "ORDER BY event_id DESC LIMIT 1",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert completion is not None
+        payload = json.loads(completion["payload_json"])
+        assert payload["coverage"] == "full"
+        assert payload["materials_generation"] == 1
+        assert payload["application_url"] == "https://example.com/apply"
+
+        _insert_review_decision(
+            conn,
+            decision="approve_submit",
+            decided_at="2026-01-02T00:00:00+00:00",
+            materials_generation=1,
+            profile_version=1,
+            application_url="https://example.com/apply",
+        )
+
+        live_job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=2,
+            approval_required=True,
+        )
+        assert live_job is not None
+    finally:
+        close_connection(db_path)
+
+
+@pytest.mark.parametrize(
+    ("decision_bindings", "expected_reason"),
+    [
+        ({"materials_generation": 0, "profile_version": 1, "application_url": "https://example.com/apply"}, "approval_stale_materials"),
+        ({"materials_generation": 1, "profile_version": 0, "application_url": "https://example.com/apply"}, "approval_stale_profile"),
+        ({"materials_generation": 1, "profile_version": 1, "application_url": "https://example.com/old-apply"}, "approval_stale_url"),
+    ],
+)
+def test_apply_approval_gate_rejects_stale_bindings(
+    tmp_path,
+    monkeypatch,
+    decision_bindings,
+    expected_reason,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn)
+    _insert_review_decision(conn, decision="approve_submit", **decision_bindings)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        worker_id = {
+            "approval_stale_materials": 11,
+            "approval_stale_profile": 12,
+            "approval_stale_url": 13,
+        }[expected_reason]
+        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
+        assert any(
+            f"[W{worker_id}]" in event and expected_reason in event
+            for event in get_recent_events()
+        )
+    finally:
+        close_connection(db_path)
+
+
+def test_apply_approval_gate_accepts_partial_override_bound_to_run(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, coverage="partial", run_id="dry-run-partial")
+    _insert_review_decision(
+        conn,
+        decision="approve_submit",
+        materials_generation=1,
+        profile_version=1,
+        application_url="https://example.com/apply",
+        partial_override_run_id="dry-run-partial",
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
+    finally:
+        close_connection(db_path)
+
+
+@pytest.mark.parametrize(
+    ("coverage", "partial_override_run_id", "expected_reason"),
+    [
+        ("full", None, "awaiting_dry_run"),
+        ("partial", "dry-run-profile-v1", "override_evidence_invalid"),
+    ],
+)
+def test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile(
+    tmp_path,
+    monkeypatch,
+    coverage,
+    partial_override_run_id,
+    expected_reason,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(
+        conn,
+        coverage=coverage,
+        profile_version=1,
+        run_id="dry-run-profile-v1",
+    )
+    conn.execute(
+        """
+        UPDATE candidate_profiles
+        SET version = 2, updated_at = ?
+        WHERE tenant_id = 'local' AND profile_id = 'default'
+        """,
+        (utc_now(),),
+    )
+    conn.commit()
+    _insert_review_decision(
+        conn,
+        decision="approve_submit",
+        materials_generation=1,
+        profile_version=2,
+        application_url="https://example.com/apply",
+        partial_override_run_id=partial_override_run_id,
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        worker_id = 21 if coverage == "full" else 22
+        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
+        assert any(
+            f"[W{worker_id}]" in event and expected_reason in event
+            for event in get_recent_events()
+        )
+    finally:
+        close_connection(db_path)
+
+
+@pytest.mark.parametrize("seed_stale_run", [False, True])
+def test_apply_approval_gate_rejects_invalid_partial_override(
+    tmp_path,
+    monkeypatch,
+    seed_stale_run,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, coverage=None)
+    if seed_stale_run:
+        record_job_event(
+            conn,
+            "https://example.com/job",
+            "apply",
+            "ApplyRunStarted",
+            message="stale partial dry-run started",
+            payload={
+                "run_id": "dry-run-partial",
+                "dry_run": True,
+                "materials_generation": 0,
+                "profile_version": 1,
+                "application_url": "https://example.com/apply",
+            },
+        )
+        record_job_event(
+            conn,
+            "https://example.com/job",
+            "apply",
+            "DryRunCompleted",
+            message="stale partial dry-run completed",
+            payload={
+                "run_id": "dry-run-partial",
+                "dry_run": True,
+                "coverage": "partial",
+            },
+        )
+        conn.commit()
+    _insert_review_decision(
+        conn,
+        decision="approve_submit",
+        materials_generation=1,
+        profile_version=1,
+        application_url="https://example.com/apply",
+        partial_override_run_id="dry-run-partial",
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        worker_id = 23 if seed_stale_run else 24
+        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
+        assert any(
+            f"[W{worker_id}]" in event and "override_evidence_invalid" in event
+            for event in get_recent_events()
+        )
     finally:
         close_connection(db_path)
 

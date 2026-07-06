@@ -1,11 +1,18 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
+> **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
+> inventory against current `main`. This is **not** a release-ready outcome:
+> W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release
+> checkpoints remain open. The document is preserved as the historical work-item
+> definition source; do not treat the move to `implemented/` as proof that the
+> OSS release gate passed.
+>
 > **Audience:** an external implementing agent (Codex). This document is
 > self-contained and prescriptive: follow it literally. Where it says STOP,
 > stop and report rather than improvising.
-> **Companions:** `docs/plans/2026-07-03-temporal-native-rearchitecture.md`
+> **Companions:** `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`
 > (PR #230, the architectural plan) and
-> `docs/plans/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
+> `docs/plans/implemented/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
 > the P1b–P5 implementation spec). Workstream W1 below **builds on top of
 > temporal phase P2** and must not re-implement anything P2 delivers.
 > **Goal:** make this repository safe to publish as open source while
