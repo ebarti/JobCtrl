@@ -42,18 +42,48 @@ from jobhunter.infrastructure.setup_probes import resolve_claude_apply_binary
 log = logging.getLogger(__name__)
 
 
-# Disallowed Gmail tools — kept identical to the legacy launcher list
-# so the agent's permission posture doesn't regress.
-_DISALLOWED_TOOLS = (
-    "mcp__gmail__draft_email,mcp__gmail__modify_email,"
-    "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
-    "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
-    "mcp__gmail__create_label,mcp__gmail__update_label,"
-    "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
-    "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
-    "mcp__gmail__list_filters,mcp__gmail__get_filter,"
-    "mcp__gmail__delete_filter"
+# Apply runs get an explicit owned-tool allowlist rather than a broad
+# permission bypass plus a denylist. Keep this list aligned with the prompt:
+# no raw page-script evaluation, no Gmail write tools, and no shell/file tools.
+_ALLOWED_TOOLS = ",".join(
+    (
+        "mcp__playwright__browser_navigate",
+        "mcp__playwright__browser_snapshot",
+        "mcp__playwright__browser_take_screenshot",
+        "mcp__playwright__browser_click",
+        "mcp__playwright__browser_fill_form",
+        "mcp__playwright__browser_file_upload",
+        "mcp__playwright__browser_tabs",
+        "mcp__playwright__browser_wait_for",
+        "mcp__gmail__search_emails",
+        "mcp__gmail__read_email",
+    )
 )
+
+_ENV_ALLOWLIST = {
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CONFIG_DIR",
+    "GMAIL_MCP_CREDENTIALS_PATH",
+    "GMAIL_MCP_DIR",
+    "GMAIL_MCP_OAUTH_KEYS_PATH",
+    "HOME",
+    "JOBHUNTER_APP_DIR",
+    "JOBHUNTER_CLAUDE_BIN",
+    "JOBHUNTER_DB_PATH",
+    "PATH",
+    "PYTHONPATH",
+    "SHELL",
+    "SSL_CERT_FILE",
+    "USER",
+    "UV_PROJECT_ENVIRONMENT",
+    "VIRTUAL_ENV",
+}
+_ENV_PREFIX_ALLOWLIST = ("AWS_", "GOOGLE_", "JOBHUNTER_CRAWL_UA_")
 
 # Result codes the agent emits as ``RESULT:CODE`` lines.
 _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
@@ -149,16 +179,13 @@ class ClaudeCodeCliAdapter:
         cmd.extend([
             "-p",
             "--mcp-config", str(mcp_config_path),
-            "--permission-mode", "bypassPermissions",
             "--no-session-persistence",
-            "--disallowedTools", _DISALLOWED_TOOLS,
+            "--allowedTools", _ALLOWED_TOOLS,
             "--output-format", "stream-json",
             "--verbose", "-",
         ])
 
-        env = os.environ.copy()
-        env.pop("CLAUDECODE", None)
-        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        env = _apply_subprocess_env()
 
         worker_log = self._log_dir / f"worker-{worker_id}.log"
         deadline_seconds = (
@@ -368,12 +395,10 @@ class ClaudeCodeCliAdapter:
             if f"RESULT:{code}" in output:
                 if code == "APPLIED":
                     if dry_run:
-                        # Defensive: a dry-run agent should emit
-                        # RESULT:DRY_RUN, but if it accidentally says
-                        # RESULT:APPLIED on a dry-run we MUST still
-                        # treat it as a dry-run completion (per §4.6
-                        # invariant: dry runs never mark applied).
-                        return DryRunComplete(navigated_to="")
+                        return Failed(
+                            error="dry_run_violation: agent reported applied during dry-run",
+                            retryable=False,
+                        )
                     return Applied(
                         applied_at=_utc_now(),
                         verification_confidence=_applied_confidence(output),
@@ -410,6 +435,19 @@ class ClaudeCodeCliAdapter:
             return Failed(error="unknown", retryable=True)
 
         return Failed(error="no_result_line", retryable=True)
+
+
+def _apply_subprocess_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _ENV_ALLOWLIST or any(
+            key.startswith(prefix) for prefix in _ENV_PREFIX_ALLOWLIST
+        ):
+            env[key] = value
+    env.pop("CLAUDECODE", None)
+    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    env.pop("CAPSOLVER_API_KEY", None)
+    return env
 
 
 def _applied_confidence(output: str) -> float:

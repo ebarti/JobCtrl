@@ -37,7 +37,7 @@ P3 is **not** designed in implementation detail here (§6). Do not start it unti
 
 - Conventional Commits for every commit and PR title; PR body states What / Why / Validation.
 - Never edit code on `main`; every phase is developed in its own worktree/branch; one reviewable unit per PR.
-- **Additive:** this is a new surface. Do not remove or weaken any existing safety/privacy behavior (loopback bind, apply approval gate, dry-run guard, at-most-once, spend cap). Adding auth to the local API (P0) is a strict addition — unauthenticated loopback reads that exist today keep working unless the owner decides otherwise (§13, D-2).
+- **Additive:** this is a new surface. Do not remove or weaken any existing safety/privacy behavior (loopback bind, apply approval gate, explicit dry-run guard when dry-run is requested, at-most-once, spend cap). Adding auth to the local API (P0) is a strict addition — unauthenticated loopback reads that exist today keep working unless the owner decides otherwise (§13, D-2).
 - Public-history-safe: neutral product language only. Name ATS **integration targets** only where the repo already names them in code (`AtsKind` values: Workday, Greenhouse, Lever, Ashby). Never name or allude to rival products/companies; no marketing language.
 - Do not commit or fixture any real profile data, resumes, cover letters, PDFs, browser profiles, SQLite databases, secrets, or logs. Fixtures use synthetic, fictional employers and the existing synthetic seed (`pnpm qa:seed`).
 - Each phase that changes user-facing behavior, the local API, or safety notes MUST update the owning docs per the CLAUDE.md documentation matrix (enumerated per phase under "Docs").
@@ -297,7 +297,7 @@ All of the following must hold:
 A Phase-3 submission MUST enter through the existing apply workflow entry (`apply` JSON-RPC method → `ApplyWorkflow`), inheriting all four mechanisms — not the raw launcher, not the extension:
 
 - **Approval gate:** `apply_approval_required` (default `True`, `workers/automation/src/jobhunter/infrastructure/scoring/criteria_provider.py` » `read_apply_approval_required`) enforced in the worker's claim transaction (`workers/automation/src/jobhunter/apply/launcher.py` » `_latest_apply_review_decision`, the `approval_required and not dry_run` branch); consent recorded via `POST /v1/jobs/:jobKey/apply-review/decision` (`apps/api/src/server.ts`; `apps/api/src/application-feedback.ts` » `recordApplyReviewDecision`, decision `approve_submit` from `APPLY_REVIEW_DECISION_VALUES`).
-- **Dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobhunter/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`).
+- **Explicit dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobhunter/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`). This protects runs that explicitly opt into dry-run mode; it is not a dry-run-by-default requirement.
 - **At-most-once lifecycle:** deterministic `apply_workflow_id` = `apply-{tenant}-{job_key}` (`workers/automation/src/jobhunter/workflow_specs.py`), Temporal `USE_EXISTING` conflict policy, single live attempt (`apply/workflow.py` » `_APPLY_LIVE_RETRY`), active-run exclusion (`_has_active_apply` / `list_active`), and the `ApplySubmitIntended` checkpoint (`workers/automation/src/jobhunter/domain/apply/process_manager.py`).
 - **Spend ceiling:** the `check_spend_budget` preflight (`workers/automation/src/jobhunter/llm.py`) raising `BudgetExceededError`; daily budget default $25 (`read_daily_budget_usd`).
 - **Read model / UI:** `apply_run_projections`; Apply Review queue + `ApplyReviewDecisionControls`; apply events (`ApplyRunStarted`, `ApplySubmitIntended`, `ApplicationSubmitted`, `ApplicationFailed`, `ApplyReviewDecisionRecorded`).
@@ -305,7 +305,7 @@ A Phase-3 submission MUST enter through the existing apply workflow entry (`appl
 ### 6.3 What Phase 3 must NOT do
 
 - Must not add a submission code path to the extension or content scripts.
-- Must not weaken, flag-off, or bypass the approval gate, dry-run guard, at-most-once lifecycle, or spend cap.
+- Must not weaken, flag-off, or bypass the approval gate, explicit dry-run guard when dry-run is requested, at-most-once lifecycle, or spend cap.
 - Must not submit as a side effect of capture or autofill.
 - The extension's role is limited to handing a reviewed application to the supervised path and reflecting its status; the human `approve_submit` decision remains mandatory (I-2, I-3, BR-001, BR-023, BR-054).
 
