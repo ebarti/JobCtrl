@@ -87,6 +87,20 @@ def test_opted_in_public_source_is_allowed() -> None:
     )
 
 
+def test_public_source_must_use_http_or_https() -> None:
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_ALLOWED_HOST,))
+    for url in (
+        f"file://{_ALLOWED_HOST}/etc/passwd",
+        f"ftp://{_ALLOWED_HOST}/contacts.csv",
+        f"javascript://{_ALLOWED_HOST}/alert",
+        f"{_ALLOWED_HOST}/team",
+    ):
+        assert (
+            policy.authorize(category=ResearchSourceCategory.PUBLIC_WEB_PAGE.value, url=url)
+            is ResearchSourceDecision.REJECTED
+        )
+
+
 def test_protected_url_routes_to_manual_capture_not_auto_fetch() -> None:
     policy = ContactResearchSourcePolicy(domain_allowlist=(_ALLOWED_HOST,))
     for path in ("/login", "/sso/start", "/members?paywall=1"):
