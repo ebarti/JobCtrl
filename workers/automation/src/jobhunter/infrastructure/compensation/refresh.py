@@ -56,11 +56,14 @@ def refresh_compensation_facts(
     observation_file = Path(observations_json_path) if observations_json_path else None
     if observation_file is not None and not observation_file.exists():
         raise ValueError(f"observationsJsonPath does not exist: {observation_file}")
+    compensation_run_id = f"compensation:{refreshed_at}"
     try:
         source_load = load_default_reported_compensation_observations(
             local_observations_path=observation_file,
             include_eurotoptech=include_euro_top_tech,
             eurotoptech_max_pages=euro_top_tech_max_pages,
+            recorder_conn=conn,
+            run_id=compensation_run_id,
         )
     except Exception as exc:  # noqa: BLE001 - refresh should degrade to local evidence
         log.warning("Reported compensation sources could not be fully loaded: %s", exc)
@@ -68,6 +71,8 @@ def refresh_compensation_facts(
             local_observations_path=observation_file,
             include_eurotoptech=False,
             eurotoptech_max_pages=euro_top_tech_max_pages,
+            recorder_conn=conn,
+            run_id=compensation_run_id,
         )
 
     observations = source_load.observations

@@ -4,7 +4,7 @@ See ddd-target.md §5.6 (``BrowserPort``, ``AutonomousAgentPort``,
 ``ApplyRunRepository``, seam justification).
 
 These ports isolate the two heaviest infrastructure dependencies in
-the worker: the Chrome browser lifecycle and the Claude Code
+the worker: the Chrome browser lifecycle and the Claude apply runtime
 subprocess. Local-mode adapters wrap the existing ``apply/chrome.py``
 and ``apply/launcher.py`` subprocess code; cloud-mode adapters can
 swap to Browserbase / direct Anthropic API without the use cases
@@ -130,7 +130,7 @@ class AgentResult:
 class AutonomousAgentPort(Protocol):
     """Driven port: run one autonomous agent against an open browser session.
 
-    The local adapter spawns ``claude --model X -p`` with the MCP
+    The local adapter spawns the resolved Claude runtime with the MCP
     config rendered to disk; the cloud adapter calls the Anthropic
     API directly with tool use. Both produce the same ``AgentResult``
     shape so the use case is portable.
