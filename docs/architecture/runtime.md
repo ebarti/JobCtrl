@@ -256,7 +256,18 @@ return `503 worker_runtime_unavailable` until a healthy heartbeat exists.
 Request hardening beyond the loopback bind: a Host-header allowlist rejects
 non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
 mutating requests with a non-loopback `Origin`/`Referer` are rejected with
-`403 cross_site_request`.
+`403 cross_site_request`. Browser-extension routes are additive: authenticated
+`/v1/extension/*` routes still require a loopback Host and a local capability
+token, then allow a trusted `chrome-extension://` origin through route-scoped
+CORS and mutation-origin checks. Ordinary web and CLI routes keep the existing
+loopback posture. The browser-extension capture route seeds
+`manual_capture_queue` with extension provenance and then delegates to the
+same worker-backed manual-capture importer used by the web app, so discovery
+dedupe, snapshots, quarantine, and projections remain owned by the existing
+Job Discovery pipeline. Deterministic browser-extension autofill reads a
+separate sanitized profile DTO from the Candidate Profile read path; it does
+not expose profile passwords, resume content, generated artifacts, or apply
+submission authority.
 
 ## Python Automation Engine
 

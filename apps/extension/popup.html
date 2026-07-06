@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JobHunter</title>
+    <script type="module" src="/src/popup.ts"></script>
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header>
+        <h1>JobHunter</h1>
+        <span id="api-state" class="status-pill">Checking</span>
+      </header>
+      <section>
+        <label for="token-input">Pairing token</label>
+        <div class="token-row">
+          <input id="token-input" type="password" autocomplete="off" />
+          <button id="save-token" type="button">Save</button>
+        </div>
+      </section>
+      <section>
+        <button id="capture" class="primary" type="button">Save job</button>
+        <button id="autofill" type="button">Review autofill</button>
+        <button id="clear-queue" type="button">Clear queue</button>
+      </section>
+      <p id="status" role="status"></p>
+    </main>
+  </body>
+</html>

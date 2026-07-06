@@ -43,6 +43,8 @@ import {
   bulletProvenanceRecordedHandler,
   coverLetterGeneratedHandler,
   employerAnalyzedHandler,
+  interviewPrepFailedHandler,
+  interviewPrepGeneratedHandler,
   materialsExhaustedHandler,
   pdfRenderedHandler,
   resumeApprovedHandler,
@@ -87,6 +89,7 @@ import {
 } from "../scoring/handlers.js";
 import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
+import { digestKeys } from "./digestKeys.js";
 import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
 
 export type InvalidationItem =
@@ -158,6 +161,8 @@ export const handlers: HandlerMap = {
   MaterialsExhausted: materialsExhaustedHandler,
   EmployerAnalyzed: employerAnalyzedHandler,
   BulletProvenanceRecorded: bulletProvenanceRecordedHandler,
+  InterviewPrepGenerated: interviewPrepGeneratedHandler,
+  InterviewPrepFailed: interviewPrepFailedHandler,
   TailoringPolicyUpdated: tailoringPolicyUpdatedHandler,
   TailorRetailorRequested: tailorRetailorRequestedHandler,
   TailoredArtifactsSuppressed: tailoredArtifactsSuppressedHandler,
@@ -187,6 +192,7 @@ export const handlers: HandlerMap = {
   ProfileUpdated: profileUpdatedHandler,
   ProfileImported: profileImportedHandler,
   CompensationFactsUpdated: compensationFactsUpdatedHandler,
+  DigestReviewed: (event) => [invalidate(digestKeys.all(event.tenantId))],
   WorkflowStarted: workflowStartedHandler,
   WorkflowCompleted: workflowCompletedHandler,
   WorkflowFailed: workflowFailedHandler,
