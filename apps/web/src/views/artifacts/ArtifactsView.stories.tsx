@@ -17,16 +17,9 @@ import {
 } from "../../test/fixtures/projections.js";
 import { ArtifactsView } from "./ArtifactsView.js";
 
-// ArtifactsView still mounts ArtifactFilterBar, whose bare <select> is
-// tracked in docs/backlog.md. The table itself now uses the shared native
-// data grid.
 const meta = {
   title: "Views/Artifacts/ArtifactsView",
   component: ArtifactsView,
-  parameters: {
-    // a11y deferred — ArtifactFilterBar select-name defect; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof ArtifactsView>;
 
 export default meta;

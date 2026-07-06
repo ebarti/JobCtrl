@@ -1702,6 +1702,7 @@ function ResumeCommentThreadPanel({
 }
 
 function safeResumePlateTag(tagName: string): keyof HTMLElementTagNameMap {
+  if (tagName === "main") return "div";
   return RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)
     ? (tagName as keyof HTMLElementTagNameMap)
     : "div";
@@ -2328,7 +2329,7 @@ export function ResumeStandalonePlateEditor({
           {htmlState.status === "loading" ? "loading baseline" : dirty ? "local edits" : "baseline current"}
         </span>
       </div>
-      <div className="resume-plate-scroll">
+      <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
             className="resume-plate-page"
@@ -2675,7 +2676,7 @@ export function ResumePlateEditor({
           ))}
         </div>
       ) : null}
-      <div className="resume-plate-scroll">
+      <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
             className="resume-plate-page"
