@@ -644,12 +644,15 @@ wall-clock number is the owner acceptance signal per phase.
 2. **Phase 1 shape:** per-family enrichment + fan-out with **no** terminal global
    pass (a), or with a final reconciling pass as a safety net (b). Trade-off:
    simplicity/latency vs. a guaranteed sweep for stragglers.
-   **Resolved (2026-07-06, #301/#306):** option (a) — no terminal global pass in
-   the run itself. The straggler safety net landed with Phase 2 as the pre-loop
-   `pending_tailor` sweep: the next run reconciles stragglers before fanning
-   out, which also closes the double-tailor race found in review. A
-   workflow-level sweep-runs-once fixture remains a recorded follow-up (review
-   Medium on #306).
+   **Resolved (2026-07-06, #301/#306):** option (b) — per-family streaming
+   enrichment + fan-out with the terminal reconcile enrichment + fan-out pass
+   KEPT after the family loop as the safety net. The terminal pass always runs
+   and remains authoritative for failure folding and progress finalization
+   (`discovery/workflow.py:219-257`; fixture `test_workflow_discovery.py:394-416`
+   pins it as "plan option (b)"). The pre-loop `pending_tailor` sweep added with
+   Phase 2 is an additional straggler net and closes the double-tailor race
+   found in review. A workflow-level sweep-runs-once fixture remains a recorded
+   follow-up (review Medium on #301).
 3. **Phase 2 mechanism:** event-driven per-job start from inside the enrichment
    activity vs. tight small-batch polling. Trade-off: Temporal history size and
    coupling vs. latency.
