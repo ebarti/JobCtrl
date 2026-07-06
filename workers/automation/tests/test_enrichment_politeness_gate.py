@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlparse
 
 import pytest
 
@@ -83,14 +84,25 @@ class _Resp:
 class _SpyPage:
     """A Playwright page stand-in that records the URLs it was told to open."""
 
-    def __init__(self, sink: list[str], lock: threading.Lock | None = None) -> None:
+    def __init__(
+        self,
+        sink: list[str],
+        lock: threading.Lock | None = None,
+        *,
+        clock: VirtualClock | None = None,
+        events: list[tuple[str, float]] | None = None,
+    ) -> None:
         self._sink = sink
         self._lock = lock or threading.Lock()
+        self._clock = clock
+        self._events = events
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kwargs: object) -> _Resp:
         with self._lock:
             self._sink.append(url)
+            if self._clock is not None and self._events is not None:
+                self._events.append((url, self._clock.now()))
         return _Resp()
 
     def wait_for_load_state(self, *_args: object, **_kwargs: object) -> None:
@@ -107,36 +119,67 @@ class _SpyPage:
 
 
 class _SpyBrowser:
-    def __init__(self, sink: list[str], lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        sink: list[str],
+        lock: threading.Lock,
+        *,
+        clock: VirtualClock | None = None,
+        events: list[tuple[str, float]] | None = None,
+    ) -> None:
         self._sink = sink
         self._lock = lock
+        self._clock = clock
+        self._events = events
 
     def new_context(self, **_kwargs: object) -> "_SpyBrowser":
         return self
 
     def new_page(self, **_kwargs: object) -> _SpyPage:
-        return _SpyPage(self._sink, self._lock)
+        return _SpyPage(
+            self._sink, self._lock, clock=self._clock, events=self._events
+        )
 
     def close(self) -> None:
         return None
 
 
 class _SpyChromium:
-    def __init__(self, sink: list[str], lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        sink: list[str],
+        lock: threading.Lock,
+        *,
+        clock: VirtualClock | None = None,
+        events: list[tuple[str, float]] | None = None,
+    ) -> None:
         self._sink = sink
         self._lock = lock
+        self._clock = clock
+        self._events = events
 
     def launch(self, **_kwargs: object) -> _SpyBrowser:
-        return _SpyBrowser(self._sink, self._lock)
+        return _SpyBrowser(
+            self._sink, self._lock, clock=self._clock, events=self._events
+        )
 
 
 class _SpyPlaywright:
     """``sync_playwright()`` stand-in; ``goto_calls`` accumulates navigations."""
 
-    def __init__(self, sink: list[str] | None = None, lock: threading.Lock | None = None) -> None:
+    def __init__(
+        self,
+        sink: list[str] | None = None,
+        lock: threading.Lock | None = None,
+        *,
+        clock: VirtualClock | None = None,
+        events: list[tuple[str, float]] | None = None,
+    ) -> None:
         self.goto_calls: list[str] = sink if sink is not None else []
         self._lock = lock or threading.Lock()
-        self.chromium = _SpyChromium(self.goto_calls, self._lock)
+        self.chromium = _SpyChromium(
+            self.goto_calls, self._lock, clock=clock, events=events
+        )
 
     def __enter__(self) -> "_SpyPlaywright":
         return self
@@ -455,7 +498,14 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
 
         sink: list[str] = []
         sink_lock = threading.Lock()
-        monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright(sink, sink_lock))
+        navigation_times: list[tuple[str, float]] = []
+        monkeypatch.setattr(
+            detail,
+            "sync_playwright",
+            lambda: _SpyPlaywright(
+                sink, sink_lock, clock=clock, events=navigation_times
+            ),
+        )
 
         stats = detail._run_detail_scraper(
             conn, workers=2, reset_linkedin_candidates=False
@@ -464,10 +514,21 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         # Parallel enrichment across two hosts still processes every job.
         assert stats["processed"] == 4
         assert sorted(sink) == sorted(host_a + host_b)
-        # Per-host min-interval (2.0s) was applied to each host's second nav —
-        # this is the SITE_DELAYS replacement enforced by the shared limiter.
-        paced = [s for s in clock.sleeps if s >= 2.0]
-        assert len(paced) >= 2
+        # Per-host min-interval (2.0s) separates each host's navigations even
+        # when one worker's virtual sleep advances the shared clock for another.
+        navigation_by_host: dict[str, list[float]] = {
+            "host-a.test": [],
+            "host-b.test": [],
+        }
+        for url, started_at in navigation_times:
+            hostname = urlparse(url).hostname
+            if hostname in navigation_by_host:
+                navigation_by_host[hostname].append(started_at)
+
+        assert all(len(times) == 2 for times in navigation_by_host.values())
+        for times in navigation_by_host.values():
+            first, second = sorted(times)
+            assert second - first >= 2.0
     finally:
         close_connection(db_path)
 
