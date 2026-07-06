@@ -26,7 +26,6 @@ stop is cooperative cancellation of the wrapping asyncio task. ``save_dir`` /
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -38,6 +37,7 @@ from jobhunter.domain.materials.analysis import (
 )
 from jobhunter.infrastructure.analysis.gemini_schema import gemini_json_schema
 from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+from jobhunter.infrastructure.setup_probes import antigravity_auth_kwargs
 
 # An ``Agent`` factory: (config) -> async-context-manager agent.
 AgentFactory = Callable[[Any], Any]
@@ -82,22 +82,6 @@ def _load_types_module() -> Any:
     return types
 
 
-def _resolve_api_key() -> str:
-    """Return the Gemini/Google API key, preferring ``GEMINI_API_KEY`` (D-04).
-
-    Raises a clear, actionable error if neither key is set so a missing key
-    degrades the ensemble to a recorded per-leg failure (failure mode #2) rather
-    than a cryptic SDK stack trace.
-    """
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Antigravity (Gemini) analysis leg requires GEMINI_API_KEY or "
-            "GOOGLE_API_KEY in the environment; neither is set."
-        )
-    return api_key
-
-
 def _runtime_subdir(name: str) -> str:
     """Return a per-process 0700 runtime dir for the local agent's state."""
     base = Path(tempfile.gettempdir()) / _RUNTIME_DIR_NAME
@@ -138,7 +122,6 @@ class AntigravityAnalysisAdapter:
         )
         return config_factory(
             model=self._model,
-            api_key=_resolve_api_key(),
             system_instructions=system_prompt,
             # Constrained extraction only — the single built-in FINISH tool, no
             # file/shell/workspace tools.
@@ -150,6 +133,7 @@ class AntigravityAnalysisAdapter:
             response_schema=response_schema,
             save_dir=_runtime_subdir("sessions"),
             app_data_dir=_runtime_subdir("appdata"),
+            **antigravity_auth_kwargs(),
         )
 
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:

@@ -665,29 +665,107 @@ traffic, no applications, nothing spendful** is run during verification.
 
 ## Owner decisions (STOP and confirm before the relevant phase)
 
+**Historical note (2026-07-06):** All six decisions below were resolved during
+implementation of the stacked politeness PRs (#297–#316); each now carries a
+`Resolved (2026-07-06, implemented)` record with the shipped choice and verified
+code anchors, so the "STOP and confirm before the relevant phase" framing reads as
+historical. Two residues are deliberately left on the owner pile and flagged
+inline: the final honest-UA contact string (D1) and the per-source policy editor /
+web knobs (D4).
+
 - **D1 — Honest UA string + contact.** The exact outbound user-agent and whether
   to include a contact/project URL. An existing example already embeds the project
   repository URL as contact (`ats_adapters.py:90-94`); the honest locator UA is
   `"JobHunter Source Locator (local)"` and the compensation UA is `"JobHunter/0.3"`.
   Owner picks the single canonical value. (Blocks P0 modelling / P5 finalization.)
+  - **Resolved (2026-07-06, implemented):** Canonical honest UA
+    `JobHunter/<version> (+https://github.com/ebarti/JobHunter)`, produced by
+    `default_honest_user_agent()` and funnelled through the single resolution point
+    `resolve_honest_user_agent()` (`infrastructure/network/politeness.py:63`), which
+    every `PolitenessGateway` uses for its default UA (`politeness.py:122`). Owner
+    env overrides `JOBHUNTER_CRAWL_UA_PRODUCT` (`politeness.py:56`) and
+    `JOBHUNTER_CRAWL_UA_CONTACT` (`politeness.py:59`); an empty contact drops the
+    `(+contact)` suffix (`politeness.py:78`). The identity is stamped at call time
+    on the three Playwright surfaces — `PlaywrightDetailPageFetcher`
+    (`infrastructure/enrichment/playwright_fetcher.py:128`),
+    `smartextract.collect_page_intelligence` (`discovery/smartextract.py:431`), and
+    `detail.scrape_site_batch`'s anonymous context (`enrichment/detail.py:994`) —
+    proven by `tests/test_browser_ua_propagation.py` (robots identity == fetch
+    identity == owner override). It never impersonates a browser on surfaces we
+    control. **Owner-pending:** the final contact-string value, surfaced in
+    `docs/user/configuration.md` and `jobhunter doctor` (`cli.py:1819`) for the
+    owner to review before real crawls.
 - **D2 — robots scope by method.** Whether documented public JSON APIs
   (`SourcePolicyMethod.api`/`feed`: Greenhouse/Lever/Ashby/Workday CXS,
   eurotoptech) are robots-checked at their API host, or whether robots enforcement
   applies to page-rendering methods (`static_page`/`rendered_listing`/`rendered_detail`)
   with API methods relying on the documented-API contract. (Blocks P2.)
+  - **Resolved (2026-07-06, implemented):** Robots enforcement applies to
+    page-rendering methods; documented public JSON APIs are exempt at their API host
+    via `RobotsPolicy.EXEMPT_DOCUMENTED_API`
+    (`domain/discovery/source_registry.py:65`), applied to the ATS canonical API
+    policy (Greenhouse/Lever/Ashby, `source_registry.py:198`) and the Workday CXS
+    API policy (`source_registry.py:189`) — both `allowed_methods=(SourcePolicyMethod.API,)` —
+    and to the documented compensation feeds via `COMPENSATION_FEED_POLICY`
+    (`allowed_methods=(SourcePolicyMethod.FEED,)`, robots EXEMPT at
+    `infrastructure/compensation/sqlite_market_repository.py:86-89`), which govern
+    Euro Top Tech (`sqlite_market_repository.py:80`) and the other operator-configured
+    compensation feeds. The exemption is robots-off only: the gateway still stamps the
+    honest UA and applies per-host pacing/concurrency + the per-run request budget to
+    these feeds (`sqlite_market_repository.py:83-85`). Page-rendering policies keep
+    `RobotsPolicy.HONOR` (`source_registry.py:135` default, `:214` enrichment).
 - **D3 — `jobspy` broad-board posture.** Keep broad boards with invocation-boundary
   budget + pacing + outcome recording (accepting jobspy's internal requests are
   unpoliced), or gate broad boards behind explicit opt-in + disclosure as
   `lead_generator` sources. Also: robots/UA treatment for the authenticated
   LinkedIn resolver session. (Blocks P2/P3.)
+  - **Resolved (2026-07-06, implemented):** Broad boards kept, policed at *our*
+    invocation boundary (jobspy owns its per-board transport): a per-run
+    search-invocation budget + inter-search pacing on the shared `jobspy`
+    host-limiter bucket + a `budget_exhausted` outcome recorded when the budget stops
+    a crawl — `discovery/jobspy.py:67-69` and `:1134-1198` (`politeness_ua` `:1143`,
+    `search_budget` `:1145`, recording `:1187-1198`). jobspy's internal per-board
+    requests remain unpoliced and are honestly labelled in-code (`jobspy.py:67`). The
+    authenticated LinkedIn resolver is an owner-scoped carve-out: robots OFF on the
+    owner's logged-in session via `_OwnerAuthenticatedRobots` (`enrichment/detail.py:102`)
+    on the batch path (`detail.py:980`) and the recovery pre-pass (`detail.py:1728`),
+    while rate + budget stay ON everywhere — the recovery pass is gated through
+    `session.guard` and defers with `politeness_deferred` when budget/rate blocks
+    (`detail.py:615`, `:1814`). `user_agent=None` at every `LinkedInApplyUrlResolver(...)`
+    construction (`detail.py:1683`), AST-enforced by
+    `tests/test_fetch_surface_enforcement.py::test_authenticated_linkedin_context_never_uses_bot_ua_at_any_site`.
 - **D4 — Default rate / concurrency / budget values.** Per-host min-interval (or
   req/s), per-host max concurrency, and per-run request/page budget defaults; and
   whether the registry UI exposes a per-source policy editor. (Blocks P1 defaults /
   P4 UI / P5 config.)
+  - **Resolved (2026-07-06, implemented):** Conservative fail-closed defaults:
+    `SourcePolicy` defaults to `RobotsPolicy.HONOR`
+    (`domain/discovery/source_registry.py:135`); `ENRICHMENT_CRAWL_POLICY`
+    (`source_registry.py:209`) sets robots HONOR (`:214`),
+    `min_request_interval_seconds=2.0` (`:215`, subsuming the old fixed `SITE_DELAYS`
+    sleep), `max_concurrent_requests_per_host=1` (`:216`), and a
+    `max_requests_per_run=1000` runaway-navigation safety valve (`:217`). Override
+    wiring is generic env/config (the honest-UA envs above; per-host overrides noted
+    as an owner/config concern at `source_registry.py:208`). **Owner-deferred:** the
+    per-source policy editor / web knobs — the registry UI surfaces politeness
+    outcomes read-only, with no policy-edit affordance.
 - **D5 — robots cache TTL.** Default TTL for cached `robots.txt`. (Blocks P1.)
+  - **Resolved (2026-07-06, implemented):** robots cache TTL = 1h on success
+    (`DEFAULT_ROBOTS_TTL_SECONDS = 3600.0`, `infrastructure/network/robots.py:36`)
+    and 5min on fail-closed/unreachable results so they re-check soon
+    (`UNREACHABLE_ROBOTS_TTL_SECONDS = 300.0`, `robots.py:39`).
 - **D6 — Unreachable-robots semantics.** Behavior on `5xx`/timeout when fetching
   `robots.txt` (conservative-deny-until-refetch vs allow-with-record), consistent
   with the fail-closed stance. (Blocks P1.)
+  - **Resolved (2026-07-06, implemented):** `RobotsCache._fetch`
+    (`infrastructure/network/robots.py:96`): `2xx` → parse and enforce (`:100`);
+    `4xx` incl. `404` → allow (robots absent, `:107`); `5xx` → fail-closed, disallow
+    until retry (`:104`); timeout → fail-closed (`:109`); DNS failure / connection
+    refused → fail-open with a warning (`:112`, `:117`); any other error →
+    fail-closed (`:120`). Fail-closed results carry the short 300s recheck TTL via
+    `_unreachable` (`:136`). The yield trade-off (fail-open on definitive
+    DNS/refused absence vs fail-closed on ambiguous 5xx/timeout) is documented in the
+    module docstring (`robots.py:1-13`).
 
 ## Delivery Model: Stacked PRs On This Plan
 

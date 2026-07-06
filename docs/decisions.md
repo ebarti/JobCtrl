@@ -43,6 +43,8 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Frontend Hexagonal Ports With Local + Hosted Adapters Named](#_2026-05-06-frontend-hexagonal-ports-with-local-hosted-adapters-named) · 2026-05-06
 - [SSE Realtime Via `GET /v1/events/stream` + Invalidation Router](#_2026-05-06-sse-realtime-via-get-v1-events-stream-invalidation-router) · 2026-05-06
 - [View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror](#_2026-05-06-view-vs-context-dichotomy-1-1-backend-bounded-context-mirror) · 2026-05-06
+- [Saved Table Views Stay Client-Persisted Templates](#_2026-07-05-saved-table-views-stay-client-persisted-templates) · 2026-07-05
+- [Daily Digest Stays Local And Explicitly Acknowledged](#_2026-07-05-daily-digest-stays-local-and-explicitly-acknowledged) · 2026-07-05
 
 **Orchestration & workflow reliability (Temporal)**
 
@@ -53,6 +55,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Heavy Sync RPC Handlers Become Workflows](#_2026-07-03-heavy-sync-rpc-handlers-become-workflows) · 2026-07-03
 - [Classified Errors Drive Temporal Retry; Bounded Attempts](#_2026-07-03-classified-errors-drive-temporal-retry-bounded-attempts) · 2026-07-03
 - [Per-Job JobPreparationWorkflow Replaces The Preparation Queue](#_2026-07-03-per-job-jobpreparationworkflow-replaces-the-preparation-queue) · 2026-07-03
+- [Score-As-You-Discover Streaming In DiscoverWorkflow](#_2026-07-05-score-as-you-discover-streaming-in-discoverworkflow) · 2026-07-05
 
 **Scoring, materials & tailoring**
 
@@ -62,6 +65,8 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit](#_2026-06-15-requirement-fit-ledger-—-scores-resolve-from-weighted-requirement-fit) · 2026-06-15
 - [HTML/CSS Resume Rendering Replaces LaTeX](#_2026-06-24-html-css-resume-rendering-replaces-latex) · 2026-06-24
 - [Requirement-Led Resume Tailoring](#_2026-06-30-requirement-led-resume-tailoring) · 2026-06-30
+- [Career Evidence Map Is An Operations Read Model Over Existing Facts](#_2026-07-05-career-evidence-map-is-an-operations-read-model-over-existing-facts) · 2026-07-05
+- [Interview Preparation Is Grounded, Gated, Generation-Versioned Material](#_2026-07-05-interview-preparation-is-grounded-gated-generation-versioned-material) · 2026-07-05
 
 **Discovery & compensation**
 
@@ -1316,6 +1321,254 @@ Consequences:
 - the in-process preparation queue and its reaper are removed
 
 Cites: PR #237 (P3).
+
+## 2026-07-05: Score-As-You-Discover Streaming In DiscoverWorkflow
+
+Status: accepted
+
+Decision: `DiscoverWorkflow` scores jobs as it discovers them. After **each
+source family completes** it runs enrichment + preparation fan-out for that
+family's jobs immediately, instead of once after every family. Three sub-choices
+resolve the streaming plan's open decisions:
+
+1. **Progress model.** The denominator stays fixed at plan time
+   (`progress_total = len(families) + 2`) and the counter is monotonic: family
+   source activities advance it, and a terminal reconcile enrichment +
+   preparation finalize it to 100%. The per-family streaming passes are
+   **progress-silent** (`progress_total=0`), so the Runs bar never oscillates or
+   shrinks. Incremental scores reach the UI through the independent
+   `JobScored` → projections → SSE path, not the progress bar. No new
+   `discovery_runs` columns, so both projection builders stay in parity.
+2. **Phase-1 shape.** Per-family streaming passes **plus** a terminal reconcile
+   enrichment + fan-out (plan option (b)). The terminal pass remains
+   authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
+   completed; fail as `discovery_source_failed` only if all failed) and for
+   progress finalization; the streaming passes are additive and best-effort (any
+   non-cancellation failure is left for the terminal pass to sweep up, deduped by
+   the deterministic id). This keeps the existing folding + progress semantics
+   unchanged and low-risk.
+3. **Race-free repeated fan-out.** The per-job workflow id
+   `prep-{idempotency_key}` + `WorkflowIDConflictPolicy.USE_EXISTING` make N
+   fan-out invocations start exactly one workflow per job. Because the
+   idempotency key includes `kind`, a fresh job that crosses
+   `pending_score` → `pending_tailor` mid-tailor would otherwise be re-derived as
+   a second `TAILOR_RESUME` workflow racing its own in-flight `SCORE_JOB`
+   workflow (Phase 2's per-job handoff scores jobs the instant they are
+   enriched, so this is reachable well before end-of-run). To prevent that
+   double-tailor, the fan-out gains an `include_pending_tailor` flag and a
+   one-time straggler sweep (`include_pending_tailor=True`) runs **before the
+   family loop** — the only moment `pending_tailor` holds only pre-existing
+   scored-but-not-tailored work and cannot contain a fresh job already owned by
+   a this-run `SCORE_JOB` workflow. Every family + terminal fan-out is
+   score-only. (Running the sweep up front, rather than on the first completed
+   family, is also what keeps it correct when families run concurrently in
+   Phase 3.)
+4. **Phase 2 handoff mechanism (Temporal-native, event-driven).** A job's
+   preparation starts the moment it is individually enriched, not after its whole
+   family. The mechanism is event-driven from **inside** the enrichment activity
+   (an `on_job_enriched` callback threaded to `enrichment/detail.py`, fired per
+   job after its commit), chosen over ad-hoc polling. Because the start is a side
+   effect inside the activity, `DiscoverWorkflow`'s command history is unchanged
+   (determinism/replay safe). The per-job start uses the same deterministic
+   `SCORE_JOB` id as the fan-out, so the handoff and the reconciling fan-outs
+   converge on exactly one execution per job (`USE_EXISTING`); a re-enrichment
+   that changes `source_event_id` legitimately forks a new workflow. Per-job
+   starts are serialized by a lock (site enrichment can run in parallel threads)
+   and are best-effort (a start failure is logged and left for the fan-out
+   backstop, never mistaken for an enrichment failure).
+
+Rationale:
+
+- Time To First Score drops materially: an early family's jobs are scored while
+  later families are still crawling, instead of after the whole run.
+- Every prior invariant holds — fan-out idempotence (I1), tolerated
+  partial-source failure (I2), determinism/replay (I3), the daily spend ceiling
+  and per-job preflight (I4), the `min_score` gate (I5), cancellation/heartbeats
+  (I6), and honest monotonic progress (I7).
+- Reusing the existing terminal pass for folding + progress keeps the blast
+  radius small and the read-model parity intact.
+
+Consequences:
+
+- `DiscoveryPreparationFanoutInput` / `start_discovery_preparation_workflows` /
+  `derive_preparation_targets` gain an `include_pending_tailor` flag (default
+  `True` preserves the pre-streaming full derive).
+- Fan-out and enrichment activities now run per completed family plus once at the
+  terminal reconcile; repeated invocation is safe by construction (I1).
+- Phase 2 adds a `per_job_handoff` flag + prep params on the enrichment activity,
+  a `start_job_preparation_workflow` single-job starter, and an opaque
+  `on_job_enriched` callback threaded from the activity to `enrichment/detail.py`
+  (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
+  `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
+- Phase 3 (parallel source families) is **gated, default off**:
+  `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1` = sequential = today's
+  behavior). Values > 1 process families in batches of that size — the source
+  crawls run concurrently (`asyncio.gather`), then the batch's enrichment +
+  score-only fan-out runs once (enrichment never runs concurrently). The cap is
+  resolved at planning time and threaded through the plan so the workflow stays
+  deterministic; results fold in submission order; a canceled source cancels the
+  whole run. Browser concurrency is the first-class risk, so the default is off
+  and a worker-capacity analysis lives in
+  `docs/architecture/pipeline/concurrency.md`; the owner tunes the cap and runs a
+  soak before relying on it. A finer-grained cross-activity browser
+  pool/semaphore is a documented follow-up if the family cap proves insufficient.
+
+Cites: R9 streaming-pipeline-latency plan
+(`docs/plans/2026-07-05-streaming-pipeline-latency-plan.md`), Phase 1.
+
+## 2026-07-05: Career Evidence Map Is An Operations Read Model Over Existing Facts
+
+Status: accepted
+
+Decision: the Career Evidence Map is an Operations / Read-Side model that
+inverts existing canonical facts. It reads Candidate Profile proof points and
+skills, Materials bullet provenance, Scoring requirement-fit items, and
+generation-time coverage audits. It does not create profile facts, score facts,
+or materials facts.
+
+Rationale:
+
+- users need to inspect where a proof point was used across resumes and fit
+  reports, but those uses are already recorded per artifact and per job
+- Operations is the existing owner of projection-backed read models that compose
+  several bounded contexts for UI consumption
+- deriving the map from canonical rows preserves the auditability rule: every
+  displayed claim has one source of truth
+
+Consequences:
+
+- the public DTO uses camelCase read-model fields and deep-link-ready usage refs
+- the implementation must not infer missing or covered evidence from job
+  keywords alone; gaps come from recorded fit/coverage facts
+- if the index is projected, both the Python and TypeScript builders must emit
+  the same shape and parity fixtures must cover it
+
+Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
+
+## 2026-07-05: Interview Preparation Is Grounded, Gated, Generation-Versioned Material
+
+Status: accepted
+
+Decision: Interview Preparation is a generated-materials capability for
+before-interview preparation only. Prep items are generated from existing
+grounded data, carry evidence and requirement provenance, pass the existing
+fabrication/claim-grounding/judge gates, and are persisted as
+generation-versioned material. The product has no live, in-session, streaming,
+transcript, microphone, or real-time answer-assistance state or endpoint.
+
+Rationale:
+
+- interview prep is only useful if the candidate can defend every claim from
+  their real profile evidence and accepted materials
+- the Materials context already has the truthfulness gates needed to reject
+  invented metrics, titles, employers, and named technologies
+- a dedicated no-live-assistance invariant prevents boundary drift into
+  unethical in-interview assistance
+
+Consequences:
+
+- prep generation is explicit and user-initiated; it is not part of discovery or
+  per-job preparation auto-spend
+- failed or regenerated prep never destroys the last accepted generation
+- post-interview reflection remains an Apply outcome note, not an interview
+  assistant transcript or live-session artifact
+
+Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
+
+## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
+
+Status: accepted
+
+Decision: outcome analytics are a read-side Operations concern exposed through
+`GET /v1/analytics/outcomes`. The endpoint reads integer counts from
+`dashboard_projections.outcome_conversion_json`; rates are derived only in the
+TypeScript read model and are `null` below `MIN_CONVERSION_SAMPLE` (`5` by
+default). The analytics contract carries `n` beside every rate. The band
+vocabulary decision is explicit: keep the existing parity-guarded score-band
+breakdown as `byScoreBand`, and add a separate canonical requirement-fit
+breakdown as `byFitBand`. Apply mode is projected as
+`automated_live`, `manual_marked`, or `external_confirmed`; dry-runs are excluded
+from the applied denominator. Accepted resume template and tailoring policy are
+projected onto `job_list_projections` for `byTemplate` and `byPolicy`.
+Response-time medians are derived from `applied_at` and response-kind outcome
+timestamps; suggestion review counts come from decided
+`application_outcome_suggestions` rows.
+
+Rationale:
+
+- integer-only projection keeps the Python and TypeScript builders byte-parity
+  friendly and avoids cross-runtime float drift
+- low-volume single-user data needs counts-only rendering below the sample floor
+- score band and fit band use different vocabularies, so merging them would make
+  the read model ambiguous
+- analytics describe recorded outcomes and stay outside scoring, ranking,
+  thresholds, discovery scheduling, and apply eligibility
+
+Consequences:
+
+- new dimensions require updates in both projection builders and the shared
+  parity fixture
+- clients consume already-gated rates and cannot compute sub-threshold
+  percentages from the analytics response
+- template/policy/time-to-response analytics reuse the same threshold and
+  read-only boundary
+
+Cites: PR #273 (`MIN_CONVERSION_SAMPLE` baseline) and R4 outcome analytics.
+
+## 2026-07-05: Saved Table Views Stay Client-Persisted Templates
+
+Status: accepted
+
+Decision: saved table-view definitions and table presentation state live in a
+versioned Zustand `persist` store (`jh:saved-table-views`). Active Jobs filters,
+sort, page, and page size remain URL state. Applying a saved view writes those
+URL-owned dimensions through router navigation and applies only presentation
+dimensions directly from the client store.
+
+Rationale:
+
+- filters and sort are already bookmarkable URL state and feed the route loader
+  query key
+- table views are local UI templates, not backend domain data or cross-device
+  settings
+- the client store follows the same migration-safe pattern as other persisted
+  UI preferences and can drop renamed/removed column ids without corrupting a
+  view
+
+Consequences:
+
+- a saved view is not a live second copy of the current URL filters/sort
+- editing filters after applying a view does not mutate the saved template
+  unless the user explicitly saves/updates that view
+- server-side or shareable saved views would require a separate future
+  aggregate/API decision rather than repurposing this local store
+
+## 2026-07-05: Daily Digest Stays Local And Explicitly Acknowledged
+
+Status: accepted
+
+Decision: the daily digest is an on-demand local read model exposed through the
+dashboard and CLI. Passive reads never advance `digest_state`; only an explicit
+acknowledge action records the reviewed watermark. Digest deep links carry
+filters and sort in the URL, and acknowledge emits `DigestReviewed` so the SSE
+router refreshes the local digest query.
+
+Rationale:
+
+- the digest summarizes sensitive local job/application state and should not
+  introduce email, push, webhook, SMS, or hosted delivery in this scope
+- timestamp watermarks make "new since last review" auditable across the web
+  app and CLI
+- UTC follow-up cutoffs keep the TypeScript and Python digest reads in parity
+  and resolve the local-vs-UTC boundary inconsistency in favor of one rule
+
+Consequences:
+
+- dashboard load and `jobhunter digest` are passive until the operator chooses
+  "mark reviewed" or `--acknowledge`
+- future scheduled or external delivery needs a separate opt-in design and
+  safety decision
+- TypeScript/Python parity fixtures guard count drift between the API and CLI
 
 ## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
 

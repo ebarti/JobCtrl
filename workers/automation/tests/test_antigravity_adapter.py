@@ -195,11 +195,30 @@ async def test_response_schema_is_gemini_serialised(monkeypatch: pytest.MonkeyPa
 async def test_missing_api_key_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     calls: dict[str, Any] = {}
     adapter = _make_adapter(structured=_valid_analysis_dict(), calls=calls)
 
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY or GOOGLE_API_KEY"):
+    with pytest.raises(RuntimeError, match="Antigravity analysis auth requires"):
         await adapter.draft("SYS", "6+ years of Python required.")
+
+
+async def test_vertex_adc_config_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "1")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "project-a")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    calls: dict[str, Any] = {}
+    adapter = _make_adapter(structured=_valid_analysis_dict(), calls=calls)
+
+    await adapter.draft("SYS", "6+ years of Python required.")
+
+    kwargs = calls["config_kwargs"]
+    assert "api_key" not in kwargs
+    assert kwargs["vertex"] is True
+    assert kwargs["project"] == "project-a"
+    assert kwargs["location"] == "europe-west4"
 
 
 async def test_none_structured_output_raises(monkeypatch: pytest.MonkeyPatch) -> None:

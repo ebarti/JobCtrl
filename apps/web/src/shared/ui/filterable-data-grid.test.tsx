@@ -305,6 +305,100 @@ describe("FilterableDataGrid", () => {
     expect(companyCol).toHaveStyle({ width: "276px" });
   });
 
+  it("applies controlled column order, visibility, widths, and density", async () => {
+    const onColumnWidthsChange = vi.fn();
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={resizableColumns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        columnOrder={["observed", "company", "provider"]}
+        columnVisibility={{ provider: false }}
+        columnWidths={{ observed: 160 }}
+        onColumnWidthsChange={onColumnWidthsChange}
+        density="compact"
+      />,
+    );
+    const user = userEvent.setup();
+    const headers = screen.getAllByRole("columnheader");
+
+    expect(headers.map((header) => header.textContent)).toEqual([
+      expect.stringContaining("Observed"),
+      expect.stringContaining("Company"),
+    ]);
+    expect(screen.queryByText("Provider")).not.toBeInTheDocument();
+    expect(document.querySelector(".filterable-data-grid")).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+    expect(
+      document.querySelector<HTMLTableColElement>(
+        'col[data-column-id="observed"]',
+      ),
+    ).toHaveStyle({ width: "160px" });
+
+    await user.keyboard("{Tab}");
+    await user.click(
+      screen.getByRole("button", { name: "Resize Observed column" }),
+    );
+    screen.getByRole("button", { name: "Resize Observed column" }).focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(onColumnWidthsChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ observed: 176 }),
+    );
+  });
+
+  it("groups page rows and applies semantic color-rule classes", () => {
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        grouping={{ columnId: "provider" }}
+        colorRules={[
+          {
+            columnId: "company",
+            predicate: { op: "contains", value: "Acme" },
+            tone: "success",
+          },
+          {
+            columnId: "observed",
+            predicate: { op: "gte", value: 8 },
+            tone: "warning",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("row", { name: /Workday ATS 2/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    expect(screen.getByRole("row", { name: /JobSpy board 1/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
+    expect(acmeRow).toHaveClass("data-grid-row-tone-success");
+    expect(within(acmeRow).getByRole("rowheader")).toHaveClass(
+      "data-grid-cell-tone-success",
+    );
+    const boardRow = screen.getByRole("row", { name: /BoardCo JobSpy board 8/i });
+    expect(boardRow).toHaveClass("data-grid-row-tone-warning");
+    expect(within(boardRow).getByText("8").closest("td")).toHaveClass(
+      "data-grid-cell-tone-warning",
+    );
+  });
+
   it("keeps dense grid focus indicators tied to the standard ring token", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
 

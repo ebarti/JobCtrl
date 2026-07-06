@@ -482,15 +482,20 @@ controls. Density is scoped to the app shell: `.app-shell` owns
   dashboard / Pipelines `<StageTriggerPanel>` (limit, workers, minScore,
   validationMode, `dryRun` defaulting to **true**, model, …); persisted to
   `jh:stage-trigger-config`.
+- **Saved table views** — table-scoped view templates and presentation state
+  for high-density operational tables; persisted to `jh:saved-table-views`.
+  Active Jobs filters/sort remain URL state, and applying a view writes the URL
+  rather than creating a second live copy of those facts.
 - **Anything cross-cutting that we discover later** that fits the pattern
   "I want to dispatch from a deep tree without prop drilling, and the
   state is not server-derived." Examples we anticipate: a `commandPalette`
   open/close (cmd-k UX), a `confirmDialog` queue.
 
-Five Zustand stores exist today: `ui-preferences`, `toasts`, and
+Six Zustand stores exist today: `ui-preferences`, `toasts`, and
 `command-palette` (transient), plus `profile-import` and
-`stage-trigger-config` (persisted). Three carry `persist` middleware —
-`jh:ui-preferences`, `jh:profile-import`, and `jh:stage-trigger-config`.
+`stage-trigger-config` and `saved-table-views` (persisted). Four carry
+`persist` middleware — `jh:ui-preferences`, `jh:profile-import`,
+`jh:stage-trigger-config`, and `jh:saved-table-views`.
 
 **Why this split (not "all Zustand" or "all context"):**
 
@@ -522,6 +527,11 @@ from the store (or thin context wrappers if a context proves ergonomic).
 A `<ThemeEffect />` component subscribes to the store and writes the
 `data-theme` attribute on `<html>` and the `data-density` attribute on
 the AppShell root.
+
+Saved table views can provide a table-scoped density override. `null` inherits
+the global `jh:ui-preferences` density; a concrete `compact` / `regular` /
+`comfy` value applies only to the mounted table through the grid's
+`data-density` attribute.
 
 **Why Zustand, not raw `useState` + context:** persistence is built in;
 no "save on every change" useEffect; SSR-safe later; no cascade

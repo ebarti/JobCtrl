@@ -76,6 +76,12 @@ from jobhunter.domain.events.materials import (
     BulletProvenanceRecordedPayload,
     create_bullet_provenance_recorded,
 )
+from jobhunter.domain.events.interview import (
+    InterviewPrepGeneratedPayload,
+    create_interview_prep_generated,
+    InterviewPrepFailedPayload,
+    create_interview_prep_failed,
+)
 from jobhunter.domain.events.apply import (
     ApplicationEmailFeedbackIngestedPayload,
     create_application_email_feedback_ingested,
@@ -113,6 +119,10 @@ from jobhunter.domain.events.profile import (
     create_profile_updated,
     ProfileImportedPayload,
     create_profile_imported,
+)
+from jobhunter.domain.events.operations import (
+    DigestReviewedPayload,
+    create_digest_reviewed,
 )
 from jobhunter.domain.events.workflow import (
     WorkflowStartedPayload,
@@ -163,6 +173,8 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "MaterialsExhausted",
     "EmployerAnalyzed",
     "BulletProvenanceRecorded",
+    "InterviewPrepGenerated",
+    "InterviewPrepFailed",
     "TailorRetailorRequested",
     "TailoredArtifactsSuppressed",
     "ResumeTemplateVersionSaved",
@@ -192,6 +204,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ProfileImported",
     "TailoringPolicyUpdated",
     "CompensationFactsUpdated",
+    "DigestReviewed",
     "WorkflowStarted",
     "WorkflowCompleted",
     "WorkflowFailed",
@@ -276,6 +289,10 @@ __all__ = [
     "create_employer_analyzed",
     "BulletProvenanceRecordedPayload",
     "create_bullet_provenance_recorded",
+    "InterviewPrepGeneratedPayload",
+    "create_interview_prep_generated",
+    "InterviewPrepFailedPayload",
+    "create_interview_prep_failed",
     # Apply
     "ApplicationSubmittedPayload",
     "create_application_submitted",
@@ -311,6 +328,9 @@ __all__ = [
     "create_profile_updated",
     "ProfileImportedPayload",
     "create_profile_imported",
+    # Operations
+    "DigestReviewedPayload",
+    "create_digest_reviewed",
     # Workflow lifecycle (Temporal loop closure)
     "WorkflowStartedPayload",
     "create_workflow_started",

@@ -70,6 +70,37 @@ describe("ConversionPanel", () => {
     expect(container.querySelector(".conversion-note")?.textContent).not.toContain("not available");
   });
 
+  it("keeps raw counts but shows no fabricated rate when the sample is too small", () => {
+    const smallSample: DashboardSummary = {
+      ...sampleDashboardSummary,
+      conversion: {
+        totals: {
+          applied: 1,
+          reply: 1,
+          interview: 0,
+          offer: 0,
+          rejection: 0,
+          replyRate: null,
+          interviewRate: null,
+          offerRate: null,
+          rejectionRate: null,
+          costPerInterview: null,
+        },
+        bySource: [],
+        byBand: [],
+      },
+    };
+
+    const { container } = render(<ConversionPanel summary={smallSample} />);
+
+    // INVARIANT: one application + one reply shows the count but NEVER a 100% rate.
+    const stages = [...container.querySelectorAll(".conversion-stage")].map((el) => el.textContent);
+    expect(stages).toEqual(["Applied1100%", "Reply1n/a", "Interview0n/a", "Offer0n/a"]);
+    expect(
+      screen.getByText("Not enough applications yet for reliable conversion rates."),
+    ).toBeInTheDocument();
+  });
+
   it("shows an empty state when there are no applications yet", () => {
     const summary: DashboardSummary = { ...sampleDashboardSummary, conversion: emptyConversion };
 

@@ -39,6 +39,11 @@ import {
 } from "../../../shared/ui/filterable-data-grid.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import {
+  SourcePolitenessBadges,
+  hasPolitenessOutcomes,
+  politenessOutcomeSummary,
+} from "./SourcePolitenessBadges.js";
+import {
   Tabs,
   TabsContent,
   TabsList,
@@ -174,6 +179,8 @@ function manualActionLabel(value: ManualCaptureItem["reason"]): string {
       return "Protected internal site";
     case "ambiguous_career_system":
       return "Unconfirmed careers page";
+    case "browser_extension_capture":
+      return "Browser extension capture";
   }
 }
 
@@ -193,6 +200,8 @@ function manualActionDetail(value: ManualCaptureItem["reason"]): string {
       return "The posting appears to be on a protected company or internal site.";
     case "ambiguous_career_system":
       return "The URL looks useful, but the app cannot confirm which careers system or parser should handle it yet.";
+    case "browser_extension_capture":
+      return "The user saved this posting from the browser extension.";
   }
 }
 
@@ -675,6 +684,32 @@ function SourceRegistryPanel({
         },
         getSortValue: (source) => source.duplicateRate ?? -1,
         getFilterValue: (source) => sourceQualityMetric(source, 3).value,
+      },
+      {
+        id: "politeness",
+        label: "Access",
+        render: (source) =>
+          hasPolitenessOutcomes(source.politeness) ? (
+            <SourcePolitenessBadges
+              politeness={source.politeness}
+              sourceLabel={sourceCompanyName(source)}
+            />
+          ) : (
+            <span
+              className="source-table-metric unknown"
+              aria-label="No crawl-access outcomes recorded"
+            >
+              —
+            </span>
+          ),
+        getSortValue: (source) =>
+          source.politeness.robotsDisallowedCount +
+          source.politeness.rateLimitedCount +
+          source.politeness.budgetExhaustedCount,
+        getFilterValue: (source) =>
+          hasPolitenessOutcomes(source.politeness)
+            ? politenessOutcomeSummary(source.politeness)
+            : "none",
       },
       {
         id: "actions",

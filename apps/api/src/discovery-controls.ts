@@ -5,6 +5,8 @@ import type {
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackResponse,
+  ExtensionCaptureIngestRequest,
+  ExtensionCaptureIngestResponse,
   RoleMatchFeedbackDecisionRequest,
   RoleMatchFeedbackDecisionResponse,
   RoleMatchFeedbackEvidence,
@@ -16,6 +18,8 @@ import type {
   ManualCaptureDismissResponse,
   ManualCaptureListResponse,
   ManualActionReasonValue,
+  ManualCaptureImportResponse,
+  ManualCaptureModeValue,
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
@@ -35,16 +39,21 @@ import type {
 } from "./contracts.js";
 import {
   MANUAL_ACTION_REASON_VALUES,
+  MANUAL_CAPTURE_MODE_VALUES,
   QUARANTINE_REASONS,
   SOURCE_KIND_VALUES,
   SOURCE_PRIORITY_VALUES,
   SOURCE_STATE_VALUES,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
+import type { SourcePolitenessOutcomes } from "@jobhunter/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
+export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
+const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
 const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   boards: ["indeed", "linkedin", "zip_recruiter"],
   resultsPerSite: 50,
@@ -160,6 +169,15 @@ interface ManualCaptureRow extends Record<string, unknown> {
   retry_context_json: string;
   required_at: string;
   status: string;
+}
+
+interface ImportedManualCaptureRow extends ManualCaptureRow {
+  imported_at: string | null;
+  dismissed_at: string | null;
+  capture_mode: string | null;
+  captured_url: string | null;
+  future_manual_action_required: number | null;
+  job_key: string | null;
 }
 
 interface LowScoreJobRow extends Record<string, unknown> {
@@ -446,6 +464,7 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     [DEFAULT_TENANT],
   );
   const quality = sourceQualityById(db);
+  const politeness = politenessOutcomesBySource(db);
   const sourceIds = new Set(rows.map((row) => row.source_id));
   const summaries = new Map<string, SourceRegistryEntrySummary>();
   for (const row of rows) {
@@ -455,7 +474,10 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     if (isKnownWorkdayHostAlias(row.source_id, sourceIds)) {
       continue;
     }
-    summaries.set(row.source_id, rowToSourceSummary(row, quality.get(row.source_id)));
+    summaries.set(
+      row.source_id,
+      rowToSourceSummary(row, quality.get(row.source_id), politeness.get(row.source_id)),
+    );
   }
   for (const [sourceId, stats] of quality.entries()) {
     if (filterAmericaOnlySources && isAmericaOnlySource(sourceId, sourceId, null)) {
@@ -465,7 +487,7 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
       continue;
     }
     if (!summaries.has(sourceId)) {
-      summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats));
+      summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats, politeness.get(sourceId)));
     }
   }
   return { ok: true, sources: [...summaries.values()] };
@@ -578,7 +600,11 @@ export function upsertSourceRegistryEntry(
   if (!row) {
     throw new Error(`Unable to read source registry entry ${input.sourceId}.`);
   }
-  return rowToSourceSummary(row, sourceQualityById(db).get(input.sourceId));
+  return rowToSourceSummary(
+    row,
+    sourceQualityById(db).get(input.sourceId),
+    politenessOutcomesBySource(db).get(input.sourceId),
+  );
 }
 
 export function patchSourceState(
@@ -639,7 +665,11 @@ export function patchSourceState(
   if (!row) {
     throw new Error(`Unable to read source registry entry ${sourceId}.`);
   }
-  return rowToSourceSummary(row, sourceQualityById(db).get(sourceId));
+  return rowToSourceSummary(
+    row,
+    sourceQualityById(db).get(sourceId),
+    politenessOutcomesBySource(db).get(sourceId),
+  );
 }
 
 export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorListResponse {
@@ -813,6 +843,154 @@ export function listManualCaptureQueue(db: SqliteDatabase): ManualCaptureListRes
       requiredAt: row.required_at,
       status: "pending",
     })),
+  };
+}
+
+export function seedExtensionManualCapture(
+  db: SqliteDatabase,
+  input: ExtensionCaptureIngestRequest,
+): { itemId: string; sourceId: string } | ExtensionCaptureIngestResponse {
+  ensureDiscoveryControlTables(db);
+  const now = new Date().toISOString();
+  const itemId = extensionManualCaptureItemId(input);
+  upsertSourceRegistryEntry(db, {
+    sourceId: EXTENSION_MANUAL_CAPTURE_SOURCE_ID,
+    kind: "user_mediated_capture",
+    displayName: "Browser extension",
+    priority: "standard",
+    state: "active",
+  });
+  db.prepare(
+    `INSERT INTO manual_capture_queue (
+       tenant_id, item_id, originating_url, source_id, reason,
+       retry_context_json, required_at, status
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+     ON CONFLICT(tenant_id, item_id) DO UPDATE SET
+       originating_url = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.originating_url
+         ELSE excluded.originating_url
+       END,
+       source_id = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.source_id
+         ELSE excluded.source_id
+       END,
+       reason = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.reason
+         ELSE excluded.reason
+       END,
+       retry_context_json = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.retry_context_json
+         ELSE excluded.retry_context_json
+       END,
+       required_at = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.required_at
+         ELSE excluded.required_at
+       END,
+       status = CASE
+         WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           THEN manual_capture_queue.status
+         ELSE excluded.status
+       END`,
+  ).run(
+    DEFAULT_TENANT,
+    itemId,
+    input.originatingUrl,
+    EXTENSION_MANUAL_CAPTURE_SOURCE_ID,
+    EXTENSION_MANUAL_CAPTURE_REASON,
+    JSON.stringify(
+      {
+        source: "browser_extension",
+        capture_client: input.captureClient,
+        extension_version: input.extensionVersion,
+      },
+      null,
+      0,
+    ),
+    now,
+  );
+  const replay = importedExtensionManualCaptureResponse(db, itemId);
+  if (replay) {
+    return replay;
+  }
+  const dismissed = dismissedExtensionManualCaptureResponse(db, itemId);
+  if (dismissed) {
+    return dismissed;
+  }
+  return { itemId, sourceId: EXTENSION_MANUAL_CAPTURE_SOURCE_ID };
+}
+
+function extensionManualCaptureItemId(input: ExtensionCaptureIngestRequest): string {
+  if (!input.captureId) {
+    return `extension:${crypto.randomUUID()}`;
+  }
+  const digest = crypto.createHash("sha256").update(input.captureId).digest("hex").slice(0, 32);
+  return `extension:${digest}`;
+}
+
+function dismissedExtensionManualCaptureResponse(
+  db: SqliteDatabase,
+  itemId: string,
+): ExtensionCaptureIngestResponse | null {
+  const row = getRow<ImportedManualCaptureRow>(
+    db,
+    `SELECT item_id, originating_url, source_id, reason, retry_context_json,
+            required_at, status, imported_at, dismissed_at, capture_mode,
+            captured_url, future_manual_action_required, job_key
+     FROM manual_capture_queue
+     WHERE tenant_id = ? AND item_id = ? AND status = 'dismissed'`,
+    [DEFAULT_TENANT, itemId],
+  );
+  if (!row) {
+    return null;
+  }
+  return {
+    ok: true,
+    itemId: row.item_id,
+    jobKey: null,
+    status: "dismissed",
+    dismissedAt: optionalText(row.dismissed_at),
+    message: "Capture was already dismissed in JobHunter.",
+  };
+}
+
+function importedExtensionManualCaptureResponse(
+  db: SqliteDatabase,
+  itemId: string,
+): ManualCaptureImportResponse | null {
+  const row = getRow<ImportedManualCaptureRow>(
+    db,
+    `SELECT item_id, originating_url, source_id, reason, retry_context_json,
+            required_at, status, imported_at, capture_mode, captured_url,
+            future_manual_action_required, job_key
+     FROM manual_capture_queue
+     WHERE tenant_id = ? AND item_id = ? AND status = 'imported'`,
+    [DEFAULT_TENANT, itemId],
+  );
+  if (!row?.imported_at) {
+    return null;
+  }
+  const retryContext = parseObject(row.retry_context_json);
+  const provenance = parseObject(retryContext.manual_capture_provenance);
+  const captureClient = optionalText(provenance.capture_client ?? provenance.captureClient);
+  const extensionVersion = optionalText(provenance.extension_version ?? provenance.extensionVersion);
+  return {
+    ok: true,
+    itemId: row.item_id,
+    jobKey: optionalText(row.job_key) ?? optionalText(row.captured_url),
+    importedAt: row.imported_at,
+    provenance: {
+      sourceKind: "user_mediated_capture",
+      originatingUrl: optionalText(provenance.originating_url ?? provenance.originatingUrl) ?? row.originating_url,
+      captureMode: manualCaptureMode(row.capture_mode),
+      futureManualActionRequired: Boolean(row.future_manual_action_required),
+      ...(captureClient ? { captureClient } : {}),
+      ...(extensionVersion ? { extensionVersion } : {}),
+    },
   };
 }
 
@@ -1285,6 +1463,7 @@ function rowToRoleMatchSuggestion(row: RoleMatchFeedbackRow): RoleMatchFeedbackS
 function rowToSourceSummary(
   row: SourceRegistryRow,
   stats: SourceQualityRow | undefined,
+  politeness: SourcePolitenessOutcomes | undefined,
 ): SourceRegistryEntrySummary {
   return {
     sourceId: row.source_id,
@@ -1305,11 +1484,16 @@ function rowToSourceSummary(
     activeVerificationRate: nullableNumber(stats?.active_verification_rate),
     fullDescriptionSuccessRate: nullableNumber(stats?.full_description_success_rate),
     applyUrlSuccessRate: nullableNumber(stats?.apply_url_success_rate),
+    politeness: politeness ?? emptyPolitenessOutcomes(),
     qualityTrend: "unknown",
   };
 }
 
-function qualityOnlySourceSummary(sourceId: string, stats: SourceQualityRow): SourceRegistryEntrySummary {
+function qualityOnlySourceSummary(
+  sourceId: string,
+  stats: SourceQualityRow,
+  politeness: SourcePolitenessOutcomes | undefined,
+): SourceRegistryEntrySummary {
   const recommended = recommendedSourceState(stats.recommended_state);
   return {
     sourceId,
@@ -1330,6 +1514,7 @@ function qualityOnlySourceSummary(sourceId: string, stats: SourceQualityRow): So
     activeVerificationRate: nullableNumber(stats.active_verification_rate),
     fullDescriptionSuccessRate: nullableNumber(stats.full_description_success_rate),
     applyUrlSuccessRate: nullableNumber(stats.apply_url_success_rate),
+    politeness: politeness ?? emptyPolitenessOutcomes(),
     qualityTrend: "unknown",
   };
 }
@@ -1432,10 +1617,20 @@ function manualActionReason(value: string | null | undefined): ManualActionReaso
     : null;
 }
 
+function manualCaptureMode(value: string | null | undefined): ManualCaptureModeValue {
+  return MANUAL_CAPTURE_MODE_VALUES.includes(value as ManualCaptureModeValue)
+    ? (value as ManualCaptureModeValue)
+    : "current_page";
+}
+
 function quarantineReason(value: string): QuarantineReason {
   return QUARANTINE_REASONS.includes(value as QuarantineReason)
     ? (value as QuarantineReason)
     : "user_review_requested";
+}
+
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function parseObject(raw: unknown): Record<string, unknown> {

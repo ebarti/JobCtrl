@@ -48,6 +48,20 @@ def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setenv("LANGFUSE_DISABLE", "1")
 
 
+@pytest.fixture(autouse=True)
+def reset_apply_dashboard_state() -> None:
+    """Keep the module-level apply dashboard state from leaking across tests."""
+    from jobhunter.apply import dashboard
+
+    with dashboard._lock:
+        dashboard._events.clear()
+        dashboard._worker_states.clear()
+    yield
+    with dashboard._lock:
+        dashboard._events.clear()
+        dashboard._worker_states.clear()
+
+
 @pytest.fixture
 def in_memory_exporter(monkeypatch):
     """TracerProvider piped to an in-memory exporter for span assertions.

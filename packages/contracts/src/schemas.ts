@@ -40,6 +40,8 @@ export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "al
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
+const STAGE_OR_ALL = [...STAGES, "all"] as const;
+const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 
 export const JOB_SORT_FIELDS = [
   "discovered_at",
@@ -60,6 +62,19 @@ export const JOB_SORT_FIELDS = [
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
+export const DAILY_DIGEST_ITEM_KEYS = [
+  "newMatches",
+  "blockedSources",
+  "reviewNeededMaterials",
+  "staleScores",
+  "pendingApprovals",
+  "followUpsDue",
+  "budget",
+] as const;
+export type DailyDigestItemKey = (typeof DAILY_DIGEST_ITEM_KEYS)[number];
+export const DIGEST_FOLLOW_UP_THRESHOLD_DAYS = 7 as const;
+export const DIGEST_DAY_BOUNDARY = "UTC" as const;
+
 export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "status", "size_bytes"] as const;
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
 
@@ -74,6 +89,91 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
+export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export type TableId = z.infer<typeof TableIdSchema>;
+
+export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);
+export type SavedTableViewDensity = z.infer<typeof SavedTableViewDensitySchema>;
+
+export const SavedTableViewTextFilterSchema = z
+  .object({
+    operator: z.enum(["contains", "does_not_contain"]).default("contains").catch("contains"),
+    text: z.string().default("").catch(""),
+    selectedValues: z.array(z.string()).default([]).catch([]),
+  })
+  .strict();
+export type SavedTableViewTextFilter = z.infer<typeof SavedTableViewTextFilterSchema>;
+
+export const SavedTableViewGridFiltersSchema = z.record(
+  z.string(),
+  SavedTableViewTextFilterSchema.optional(),
+);
+export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
+
+export const SavedTableViewUrlFiltersSchema = z
+  .object({
+    q: z.string().optional().catch(undefined),
+    stage: z.enum(STAGE_OR_ALL).optional().catch(undefined),
+    state: z.enum(STATE_OR_ALL).optional().catch(undefined),
+    applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
+    deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    discoveredSince: z.string().trim().min(1).optional().catch(undefined),
+    scoredSince: z.string().trim().min(1).optional().catch(undefined),
+  })
+  .strict();
+export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
+
+export const SavedTableViewSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    tableId: TableIdSchema,
+    name: z.string().trim().min(1).max(80),
+    builtIn: z.boolean(),
+    columns: z
+      .object({
+        order: z.array(z.string()).default([]).catch([]),
+        hidden: z.array(z.string()).default([]).catch([]),
+        widths: z.record(z.string(), z.coerce.number().int().min(24).max(2000)).default({}).catch({}),
+      })
+      .strict(),
+    density: SavedTableViewDensitySchema.nullable(),
+    sort: z
+      .object({
+        columnId: z.string(),
+        direction: z.enum(["asc", "desc"]),
+      })
+      .strict(),
+    urlFilters: SavedTableViewUrlFiltersSchema.default({}),
+    gridFilters: SavedTableViewGridFiltersSchema.default({}),
+    grouping: z
+      .object({
+        columnId: z.string(),
+      })
+      .strict()
+      .nullable(),
+    colorRules: z
+      .array(
+        z
+          .object({
+            columnId: z.string(),
+            predicate: z
+              .object({
+                op: z.enum(["eq", "neq", "gte", "lte", "contains"]),
+                value: z.union([z.string(), z.number()]),
+              })
+              .strict(),
+            tone: z.enum(["success", "warning", "danger", "info"]),
+          })
+          .strict(),
+      )
+      .default([]),
+    schemaVersion: z.number().int().min(1),
+  })
+  .strict();
+export type SavedTableView = z.infer<typeof SavedTableViewSchema>;
 
 const optionalText = z
   .string()
@@ -220,6 +320,13 @@ export const GenerateMaterialsRequestSchema = z
   .strict();
 export type GenerateMaterialsRequest = z.infer<typeof GenerateMaterialsRequestSchema>;
 
+export const GenerateInterviewPrepRequestSchema = z
+  .object({
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
+
 export const ApplyJobRequestSchema = z
   .object({
     dryRun: z.boolean().default(true),
@@ -244,6 +351,10 @@ export const ApplyReviewDecisionRequestSchema = z
     decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
+    materialsGeneration: z.number().int().nonnegative().nullable().optional(),
+    profileVersion: z.number().int().positive().nullable().optional(),
+    applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
+    partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -255,6 +366,10 @@ export interface ApplyReviewDecision {
   reason: string | null;
   decidedBy: string;
   decidedAt: string;
+  materialsGeneration?: number | null;
+  profileVersion?: number | null;
+  applicationUrl?: string | null;
+  partialOverrideRunId?: string | null;
 }
 
 export interface ApplyReviewDecisionResponse {
@@ -375,6 +490,7 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
+  materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
@@ -663,6 +779,31 @@ export interface ApplyAudit {
   sources: ApplyAuditSource[];
 }
 
+export type ApplyReviewDryRunCoverage = "full" | "partial";
+export type ApplyReviewApprovalGateReason =
+  | "awaiting_approval"
+  | "awaiting_dry_run"
+  | "approval_stale_materials"
+  | "approval_stale_profile"
+  | "approval_stale_url"
+  | "override_evidence_invalid";
+
+export interface ApplyReviewDryRunEvidence {
+  runId: string;
+  coverage: ApplyReviewDryRunCoverage;
+  finishedAt: string | null;
+  blockedChannels: string[];
+}
+
+export interface ApplyReviewApprovalGate {
+  materialsGeneration: number | null;
+  profileVersion: number | null;
+  applicationUrl: string | null;
+  dryRunEvidence: ApplyReviewDryRunEvidence | null;
+  partialDryRunEvidence: ApplyReviewDryRunEvidence | null;
+  reasons: ApplyReviewApprovalGateReason[];
+}
+
 export interface ApplyReviewQueueItem {
   jobKey: string;
   title: string;
@@ -701,7 +842,12 @@ export interface ApplyReviewQueueItem {
     state: "pending" | "approved_submit" | "approved_dry_run" | "deferred" | "declined";
     decision: ApplyReviewDecisionValue | null;
     decidedAt: string | null;
+    materialsGeneration?: number | null;
+    profileVersion?: number | null;
+    applicationUrl?: string | null;
+    partialOverrideRunId?: string | null;
   };
+  approvalGate: ApplyReviewApprovalGate;
   blockers: string[];
 }
 
@@ -1027,6 +1173,11 @@ export const ManualApplicationOutcomeRequestSchema = z
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
+    interviewPrepGeneration: z.number().int().positive().optional(),
+  })
+  .refine((value) => value.interviewPrepGeneration === undefined || value.kind === "interview", {
+    message: "interviewPrepGeneration is only valid for interview outcomes.",
+    path: ["interviewPrepGeneration"],
   })
   .strict();
 export type ManualApplicationOutcomeRequest = z.infer<typeof ManualApplicationOutcomeRequestSchema>;
@@ -1041,6 +1192,7 @@ export interface ApplicationOutcome {
   recordedAt: string;
   suggestionId: string | null;
   evidenceId: string | null;
+  interviewPrepGeneration: number | null;
 }
 
 export interface ApplicationOutcomeWriteResponse {
@@ -1588,10 +1740,16 @@ export const JobListQuerySchema = z
     company: optionalText,
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    discovered_since: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
+    scored_since: IsoTimestampSchema.optional().catch(undefined),
   })
   .transform((value) => ({
     ...value,
     pageSize: value.pageSize ?? value.page_size ?? 50,
+    discoveredSince: value.discoveredSince ?? value.discovered_since,
+    scoredSince: value.scoredSince ?? value.scored_since,
   }));
 
 export type JobListQuery = z.infer<typeof JobListQuerySchema>;
@@ -1878,6 +2036,159 @@ export interface RequirementFitReport {
   assessments: RequirementFitAssessment[];
 }
 
+export const EVIDENCE_MAP_ENTRY_KINDS = ["achievement_evidence", "skill"] as const;
+export type EvidenceMapEntryKind = (typeof EVIDENCE_MAP_ENTRY_KINDS)[number];
+
+export const EVIDENCE_USAGE_REF_KINDS = [
+  "resume_bullet",
+  "requirement_fit",
+  "skill_coverage",
+] as const;
+export type EvidenceUsageRefKind = (typeof EVIDENCE_USAGE_REF_KINDS)[number];
+
+export const EVIDENCE_GAP_KINDS = [
+  "missing_requirement",
+  "blocked_requirement",
+  "transferable_requirement",
+  "missing_skill",
+] as const;
+export type EvidenceGapKind = (typeof EVIDENCE_GAP_KINDS)[number];
+
+/**
+ * One recorded use of a profile proof point or skill.
+ *
+ * This is a read-model reference, not a new fact. Resume usages come from
+ * bullet provenance rows; requirement usages come from requirement-fit items;
+ * skill coverage comes from the generation-time coverage audit. Optional fields
+ * are scoped by ``kind`` so callers can deep-link without guessing.
+ */
+export interface EvidenceUsageRef {
+  kind: EvidenceUsageRefKind;
+  jobKey: string;
+  jobTitle: string | null;
+  employer: string | null;
+  artifactId: string | null;
+  bulletId: string | null;
+  generation: number | null;
+  generatedTextPreview: string | null;
+  scoreVersion: number | null;
+  requirementId: string | null;
+  requirementText: string | null;
+  requirementFitKind: RequirementFitStatus["kind"] | null;
+  artifactCoverageState: RequirementArtifactCoverage["state"] | null;
+  keyword: string | null;
+  coverageState: "covered" | "declared" | "missing" | null;
+  occurredAt: string | null;
+}
+
+export interface EvidenceFreshness {
+  evidenceDateRange: string | null;
+  evidenceStrength: "verified" | "supported" | "inferred" | "draft" | string | null;
+  userConfirmed: boolean;
+  claimConfidence: number | null;
+  lastUsedAt: string | null;
+}
+
+export interface EvidenceReusableStory {
+  scope: string;
+  action: string;
+  outcome: string;
+  metrics: string[];
+}
+
+export interface EvidenceGap {
+  gapId: string;
+  kind: EvidenceGapKind;
+  requirementId: string | null;
+  requirementText: string;
+  demandedSkill: string | null;
+  tier: "must_have" | "nice_to_have" | string | null;
+  weight: number | null;
+  fitKind: RequirementFitStatus["kind"] | null;
+  reason: string;
+  jobRefs: EvidenceUsageRef[];
+}
+
+export interface EvidenceMapEntry {
+  entryId: string;
+  kind: EvidenceMapEntryKind;
+  evidenceId: string | null;
+  skillId: string | null;
+  title: string;
+  story: EvidenceReusableStory | null;
+  skills: string[];
+  tags: string[];
+  freshness: EvidenceFreshness;
+  resumeUsages: EvidenceUsageRef[];
+  requirementUsages: EvidenceUsageRef[];
+  coverageUsages: EvidenceUsageRef[];
+  gaps: EvidenceGap[];
+}
+
+export interface EvidenceMapResponse {
+  ok: true;
+  entries: EvidenceMapEntry[];
+  gaps: EvidenceGap[];
+  generatedAt: string;
+}
+
+export const INTERVIEW_PREP_ITEM_KINDS = [
+  "theme",
+  "star_draft",
+  "gap_drill",
+  "company_note",
+] as const;
+export type InterviewPrepItemKind = (typeof INTERVIEW_PREP_ITEM_KINDS)[number];
+
+export const INTERVIEW_PREP_STATUSES = ["accepted", "failed", "superseded"] as const;
+export type InterviewPrepStatus = (typeof INTERVIEW_PREP_STATUSES)[number];
+
+export interface InterviewPrepGateAudit {
+  status: "passed" | "failed";
+  fabricationFindings: string[];
+  groundingFindings: string[];
+  judgeVerdict: string | null;
+  warnings: string[];
+}
+
+export interface InterviewPrepItem {
+  itemId: string;
+  kind: InterviewPrepItemKind;
+  title: string;
+  generatedText: string;
+  evidenceIds: string[];
+  requirementIds: string[];
+  sourceText: string[];
+  transformType: string;
+  control: string;
+  groundingAudit: string[];
+  warnings: string[];
+  position: number;
+}
+
+export interface InterviewPrep {
+  jobKey: string;
+  generation: number;
+  status: InterviewPrepStatus;
+  generatedAt: string;
+  model: string | null;
+  gateAudit: InterviewPrepGateAudit;
+  items: InterviewPrepItem[];
+}
+
+export interface InterviewPrepResponse {
+  ok: true;
+  prep: InterviewPrep | null;
+}
+
+export interface GenerateInterviewPrepResponse {
+  ok: true;
+  runId: string | null;
+  workflowId: string | null;
+  firstExecutionRunId: string | null;
+  prep: InterviewPrep | null;
+}
+
 export interface ScoringCriteriaSnapshot {
   minFitScore: number;
   criteriaText: string;
@@ -2141,6 +2452,66 @@ export interface DashboardConversionSummary {
   byBand: Array<{ band: string } & DashboardConversionFunnel>;
 }
 
+export type OutcomeAnalyticsScoreBand =
+  | "perfect"
+  | "strong"
+  | "moderate"
+  | "weak"
+  | "poor"
+  | "unscored";
+
+export type OutcomeAnalyticsFitBand =
+  | "excellent"
+  | "strong"
+  | "plausible"
+  | "stretch"
+  | "poor"
+  | "unreported";
+
+export type OutcomeAnalyticsApplyMode = "automated_live" | "manual_marked" | "external_confirmed";
+
+export interface OutcomeAnalyticsFunnel {
+  n: number;
+  applied: number;
+  reply: number;
+  interview: number;
+  offer: number;
+  rejection: number;
+  replyRate: number | null;
+  interviewRate: number | null;
+  offerRate: number | null;
+  rejectionRate: number | null;
+}
+
+export interface OutcomeAnalyticsTimeToResponse {
+  n: number;
+  medianMinutes: number | null;
+}
+
+export interface OutcomeAnalyticsSuggestionAccuracy {
+  n: number;
+  decided: number;
+  accepted: number;
+  corrected: number;
+  ignored: number;
+  acceptanceRate: number | null;
+}
+
+export interface OutcomeAnalyticsSummary {
+  ok: true;
+  generatedAt: string;
+  minSample: number;
+  totals: OutcomeAnalyticsFunnel;
+  bySource: Array<{ source: string } & OutcomeAnalyticsFunnel>;
+  byScoreBand: Array<{ scoreBand: OutcomeAnalyticsScoreBand } & OutcomeAnalyticsFunnel>;
+  byFitBand: Array<{ fitBand: OutcomeAnalyticsFitBand } & OutcomeAnalyticsFunnel>;
+  byApplyMode: Array<{ applyMode: OutcomeAnalyticsApplyMode } & OutcomeAnalyticsFunnel>;
+  byTemplate: Array<{ templateId: string; templateName: string | null } & OutcomeAnalyticsFunnel>;
+  byPolicy: Array<{ tailoringPolicyVersion: number | null; policyLabel: string } & OutcomeAnalyticsFunnel>;
+  timeToResponse: OutcomeAnalyticsTimeToResponse;
+  suggestionAccuracy: OutcomeAnalyticsSuggestionAccuracy;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -2193,6 +2564,40 @@ export interface PreparationSummary {
   };
 }
 
+export const POLITENESS_OUTCOME_REASONS = [
+  "robots_disallowed",
+  "rate_limited",
+  "budget_exhausted",
+] as const;
+export type PolitenessOutcomeReason = (typeof POLITENESS_OUTCOME_REASONS)[number];
+
+/**
+ * Per-source crawl-politeness outcomes recorded by the R10 politeness gateway.
+ *
+ * These are first-class NON-error outcomes — a robots.txt disallow, a rate-limit
+ * deferral/refusal, or a per-run request-budget exhaustion — sourced from
+ * `operational_attempt_metrics` rows written with `outcome = "blocked"` and
+ * `is_scrape_failure = 0`. They explain why a source produced nothing without
+ * being counted as a scrape failure. Counts of `0` with a `null` last reason
+ * mean no politeness outcome was recorded for the source (nothing implied).
+ */
+export interface SourcePolitenessOutcomes {
+  robotsDisallowedCount: number;
+  /**
+   * Recorded rate-limited outcomes. The gateway currently enforces rate limits
+   * by waiting rather than by emitting a rate-limited verdict, so this counter
+   * legitimately reads 0 in production until the later R10 Retry-After-clamp
+   * work records RATE_LIMITED outcomes. Rendered uniformly with the other two
+   * reasons regardless — the read path and UI are already correct for it.
+   */
+  rateLimitedCount: number;
+  budgetExhaustedCount: number;
+  /** Most-recent block reason for the source, or null when none recorded. */
+  lastBlockedReason: PolitenessOutcomeReason | null;
+  /** ISO timestamp of the most-recent block, or null when none recorded. */
+  lastBlockedAt: string | null;
+}
+
 export interface SourceHealthSummary {
   sourceId: string;
   recommendedState: string;
@@ -2212,7 +2617,74 @@ export interface SourceHealthSummary {
   lastFailureCategory: string | null;
   lastRunId: string | null;
   lastErrorClass: string | null;
+  politeness: SourcePolitenessOutcomes;
   updatedAt: string | null;
+}
+
+export interface DigestState {
+  lastAcknowledgedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface DailyDigestBudget {
+  status: "ok" | "over_budget";
+  estimatedUsd: number;
+  dailyBudgetUsd: number;
+  remainingUsd: number | null;
+  unlimited: boolean;
+}
+
+export interface DailyDigest {
+  ok: true;
+  generatedAt: string;
+  since: string | null;
+  highFitThreshold: number;
+  newMatches: {
+    count: number;
+    highFitCount: number;
+  };
+  blockedSources: {
+    count: number;
+    sources: Array<{
+      sourceId: string;
+      recommendedState: string;
+      consecutiveFailures: number;
+    }>;
+  };
+  reviewNeededMaterials: {
+    count: number;
+  };
+  staleScores: {
+    count: number;
+  };
+  pendingApprovals: {
+    count: number;
+  };
+  followUpsDue: {
+    count: number;
+    derived: true;
+    thresholdDays: typeof DIGEST_FOLLOW_UP_THRESHOLD_DAYS;
+    dayBoundary: typeof DIGEST_DAY_BOUNDARY;
+  };
+  budget: DailyDigestBudget;
+  deepLinks: Record<DailyDigestItemKey, string>;
+}
+
+export const DigestAcknowledgeRequestSchema = z
+  .object({
+    acknowledgedAt: IsoTimestampSchema.optional().catch(undefined),
+  })
+  .transform((value): { acknowledgedAt?: string } =>
+    value.acknowledgedAt ? { acknowledgedAt: value.acknowledgedAt } : {},
+  );
+
+export interface DigestAcknowledgeRequest {
+  acknowledgedAt?: string;
+}
+
+export interface DigestAcknowledgeResponse {
+  ok: true;
+  state: DigestState;
 }
 
 export interface OperationalMetricsSummary {
@@ -2329,6 +2801,9 @@ export interface JobDetail {
   // Requirement-led fit audit served from projection rows, or null when this
   // job has not been scored with requirement-level assessments yet.
   requirementFitReport: RequirementFitReport | null;
+  // Accepted interview-prep artifact served from projection rows, or null when
+  // the user has not explicitly generated prep for this job yet.
+  interviewPrep: InterviewPrep | null;
   // Projection-backed compensation facts from canonical posted-fact and
   // reported company-role estimate rows. Null only when the projection row is
   // absent or contains invalid JSON.
@@ -2340,6 +2815,54 @@ export interface ArtifactDetail {
   artifact: ArtifactSummary;
   layoutBoxes: ResumeLayoutBox[];
   tailoringExplanation: ArtifactTailoringExplanation | null;
+}
+
+export type ArtifactComparisonCoverageState =
+  | "recorded"
+  | "left_not_recorded"
+  | "right_not_recorded"
+  | "not_recorded";
+
+export interface CoverageDelta {
+  coverageRecorded: boolean;
+  state: ArtifactComparisonCoverageState;
+  computedAgainst: string | null;
+  newlyCovered: string[];
+  coverageLost: string[];
+  newlyDeclared: string[];
+  declaredLost: string[];
+  stillDeclared: string[];
+  stillMissing: string[];
+}
+
+export interface ArtifactComparisonSide {
+  artifactId: string;
+  label: string;
+  title: string;
+  status: string;
+  templateId: string | null;
+  templateName: string | null;
+  coverageRecorded: boolean;
+  coverageCounts: BulletCoverageAudit["counts"] | null;
+  riskLabels: string[];
+  validation: {
+    passed: boolean | null;
+    errorCount: number;
+    warningCount: number;
+  };
+  judge: {
+    passed: boolean | null;
+    verdict: string | null;
+    score: number | null;
+    minScore: number | null;
+    issueCount: number;
+  };
+}
+
+export interface ArtifactComparison {
+  left: ArtifactComparisonSide;
+  right: ArtifactComparisonSide;
+  coverageDelta: CoverageDelta;
 }
 
 export interface ResumeLayoutBox {
@@ -2626,6 +3149,7 @@ export interface ActionCommandPayload {
     | "analyze_job"
     | "refresh_compensation"
     | "generate_materials"
+    | "generate_interview_prep"
     | "apply"
     | "cancel"
     | "mark_applied"
@@ -2754,6 +3278,47 @@ export interface SettingsResponse {
   paths: {
     settingsPath: string;
   };
+}
+
+export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;
+export type ExtensionCapability = (typeof EXTENSION_CAPABILITY_VALUES)[number];
+
+export const ExtensionCapabilityTokenResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    token: z.string().trim().min(32),
+    tokenPath: z.string().trim().min(1),
+    created: z.boolean(),
+  })
+  .strict();
+export type ExtensionCapabilityTokenResponse = z.infer<
+  typeof ExtensionCapabilityTokenResponseSchema
+>;
+
+export const ExtensionAuthStatusResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    authenticated: z.literal(true),
+    capabilities: z.array(z.enum(EXTENSION_CAPABILITY_VALUES)),
+  })
+  .strict();
+export type ExtensionAuthStatusResponse = z.infer<typeof ExtensionAuthStatusResponseSchema>;
+
+export interface ExtensionAutofillProfileField {
+  path: string;
+  label: string;
+  value: string;
+  source: {
+    kind: "profile";
+    path: string;
+    label: string;
+  };
+}
+
+export interface ExtensionAutofillProfileResponse {
+  ok: true;
+  profileVersion: number | null;
+  fields: ExtensionAutofillProfileField[];
 }
 
 export const COMPENSATION_SOURCE_TYPES = [
@@ -2931,6 +3496,7 @@ export interface SourceRegistryEntrySummary {
   activeVerificationRate: number | null;
   fullDescriptionSuccessRate: number | null;
   applyUrlSuccessRate: number | null;
+  politeness: SourcePolitenessOutcomes;
   qualityTrend: "up" | "flat" | "down" | "unknown";
 }
 
@@ -2952,6 +3518,7 @@ export const MANUAL_ACTION_REASON_VALUES = [
   "rate_limit",
   "protected_internal_site",
   "ambiguous_career_system",
+  "browser_extension_capture",
 ] as const;
 export type ManualActionReasonValue = (typeof MANUAL_ACTION_REASON_VALUES)[number];
 
@@ -3537,8 +4104,61 @@ export interface ManualCaptureImportResponse {
     originatingUrl: string;
     captureMode: ManualCaptureModeValue;
     futureManualActionRequired: boolean;
+    captureClient?: string;
+    extensionVersion?: string;
   };
 }
+
+export const ExtensionCaptureIngestSchema = z
+  .object({
+    captureId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9._:-]+$/)
+      .optional(),
+    originatingUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "originatingUrl must be a valid http(s) URL"),
+    captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
+    capturedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "capturedUrl must be a valid http(s) URL")
+      .optional(),
+    contentText: z.string().trim().max(200_000).optional(),
+    contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
+    note: z.string().trim().max(400).optional(),
+    futureManualActionRequired: z.boolean().default(false),
+    captureClient: z.literal("browser_extension").default("browser_extension"),
+    extensionVersion: z.string().trim().min(1).max(80).default("unknown"),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.capturedUrl !== undefined ||
+      value.contentText !== undefined ||
+      value.contentHtmlBase64 !== undefined,
+    { message: "One of capturedUrl, contentText, or contentHtmlBase64 must be provided." },
+  );
+export type ExtensionCaptureIngestRequest = z.infer<typeof ExtensionCaptureIngestSchema>;
+
+export interface ExtensionCaptureDismissedReplayResponse {
+  ok: true;
+  itemId: string;
+  jobKey: null;
+  status: "dismissed";
+  dismissedAt: string | null;
+  message: string;
+}
+
+export type ExtensionCaptureIngestResponse =
+  | ManualCaptureImportResponse
+  | ExtensionCaptureDismissedReplayResponse;
 
 export const ManualCaptureDismissSchema = z
   .object({
