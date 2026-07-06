@@ -7,6 +7,34 @@
 
 ---
 
+## ⚠ Owner amendment 2026-07-06 (supersedes conflicting text below)
+
+The owner ruled: **"Using synthetic data is lying."** Applied to this plan:
+
+1. **Goal B is withdrawn in its entirety.** There is no synthetic sample
+   dataset, no "Load sample data" surface, and no sample-backed probe. The
+   implementation PR that delivered Goal B (#330) is closed unmerged.
+2. **TTFV is measured on the real path only.** The published time-to-value
+   number comes from a clean-machine run with real vendor auth and a real job
+   posting scored by real models. Whatever honest number that produces is the
+   number that gets published. No synthetic-path timing may back any public
+   claim. (Companion rule recorded in the launch-readiness plan §11.6:
+   synthetic data may *illustrate* — captioned screenshots — but never
+   *measure*.)
+3. **Measurement gate (Goal A, as decided):** reference environment = the
+   owner's Apple-silicon macOS machine; pass statistic = median of 3 clean
+   runs under threshold with the worst run under 1.5× threshold; cadence =
+   pre-release only (plus one baseline run now for the QA matrix). Real LLM
+   spend is expected and accepted for these owner-run measurements; they never
+   run unattended or in CI.
+4. **Goal C (packaging decision) is unchanged** — the agent prepares the
+   decision artifact with measured inputs; the decision itself is the owner's.
+
+Sections below marked "Goal B" and every reference to a synthetic-path TTFV
+gate are retained for historical context only and are void.
+
+---
+
 ## 0. Context and scope boundary
 
 Today JobHunter installs from source. `docs/user/getting-started.md:9` states plainly that "there is no packaged installer yet, so setup is developer-shaped," and estimates "roughly 15–30 minutes end to end, mostly downloads" for the toolchain alone (`docs/user/getting-started.md:27-31`). The documented path is `pnpm install:interactive` (→ `scripts/install`, `package.json:13`), then `jobhunter init` + `jobhunter doctor` (`docs/user/getting-started.md:86-96`), then `pnpm dev` (→ `scripts/dev`, `package.json:12`). Value only appears after a real Discover run (`discover → enrich → score → tailor → cover`, `docs/user/normal-flows.md`) that needs LLM auth and network access to job sources.
@@ -87,7 +115,7 @@ Add first-run TTFV to `docs/local-reliability-qa.md` as recurring regression che
 
 ---
 
-## 2. Goal B — Synthetic sample data as the first-run experience
+## 2. Goal B — Synthetic sample data as the first-run experience — **WITHDRAWN 2026-07-06 (owner amendment above; PR #330 closed unmerged)**
 
 **Objective.** On a fresh workspace, JobHunter demonstrates end-to-end value — a scored job and a reviewable tailored resume PDF — using safe synthetic data, *before* the user imports a real profile or configures any auth, with an absolute guarantee that sample data never mixes into real records or reaches a real employer.
 
@@ -283,10 +311,21 @@ For this documentation PR specifically: confirm the plan renders and its referen
 
 ## 8. Open owner decisions
 
+All four were resolved by the owner on 2026-07-06:
+
 1. **D1 — sample data source:** curate a product-owned dataset from the `qa-seed.ts` shape (Option A) or author a separate minimal demo fixture and keep `qa-seed.ts` test-only (Option B)?
+   - **Resolved (2026-07-06): moot — Goal B withdrawn** (owner amendment at
+     the top of this plan). No sample dataset ships in any form.
 2. **D2 — never-mix mechanism:** separate disposable demo workspace (Option 1, strongest isolation) or in-workspace partition by an explicit sample provenance marker (Option 2, richer UX, must satisfy every safety clause in §2.6)?
+   - **Resolved (2026-07-06): moot — Goal B withdrawn.**
 3. **TTFV reference class and statistic:** which machine class and which pass statistic (median + worst-case ceiling vs. strict max) define the gate, and what are the initial phase budgets from the first clean baseline?
+   - **Resolved (2026-07-06):** reference class = the owner's Apple-silicon
+     macOS machine; statistic = median of 3 clean runs under threshold, worst
+     run under 1.5× threshold. Initial phase budgets set from the first
+     real-path baseline run. Measurement is real-path only (owner amendment).
 4. **Cadence of the full clean-VM run:** pre-release only, fixed schedule, or both — and on which platform set beyond macOS (given the glibc-Linux gap)?
+   - **Resolved (2026-07-06):** pre-release only, macOS. A Linux run remains a
+     discretionary owner sanity check, not a gate.
 
 ---
 
