@@ -15,9 +15,10 @@ what can leave, and which actions to treat with care.
 JobHunter has no hosted backend and no account system. Your database and files
 stay local by default. Privacy-sensitive content can still leave your machine
 when you deliberately run steps that need outside services: LLM calls, job-board
-fetches, Gmail read-only lookups, Google Maps autocomplete, CAPTCHA solving, or
-Langfuse telemetry when configured. Live apply automation and any email-based
-application sending are real employer-facing actions, not simulations.
+fetches, Gmail lookups or approved email application sends, Google Maps
+autocomplete, CAPTCHA solving, or Langfuse telemetry when configured. Live apply
+automation and email-based application sending are real employer-facing actions,
+not simulations.
 
 ## Local Data
 
@@ -87,10 +88,9 @@ Depending on configuration, JobHunter can call:
 - LLM providers for scoring, employer analysis, tailoring, cover letters, and
   stored interview prep;
 - job boards, ATS APIs, or public posting pages for discovery and enrichment;
-- Gmail read-only APIs for verification-code or outcome feedback flows. The
-  current connector does not request `gmail.send`; granting or wiring that scope
-  would authorize outgoing email and must be treated as a live application
-  submission path;
+- Gmail APIs for verification-code or outcome feedback flows, plus approved
+  email application sends when the dry-run candidate and Apply Review approval
+  bind the same recipient and attachment;
 - Langfuse/OpenTelemetry endpoints for traces when explicitly enabled;
 - paid CAPTCHA solving services when explicitly configured for apply automation.
 
@@ -117,17 +117,21 @@ These boundaries are the operator's responsibility:
   specific reason to disable it, rehearse with dry runs, and target one job or
   site at a time while validating behavior.
 - **Email applications:** sending an application by email is still a live
-  employer submission. JobHunter's shipped Gmail connector is read-only; do not
-  add or grant Gmail `gmail.send` unless you intentionally want JobHunter to send
-  application email from your mailbox.
-- **Credential typing:** browser automation can type credentials you put in your
-  profile, and those credentials may appear in the apply agent prompt when a
-  login form needs them. Use a unique, dedicated job-site password. Do not reuse
-  email, banking, work, or primary personal passwords.
-- **CAPTCHA solving:** CAPTCHA solving is disabled unless `CAPSOLVER_API_KEY` is
-  configured. If you configure it, CAPTCHA site keys and page URLs are sent to a
-  paid third-party service, and you are responsible for the site's terms,
-  authorization requirements, and legal risk.
+  employer submission. JobHunter sends only through the owned Gmail connector
+  after a dry-run records the recipient and attachment candidate and Apply
+  Review approves that exact binding; without Gmail `gmail.send` or a matching
+  approval, the path fails closed.
+- **Credential typing:** browser automation can type non-secret profile fields.
+  For regular job-site password fields, the apply agent can call a local
+  credential tool that reads the stored profile password and types it into the
+  focused field without returning the value to the model. If the tool is
+  unavailable or the focused field is not a password field, login fails closed
+  for operator handling.
+- **CAPTCHA solving:** supported CAPTCHA widgets are handled only through the
+  owned local solver tool when configured. The apply agent does not solve
+  image/audio challenges manually, switch to stealth browsers, or receive a
+  CAPTCHA-provider key or solver token through the model prompt. Unsupported or
+  unconfigured CAPTCHA flows fail closed.
 - **Scraping and source terms:** source access can violate provider or site
   terms. Default discovery options include LinkedIn and Indeed; disable any
   source you are not allowed to query automatically.
@@ -164,10 +168,13 @@ explicit approval bound to the reviewed materials generation, profile version,
 and application URL, a browser-level guard during dry runs, no application
 submitted twice, and a daily spend ceiling. Apply Review allows a partial
 dry-run override only when it names the specific partial run and shows the
-blocked channels you are accepting. The apply agent also reads untrusted job
-pages, so prompt injection is a real exposure. The full gate model, the apply
-agent's automation posture, and how credentials appear in the apply prompt live
-in [Security](security.md).
+blocked channels you are accepting. Email-only applications use the same
+approval model: the agent can report the posted recipient, but JobHunter records
+the deterministic email candidate locally and sends only after approval binds
+that recipient and attachment. The apply agent also reads untrusted job pages,
+so prompt injection is a real exposure. The full gate model, the apply agent's
+automation posture, and how credentials appear in the apply prompt live in
+[Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 

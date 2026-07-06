@@ -234,8 +234,9 @@ process; it does **not** prescribe final copy.
   Services" and link to it; it must not introduce a claim absent from that
   page. Keep the existing safety/back-up guidance.
 - **No capability regressions in text.** Preserve every currently documented
-  capability and safety note (auto-apply approval gate, dry-run guard, backup/
-  restore); this is a re-lead and claim-audit, not a capability removal.
+  capability and safety note (auto-apply approval gate, explicit dry-run mode
+  guard, backup/restore); this is a re-lead and claim-audit, not a capability
+  removal.
 
 **Claim-review process for the README.**
 
@@ -309,7 +310,7 @@ that must have merged first).
 | 4 | Apply-review audit surfaces | `qa-seed.ts` approved materials generation, requirement evidence, `change_annotations` (comments), approval controls | `/apply-review` and its evidence / comments / approval-control sub-surfaces | Evidence, line comments, and explicit approval controls are inspectable before anything is submitted | A (+B for sub-surface captures) | none |
 | 5 | Artifact replacement preserves last accepted on failure | New seed state: an approved generation **plus** a later **failed** refresh that does not supersede the approved artifact | `/apply-review` (or artifact view) before/after a failed re-tailor | A failed refresh never destroys the last accepted artifact; the accepted material stays visible and openable (`BR-041`, `BR-052`, `TR-032`) | B | none (behavior shipped) |
 | 6 | Tailoring gate rejects an unsupported claim | `qa-seed.ts` change annotation with an unsupported/needs-confirmation claim label + `review_blocked` decision; extend to a clearly *fabricated* claim per `docs/architecture/tailoring.md` fabrication gates | `/apply-review` zoomed on the blocked claim + its blocker/repair reason | The gate blocks the unsupported claim and surfaces the blocker and repair instruction — proven from canonical fixture data | B | none (behavior shipped) |
-| 7 | Dry-run apply completes without submission + live-approval gate | `qa-seed.ts` dry-run run (`qa-run-1`), approval card (`applyApprovalRequired` default true), and dry-run blocked-channel evidence (`apply_dryrun_blocked`) | `/apply-review` approval card + `/runs` dry-run run + blocked-channel evidence | A dry run finishes, nothing was submitted, and live submit is gated behind an explicit fresh approval (`BR-054`) | B (approval + run) / C (live blocked-channel evidence) | Approval-binding + blocked-channel evidence: OSS spec **W1.1 / W1.2** for the evidence asset |
+| 7 | Explicit dry-run apply completes without submission + live-approval gate | `qa-seed.ts` dry-run run (`qa-run-1`), approval card (`applyApprovalRequired` default true), and dry-run blocked-channel evidence (`apply_dryrun_blocked`) | `/apply-review` approval card + `/runs` dry-run run + blocked-channel evidence | When dry-run mode is explicitly requested, nothing is submitted, and live submit is gated behind an explicit fresh approval (`BR-054`) | B (approval + run) / C (live blocked-channel evidence) | Approval-binding + blocked-channel evidence: OSS spec **W1.1 / W1.2** for the evidence asset |
 | 8 | Spend-ceiling stop + health surface | New seed state: `llm_spend` at/over `dailyBudgetUsd`; a workflow stopped with the budget error | `GET /v1/health` + web health surface showing over-budget; a run stopped by the ceiling | A daily spend ceiling stops spending work and the over-budget state is visible (`BR-050`) | B (health surface) / C (the stop lifecycle) | Spend system + per-lane visibility: OSS spec **P5 / W2.4** |
 | 9 | Reliability demo — kill worker mid-run, restart, resume | Synthetic discovery run against a stub/fake source (no real crawl/LLM); Temporal history persisted at `.dev/temporal/temporal.db` | Start a synthetic run → kill the worker **by captured PID** → restart worker → `/runs` + Temporal UI show the same run resuming | Durable Temporal execution resumes an in-flight run from workflow history after a worker crash (`TR-008`) | C | none (durability shipped) — but requires a live worker + Temporal to record |
 
@@ -514,6 +515,12 @@ Notes:
    specific rows, the external approaches that become the columns, the cadence
    interval, and the final sidebar label stay owner-supplied (kept private until
    facts-verified) and do not block merging this plan or the R7a train.
+
+   → **RESOLVED 2026-07-06 (owner).** Delegated draft: the maintainer agent
+   derives the neutral capability rows and the anonymized external-approach
+   columns, verifies every cell against live sources, and the owner approves
+   the result before it is committed. Maintenance cadence: quarterly
+   re-verification. Sidebar label stays "How It Compares".
 4. **Demo-asset launch set** — which assets ship in the initial launch vs are
    deferred until their capability merges: asset 7's live blocked-channel
    evidence (OSS spec W1.1/W1.2) and asset 8's spend-ceiling stop (OSS spec
@@ -530,6 +537,11 @@ Notes:
    fixture, not the capability. Asset 8's health-surface capture and assets 1–2
    are deferred launch-set follow-ups. Confirming the initial launch set remains
    OWNER-PENDING.
+
+   → **RESOLVED 2026-07-06 (owner).** Ship what's ready: launch proceeds with
+   the assets already captured or scripted; assets 1–2, 7-evidence, and
+   8-spend-stop remain deferred post-launch follow-ups exactly as the
+   inventory records them. Launch is not blocked on producing the full set.
 5. **Reliability-demo format** — asset 9 as a scripted e2e artifact vs a
    synthetic screen recording vs a documented walkthrough, and where the
    artifact lives (must be synthetic and privacy-safe; recordings are binary).
@@ -552,12 +564,31 @@ Notes:
    carries into a high-stakes interview. CL-029 is already listed as a §11.6
    reclassification candidate. The threshold itself and this specific verdict
    await the owner's bar-setting.
+
+   → **RESOLVED 2026-07-06 (owner).** Bar set: any brand-new LLM-generated
+   user-facing surface without real-usage validation is labeled `Beta` in
+   public copy even when its truthfulness gates pass — the gates guarantee a
+   no-fabrication floor, not output quality. Verdict: **CL-029 reclassifies to
+   `Beta`** (apply in the next ledger currency pass). Additional owner rule
+   recorded the same day: **synthetic data may illustrate, never measure** —
+   screenshots/GIFs may use clearly-captioned fictional data, but no
+   performance, speed, or outcome number in public copy may ever be derived
+   from synthetic data (see the R2 plan's TTFV amendment).
 7. **Sign-off owners** — who owns the claim-freeze sign-off and each Phase C
    publish step.
 
    → **OWNER-PENDING 2026-07-06.** Unresolved by implementation — an owner
    decision. The claims-freeze stays PROVISIONAL until the owner signs off, and
    the owner of each Phase C publish step is still to be named.
+
+   → **RESOLVED 2026-07-06 (owner).** The owner is the single sign-off holder
+   for the claims freeze and executes every Phase C publish step (repository
+   visibility flip, DNS, git tag, PyPI upload). The freeze converts from
+   PROVISIONAL to signed only after a mandatory guided review in which the
+   maintainer agent walks the owner through every ledger claim and its
+   evidence anchor. Follow-up recorded: re-enable the "Python CI" GitHub
+   workflow (currently disabled to conserve Actions minutes) before the
+   repository goes public.
 
 ## 12. Risks and mitigations
 

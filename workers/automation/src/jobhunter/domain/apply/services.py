@@ -25,9 +25,12 @@ stays separable from the eligibility/prompt logic.
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 from jobhunter.domain.apply.value_objects import ApplyPrompt
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
@@ -183,11 +186,43 @@ class ApplyPromptBuilder:
             search_config=dict(search_config) if search_config is not None else None,
             upload_dir=upload_dir,
         )
-        mcp_config = self._mcp_config_factory(cdp_port)
+        mcp_config = self._build_mcp_config(
+            cdp_port,
+            job=job,
+            snapshot=snapshot,
+            upload_dir=upload_dir,
+        )
         return ApplyPrompt(text=text, mcp_config=mcp_config)
 
+    def _build_mcp_config(
+        self,
+        cdp_port: int,
+        *,
+        job: Mapping[str, Any],
+        snapshot: ProfileSnapshot,
+        upload_dir: str | None,
+    ) -> Mapping[str, Any]:
+        try:
+            return self._mcp_config_factory(
+                cdp_port,
+                job=job,
+                snapshot=snapshot,
+                upload_dir=upload_dir,
+            )
+        except TypeError:
+            return self._mcp_config_factory(cdp_port)
 
-def _default_mcp_config(cdp_port: int) -> dict[str, Any]:
+
+PLAYWRIGHT_MCP_PACKAGE = "@playwright/mcp@0.0.77"
+
+
+def _default_mcp_config(
+    cdp_port: int,
+    *,
+    job: Mapping[str, Any] | None = None,
+    snapshot: ProfileSnapshot | None = None,
+    upload_dir: str | None = None,
+) -> dict[str, Any]:
     """Default MCP config used when no override is supplied.
 
     Mirrors the legacy ``apply/launcher._make_mcp_config`` shape so
@@ -196,12 +231,26 @@ def _default_mcp_config(cdp_port: int) -> dict[str, Any]:
     """
     from jobhunter import config as _config
 
+    application_url = str((job or {}).get("application_url") or (job or {}).get("url") or "")
+    personal = snapshot.personal if snapshot is not None else {}
+    upload_root = str(
+        upload_dir
+        or (_config.APPLY_WORKER_DIR / "current")
+    )
+    apply_tools_env = {
+        "JOBHUNTER_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
+        "JOBHUNTER_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
+        "JOBHUNTER_APPLY_UPLOAD_DIR": upload_root,
+    }
+    captcha_key = os.environ.get("CAPSOLVER_API_KEY", "").strip()
+    if captcha_key:
+        apply_tools_env["CAPSOLVER_API_KEY"] = captcha_key
     return {
         "mcpServers": {
             "playwright": {
                 "command": "npx",
                 "args": [
-                    "@playwright/mcp@latest",
+                    PLAYWRIGHT_MCP_PACKAGE,
                     f"--cdp-endpoint=http://localhost:{cdp_port}",
                     f"--viewport-size={_config.DEFAULTS['viewport']}",
                 ],
@@ -209,9 +258,36 @@ def _default_mcp_config(cdp_port: int) -> dict[str, Any]:
             "gmail": {
                 "command": sys.executable,
                 "args": ["-m", "jobhunter.infrastructure.gmail.mcp_server"],
+                "env": {
+                    "JOBHUNTER_GMAIL_ALLOWED_DOMAINS": ",".join(
+                        _verification_sender_domains(application_url)
+                    ),
+                    "JOBHUNTER_GMAIL_AFTER_MS": str(int(time.time() * 1000)),
+                    "JOBHUNTER_GMAIL_TO_EMAIL": str(personal.get("email") or ""),
+                    "JOBHUNTER_GMAIL_TOKEN_PATH": str(_config.get_gmail_mcp_credentials_path()),
+                    "JOBHUNTER_GMAIL_OAUTH_CLIENT_PATH": str(_config.get_gmail_mcp_oauth_keys_path()),
+                },
+            },
+            "apply_tools": {
+                "command": sys.executable,
+                "args": ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"],
+                "env": apply_tools_env,
             },
         },
     }
+
+
+def _verification_sender_domains(application_url: str) -> tuple[str, ...]:
+    try:
+        hostname = (urlparse(application_url).hostname or "").lower()
+    except Exception:
+        hostname = ""
+    if not hostname:
+        return ()
+    labels = hostname.split(".")
+    if len(labels) >= 2:
+        return (".".join(labels[-2:]),)
+    return (hostname,)
 
 
 __all__ = [

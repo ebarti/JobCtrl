@@ -1090,6 +1090,7 @@ DEFAULTS = {
     "max_tailor_attempts": 5,
     "poll_interval": 60,
     "apply_timeout": 900,
+    "apply_max_budget_usd": 5.00,
     "viewport": "1280x900",
 }
 
@@ -1123,11 +1124,23 @@ def get_gmail_mcp_credentials_path() -> Path:
 
 
 def gmail_mcp_auth_status() -> tuple[bool, str]:
-    """Report whether read-only Gmail verification is locally authenticated."""
+    """Report whether Gmail verification and owned email-send scopes are authenticated."""
     load_env()
     credentials_path = get_gmail_mcp_credentials_path()
     oauth_keys_path = get_gmail_mcp_oauth_keys_path()
     if credentials_path.exists():
+        try:
+            token = json.loads(credentials_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False, f"invalid Gmail token JSON at {credentials_path}"
+        from jobhunter.infrastructure.gmail.auth import GMAIL_SEND_SCOPE
+
+        scopes = {part.strip() for part in str(token.get("scope") or "").split() if part.strip()}
+        if GMAIL_SEND_SCOPE not in scopes:
+            return (
+                False,
+                f"Gmail token at {credentials_path} is missing gmail.send scope; run jobhunter gmail-auth",
+            )
         return True, f"authenticated with {credentials_path}"
     if not oauth_keys_path.exists():
         return (
@@ -1173,6 +1186,22 @@ def get_apply_timeout_seconds() -> int:
                 return parsed
             log.warning("JOBHUNTER_APPLY_TIMEOUT_SECONDS must be positive; using default")
     return int(DEFAULTS.get("apply_timeout", 900))
+
+
+def get_apply_max_budget_usd() -> float:
+    """Return the per-run Claude apply budget cap in USD."""
+    load_env()
+    raw = os.environ.get("JOBHUNTER_APPLY_MAX_BUDGET_USD")
+    if raw:
+        try:
+            parsed = float(raw)
+        except ValueError:
+            log.warning("Invalid JOBHUNTER_APPLY_MAX_BUDGET_USD=%r; using default", raw)
+        else:
+            if parsed >= 0:
+                return parsed
+            log.warning("JOBHUNTER_APPLY_MAX_BUDGET_USD must be non-negative; using default")
+    return float(DEFAULTS.get("apply_max_budget_usd", 5.00))
 
 
 def load_env():

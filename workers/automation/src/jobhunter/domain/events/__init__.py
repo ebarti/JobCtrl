@@ -95,6 +95,8 @@ from jobhunter.domain.events.apply import (
     create_apply_submit_intended,
     ApplyRunEventRecordedPayload,
     create_apply_run_event_recorded,
+    EmailApplicationCandidateRecordedPayload,
+    create_email_application_candidate_recorded,
 )
 from jobhunter.domain.events.orchestration import (
     StageStartedPayload,
@@ -227,6 +229,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ApplyRunStarted",
     "ApplySubmitIntended",
     "ApplyRunEventRecorded",
+    "EmailApplicationCandidateRecorded",
     "ApplicationEmailFeedbackIngested",
     "ApplicationSubmitted",
     "ApplicationFailed",
@@ -360,6 +363,8 @@ __all__ = [
     "create_apply_submit_intended",
     "ApplyRunEventRecordedPayload",
     "create_apply_run_event_recorded",
+    "EmailApplicationCandidateRecordedPayload",
+    "create_email_application_candidate_recorded",
     "ApplicationEmailFeedbackIngestedPayload",
     "create_application_email_feedback_ingested",
     # Orchestration

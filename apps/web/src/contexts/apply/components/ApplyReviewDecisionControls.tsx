@@ -41,6 +41,7 @@ const GATE_REASON_LABELS: Record<string, string> = {
   approval_stale_materials: "materials changed since approval",
   approval_stale_profile: "profile changed since approval",
   approval_stale_url: "application URL changed since approval",
+  approval_stale_email_candidate: "email application changed since approval",
   override_evidence_invalid: "partial dry-run override no longer matches",
 };
 
@@ -105,6 +106,12 @@ export function ApplyReviewDecisionControls({
               materialsGeneration: item.approvalGate.materialsGeneration,
               profileVersion: item.approvalGate.profileVersion,
               applicationUrl: item.approvalGate.applicationUrl,
+              ...(item.emailApplication
+                ? {
+                    emailRecipient: item.emailApplication.recipient,
+                    emailAttachmentArtifactId: item.emailApplication.attachmentArtifactId,
+                  }
+                : {}),
             }
           : {}),
         ...(partialOverrideRunId ? { partialOverrideRunId } : {}),
@@ -118,6 +125,9 @@ export function ApplyReviewDecisionControls({
         <span>Materials generation: {formatBindingValue(item.approvalGate.materialsGeneration)}</span>
         <span>Profile version: {formatBindingValue(item.approvalGate.profileVersion)}</span>
         <span>Application URL: {formatBindingValue(item.approvalGate.applicationUrl)}</span>
+        {item.emailApplication ? (
+          <span>Email recipient: {item.emailApplication.recipient}</span>
+        ) : null}
         <span>Dry-run evidence: {dryRunEvidenceLabel(item)}</span>
       </div>
       {primaryDecisions.map((value) => (

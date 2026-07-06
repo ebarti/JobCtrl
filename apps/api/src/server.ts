@@ -279,6 +279,7 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
   "approval_stale_materials",
   "approval_stale_profile",
   "approval_stale_url",
+  "approval_stale_email_candidate",
   "partial_override_evidence_invalid",
 ]);
 const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
@@ -3213,6 +3214,9 @@ function applyReviewPreconditionMessage(error: string): string {
   }
   if (error === "approval_stale_url") {
     return "The reviewed application URL changed before submit approval. Refresh apply review and approve again.";
+  }
+  if (error === "approval_stale_email_candidate") {
+    return "The email application recipient or attachment changed before submit approval. Refresh apply review and approve again.";
   }
   if (error === "partial_override_evidence_invalid") {
     return "The selected partial dry-run evidence no longer matches this job's current materials, profile, and URL.";

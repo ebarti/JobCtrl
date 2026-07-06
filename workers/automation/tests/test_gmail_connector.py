@@ -9,6 +9,7 @@ import time
 import httpx
 
 from jobhunter.infrastructure.gmail.auth import (
+    GMAIL_SEND_SCOPE,
     GmailAuthError,
     OAuthClient,
     build_authorization_url,
@@ -44,7 +45,7 @@ def test_web_oauth_requires_local_redirect() -> None:
         raise AssertionError("expected GmailAuthError")
 
 
-def test_authorization_url_requests_readonly_scope() -> None:
+def test_authorization_url_requests_read_and_send_scopes() -> None:
     client = OAuthClient(
         client_id="client",
         client_secret="secret",
@@ -54,6 +55,7 @@ def test_authorization_url_requests_readonly_scope() -> None:
     url = build_authorization_url(client, "http://127.0.0.1:38123/oauth2callback", "state")
 
     assert "https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly" in url
+    assert "https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.send" in url
     assert "gmail.modify" not in url
 
 
@@ -165,56 +167,164 @@ def test_gmail_client_reads_message_body(monkeypatch) -> None:
     assert "654321" in message["body_text"]
 
 
-def test_mcp_server_exposes_readonly_tools() -> None:
+def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.gmail.client.load_token",
+        lambda: {"scope": f"https://www.googleapis.com/auth/gmail.readonly {GMAIL_SEND_SCOPE}"},
+    )
+    attachment = tmp_path / "resume.pdf"
+    attachment.write_bytes(b"%PDF")
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/messages/send")
+        seen["auth"] = request.headers["Authorization"]
+        payload = json.loads(request.content.decode("utf-8"))
+        seen["raw"] = payload["raw"]
+        return httpx.Response(200, json={"id": "m1", "threadId": "t1"})
+
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    result = client.send_email_application(
+        to_email="apply@example.com",
+        subject="Application for Staff Engineer",
+        body="Hello",
+        attachment_path=str(attachment),
+        attachment_name="resume.pdf",
+    )
+
+    assert result == {"id": "m1", "threadId": "t1"}
+    assert seen["auth"] == "Bearer token"
+    assert seen["raw"]
+
+
+def test_gmail_client_refuses_send_without_send_scope(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.gmail.client.load_token",
+        lambda: {"scope": "https://www.googleapis.com/auth/gmail.readonly"},
+    )
+    attachment = tmp_path / "resume.pdf"
+    attachment.write_bytes(b"%PDF")
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))))
+
+    try:
+        client.send_email_application(
+            to_email="apply@example.com",
+            subject="Application",
+            body="Hello",
+            attachment_path=str(attachment),
+            attachment_name="resume.pdf",
+        )
+    except GmailAuthError as exc:
+        assert "gmail.send scope" in str(exc)
+    else:
+        raise AssertionError("expected GmailAuthError")
+
+
+def test_mcp_server_exposes_only_scoped_verification_tool() -> None:
     class FakeClient:
         def search_emails(self, **_kwargs):
-            return [{"id": "m1", "subject": "Code"}]
+            return [
+                {
+                    "id": "m1",
+                    "from": "ATS <noreply@apply.example.com>",
+                    "internalDate": "2000",
+                }
+            ]
 
         def read_email(self, *, message_id):
-            return {"id": message_id, "body_text": "code 123456"}
+            return {
+                "id": message_id,
+                "snippet": "Your verification code is 123456",
+                "body_text": "Your verification code is 123456. Decoy secret: NEVER-LEAK.",
+            }
 
-    server = GmailMcpServer(client=FakeClient())
+    server = GmailMcpServer(
+        client=FakeClient(),
+        allowed_sender_domains=("example.com",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
     tools = server.handle_json(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
-    searched = server.handle_json(
+    called = server.handle_json(
         json.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
                 "params": {
-                    "name": "search_emails",
-                    "arguments": {"to_email": "candidate@example.com"},
+                    "name": "get_verification_code",
+                    "arguments": {},
                 },
-            }
-        )
-    )
-    called = server.handle_json(
-        json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "read_email", "arguments": {"message_id": "m1"}},
             }
         )
     )
 
     tool_names = {tool["name"] for tool in tools["result"]["tools"]}
-    assert tool_names == {"search_emails", "read_email"}
-    assert "Code" in searched["result"]["content"][0]["text"]
-    assert "code 123456" in called["result"]["content"][0]["text"]
+    assert tool_names == {"get_verification_code"}
+    text = called["result"]["content"][0]["text"]
+    assert "123456" in text
+    assert "NEVER-LEAK" not in text
+    assert "body_text" not in text
 
 
-def test_mcp_server_reads_only_search_result_ids() -> None:
+def test_mcp_server_rejects_out_of_scope_verification_messages() -> None:
     class FakeClient:
         def search_emails(self, **_kwargs):
-            return [{"id": "m1", "subject": "Code"}]
+            return [
+                {
+                    "id": "old",
+                    "from": "noreply@apply.example.com",
+                    "internalDate": "900",
+                },
+                {
+                    "id": "wrong-domain",
+                    "from": "noreply@attacker.invalid",
+                    "internalDate": "2000",
+                },
+            ]
 
         def read_email(self, *, message_id):
-            return {"id": message_id, "body_text": "code 123456"}
+            raise AssertionError(f"out-of-scope message was read: {message_id}")
 
-    server = GmailMcpServer(client=FakeClient())
-    before_search = server.handle_json(
+    server = GmailMcpServer(
+        client=FakeClient(),
+        allowed_sender_domains=("example.com",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
+    called = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_verification_code",
+                    "arguments": {},
+                },
+            }
+        )
+    )
+
+    payload = json.loads(called["result"]["content"][0]["text"])
+    assert payload == {
+        "codes": [],
+        "links": [],
+        "source_count": 0,
+        "note": "verification values extracted; raw email content withheld",
+    }
+
+
+def test_mcp_server_rejects_raw_gmail_tool_names() -> None:
+    server = GmailMcpServer(
+        client=object(),
+        allowed_sender_domains=("example.com",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
+    response = server.handle_json(
         json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -224,30 +334,6 @@ def test_mcp_server_reads_only_search_result_ids() -> None:
             }
         )
     )
-    server.handle_json(
-        json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "search_emails",
-                    "arguments": {"to_email": "candidate@example.com"},
-                },
-            }
-        )
-    )
-    after_search_wrong_id = server.handle_json(
-        json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "read_email", "arguments": {"message_id": "m2"}},
-            }
-        )
-    )
 
-    assert before_search["error"]["code"] == -32000
-    assert "returned by search_emails" in before_search["error"]["message"]
-    assert after_search_wrong_id["error"]["code"] == -32000
+    assert response["error"]["code"] == -32000
+    assert "Unknown Gmail tool" in response["error"]["message"]

@@ -40,6 +40,22 @@ def _bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"", "unknown", "unset", "null", "none"}:
+            return None
+        if text in {"true", "yes", "y", "1", "on"}:
+            return True
+        if text in {"false", "no", "n", "0", "off"}:
+            return False
+    return bool(value)
+
+
 def _float(value: Any, default: float = 0.0) -> float:
     try:
         parsed = float(value)
@@ -201,6 +217,61 @@ class ApplicationDefaults:
             "availability": self.availability.to_dict(),
             "eeo_voluntary": self.eeo_voluntary.to_dict(),
         }
+
+
+@dataclass(frozen=True)
+class ApplicationAttestations:
+    """Typed legal/screening attestations used by Apply Automation.
+
+    ``None`` means the candidate has not provided an answer. Runtime apply
+    must fail with ``missing_profile_data:<field>`` instead of guessing.
+    """
+
+    age_18_plus: bool | None = None
+    background_check_consent: bool | None = None
+    felony_conviction: bool | None = None
+    previously_worked_at_employer: bool | None = None
+    additional: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_MAPPING)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ApplicationAttestations":
+        data = data or {}
+        additional = data.get("additional") or {}
+        if not isinstance(additional, Mapping):
+            additional = {}
+        return cls(
+            age_18_plus=_optional_bool(data.get("age_18_plus")),
+            background_check_consent=_optional_bool(data.get("background_check_consent")),
+            felony_conviction=_optional_bool(data.get("felony_conviction")),
+            previously_worked_at_employer=_optional_bool(
+                data.get("previously_worked_at_employer")
+            ),
+            additional=MappingProxyType(dict(additional)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "age_18_plus": self.age_18_plus,
+            "background_check_consent": self.background_check_consent,
+            "felony_conviction": self.felony_conviction,
+            "previously_worked_at_employer": self.previously_worked_at_employer,
+            "additional": dict(self.additional),
+        }
+
+
+@dataclass(frozen=True)
+class ApplicationPreferences:
+    """Non-attestation application preferences."""
+
+    how_heard: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ApplicationPreferences":
+        data = data or {}
+        return cls(how_heard=_str(data.get("how_heard"), ""))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"how_heard": self.how_heard}
 
 
 # ---------------------------------------------------------------------------

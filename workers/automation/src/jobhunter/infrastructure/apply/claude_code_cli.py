@@ -20,8 +20,9 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from jobhunter import config
 from jobhunter.domain.apply.value_objects import (
@@ -29,6 +30,7 @@ from jobhunter.domain.apply.value_objects import (
     ApplyPrompt,
     Captcha,
     DryRunComplete,
+    EmailOnlyApplication,
     Expired,
     Failed,
     LoginIssue,
@@ -42,21 +44,84 @@ from jobhunter.infrastructure.setup_probes import resolve_claude_apply_binary
 log = logging.getLogger(__name__)
 
 
-# Disallowed Gmail tools — kept identical to the legacy launcher list
-# so the agent's permission posture doesn't regress.
-_DISALLOWED_TOOLS = (
-    "mcp__gmail__draft_email,mcp__gmail__modify_email,"
-    "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
-    "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
-    "mcp__gmail__create_label,mcp__gmail__update_label,"
-    "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
-    "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
-    "mcp__gmail__list_filters,mcp__gmail__get_filter,"
-    "mcp__gmail__delete_filter"
+# Apply runs get an explicit owned-tool allowlist rather than a broad
+# permission bypass. Keep this aligned with the pinned Playwright MCP
+# package in ``domain.apply.services``.
+PINNED_PLAYWRIGHT_MCP_TOOLS = frozenset(
+    {
+        "browser_close",
+        "browser_resize",
+        "browser_console_messages",
+        "browser_handle_dialog",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_drop",
+        "browser_fill_form",
+        "browser_press_key",
+        "browser_type",
+        "browser_navigate",
+        "browser_navigate_back",
+        "browser_network_requests",
+        "browser_network_request",
+        "browser_run_code_unsafe",
+        "browser_take_screenshot",
+        "browser_snapshot",
+        "browser_click",
+        "browser_drag",
+        "browser_hover",
+        "browser_select_option",
+        "browser_tabs",
+        "browser_wait_for",
+    }
 )
+PLAYWRIGHT_TOOL_EXCLUSIONS = frozenset(
+    {
+        "browser_console_messages",
+        "browser_drop",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_network_request",
+        "browser_network_requests",
+        "browser_resize",
+        "browser_run_code_unsafe",
+    }
+)
+PLAYWRIGHT_APPLY_TOOLS = frozenset(
+    f"mcp__playwright__{tool}"
+    for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
+)
+GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
+BASE_OWNED_APPLY_TOOLS = frozenset(
+    {
+        "mcp__apply_tools__type_credential",
+        "mcp__apply_tools__upload_artifact",
+    }
+)
+CAPTCHA_APPLY_TOOL = "mcp__apply_tools__solve_captcha"
+DISALLOWED_CLAUDE_TOOLS = (
+    "Bash",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+)
+_ALLOWED_TOOLS = ",".join(
+    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
+)
+_DISALLOWED_TOOLS = ",".join(DISALLOWED_CLAUDE_TOOLS)
+
+_ENV_ALLOWLIST = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "TMPDIR",
+}
 
 # Result codes the agent emits as ``RESULT:CODE`` lines.
 _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
+_EMAIL_ONLY_RE = re.compile(r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 
 # Reasons that get promoted from ``RESULT:FAILED:reason`` to a
 # dedicated SubmissionResult variant.
@@ -139,26 +204,26 @@ class ClaudeCodeCliAdapter:
         # Render MCP config to disk per-worker (the agent's --mcp-config
         # flag wants a file, not a literal JSON string).
         mcp_config_path = self._app_dir / f".mcp-apply-{worker_id}.json"
-        mcp_config_path.write_text(json.dumps(prompt.mcp_config), encoding="utf-8")
 
         model_label = (model or "").strip() or "default"
         claude_bin = resolve_claude_apply_binary()
         cmd = [claude_bin]
         if model_label not in _DEFAULT_MODEL_SENTINELS:
             cmd.extend(["--model", model_label])
+        if _claude_supports_budget_flag(claude_bin):
+            cmd.extend(["--max-budget-usd", f"{config.get_apply_max_budget_usd():.2f}"])
+        allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
         cmd.extend([
             "-p",
             "--mcp-config", str(mcp_config_path),
-            "--permission-mode", "bypassPermissions",
             "--no-session-persistence",
+            "--allowedTools", allowed_tools,
             "--disallowedTools", _DISALLOWED_TOOLS,
             "--output-format", "stream-json",
             "--verbose", "-",
         ])
 
-        env = os.environ.copy()
-        env.pop("CLAUDECODE", None)
-        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        env = _apply_subprocess_env()
 
         worker_log = self._log_dir / f"worker-{worker_id}.log"
         deadline_seconds = (
@@ -174,6 +239,7 @@ class ClaudeCodeCliAdapter:
         start = time.time()
 
         try:
+            _write_private_json(mcp_config_path, prompt.mcp_config)
             proc = subprocess.Popen(
                 cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
@@ -351,6 +417,10 @@ class ClaudeCodeCliAdapter:
                 _unregister_active_claude_process(worker_id, proc)
                 if proc.poll() is None:
                     _kill_process_tree_if_alive(proc)
+            try:
+                mcp_config_path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
 
     # ------------------------------------------------------------------
     # RESULT line parsing
@@ -364,16 +434,18 @@ class ClaudeCodeCliAdapter:
         promotion of failed-reasons to dedicated variants for
         captcha / expired / login_issue.
         """
+        email_only = _EMAIL_ONLY_RE.search(output)
+        if email_only:
+            return EmailOnlyApplication(recipient_email=email_only.group(1))
+
         for code in _RESULT_CODES:
             if f"RESULT:{code}" in output:
                 if code == "APPLIED":
                     if dry_run:
-                        # Defensive: a dry-run agent should emit
-                        # RESULT:DRY_RUN, but if it accidentally says
-                        # RESULT:APPLIED on a dry-run we MUST still
-                        # treat it as a dry-run completion (per §4.6
-                        # invariant: dry runs never mark applied).
-                        return DryRunComplete(navigated_to="")
+                        return Failed(
+                            error="dry_run_violation: agent reported applied during dry-run",
+                            retryable=False,
+                        )
                     return Applied(
                         applied_at=_utc_now(),
                         verification_confidence=_applied_confidence(output),
@@ -391,13 +463,10 @@ class ClaudeCodeCliAdapter:
             for line in output.split("\n"):
                 if "RESULT:FAILED" not in line:
                     continue
-                idx = line.index("FAILED")
-                tail = line[idx + 6:]
-                reason = _clean_reason(
-                    tail.split("RESULT:FAILED:")[-1].strip()
-                    if ":" in tail
-                    else "unknown"
-                )
+                tail = line.split("RESULT:FAILED", 1)[1].strip()
+                if tail.startswith(":"):
+                    tail = tail[1:].strip()
+                reason = _clean_reason(tail or "unknown")
                 if reason in _PROMOTED_FAILED_REASONS:
                     if reason == "captcha":
                         return Captcha(details="agent reported CAPTCHA")
@@ -406,10 +475,61 @@ class ClaudeCodeCliAdapter:
                     return LoginIssue(details="agent reported login issue")
                 if reason == "manual" or reason.startswith("manual"):
                     return Manual(reason=reason)
+                if reason.startswith("missing_profile_data:"):
+                    return Failed(error=reason, retryable=False)
                 return Failed(error=reason or "unknown", retryable=True)
             return Failed(error="unknown", retryable=True)
 
         return Failed(error="no_result_line", retryable=True)
+
+
+def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
+    tools = set(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
+    apply_tools = ((mcp_config.get("mcpServers") or {}).get("apply_tools") or {})
+    env = apply_tools.get("env") if isinstance(apply_tools, Mapping) else {}
+    if isinstance(env, Mapping) and str(env.get("CAPSOLVER_API_KEY") or "").strip():
+        tools.add(CAPTCHA_APPLY_TOOL)
+    return ",".join(sorted(tools))
+
+
+def _apply_subprocess_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _ENV_ALLOWLIST:
+            env[key] = value
+    return env
+
+
+def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(payload)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    handle = None
+    try:
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        handle.write(data)
+    except Exception:
+        if handle is None:
+            os.close(fd)
+        raise
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+@lru_cache(maxsize=8)
+def _claude_supports_budget_flag(claude_bin: str) -> bool:
+    try:
+        result = subprocess.run(
+            [claude_bin, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return "--max-budget-usd" in (result.stdout or "") or "--max-budget-usd" in (result.stderr or "")
 
 
 def _applied_confidence(output: str) -> float:
