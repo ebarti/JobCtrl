@@ -208,30 +208,14 @@ Out of scope for the local stack (tracked under
   wording, relevance to a target job, achievement framing, evidence strength,
   and whether the item deserves required placement in the final resume.
 
-### Known-Failing Web E2E Baseline (2026-07-03)
+### Known-Failing Web E2E Baseline
 
-Five Playwright specs fail identically on `main` and on every Temporal
-rearchitecture validation run (isolated stacks, 2026-07-02 → 2026-07-03,
-PR #233 / #235 / #237 gate runs). They pre-date that work and are not caused
-by it. QA gates treat them as the known baseline: "e2e passes" means **no NEW
-failures beyond these five**. Fixing any of them must remove it from this
-list so the baseline shrinks instead of masking regressions.
-
-- `apps/web/e2e/tests/dashboard.spec.ts:3` — dashboard KPIs render; clicking
-  the Jobs KPI navigates to `/jobs` with a matching row count.
-- `apps/web/e2e/tests/jobs-drawer.spec.ts:297` — compensation source-conflict
-  evidence stays product-visible on mobile viewport without unsafe requests.
-- `apps/web/e2e/tests/jobs-drawer.spec.ts:371` — job drawer opens with
-  requirement fit / stages / artifacts, survives reload, and close preserves
-  the URL filter.
-- `apps/web/e2e/tests/route-visual-qa.spec.ts:507` — requirement-fit drawer
-  and Apply Review cards visual regression coverage.
-- `apps/web/e2e/tests/token-foundation.spec.ts:349` — domain status surfaces
-  use painted semantic token classes (funnel segments, apply-run dots, tags).
-
-Root causes are untriaged; failure modes are assertion-level (seeded-fixture
-expectations and visual/painted-style assertions), not infrastructure. Triage
-each spec, fix or re-fixture it, and delete its bullet here.
+No known-failing Playwright specs are exempted. The 2026-07-03 baseline was
+burned down on 2026-07-06: dashboard KPI navigation and semantic-token status
+paint already passed on current `main`, the jobs-drawer assertions were
+updated to the current split compensation columns and Role Analysis section,
+and the route visual snapshot was refreshed for the current requirement-fit
+card layout. QA gates should treat any `pnpm web:e2e` failure as actionable.
 
 ## SaaS And Commercialization
 
