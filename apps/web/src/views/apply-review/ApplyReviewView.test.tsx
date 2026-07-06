@@ -19,8 +19,13 @@ import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
   makeApplyAudit,
+  makeArtifactDetail,
+  makeArtifactTailoringExplanation,
+  makeCoverageAudit,
   sampleApplyReviewQueue,
+  sampleAcceptedResumeArtifact,
   sampleArtifact,
+  sampleDraftResumeArtifact,
   sampleResumeTemplateListResponse,
 } from "../../test/fixtures/projections.js";
 import { buildProviderHarness, createTestQueryClient, renderWithProviders } from "../../test/render.js";
@@ -1543,6 +1548,246 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Saved draft will render automatically before approval.")).not.toBeInTheDocument();
   });
 
+  it("compares the accepted artifact with the rendered draft artifact", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const acceptedArtifact = {
+      ...sampleAcceptedResumeArtifact,
+      artifactId: "resume-text-2",
+      jobKey,
+      title: "Accepted resume",
+      company: sampleApplyReviewQueue.items[0]!.company,
+    };
+    const draftArtifact = {
+      ...sampleDraftResumeArtifact,
+      artifactId: "resume-review-text",
+      jobKey,
+      title: "Rendered draft resume",
+      company: sampleApplyReviewQueue.items[0]!.company,
+    };
+    const draft = {
+      ...makeResumeReviewDraft(jobKey, {
+        draftId: "draft-job-2",
+        revisionId: "draft-revision-1",
+      }),
+      commentThreads: [makeResumeCommentThread("draft-job-2")],
+    };
+    let renderCompleted = false;
+    const renderResumeReviewDraft = vi.fn(async () => {
+      renderCompleted = true;
+      return {
+        ok: true as const,
+        draft: {
+          ...draft,
+          state: "rendered" as const,
+        },
+        validation: { passed: true, errors: [], warnings: [] },
+        artifacts: {
+          resumeText: {
+            artifactId: draftArtifact.artifactId,
+            artifactType: "tailored_resume" as const,
+            generation: 3,
+            renderFormat: "text" as const,
+          },
+          resumePdf: {
+            artifactId: "resume-review-pdf",
+            artifactType: "resume_pdf" as const,
+            generation: 3,
+            renderFormat: "html_pdf" as const,
+          },
+        },
+        layoutBoxCount: 3,
+      };
+    });
+    const refreshedQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item) =>
+        item.jobKey === jobKey
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeTextArtifactId: draftArtifact.artifactId,
+              },
+            }
+          : item,
+      ),
+    };
+    const applyReviewQueue = vi.fn(async () => (renderCompleted ? refreshedQueue : sampleApplyReviewQueue));
+    const artifact = vi.fn(async (artifactId: string) => {
+      if (artifactId === acceptedArtifact.artifactId) {
+        return makeArtifactDetail(
+          acceptedArtifact,
+          makeArtifactTailoringExplanation(
+            makeCoverageAudit({
+              covered: ["platform reliability", "typescript"],
+              declared: ["terraform", "gcp"],
+              missing: ["incident response", "kubernetes"],
+            }),
+          ),
+        );
+      }
+      if (artifactId === draftArtifact.artifactId) {
+        return makeArtifactDetail(
+          draftArtifact,
+          makeArtifactTailoringExplanation(
+            makeCoverageAudit({
+              covered: ["platform reliability", "incident response", "terraform"],
+              declared: ["kubernetes", "gcp"],
+              missing: ["typescript"],
+            }),
+          ),
+        );
+      }
+      return makeArtifactDetail({ ...sampleArtifact, artifactId });
+    });
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue,
+          artifact,
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          renderResumeReviewDraft,
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: draft.commentThreads,
+            seededCount: draft.commentThreads.length,
+            updatedCount: 0,
+          })),
+        },
+      }),
+    });
+
+    await findResumeShadowRoot();
+    const renderButton = await screen.findByRole("button", { name: "render replacement" });
+    await waitFor(() => expect(renderButton).not.toBeDisabled());
+    await userEvent.click(renderButton);
+    await waitFor(() => expect(applyReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    const comparison = within(await screen.findByRole("region", { name: "Artifact comparison" }));
+    expect(await comparison.findByText("Accepted resume")).toBeInTheDocument();
+    expect(comparison.getByText("Rendered draft resume")).toBeInTheDocument();
+    expect(await comparison.findByText("+covered")).toBeInTheDocument();
+    expect(comparison.getByText("incident response")).toBeInTheDocument();
+    expect(comparison.getByText("lost")).toBeInTheDocument();
+    expect(comparison.getByText("typescript")).toBeInTheDocument();
+    expect(comparison.getByText("+declared")).toBeInTheDocument();
+    expect(comparison.getByText("declared lost")).toBeInTheDocument();
+    expect(comparison.getByText("gcp")).toBeInTheDocument();
+    expect(comparison.getByText("claim risk")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
+
+    await waitFor(() => expect(renderButton).not.toBeDisabled());
+    await userEvent.click(renderButton);
+    await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledTimes(2));
+    expect(await comparison.findByText("Accepted resume")).toBeInTheDocument();
+    expect(comparison.getByText("Rendered draft resume")).toBeInTheDocument();
+  });
+
+  it("does not reuse a rendered draft comparison after switching jobs", async () => {
+    const firstItem = sampleApplyReviewQueue.items[0]!;
+    const secondItem = sampleApplyReviewQueue.items[1]!;
+    const acceptedArtifact = {
+      ...sampleAcceptedResumeArtifact,
+      artifactId: firstItem.materialsPreview.resumeTextArtifactId ?? "resume-text-2",
+      jobKey: firstItem.jobKey,
+      title: "Accepted resume",
+      company: firstItem.company,
+    };
+    const draftArtifact = {
+      ...sampleDraftResumeArtifact,
+      artifactId: "resume-review-text",
+      jobKey: firstItem.jobKey,
+      title: "Rendered draft resume",
+      company: firstItem.company,
+    };
+    const draft = {
+      ...makeResumeReviewDraft(firstItem.jobKey, {
+        draftId: "draft-job-2",
+        revisionId: "draft-revision-1",
+      }),
+      commentThreads: [makeResumeCommentThread("draft-job-2")],
+    };
+    const renderResumeReviewDraft = vi.fn(async () => ({
+      ok: true as const,
+      draft: {
+        ...draft,
+        state: "rendered" as const,
+      },
+      validation: { passed: true, errors: [], warnings: [] },
+      artifacts: {
+        resumeText: {
+          artifactId: draftArtifact.artifactId,
+          artifactType: "tailored_resume" as const,
+          generation: 3,
+          renderFormat: "text" as const,
+        },
+        resumePdf: {
+          artifactId: "resume-review-pdf",
+          artifactType: "resume_pdf" as const,
+          generation: 3,
+          renderFormat: "html_pdf" as const,
+        },
+      },
+      layoutBoxCount: 3,
+    }));
+    const artifact = vi.fn(async (artifactId: string) => {
+      if (artifactId === acceptedArtifact.artifactId) {
+        return makeArtifactDetail(
+          acceptedArtifact,
+          makeArtifactTailoringExplanation(makeCoverageAudit()),
+        );
+      }
+      if (artifactId === draftArtifact.artifactId) {
+        return makeArtifactDetail(
+          draftArtifact,
+          makeArtifactTailoringExplanation(makeCoverageAudit()),
+        );
+      }
+      return makeArtifactDetail({ ...sampleArtifact, artifactId });
+    });
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          renderResumeReviewDraft,
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: draft.commentThreads,
+            seededCount: draft.commentThreads.length,
+            updatedCount: 0,
+          })),
+        },
+      }),
+    });
+
+    await findResumeShadowRoot();
+    const renderButton = await screen.findByRole("button", { name: "render replacement" });
+    await waitFor(() => expect(renderButton).not.toBeDisabled());
+    await userEvent.click(renderButton);
+    const comparison = within(await screen.findByRole("region", { name: "Artifact comparison" }));
+    expect(await comparison.findByText("Rendered draft resume")).toBeInTheDocument();
+
+    artifact.mockClear();
+    await userEvent.click(
+      within(screen.getByLabelText("Application review queue")).getByRole("button", {
+        name: new RegExp(secondItem.title),
+      }),
+    );
+
+    const nextComparison = within(await screen.findByRole("region", { name: "Artifact comparison" }));
+    expect(
+      await nextComparison.findByText("Render a saved draft to compare it with the accepted artifact."),
+    ).toBeInTheDocument();
+    expect(nextComparison.queryByText("Rendered draft resume")).not.toBeInTheDocument();
+    expect(artifact).not.toHaveBeenCalledWith(draftArtifact.artifactId);
+  });
+
   it("lets the user reply to a persisted JobHunter line comment without hiding source context", async () => {
     const draft: ResumeReviewDraft = {
       ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
@@ -2460,11 +2705,81 @@ describe("<ApplyReviewView>", () => {
     await user.click(await screen.findByRole("button", { name: /approve submit for principal platform engineer/i }));
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
-    expect(decideApplyReview).toHaveBeenCalledWith(
-      "job-2",
-      expect.objectContaining({ decision: "approve_submit" }),
-    );
+	    expect(decideApplyReview).toHaveBeenCalledWith(
+	      "job-2",
+	      expect.objectContaining({
+	        decision: "approve_submit",
+	        materialsGeneration: sampleApplyReviewQueue.items[0]!.approvalGate.materialsGeneration,
+	        profileVersion: sampleApplyReviewQueue.items[0]!.approvalGate.profileVersion,
+	        applicationUrl: sampleApplyReviewQueue.items[0]!.approvalGate.applicationUrl,
+	      }),
+	    );
     expect(applyJob).not.toHaveBeenCalled();
+  });
+
+  it("offers submit approval with a partial dry-run override only when partial evidence exists", async () => {
+    const user = userEvent.setup();
+    const decideApplyReview = vi.fn(async () => ({
+      ok: true as const,
+      decision: {
+        decisionId: "decision-partial",
+        jobKey: "job-2",
+        decision: "approve_submit" as const,
+        reason: "approved",
+        decidedBy: "user",
+        decidedAt: "2026-05-06T08:30:00Z",
+      },
+    }));
+    const partialQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              approvalGate: {
+                ...item.approvalGate,
+                dryRunEvidence: null,
+                partialDryRunEvidence: {
+                  runId: "dry-run-partial",
+                  coverage: "partial" as const,
+                  finishedAt: "2026-05-06T06:35:00Z",
+                  blockedChannels: ["Document"],
+                },
+                reasons: ["awaiting_dry_run" as const],
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => partialQueue),
+          decideApplyReview,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Partial dry-run evidence only/i);
+    expect(screen.getByRole("button", { name: /Approve submit for Principal Platform Engineer/i })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", {
+        name: /Approve with partial dry-run evidence for Principal Platform Engineer/i,
+      }),
+    );
+
+    await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
+	    expect(decideApplyReview).toHaveBeenCalledWith(
+	      "job-2",
+	      expect.objectContaining({
+	        decision: "approve_submit",
+	        materialsGeneration: partialQueue.items[0]!.approvalGate.materialsGeneration,
+	        profileVersion: partialQueue.items[0]!.approvalGate.profileVersion,
+	        applicationUrl: partialQueue.items[0]!.approvalGate.applicationUrl,
+	        partialOverrideRunId: "dry-run-partial",
+	      }),
+	    );
   });
 
   it("does not depend on outcome suggestions to render the queue route", async () => {

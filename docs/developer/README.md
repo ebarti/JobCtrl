@@ -182,7 +182,7 @@ form when the tier calls for it.
 | a dry run (noun), dry-run (adjective) | "Dry-Run Apply" as a standalone name | "rehearse with a dry run"; a recommended rehearsal, never described as an enforced prerequisite |
 | approval gates; approve a submission | consent gates, sign-off | the user-facing name for the apply gate model; the recorded decision is `approve_submit` |
 | a live submission | live apply (as a noun) | the real, non-dry-run application submit |
-| the apply agent | apply bot, apply worker | the Claude Code CLI subprocess that drives the browser ("apply-worker state" remains the on-disk directory name) |
+| the apply agent | apply bot, apply worker | the Claude apply-runtime subprocess that drives the browser ("apply-worker state" remains the on-disk directory name) |
 
 ### Diagrams
 

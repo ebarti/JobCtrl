@@ -16,7 +16,13 @@ import type {
   TelemetryPort,
 } from "../shared/ports/index.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
-import { sampleResumeTemplateListResponse } from "./fixtures/projections.js";
+import {
+  makeArtifactDetail,
+  makeArtifactsPage,
+  sampleArtifact,
+  sampleExtensionCapabilityTokenResponse,
+  sampleResumeTemplateListResponse,
+} from "./fixtures/projections.js";
 
 const sampleDiscoverySourceRegistry = {
   ok: true as const,
@@ -179,6 +185,13 @@ export interface BuildTestPortsOptions {
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
   const baseApi = new FetchApiClientAdapter();
   const templateApiDefaults: Partial<Ports["api"]> = {
+    artifacts: vi.fn(async () => makeArtifactsPage()),
+    artifact: vi.fn(async (artifactId: string) =>
+      makeArtifactDetail({
+        ...sampleArtifact,
+        artifactId,
+      }),
+    ),
     discoverySources: vi.fn(async () => sampleDiscoverySourceRegistry),
     resumeTemplates: vi.fn(async () => sampleResumeTemplateListResponse),
     saveResumeTemplate: vi.fn(async (body) => ({
@@ -235,6 +248,12 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       attempt: null,
       generation: null,
       message: "Resume materials already use the effective template.",
+    })),
+    extensionCapabilityToken: vi.fn(async () => sampleExtensionCapabilityTokenResponse),
+    rotateExtensionCapabilityToken: vi.fn(async () => ({
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
     })),
   };
   const api = overrides.api

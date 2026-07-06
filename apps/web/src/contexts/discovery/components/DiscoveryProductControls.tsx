@@ -179,6 +179,8 @@ function manualActionLabel(value: ManualCaptureItem["reason"]): string {
       return "Protected internal site";
     case "ambiguous_career_system":
       return "Unconfirmed careers page";
+    case "browser_extension_capture":
+      return "Browser extension capture";
   }
 }
 
@@ -198,6 +200,8 @@ function manualActionDetail(value: ManualCaptureItem["reason"]): string {
       return "The posting appears to be on a protected company or internal site.";
     case "ambiguous_career_system":
       return "The URL looks useful, but the app cannot confirm which careers system or parser should handle it yet.";
+    case "browser_extension_capture":
+      return "The user saved this posting from the browser extension.";
   }
 }
 

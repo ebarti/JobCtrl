@@ -75,6 +75,7 @@ class JobListProjection:
     description: str = ""
     full_description: str = ""
     fit_score: int | None = None
+    fit_band: str | None = None
     compensation_summary_json: str | None = None
     score_breakdown_json: str | None = None
     score_keywords_json: str = "[]"
@@ -95,6 +96,10 @@ class JobListProjection:
     has_pdf: bool = False
     apply_status: str | None = None
     applied_at: str | None = None
+    apply_mode: str | None = None
+    resume_template_id: str | None = None
+    resume_template_name: str | None = None
+    tailoring_policy_version: int | None = None
     artifact_count: int = 0
     deleted_at: str | None = None
     last_updated_at: str | None = None
@@ -162,6 +167,10 @@ class JobDetailProjection:
     # ``RequirementFitReport.to_read_model()``), or None when this job has not
     # been scored with requirement-level assessments yet.
     requirement_fit_report_json: str | None = None
+    # Interview-prep read shape (JSON of the latest accepted
+    # ``InterviewPrep.to_read_model()``), or None when the user has not
+    # explicitly generated prep for this job yet.
+    interview_prep_json: str | None = None
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,11 @@ interface ManualOutcomeFormValues {
   readonly note: string;
 }
 
+interface InterviewReflectionFormValues {
+  readonly occurredAt: string;
+  readonly note: string;
+}
+
 interface SuggestionCorrectionFormValues {
   readonly outcomeKind: ApplicationOutcomeKind;
   readonly occurredAt: string;
@@ -63,6 +68,18 @@ function manualOutcomePayload(values: ManualOutcomeFormValues): ManualApplicatio
     kind: values.kind,
     occurredAt: isoTimestampFromLocalInput(values.occurredAt),
     note: values.note.trim() || undefined,
+  };
+}
+
+function interviewReflectionPayload(
+  values: InterviewReflectionFormValues,
+  prepGeneration: number,
+): ManualApplicationOutcomeRequest {
+  return {
+    kind: "interview",
+    occurredAt: isoTimestampFromLocalInput(values.occurredAt),
+    note: values.note.trim() || undefined,
+    interviewPrepGeneration: prepGeneration,
   };
 }
 
@@ -241,6 +258,125 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
   );
 }
 
+export interface InterviewReflectionPanelProps {
+  readonly jobId: JobId;
+  readonly prepGeneration: number;
+}
+
+export function InterviewReflectionPanel({ jobId, prepGeneration }: InterviewReflectionPanelProps) {
+  const { data, error, isFetching } = useJobApplicationOutcomesQuery(jobId);
+  const message = error instanceof Error ? error.message : null;
+  const reflections = (data?.outcomes ?? []).filter(
+    (outcome) => outcome.kind === "interview" && outcome.interviewPrepGeneration === prepGeneration,
+  );
+
+  return (
+    <div className="interview-reflection-panel" aria-label="Post-interview reflections">
+      <InterviewReflectionForm jobId={jobId} prepGeneration={prepGeneration} />
+      {message ? <div className="banner inline">{message}</div> : null}
+      {!data && !message ? (
+        <Empty title={isFetching ? "Loading reflections." : "No reflections."} />
+      ) : null}
+      {data ? <OutcomeTimeline outcomes={reflections} /> : null}
+    </div>
+  );
+}
+
+export interface InterviewReflectionFormProps {
+  readonly jobId: JobId;
+  readonly prepGeneration: number;
+}
+
+export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewReflectionFormProps) {
+  const recordOutcome = useRecordManualApplicationOutcomeMutation();
+  const [statusMessage, setStatusMessage] = useState("");
+  const form = useForm({
+    defaultValues: {
+      occurredAt: "",
+      note: "",
+    },
+    validators: {
+      onSubmit: ({ value }) => {
+        const result = ManualApplicationOutcomeRequestSchema.safeParse(
+          interviewReflectionPayload(value, prepGeneration),
+        );
+        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid reflection");
+      },
+    },
+    onSubmit: async ({ value, formApi }) => {
+      setStatusMessage("");
+      const result = ManualApplicationOutcomeRequestSchema.safeParse(
+        interviewReflectionPayload(value, prepGeneration),
+      );
+      if (!result.success) {
+        setStatusMessage(result.error.issues[0]?.message ?? "Invalid reflection");
+        return;
+      }
+      await recordOutcome.mutateAsync({ jobId, body: result.data });
+      formApi.reset({
+        occurredAt: "",
+        note: "",
+      });
+      setStatusMessage("Reflection recorded");
+    },
+  });
+
+  return (
+    <form
+      className="outcome-form interview-reflection-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void form.handleSubmit();
+      }}
+    >
+      <input name="kind" readOnly type="hidden" value="interview" />
+      <input name="interviewPrepGeneration" readOnly type="hidden" value={prepGeneration} />
+      <form.Field name="occurredAt">
+        {(field) => (
+          <label className="field">
+            <span>Interview date</span>
+            <input
+              name="occurredAt"
+              type="datetime-local"
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </label>
+        )}
+      </form.Field>
+      <form.Field name="note">
+        {(field) => (
+          <label className="field wide">
+            <span>Reflection note</span>
+            <textarea
+              name="note"
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </label>
+        )}
+      </form.Field>
+      {recordOutcome.isError ? <div className="danger">Reflection save failed</div> : null}
+      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
+        {({ canSubmit, isSubmitting }) => (
+          <Button
+            className="outcome-submit"
+            type="submit"
+            size="sm"
+            disabled={!canSubmit || isSubmitting || recordOutcome.isPending}
+          >
+            {isSubmitting || recordOutcome.isPending ? "Recording" : "Record reflection"}
+          </Button>
+        )}
+      </form.Subscribe>
+    </form>
+  );
+}
+
 export interface OutcomeTimelineProps {
   readonly outcomes: readonly ApplicationOutcome[];
 }
@@ -260,6 +396,9 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
           </span>
           <time dateTime={outcome.occurredAt}>{formatDateTime(outcome.occurredAt)}</time>
           <span className="meta">{outcome.source === "email_suggestion" ? "email suggestion" : "manual"}</span>
+          {outcome.interviewPrepGeneration !== null ? (
+            <span className="meta">prep generation {outcome.interviewPrepGeneration}</span>
+          ) : null}
           {outcome.note ? <p className="outcome-note">{outcome.note}</p> : null}
         </li>
       ))}
