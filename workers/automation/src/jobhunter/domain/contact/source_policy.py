@@ -100,6 +100,14 @@ def _host(url: str) -> str:
         return ""
 
 
+def _is_public_web_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return False
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
 def contact_research_source_policy() -> SourcePolicy:
     """The discovery ``SourcePolicy`` guardrails reused for contact research.
 
@@ -176,6 +184,8 @@ class ContactResearchSourcePolicy:
             return ResearchSourceDecision.ALLOWED
         # public_web_page
         if not url.strip():
+            return ResearchSourceDecision.REJECTED
+        if not _is_public_web_url(url):
             return ResearchSourceDecision.REJECTED
         if looks_protected(url):
             return ResearchSourceDecision.MANUAL_CAPTURE_REQUIRED
