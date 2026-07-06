@@ -78,7 +78,7 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 - **Spend ceiling as a blast-radius control.** The `check_spend_budget` preflight
   runs before the apply activity, so a runaway or injected loop cannot spend past
   the daily ceiling.
-- **Prompt-injection surface.** The agent is a Claude Code CLI subprocess launched
+- **Prompt-injection surface.** The agent is a Claude apply-runtime subprocess launched
   with `--permission-mode bypassPermissions` (no per-action prompts) because it
   must fill arbitrary, unknowable forms. It reads untrusted third-party page text
   live, so prompt injection is a genuine, unavoidable exposure — the controls

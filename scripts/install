@@ -279,6 +279,25 @@ run_doctor() {
   fi
 }
 
+run_python_setup() {
+  local setup_args=(--skip-system --skip-dependencies --skip-browsers)
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    setup_args+=(--yes)
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    setup_args+=(--dry-run)
+  fi
+  if [[ "$SKIP_DOCTOR" -eq 1 ]]; then
+    setup_args+=(--skip-doctor)
+  fi
+
+  if confirm "Run JobHunter setup for vendor auth and analysis-leg configuration?"; then
+    run_in_root uv --project workers/automation run jobhunter setup "${setup_args[@]}"
+  else
+    SKIPPED_STEPS+=("JobHunter setup")
+  fi
+}
+
 print_summary() {
   heading "Summary"
   if [[ "${#SKIPPED_STEPS[@]}" -gt 0 ]]; then
@@ -346,7 +365,7 @@ main() {
   install_node_workspace
   install_python_worker
   install_playwright_browsers
-  run_doctor
+  run_python_setup
   print_summary
 
   if [[ "${#REMAINING_SYSTEM_DEPS[@]}" -gt 0 ]]; then

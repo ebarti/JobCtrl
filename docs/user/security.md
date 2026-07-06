@@ -33,7 +33,7 @@ run the step that needs them and have configured the relevant provider:
 | Outbound call | When it happens | What is sent |
 | --- | --- | --- |
 | LLM provider APIs | Scoring, employer analysis, resume tailoring, and cover-letter generation | Job posting text, your profile evidence (experience, skills, verified metrics), and the generated resume/cover-letter text. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
-| The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers), the tailored resume and cover-letter text, and — when you have configured them — an account password for login fields and the CapSolver API key. The apply agent is a Claude Code CLI subprocess, so this prompt is sent to the model backing it. |
+| The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers), the tailored resume and cover-letter text, and — when you have configured them — an account password for login fields and the CapSolver API key. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
 | Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobHunter never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
 | Gmail (read-only) | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails. The connector requests read-only scope; raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
@@ -158,8 +158,10 @@ secret commits (see the [developer Security page](../developer/security.md)).
 
 ## The Apply Agent
 
-The apply agent is a local Claude Code CLI subprocess that drives a real Chrome
-browser through Playwright. It runs with per-action permission prompts turned off
+The apply agent is a local Claude runtime subprocess that drives a real Chrome
+browser through Playwright. It uses a system `claude` when present, then the
+pinned Claude Agent SDK bundled binary unless `JOBHUNTER_CLAUDE_BIN` is set. It
+runs with per-action permission prompts turned off
 (`--permission-mode bypassPermissions`) because it needs that autonomy to fill
 the arbitrary, unpredictable forms real applications use.
 

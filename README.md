@@ -95,7 +95,8 @@ Requirements:
 - Playwright Chromium for HTML/CSS PDF rendering
 - Chrome or Chromium for browser automation
 - Poppler (`pdftoppm` on `PATH`) for PDF page previews
-- an LLM provider key or local LLM endpoint for scoring and materials
+- an LLM provider key or local LLM endpoint for scoring/materials, plus
+  vendor auth for any enabled employer-analysis ensemble legs
 
 Install and run:
 
@@ -103,6 +104,7 @@ Install and run:
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
 pnpm install:interactive
+uv --project workers/automation run jobhunter setup
 uv --project workers/automation run jobhunter init
 uv --project workers/automation run jobhunter doctor
 pnpm dev
@@ -111,6 +113,8 @@ pnpm dev
 `pnpm install:interactive` checks local system tools, offers guided installs
 when Homebrew is available, installs the Node and Python dependencies, and
 installs the Playwright Chromium browsers used by web tests and PDF rendering.
+It then hands off to `jobhunter setup` to detect vendor auth, persist enabled
+employer-analysis legs, and run `doctor`.
 For an already provisioned machine or CI-style setup, `pnpm dev:setup` remains
 the non-interactive Node + Python dependency sync.
 
@@ -223,6 +227,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | Command | What it does |
 | --- | --- |
 | `init` | Create local configuration under `~/.jobhunter/`. |
+| `setup` | Check/sync dependencies, detect vendor auth, and persist enabled employer-analysis legs. |
 | `doctor` | Report feature tiers: database, LLM, Temporal, browser, Gmail, telemetry. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores reset stale scores. |
@@ -253,7 +258,16 @@ Start with [.env.example](.env.example), then read the full reference in
 Common variables:
 
 - `JOBHUNTER_DIR`: override the local app directory.
-- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
+- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure general LLM access.
+- `ANTHROPIC_API_KEY` or local Claude credentials: authenticate the Claude
+  employer-analysis leg.
+- `CODEX_HOME/auth.json`: authenticates the Codex employer-analysis leg; a bare
+  `OPENAI_API_KEY` must be enrolled with `codex login --with-api-key` or
+  `jobhunter setup`.
+- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env: authenticate the
+  Antigravity/Gemini employer-analysis leg.
+- `JOBHUNTER_ANALYSIS_LEGS`: comma-separated enabled analysis legs when setup
+  intentionally skips an unauthenticated leg.
 - `LLM_MODEL`: choose the default model for the configured provider.
 - `VITE_GOOGLE_MAPS_API_KEY`: optional address search in the Profile form.
 - `CHROME_PATH`: override Chrome/Chromium detection.

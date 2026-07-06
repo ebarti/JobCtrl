@@ -8,7 +8,9 @@ Most people never need this page. JobHunter ships with working defaults, and the
 Discovery targets and preferences you set in the web app cover day-to-day use.
 The two settings worth knowing first are an **LLM provider key** (required before
 scoring or materials can run) and the **daily LLM spend budget** (which caps
-cost) — both are covered below.
+cost). Employer-analysis also has per-vendor auth checks because it runs a
+Claude + Codex + Antigravity ensemble; `jobhunter setup` and `jobhunter doctor`
+report those separately.
 
 JobHunter configuration is intentionally local. Some settings live in the local
 SQLite database, set through the web app; secrets and runtime switches are read
@@ -52,8 +54,8 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 
 | Variable | What it does |
 | --- | --- |
-| `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials. |
-| `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. |
+| `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials and the Antigravity/Gemini analysis leg. |
+| `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. For the Codex analysis leg, enroll this into `CODEX_HOME/auth.json`; a bare env key is not enough. |
 | `LLM_URL` | Enables a local OpenAI-compatible HTTP endpoint. |
 | `LLM_API_KEY` | Optional bearer token for the `LLM_URL` endpoint. |
 | `GOOGLE_API_KEY` | Fallback for the Antigravity/Gemini analysis leg when `GEMINI_API_KEY` is unset. |
@@ -61,6 +63,42 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 
 The pipeline default model spec is currently `gemini:gemini-3.5-flash` unless a
 stage or UI control overrides it.
+
+## Employer-Analysis Ensemble
+
+Run this after first install or whenever vendor auth changes:
+
+```bash
+uv --project workers/automation run jobhunter setup
+uv --project workers/automation run jobhunter doctor
+```
+
+The ensemble legs use vendor SDK runtimes pinned in the Python environment. The
+setup command detects auth before prompting and writes only local `.env`
+configuration; it never commits or ships credentials.
+
+| Variable | What it does |
+| --- | --- |
+| `JOBHUNTER_ANALYSIS_LEGS` | Comma-separated enabled legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg so runs do not burn retries. |
+| `ANTHROPIC_API_KEY` | Supported Claude Agent SDK auth path. |
+| `ANTHROPIC_AUTH_TOKEN` | Alternate Claude auth token path. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Local/dev Claude subscription convenience. The distributed product path remains API/provider auth. |
+| `CLAUDE_CONFIG_DIR` | Overrides the local Claude credential directory checked for `.credentials.json`. |
+| `CODEX_HOME` | Codex home containing `auth.json`. Defaults to `~/.codex`; the JobHunter adapter copies this auth into isolated `~/.jobhunter/codex_home`. |
+| `JOBHUNTER_CODEX_BIN` | Explicit Codex runtime override. The default is the pinned `openai-codex-cli-bin` bundled binary. |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Set to `1` to allow the Antigravity leg to use Vertex AI ADC instead of an API key. |
+| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_PROJECT_ID` / `GCLOUD_PROJECT` | Project used with Vertex AI ADC. |
+| `GOOGLE_CLOUD_LOCATION` / `GOOGLE_VERTEX_LOCATION` | Optional Vertex location for Antigravity. |
+
+Codex auth is the common gotcha: `OPENAI_API_KEY` and `CODEX_API_KEY` can feed
+other surfaces, but the Codex SDK app-server path used by JobHunter needs
+persisted `auth.json`. Enroll a key with:
+
+```bash
+printenv OPENAI_API_KEY | codex login --with-api-key
+```
+
+or run the Codex device login locally, then rerun `jobhunter setup`.
 
 ## LLM Spend Budget
 
@@ -114,6 +152,7 @@ rendering, and layout boxes stay tied to the same material generation.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `CHROME_PATH` | auto-detected | Chrome/Chromium executable path. |
+| `JOBHUNTER_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBHUNTER_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
 | `CAPSOLVER_API_KEY` | unset | Optional CAPTCHA solving support for explicitly authorized apply runs. |
 | `JOBHUNTER_LINKEDIN_APPLY_RESOLVER` | enabled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution. |
