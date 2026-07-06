@@ -171,6 +171,49 @@ def test_csv_import_tags_provenance_and_skips_linkless_rows(tmp_path: Path) -> N
         assert attribute.provenance.capture_method == "manual"
 
 
+def test_edit_preserves_provenance_of_unchanged_imported_facts(tmp_path: Path) -> None:
+    """Regression (#331 review High): a role-only edit must not re-stamp
+    imported facts as user_entered (INV-2); only new or value-edited facts
+    become user-entered."""
+    repo, _ = _setup(tmp_path)
+    csv_text = "name,email,employer,role\nBob Manager,bob@globex.example,Globex,hiring_manager\n"
+    ImportContactsUseCase(repo).execute(
+        LOCAL_TENANT, filename="referrals.csv", csv_text=csv_text
+    )
+    imported = repo.list_for_employer(LOCAL_TENANT, "Globex")[0]
+    original = {attribute.kind: attribute for attribute in imported.attributes}
+
+    updated = UpdateContactUseCase(repo).execute(
+        LOCAL_TENANT,
+        imported.contact_id,
+        role=ContactRole.REFERRER,
+        attributes=[
+            AttributeInput("name", "Bob Manager"),
+            AttributeInput("email", "bob@globex.example"),
+            AttributeInput("phone", "+1 555 0100"),
+        ],
+    )
+    by_kind = {attribute.kind: attribute for attribute in updated.attributes}
+    for kind in ("name", "email"):
+        assert by_kind[kind].provenance.source_kind == "user_imported_list"
+        assert by_kind[kind].provenance.source_ref == "referrals.csv"
+        assert by_kind[kind].provenance.captured_at == original[kind].provenance.captured_at
+        assert by_kind[kind].attribute_id == original[kind].attribute_id
+    assert by_kind["phone"].provenance.source_kind == "user_entered"
+
+    revalued = UpdateContactUseCase(repo).execute(
+        LOCAL_TENANT,
+        imported.contact_id,
+        attributes=[
+            AttributeInput("name", "Bob Manager"),
+            AttributeInput("email", "bob.manager@globex.example"),
+        ],
+    )
+    by_kind = {attribute.kind: attribute for attribute in revalued.attributes}
+    assert by_kind["name"].provenance.source_kind == "user_imported_list"
+    assert by_kind["email"].provenance.source_kind == "user_entered"
+
+
 def test_list_for_job_filters_by_application(tmp_path: Path) -> None:
     repo, _ = _setup(tmp_path)
     CreateContactUseCase(repo).execute(
