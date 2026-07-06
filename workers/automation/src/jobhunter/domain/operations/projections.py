@@ -75,6 +75,7 @@ class JobListProjection:
     description: str = ""
     full_description: str = ""
     fit_score: int | None = None
+    fit_band: str | None = None
     compensation_summary_json: str | None = None
     score_breakdown_json: str | None = None
     score_keywords_json: str = "[]"
@@ -95,6 +96,10 @@ class JobListProjection:
     has_pdf: bool = False
     apply_status: str | None = None
     applied_at: str | None = None
+    apply_mode: str | None = None
+    resume_template_id: str | None = None
+    resume_template_name: str | None = None
+    tailoring_policy_version: int | None = None
     artifact_count: int = 0
     deleted_at: str | None = None
     last_updated_at: str | None = None

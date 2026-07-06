@@ -13,6 +13,7 @@ import {
   createDiscoveryRunCompleted,
   createDiscoveryRunFailed,
   createDiscoveryRunStarted,
+  createDigestReviewed,
   createDuplicateJobLinked,
   createDuplicateJobLinkRejected,
   createEnrichmentFailed,
@@ -249,6 +250,11 @@ export const eventByType = {
     marketRecordStatus: "recorded",
     marketEstimateState: "estimated_range",
     updatedAt: NOW,
+  }),
+  DigestReviewed: createDigestReviewed(LOCAL_TENANT, {
+    acknowledgedAt: NOW,
+    reviewedAt: NOW,
+    previousAcknowledgedAt: "2026-05-05T08:00:00Z",
   }),
   JobScored: createJobScored(LOCAL_TENANT, {
     jobId: JOB_ID,

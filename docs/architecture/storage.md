@@ -56,7 +56,7 @@ The remaining tables group by owner:
 | Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
-| Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `artifact_list_projections`, `event_watermarks` |
+| Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
 | Discovery & preparation | `discovery_runs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
 | Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `jobhunter_deleted_jobs` |
 
@@ -66,6 +66,9 @@ rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
 file-backed until their own storage migration.
+The `digest_state` projection table stores the local daily digest review
+watermark; passive Dashboard and CLI reads do not update it, and only explicit
+acknowledge actions advance it.
 Posted compensation facts live in the canonical
 `job_posted_compensation_facts` table. The parser consumes only bounded salary
 source text such as `jobs.salary`, records explicit parse states and warnings,

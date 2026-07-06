@@ -60,6 +60,10 @@ Use the Discovery page to set:
 - minimum fit score and automation preferences;
 - manual capture and quarantined source decisions.
 
+The optional browser extension's **Save job** action also lands here: it records
+the active page as a user-mediated manual capture, then the normal discovery
+import path dedupes, snapshots, and surfaces the job in Jobs.
+
 Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.
@@ -146,6 +150,8 @@ Typical review actions:
 - reply to JobHunter line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;
+- compare the accepted artifact with the rendered draft using stored coverage,
+  validation, judge, template, and risk-label rows;
 - approve only after the edited draft is saved, valid, and rendered.
 
 Failed validation stays as audit history and does not hide the last accepted
@@ -177,19 +183,25 @@ Useful command-line checks:
 
 ```bash
 uv --project workers/automation run jobhunter status
+uv --project workers/automation run jobhunter digest
 uv --project workers/automation run jobhunter runs
 uv --project workers/automation run jobhunter runs --failed-only
 ```
 
-These print your pipeline status, list all workflow runs, and list only failed
-runs, respectively.
+These print your pipeline status, show the local daily digest, list all workflow
+runs, and list only failed runs, respectively. The digest is read-only unless
+you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 Useful web app views:
 
 - Dashboard for high-level counts and source health.
+- Analytics for recorded outcome counts and sample-gated rates by source, score
+  band, fit band, and apply mode. The page reads canonical application outcome
+  rows and projections only; groups below the minimum sample count stay
+  count-only.
 - Jobs for triage and per-job actions.
 - Runs for workflow history.
-- Artifacts for generated files.
+- Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
 

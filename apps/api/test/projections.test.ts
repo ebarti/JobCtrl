@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { ensureProjectionTables } from "../src/projections.js";
@@ -3176,18 +3177,53 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
          VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
       ).run(jobUrl);
+      db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 2, 'local', 'complete', '2026-06-09T12:00:00+00:00', '2026-06-09T12:10:00+00:00')`,
+      ).run(jobUrl);
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
           job_url, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
       );
-      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
-      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "tailored_resume",
+        "resume-1",
+        "/tmp/resume.txt",
+        "text",
+        10,
+        completeMetadata,
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "resume_pdf",
+        "resume-pdf-1",
+        "/tmp/resume.pdf",
+        "pdf",
+        20,
+        "{}",
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        2,
+        "tailored_resume",
+        "resume-2",
+        "/tmp/resume-v2.txt",
+        "text",
+        12,
+        completeMetadata,
+        "2026-06-09T12:05:00+00:00",
+      );
 
       // The set-level coverage + voice, denormalised onto every row (the Python
       // repo writes the SAME value on each row of the generation).
-      const coverageJson = JSON.stringify({
+      const coverageJsonGen1 = JSON.stringify({
         computed_against: "rendered_text",
         planned: ["latency", "terraform", "python"],
         covered: ["latency"],
@@ -3196,6 +3232,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         covered_by: { latency: "experience:acme_swe#0" },
         declared_by: { terraform: "skills:cloud#0" },
         counts: { planned: 3, covered: 1, declared: 1, missing: 1 },
+      });
+      const coverageJsonGen2 = JSON.stringify({
+        computed_against: "rendered_text",
+        planned: ["latency", "incident response", "python"],
+        covered: ["latency", "incident response"],
+        declared: [],
+        missing: ["python"],
+        covered_by: {
+          latency: "experience:acme_swe#0",
+          "incident response": "experience:incident#0",
+        },
+        declared_by: {},
+        counts: { planned: 3, covered: 2, declared: 0, missing: 1 },
       });
       const voiceJson = JSON.stringify({
         ran: true,
@@ -3211,13 +3260,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           evidence_ids_json, requirement_ids_json, matched_keywords_json,
           transform_type, control, rationale, generated_text, position, created_at,
           coverage_json, voice_json
-        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00', ?, ?)`,
+        ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertProvenance.run(
-        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        jobUrl, 1, "experience:acme_swe#0", "resume-1", "experience", "acme_swe",
         JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
         "voice", "rephrase_allowed", "Voiced bullet.",
-        "Owned the API and cut latency 40%.", 0, coverageJson, voiceJson,
+        "Owned the API and cut latency 40%.", 0, "2026-06-08T12:10:00+00:00", coverageJsonGen1, voiceJson,
+      );
+      insertProvenance.run(
+        jobUrl, 2, "experience:incident#0", "resume-2", "experience", "incident_response",
+        JSON.stringify(["ev_incident"]), JSON.stringify(["req_incident"]), JSON.stringify(["incident response"]),
+        "voice", "rephrase_allowed", "Voiced bullet.",
+        "Owned incident response drills.", 0, "2026-06-09T12:10:00+00:00", coverageJsonGen2, voiceJson,
       );
       db.close();
 
@@ -3247,11 +3302,22 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         // The voiced bullet is served with transformType "voice".
         expect(explanation.bulletProvenance[0].transformType).toBe("voice");
 
-        // The PDF artifact resolves coverage + voice from the sibling text row.
+        // Historical and current text artifacts each keep their own generation's
+        // canonical coverage row.
+        const resume2Res = await app.inject({ method: "GET", url: "/v1/artifacts/resume-2" });
+        expect(resume2Res.statusCode, resume2Res.body).toBe(200);
+        const resume2Explanation = resume2Res.json().tailoringExplanation;
+        expect(resume2Explanation.coverageAudit?.covered).toEqual(["latency", "incident response"]);
+        expect(resume2Explanation.coverageAudit?.declared).toEqual([]);
+        expect(resume2Explanation.coverageAudit?.missing).toEqual(["python"]);
+
+        // The PDF artifact resolves coverage + voice from its same-generation
+        // sibling text row, not the newer generation.
         const pdfRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-pdf-1" });
         expect(pdfRes.statusCode, pdfRes.body).toBe(200);
         const pdfExplanation = pdfRes.json().tailoringExplanation;
         expect(pdfExplanation.coverageAudit?.covered).toEqual(["latency"]);
+        expect(pdfExplanation.coverageAudit?.declared).toEqual(["terraform"]);
         expect(pdfExplanation.voicePass?.accepted).toBe(true);
       } finally {
         await app.close();
@@ -3565,6 +3631,68 @@ describe("dashboard outcome-conversion projection", () => {
         occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
         PRIMARY KEY (tenant_id, outcome_id)
       );
+      CREATE TABLE application_outcome_suggestions (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        suggestion_id TEXT NOT NULL,
+        job_key TEXT NOT NULL,
+        evidence_id TEXT,
+        suggested_kind TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0,
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decision TEXT,
+        decision_reason TEXT,
+        decided_outcome_id TEXT,
+        PRIMARY KEY (tenant_id, suggestion_id)
+      );
+      CREATE TABLE job_materials (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_validation_json TEXT,
+        last_verdict_json TEXT,
+        metadata_json TEXT,
+        PRIMARY KEY (job_url, generation)
+      );
+      CREATE TABLE job_materials_artifacts (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        artifact_type TEXT NOT NULL,
+        artifact_id TEXT,
+        status TEXT NOT NULL,
+        path TEXT NOT NULL,
+        render_format TEXT NOT NULL DEFAULT 'text',
+        size_bytes INTEGER,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE job_requirement_fit_reports (
+        job_url TEXT NOT NULL, score_version INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        employer_analysis_generation INTEGER NOT NULL DEFAULT 1,
+        profile_snapshot_version INTEGER NOT NULL DEFAULT 1,
+        scoring_policy_version INTEGER NOT NULL DEFAULT 1,
+        formula_version TEXT NOT NULL DEFAULT 'test',
+        resolved_fit_score INTEGER,
+        fit_band TEXT NOT NULL,
+        confidence TEXT NOT NULL DEFAULT 'medium',
+        summary_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, score_version, tenant_id)
+      );
+      CREATE TABLE apply_run_projections (
+        run_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL, job_title TEXT NOT NULL DEFAULT '',
+        job_employer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+        result TEXT, dry_run INTEGER NOT NULL DEFAULT 0,
+        worker_id INTEGER, model TEXT, started_at TEXT, finished_at TEXT,
+        duration_ms INTEGER, events_json TEXT NOT NULL DEFAULT '[]'
+      );
     `);
     db.close();
   }
@@ -3573,8 +3701,13 @@ describe("dashboard outcome-conversion projection", () => {
     url: string;
     site: string;
     fitScore: number | null;
+    fitBand?: "excellent" | "strong" | "plausible" | "stretch" | "poor";
     applied: boolean;
+    applyRun?: { status: string; dryRun?: boolean };
+    manualMarked?: boolean;
     outcomes?: string[];
+    template?: { id: string; name: string };
+    policyVersion?: number;
   }
 
   function seedJobs(dbPath: string, jobs: SeedJob[]): void {
@@ -3587,6 +3720,35 @@ describe("dashboard outcome-conversion projection", () => {
       `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
        VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
     );
+    const insertFitReport = db.prepare(
+      `INSERT INTO job_requirement_fit_reports (
+         job_url, score_version, tenant_id, employer_analysis_generation, profile_snapshot_version,
+         scoring_policy_version, formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at
+       ) VALUES (@job_url, 1, 'local', 1, 1, 1, 'test', @resolved_fit_score, @fit_band, 'medium', '{}', @at)`,
+    );
+    const insertApplyRun = db.prepare(
+      `INSERT INTO apply_run_projections (
+         run_id, tenant_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at, events_json
+       ) VALUES (@run_id, 'local', @job_id, 'Engineer', 'Example', @status, @result, @dry_run, @started_at, @finished_at, '[]')`,
+    );
+    const insertEvent = db.prepare(
+      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES (@job_url, 'apply', @event_type, 'info', @message, @at, '{}')`,
+    );
+    const insertMaterial = db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+       ) VALUES (@job_url, @generation, 'local', 'resume_approved', @created_at, @created_at, @metadata_json)`,
+    );
+    const insertMaterialArtifact = db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (
+         @job_url, 1, 'tailored_resume', @artifact_id, 'approved', @path,
+         'text', 12, @metadata_json, @created_at
+       )`,
+    );
     for (const job of jobs) {
       insertJob.run({
         url: job.url,
@@ -3597,6 +3759,61 @@ describe("dashboard outcome-conversion projection", () => {
         applied_at: job.applied ? "2026-06-01T12:00:00+00:00" : null,
         discovered_at: "2026-05-20T12:00:00+00:00",
       });
+      if (job.fitBand) {
+        insertFitReport.run({
+          job_url: job.url,
+          resolved_fit_score: job.fitScore,
+          fit_band: job.fitBand,
+          at: "2026-05-25T12:00:00+00:00",
+        });
+      }
+      if (job.applyRun) {
+        insertApplyRun.run({
+          run_id: `${job.url}-run`,
+          job_id: job.url,
+          status: job.applyRun.status,
+          result: job.applyRun.status === "succeeded" ? "applied" : job.applyRun.status,
+          dry_run: job.applyRun.dryRun ? 1 : 0,
+          started_at: "2026-06-01T11:55:00+00:00",
+          finished_at: job.applyRun.status === "starting" ? null : "2026-06-01T12:00:00+00:00",
+        });
+      }
+      if (job.manualMarked) {
+        insertEvent.run({
+          job_url: job.url,
+          event_type: "ApplicationManuallyMarked",
+          message: "Job marked applied from test.",
+          at: "2026-06-01T12:00:00+00:00",
+        });
+      }
+      if (job.template || job.policyVersion !== undefined) {
+        const metadata = JSON.stringify({
+          tailoring_policy_version: job.policyVersion ?? null,
+          resume_template: job.template
+            ? {
+                templateId: job.template.id,
+                templateVersionId: `${job.template.id}:v1`,
+                templateVersionNumber: 1,
+                templateName: job.template.name,
+                templateHash: `hash:${job.template.id}`,
+                assignmentSource: "job_override",
+              }
+            : undefined,
+        });
+        insertMaterial.run({
+          job_url: job.url,
+          generation: 1,
+          metadata_json: metadata,
+          created_at: "2026-06-01T12:00:00+00:00",
+        });
+        insertMaterialArtifact.run({
+          job_url: job.url,
+          artifact_id: `${job.url}-resume`,
+          path: `/tmp/${encodeURIComponent(job.url)}.txt`,
+          metadata_json: metadata,
+          created_at: "2026-06-01T12:00:00+00:00",
+        });
+      }
       for (const kind of job.outcomes ?? []) {
         insertOutcome.run({
           outcome_id: `${job.url}-${kind}`,
@@ -3606,6 +3823,62 @@ describe("dashboard outcome-conversion projection", () => {
         });
       }
     }
+    db.close();
+  }
+
+  function seedAcceptedReplacementResume(dbPath: string, jobUrl: string): void {
+    const db = new Database(dbPath);
+    db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+       ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)`,
+    ).run(
+      jobUrl,
+      "2026-06-02T12:00:00+00:00",
+      "2026-06-02T12:00:00+00:00",
+      JSON.stringify({
+        source: "resume_review_draft",
+        base_generation: 1,
+      }),
+    );
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 14, ?, ?)`,
+    ).run(
+      jobUrl,
+      `${jobUrl}-replacement-resume`,
+      `/tmp/${encodeURIComponent(jobUrl)}-replacement.txt`,
+      JSON.stringify({
+        source: "resume_review_draft",
+        base_generation: 1,
+        base_resume_text_artifact_id: `${jobUrl}-resume`,
+      }),
+      "2026-06-02T12:00:00+00:00",
+    );
+    db.close();
+  }
+
+  function seedSuggestions(dbPath: string, statuses: string[]): void {
+    const db = new Database(dbPath);
+    const insertSuggestion = db.prepare(
+      `INSERT INTO application_outcome_suggestions (
+         tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+         status, created_at, decided_at, decision
+       ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+         @status, @created_at, @decided_at, @decision)`,
+    );
+    statuses.forEach((status, index) => {
+      insertSuggestion.run({
+        suggestion_id: `suggestion-${index}`,
+        job_key: `https://example.com/suggestion-${index}`,
+        status,
+        created_at: "2026-06-02T12:00:00+00:00",
+        decided_at: "2026-06-02T12:05:00+00:00",
+        decision: status,
+      });
+    });
     db.close();
   }
 
@@ -3732,6 +4005,153 @@ describe("dashboard outcome-conversion projection", () => {
     }
   });
 
+  it("returns outcome analytics by score band, fit band, and apply mode with gated rates", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      const modernTemplate = { id: "template-modern", name: "Modern compact" };
+      const plainTemplate = { id: "template-plain", name: "Plain ATS" };
+      seedJobs(dbPath, [
+        { url: "https://example.com/manual-1", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-2", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-3", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["interview"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-4", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-5", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/live-1", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-2", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-3", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-4", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-5", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/external", site: "lever", fitScore: 4, fitBand: "stretch", applied: true, outcomes: ["applied_confirmation", "recruiter_reply"] },
+        { url: "https://example.com/dry-run", site: "lever", fitScore: 2, fitBand: "poor", applied: false, applyRun: { status: "dry_run_complete", dryRun: true }, outcomes: ["recruiter_reply"] },
+      ]);
+      seedSuggestions(dbPath, ["accepted", "accepted", "accepted", "corrected", "ignored"]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        const analytics = res.json();
+
+        expect(analytics.minSample).toBe(5);
+        expect(analytics.totals).toMatchObject({ n: 11, applied: 11, reply: 6 });
+        const byScoreBand = Object.fromEntries(
+          analytics.byScoreBand.map((g: { scoreBand: string }) => [g.scoreBand, g]),
+        );
+        expect(byScoreBand.perfect).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byScoreBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byScoreBand.weak).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byFitBand = Object.fromEntries(
+          analytics.byFitBand.map((g: { fitBand: string }) => [g.fitBand, g]),
+        );
+        expect(byFitBand.excellent).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byFitBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byFitBand.stretch).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+        expect(byFitBand.poor).toBeUndefined();
+
+        const byApplyMode = Object.fromEntries(
+          analytics.byApplyMode.map((g: { applyMode: string }) => [g.applyMode, g]),
+        );
+        expect(byApplyMode.automated_live).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byApplyMode.manual_marked).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byApplyMode.external_confirmed).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byTemplate = Object.fromEntries(
+          analytics.byTemplate.map((g: { templateId: string }) => [g.templateId, g]),
+        );
+        expect(byTemplate["template-modern"]).toMatchObject({
+          templateName: "Modern compact",
+          n: 5,
+          applied: 5,
+          reply: 2,
+          replyRate: 0.4,
+        });
+        expect(byTemplate["template-plain"]).toMatchObject({
+          templateName: "Plain ATS",
+          n: 5,
+          applied: 5,
+          reply: 3,
+          replyRate: 0.6,
+        });
+        expect(byTemplate.unreported).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byPolicy = Object.fromEntries(
+          analytics.byPolicy.map((g: { policyLabel: string }) => [g.policyLabel, g]),
+        );
+        expect(byPolicy["Policy v3"]).toMatchObject({ tailoringPolicyVersion: 3, n: 5, replyRate: 0.4 });
+        expect(byPolicy["Policy v4"]).toMatchObject({ tailoringPolicyVersion: 4, n: 5, replyRate: 0.6 });
+        expect(byPolicy.Unreported).toMatchObject({ tailoringPolicyVersion: null, n: 1, replyRate: null });
+        expect(analytics.timeToResponse).toEqual({ n: 6, medianMinutes: 5760 });
+        expect(analytics.suggestionAccuracy).toEqual({
+          n: 5,
+          decided: 5,
+          accepted: 3,
+          corrected: 1,
+          ignored: 1,
+          acceptanceRate: 0.6,
+        });
+        expect(res.body).not.toContain("note");
+        expect(res.body).not.toContain("body_text");
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps accepted replacement resumes in their base template and policy buckets", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      const modernTemplate = { id: "template-modern", name: "Modern compact" };
+      seedJobs(dbPath, [
+        { url: "https://example.com/replacement-1", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-2", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-3", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-4", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-5", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+      ]);
+      for (let index = 1; index <= 5; index += 1) {
+        seedAcceptedReplacementResume(dbPath, `https://example.com/replacement-${index}`);
+      }
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        const analytics = res.json();
+        expect(analytics.byTemplate).toEqual([
+          expect.objectContaining({
+            templateId: "template-modern",
+            templateName: "Modern compact",
+            n: 5,
+            reply: 5,
+            replyRate: 1,
+          }),
+        ]);
+        expect(analytics.byPolicy).toEqual([
+          expect.objectContaining({
+            tailoringPolicyVersion: 3,
+            policyLabel: "Policy v3",
+            n: 5,
+            reply: 5,
+            replyRate: 1,
+          }),
+        ]);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("returns an empty conversion with null rates when nothing is applied", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
@@ -3759,6 +4179,26 @@ describe("dashboard outcome-conversion projection", () => {
       }
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("outcome analytics read-only guard", () => {
+  it("does not import the analytics read model into decision-code modules", () => {
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const decisionFiles = [
+      "apps/api/src/write-model.ts",
+      "apps/api/src/application-feedback.ts",
+      "workers/automation/src/jobhunter/domain/scoring/use_cases.py",
+      "workers/automation/src/jobhunter/domain/apply/services.py",
+      "workers/automation/src/jobhunter/apply/launcher.py",
+      "workers/automation/src/jobhunter/pipeline/runner.py",
+    ];
+    for (const file of decisionFiles) {
+      const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      expect(text, file).not.toContain("buildOutcomeAnalyticsSummary");
+      expect(text, file).not.toContain("/v1/analytics/outcomes");
+      expect(text, file).not.toContain("OutcomeAnalyticsSummary");
     }
   });
 });

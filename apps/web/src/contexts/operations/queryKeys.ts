@@ -1,6 +1,8 @@
 export { jobsKeys } from "./jobsKeys.js";
 export { activityKeys } from "./activityKeys.js";
+export { analyticsKeys } from "./analyticsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
+export { digestKeys } from "./digestKeys.js";
 export { compensationKeys } from "./compensationKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { applyRunsKeys } from "./applyRunsKeys.js";

@@ -27,7 +27,10 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
+  DailyDigest,
   DeleteJobRequest,
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
@@ -39,6 +42,7 @@ import type {
   GmailOutcomeScanResponse,
   EnsureCurrentResumeMaterialsRequest,
   EnsureCurrentResumeMaterialsResponse,
+  ExtensionCapabilityTokenResponse,
   JobResumeTemplateAssignmentRequest,
   JobResumeTemplateAssignmentResponse,
   JobDetail,
@@ -56,6 +60,7 @@ import type {
   MarketCompensationEstimateResponse,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   PostedCompensationFactResponse,
   ProfileConfigResponse,
@@ -180,6 +185,18 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {
+    return this.get("/v1/analytics/outcomes");
+  }
+
+  digest(): Promise<DailyDigest> {
+    return this.get("/v1/digest");
+  }
+
+  acknowledgeDigest(body: DigestAcknowledgeRequest = {}): Promise<DigestAcknowledgeResponse> {
+    return this.post("/v1/digest/acknowledge", body);
   }
 
   activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {
@@ -592,6 +609,14 @@ export class JobHunterApiClient {
 
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse> {
     return this.patch("/v1/settings", body);
+  }
+
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.get("/v1/extension/pairing-token");
+  }
+
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.post("/v1/extension/pairing-token/rotate", {});
   }
 
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> {

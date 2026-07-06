@@ -1420,6 +1420,66 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
     assert provenance["source_kind"] == "user_mediated_capture"
 
 
+def test_manual_capture_import_preserves_extension_capture_provenance(
+    conn: sqlite3.Connection,
+) -> None:
+    seed_discovery_control_queues(conn, _barcelona_registry())
+    item_id = conn.execute(
+        """
+        SELECT item_id FROM manual_capture_queue
+        WHERE source_id = ?
+        """,
+        ("manual:protected-board",),
+    ).fetchone()["item_id"]
+    conn.execute(
+        """
+        UPDATE manual_capture_queue
+        SET source_id = ?, reason = ?, retry_context_json = ?
+        WHERE item_id = ?
+        """,
+        (
+            "manual_capture:extension",
+            "browser_extension_capture",
+            json.dumps(
+                {
+                    "source": "browser_extension",
+                    "capture_client": "browser_extension",
+                    "extension_version": "0.3.0",
+                }
+            ),
+            item_id,
+        ),
+    )
+
+    import_manual_capture_item(
+        conn,
+        ManualCaptureImport(
+            item_id=item_id,
+            capture_mode="current_page",
+            captured_url="https://login.protected.example/jobs/vp-engineering",
+            content_text=_manual_capture_html(),
+            future_manual_action_required=False,
+        ),
+    )
+
+    manual_row = conn.execute(
+        """
+        SELECT retry_context_json
+        FROM manual_capture_queue
+        WHERE item_id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    provenance = json.loads(manual_row["retry_context_json"])[
+        "manual_capture_provenance"
+    ]
+    assert provenance["source_kind"] == "user_mediated_capture"
+    assert provenance["source_id"] == "manual_capture:extension"
+    assert provenance["capture_mode"] == "current_page"
+    assert provenance["capture_client"] == "browser_extension"
+    assert provenance["extension_version"] == "0.3.0"
+
+
 def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
