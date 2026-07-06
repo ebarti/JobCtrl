@@ -1319,6 +1319,42 @@ Consequences:
 
 Cites: PR #237 (P3).
 
+## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
+
+Status: accepted
+
+Decision: outcome analytics are a read-side Operations concern exposed through
+`GET /v1/analytics/outcomes`. The endpoint reads integer counts from
+`dashboard_projections.outcome_conversion_json`; rates are derived only in the
+TypeScript read model and are `null` below `MIN_CONVERSION_SAMPLE` (`5` by
+default). The analytics contract carries `n` beside every rate. The band
+vocabulary decision is explicit: keep the existing parity-guarded score-band
+breakdown as `byScoreBand`, and add a separate canonical requirement-fit
+breakdown as `byFitBand`. Apply mode is projected as
+`automated_live`, `manual_marked`, or `external_confirmed`; dry-runs are excluded
+from the applied denominator.
+
+Rationale:
+
+- integer-only projection keeps the Python and TypeScript builders byte-parity
+  friendly and avoids cross-runtime float drift
+- low-volume single-user data needs counts-only rendering below the sample floor
+- score band and fit band use different vocabularies, so merging them would make
+  the read model ambiguous
+- analytics describe recorded outcomes and must not affect scoring, ranking,
+  thresholds, discovery scheduling, or apply eligibility
+
+Consequences:
+
+- new dimensions require updates in both projection builders and the shared
+  parity fixture
+- clients consume already-gated rates and cannot compute sub-threshold
+  percentages from the analytics response
+- future template/policy/time-to-response analytics must reuse the same
+  threshold and read-only boundary
+
+Cites: PR #273 (`MIN_CONVERSION_SAMPLE` baseline) and R4 outcome analytics.
+
 ## 2026-07-05: Saved Table Views Stay Client-Persisted Templates
 
 Status: accepted

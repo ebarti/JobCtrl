@@ -2286,6 +2286,48 @@ export interface DashboardConversionSummary {
   byBand: Array<{ band: string } & DashboardConversionFunnel>;
 }
 
+export type OutcomeAnalyticsScoreBand =
+  | "perfect"
+  | "strong"
+  | "moderate"
+  | "weak"
+  | "poor"
+  | "unscored";
+
+export type OutcomeAnalyticsFitBand =
+  | "excellent"
+  | "strong"
+  | "plausible"
+  | "stretch"
+  | "poor"
+  | "unreported";
+
+export type OutcomeAnalyticsApplyMode = "automated_live" | "manual_marked" | "external_confirmed";
+
+export interface OutcomeAnalyticsFunnel {
+  n: number;
+  applied: number;
+  reply: number;
+  interview: number;
+  offer: number;
+  rejection: number;
+  replyRate: number | null;
+  interviewRate: number | null;
+  offerRate: number | null;
+  rejectionRate: number | null;
+}
+
+export interface OutcomeAnalyticsSummary {
+  ok: true;
+  generatedAt: string;
+  minSample: number;
+  totals: OutcomeAnalyticsFunnel;
+  bySource: Array<{ source: string } & OutcomeAnalyticsFunnel>;
+  byScoreBand: Array<{ scoreBand: OutcomeAnalyticsScoreBand } & OutcomeAnalyticsFunnel>;
+  byFitBand: Array<{ fitBand: OutcomeAnalyticsFitBand } & OutcomeAnalyticsFunnel>;
+  byApplyMode: Array<{ applyMode: OutcomeAnalyticsApplyMode } & OutcomeAnalyticsFunnel>;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;

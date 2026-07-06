@@ -36,7 +36,7 @@ need:
 | [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
 | [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
 | [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, audit history, list filters, and delete / hide / restore routes. |
-| [Dashboard and operational metrics](#dashboard-and-operational-metrics) | `GET /v1/dashboard/summary` source health and operational attempt counters. |
+| [Dashboard, analytics, and operational metrics](#dashboard-analytics-and-operational-metrics) | `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, source health, and operational attempt counters. |
 | [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
 | [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
@@ -255,7 +255,7 @@ record, so rediscovery can add the same posting again later.
 all-matching bulk mutation body and resets each active failed or exhausted job's
 failed stage to `pending`; non-failed selected jobs are ignored.
 
-## Dashboard and operational metrics
+## Dashboard, analytics, and operational metrics
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
@@ -266,6 +266,16 @@ web dashboard uses for source health. The same response also includes
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
 messages.
+
+`GET /v1/analytics/outcomes` returns the outcome analytics read model sourced
+from `dashboard_projections.outcome_conversion_json`. It exposes integer counts
+and read-time rates for totals plus `bySource`, `byScoreBand`, `byFitBand`, and
+`byApplyMode`. Every row carries `n` (`applied`) beside the rate fields, and all
+rates are `null` until `n >= MIN_CONVERSION_SAMPLE` (`5` by default in
+`apps/api/src/read-model.ts`). `byScoreBand` uses the existing score-band
+vocabulary, while `byFitBand` is a separate canonical requirement-fit breakdown.
+The endpoint is read-only and does not feed scoring, ranking, thresholds, or
+apply eligibility.
 
 ## Discovery controls
 

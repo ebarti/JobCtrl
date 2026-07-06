@@ -386,6 +386,53 @@ def _apply_job(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int)
     )
 
 
+def _mark_manual_applied(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int) -> None:
+    _seed_job(conn, url, site=site)
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        """,
+        (url, fit_score, utc_now()),
+    )
+    conn.execute(
+        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+        (utc_now(), url),
+    )
+    record_job_event(conn, url, "apply", "ApplicationManuallyMarked")
+
+
+def _mark_external_confirmed(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int) -> None:
+    _seed_job(conn, url, site=site)
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        """,
+        (url, fit_score, utc_now()),
+    )
+    conn.execute(
+        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+        (utc_now(), url),
+    )
+    _record_outcome(conn, url, "applied_confirmation")
+
+
+def _record_fit_band(conn: sqlite3.Connection, url: str, fit_score: int, fit_band: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_reports (
+            job_url, score_version, tenant_id, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 1, 'local', 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?)
+        """,
+        (url, fit_score, fit_band, utc_now()),
+    )
+
+
 def _record_outcome(conn: sqlite3.Connection, url: str, kind: str) -> None:
     conn.execute(
         """
@@ -434,6 +481,62 @@ def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) 
     assert by_band["moderate"] == {
         "band": "moderate", "applied": 2, "reply": 2, "interview": 1, "offer": 1, "rejection": 1,
     }
+    by_apply_mode = {entry["applyMode"]: entry for entry in conversion["byApplyMode"]}
+    assert by_apply_mode["automated_live"] == {
+        "applyMode": "automated_live", "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
+    }
+    by_fit_band = {entry["fitBand"]: entry for entry in conversion["byFitBand"]}
+    assert by_fit_band["unreported"] == {
+        "fitBand": "unreported", "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
+    }
+
+
+def test_outcome_conversion_counts_by_fit_band_and_apply_mode(conn: sqlite3.Connection) -> None:
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    for idx in range(1, 6):
+        url = f"https://example.com/live-{idx}"
+        _apply_job(conn, url, site="greenhouse", fit_score=9)
+        _record_fit_band(conn, url, 9, "excellent")
+        if idx <= 2:
+            _record_outcome(conn, url, "interview")
+    for idx in range(1, 6):
+        url = f"https://example.com/manual-{idx}"
+        _mark_manual_applied(conn, url, site="linkedin", fit_score=8)
+        _record_fit_band(conn, url, 8, "strong")
+        if idx <= 3:
+            _record_outcome(conn, url, "recruiter_reply")
+    _mark_external_confirmed(conn, "https://example.com/external", site="lever", fit_score=4)
+    _record_fit_band(conn, "https://example.com/external", 4, "stretch")
+    _record_outcome(conn, "https://example.com/external", "recruiter_reply")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    by_fit_band = {entry["fitBand"]: entry for entry in conversion["byFitBand"]}
+    assert by_fit_band["excellent"] == {
+        "fitBand": "excellent", "applied": 5, "reply": 2, "interview": 2, "offer": 0, "rejection": 0,
+    }
+    assert by_fit_band["strong"] == {
+        "fitBand": "strong", "applied": 5, "reply": 3, "interview": 0, "offer": 0, "rejection": 0,
+    }
+    assert by_fit_band["stretch"] == {
+        "fitBand": "stretch", "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
+
+    by_apply_mode = {entry["applyMode"]: entry for entry in conversion["byApplyMode"]}
+    assert by_apply_mode["automated_live"] == {
+        "applyMode": "automated_live", "applied": 5, "reply": 2, "interview": 2, "offer": 0, "rejection": 0,
+    }
+    assert by_apply_mode["manual_marked"] == {
+        "applyMode": "manual_marked", "applied": 5, "reply": 3, "interview": 0, "offer": 0, "rejection": 0,
+    }
+    assert by_apply_mode["external_confirmed"] == {
+        "applyMode": "external_confirmed", "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
 
 
 def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection) -> None:
@@ -450,6 +553,8 @@ def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection)
         "totals": {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0},
         "bySource": [],
         "byBand": [],
+        "byFitBand": [],
+        "byApplyMode": [],
     }
 
 

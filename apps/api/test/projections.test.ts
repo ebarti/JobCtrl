@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { ensureProjectionTables } from "../src/projections.js";
@@ -2950,6 +2951,28 @@ describe("dashboard outcome-conversion projection", () => {
         occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
         PRIMARY KEY (tenant_id, outcome_id)
       );
+      CREATE TABLE job_requirement_fit_reports (
+        job_url TEXT NOT NULL, score_version INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        employer_analysis_generation INTEGER NOT NULL DEFAULT 1,
+        profile_snapshot_version INTEGER NOT NULL DEFAULT 1,
+        scoring_policy_version INTEGER NOT NULL DEFAULT 1,
+        formula_version TEXT NOT NULL DEFAULT 'test',
+        resolved_fit_score INTEGER,
+        fit_band TEXT NOT NULL,
+        confidence TEXT NOT NULL DEFAULT 'medium',
+        summary_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, score_version, tenant_id)
+      );
+      CREATE TABLE apply_run_projections (
+        run_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL, job_title TEXT NOT NULL DEFAULT '',
+        job_employer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+        result TEXT, dry_run INTEGER NOT NULL DEFAULT 0,
+        worker_id INTEGER, model TEXT, started_at TEXT, finished_at TEXT,
+        duration_ms INTEGER, events_json TEXT NOT NULL DEFAULT '[]'
+      );
     `);
     db.close();
   }
@@ -2958,7 +2981,10 @@ describe("dashboard outcome-conversion projection", () => {
     url: string;
     site: string;
     fitScore: number | null;
+    fitBand?: "excellent" | "strong" | "plausible" | "stretch" | "poor";
     applied: boolean;
+    applyRun?: { status: string; dryRun?: boolean };
+    manualMarked?: boolean;
     outcomes?: string[];
   }
 
@@ -2972,6 +2998,21 @@ describe("dashboard outcome-conversion projection", () => {
       `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
        VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
     );
+    const insertFitReport = db.prepare(
+      `INSERT INTO job_requirement_fit_reports (
+         job_url, score_version, tenant_id, employer_analysis_generation, profile_snapshot_version,
+         scoring_policy_version, formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at
+       ) VALUES (@job_url, 1, 'local', 1, 1, 1, 'test', @resolved_fit_score, @fit_band, 'medium', '{}', @at)`,
+    );
+    const insertApplyRun = db.prepare(
+      `INSERT INTO apply_run_projections (
+         run_id, tenant_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at, events_json
+       ) VALUES (@run_id, 'local', @job_id, 'Engineer', 'Example', @status, @result, @dry_run, @started_at, @finished_at, '[]')`,
+    );
+    const insertEvent = db.prepare(
+      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES (@job_url, 'apply', @event_type, 'info', @message, @at, '{}')`,
+    );
     for (const job of jobs) {
       insertJob.run({
         url: job.url,
@@ -2982,6 +3023,33 @@ describe("dashboard outcome-conversion projection", () => {
         applied_at: job.applied ? "2026-06-01T12:00:00+00:00" : null,
         discovered_at: "2026-05-20T12:00:00+00:00",
       });
+      if (job.fitBand) {
+        insertFitReport.run({
+          job_url: job.url,
+          resolved_fit_score: job.fitScore,
+          fit_band: job.fitBand,
+          at: "2026-05-25T12:00:00+00:00",
+        });
+      }
+      if (job.applyRun) {
+        insertApplyRun.run({
+          run_id: `${job.url}-run`,
+          job_id: job.url,
+          status: job.applyRun.status,
+          result: job.applyRun.status === "succeeded" ? "applied" : job.applyRun.status,
+          dry_run: job.applyRun.dryRun ? 1 : 0,
+          started_at: "2026-06-01T11:55:00+00:00",
+          finished_at: job.applyRun.status === "starting" ? null : "2026-06-01T12:00:00+00:00",
+        });
+      }
+      if (job.manualMarked) {
+        insertEvent.run({
+          job_url: job.url,
+          event_type: "ApplicationManuallyMarked",
+          message: "Job marked applied from test.",
+          at: "2026-06-01T12:00:00+00:00",
+        });
+      }
       for (const kind of job.outcomes ?? []) {
         insertOutcome.run({
           outcome_id: `${job.url}-${kind}`,
@@ -3117,6 +3185,66 @@ describe("dashboard outcome-conversion projection", () => {
     }
   });
 
+  it("returns outcome analytics by score band, fit band, and apply mode with gated rates", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      seedJobs(dbPath, [
+        { url: "https://example.com/manual-1", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/manual-2", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/manual-3", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["interview"] },
+        { url: "https://example.com/manual-4", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true },
+        { url: "https://example.com/manual-5", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true },
+        { url: "https://example.com/live-1", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"] },
+        { url: "https://example.com/live-2", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"] },
+        { url: "https://example.com/live-3", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" } },
+        { url: "https://example.com/live-4", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" } },
+        { url: "https://example.com/live-5", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" } },
+        { url: "https://example.com/external", site: "lever", fitScore: 4, fitBand: "stretch", applied: true, outcomes: ["applied_confirmation", "recruiter_reply"] },
+        { url: "https://example.com/dry-run", site: "lever", fitScore: 2, fitBand: "poor", applied: false, applyRun: { status: "dry_run_complete", dryRun: true }, outcomes: ["recruiter_reply"] },
+      ]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        const analytics = res.json();
+
+        expect(analytics.minSample).toBe(5);
+        expect(analytics.totals).toMatchObject({ n: 11, applied: 11, reply: 6 });
+        const byScoreBand = Object.fromEntries(
+          analytics.byScoreBand.map((g: { scoreBand: string }) => [g.scoreBand, g]),
+        );
+        expect(byScoreBand.perfect).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byScoreBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byScoreBand.weak).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byFitBand = Object.fromEntries(
+          analytics.byFitBand.map((g: { fitBand: string }) => [g.fitBand, g]),
+        );
+        expect(byFitBand.excellent).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byFitBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byFitBand.stretch).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+        expect(byFitBand.poor).toBeUndefined();
+
+        const byApplyMode = Object.fromEntries(
+          analytics.byApplyMode.map((g: { applyMode: string }) => [g.applyMode, g]),
+        );
+        expect(byApplyMode.automated_live).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byApplyMode.manual_marked).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byApplyMode.external_confirmed).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+        expect(res.body).not.toContain("note");
+        expect(res.body).not.toContain("body_text");
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("returns an empty conversion with null rates when nothing is applied", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
@@ -3144,6 +3272,26 @@ describe("dashboard outcome-conversion projection", () => {
       }
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("outcome analytics read-only guard", () => {
+  it("does not import the analytics read model into decision-code modules", () => {
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const decisionFiles = [
+      "apps/api/src/write-model.ts",
+      "apps/api/src/application-feedback.ts",
+      "workers/automation/src/jobhunter/domain/scoring/use_cases.py",
+      "workers/automation/src/jobhunter/domain/apply/services.py",
+      "workers/automation/src/jobhunter/apply/launcher.py",
+      "workers/automation/src/jobhunter/pipeline/runner.py",
+    ];
+    for (const file of decisionFiles) {
+      const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      expect(text, file).not.toContain("buildOutcomeAnalyticsSummary");
+      expect(text, file).not.toContain("/v1/analytics/outcomes");
+      expect(text, file).not.toContain("OutcomeAnalyticsSummary");
     }
   });
 });

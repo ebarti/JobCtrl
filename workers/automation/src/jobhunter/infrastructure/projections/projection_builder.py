@@ -265,6 +265,8 @@ _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 # ``domain/scoring/use_cases.py`` SCORE_PROMPT (9-10 perfect ... 1-2 poor) so the
 # outcome-conversion funnel reads by the same bands the score view shows.
 SCORE_BAND_ORDER: tuple[str, ...] = ("perfect", "strong", "moderate", "weak", "poor", "unscored")
+FIT_BAND_ORDER: tuple[str, ...] = ("excellent", "strong", "plausible", "stretch", "poor", "unreported")
+APPLY_MODE_ORDER: tuple[str, ...] = ("automated_live", "manual_marked", "external_confirmed")
 
 # Outcome kinds that mark an applied job as having reached each funnel stage.
 # Later stages imply earlier ones (an offer implies an interview and a reply), so
@@ -289,6 +291,16 @@ def _score_band(fit_score: int | None) -> str:
     if fit_score >= 3:
         return "weak"
     return "poor"
+
+
+def _fit_band(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in FIT_BAND_ORDER else "unreported"
+
+
+def _apply_mode(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in APPLY_MODE_ORDER else "manual_marked"
 
 
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
@@ -631,6 +643,7 @@ class ProjectionBuilder:
         materials = self._load_latest_materials(job_url)
         employer_analysis_json = self._load_employer_analysis(job_url)
         requirement_fit_report_json = self._load_requirement_fit_report(job_url)
+        requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
@@ -709,6 +722,12 @@ class ProjectionBuilder:
             applied_at = ar_finished
         else:
             applied_at = _row_nullable_str(job_row, "applied_at")
+        apply_mode = self._derive_apply_mode(
+            job_url,
+            apply_run,
+            _row_nullable_str(job_row, "apply_status"),
+            _row_nullable_str(job_row, "applied_at"),
+        )
 
         # description fallbacks
         description = _row_str(job_row, "description")
@@ -738,6 +757,7 @@ class ProjectionBuilder:
             description=description,
             full_description=full_description,
             fit_score=fit_score,
+            fit_band=requirement_fit_band,
             compensation_summary_json=compensation_summary,
             score_breakdown_json=score_breakdown_json,
             score_keywords_json=score_keywords_json,
@@ -758,6 +778,7 @@ class ProjectionBuilder:
             has_pdf=has_pdf,
             apply_status=apply_status,
             applied_at=applied_at,
+            apply_mode=apply_mode,
             artifact_count=len(artifacts),
             deleted_at=deleted_at,
             last_updated_at=last_updated_at,
@@ -1261,6 +1282,48 @@ class ProjectionBuilder:
             "duration_ms": _row_nullable_int(row, "duration_ms"),
         }
 
+    def _derive_apply_mode(
+        self,
+        job_url: str,
+        apply_run: dict,
+        legacy_status: str | None,
+        legacy_applied_at: str | None,
+    ) -> str | None:
+        if apply_run.get("status") == "succeeded" and not apply_run.get("dry_run"):
+            return "automated_live"
+        is_applied = bool(legacy_applied_at) or legacy_status == "applied"
+        if not is_applied:
+            return None
+        if self._has_job_event(job_url, "ApplicationManuallyMarked"):
+            return "manual_marked"
+        if self._has_application_outcome_kind(job_url, "applied_confirmation"):
+            return "external_confirmed"
+        return "manual_marked"
+
+    def _has_job_event(self, job_url: str, event_type: str) -> bool:
+        try:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM job_events WHERE job_url = ? AND event_type = ?",
+                (job_url, event_type),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(_row_nullable_int(row, "c") or 0) > 0
+
+    def _has_application_outcome_kind(self, job_url: str, kind: str) -> bool:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM application_outcomes
+                WHERE tenant_id = ? AND job_key = ? AND kind = ?
+                """,
+                (str(self._tenant_id), job_url, kind),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(_row_nullable_int(row, "c") or 0) > 0
+
     def _load_deleted_at(self, job_url: str) -> str | None:
         try:
             row = self._conn.execute(
@@ -1651,7 +1714,7 @@ class ProjectionBuilder:
         self._store.upsert_dashboard(dashboard)
 
     def _build_outcome_conversion(self, active_rows: list) -> dict[str, Any]:
-        """Roll Gmail/manual application outcomes into a funnel by source + band.
+        """Roll Gmail/manual application outcomes into a funnel by source + bands + mode.
 
         The denominator is the applied jobs (same predicate as the ``applied``
         counter); each applied job's ``application_outcomes`` decide which funnel
@@ -1679,14 +1742,20 @@ class ProjectionBuilder:
         totals = blank()
         by_source: dict[str, dict[str, int]] = {}
         by_band: dict[str, dict[str, int]] = {}
+        by_fit_band: dict[str, dict[str, int]] = {}
+        by_apply_mode: dict[str, dict[str, int]] = {}
         for row in applied_rows:
             source = _row_str(row, "source") or "unknown"
             band = _score_band(_row_nullable_int(row, "fit_score"))
+            fit_band = _fit_band(_row_nullable_str(row, "fit_band"))
+            apply_mode = _apply_mode(_row_nullable_str(row, "apply_mode"))
             kinds = outcomes_by_job.get(_row_str(row, "job_id"), frozenset())
             for bucket in (
                 totals,
                 by_source.setdefault(source, blank()),
                 by_band.setdefault(band, blank()),
+                by_fit_band.setdefault(fit_band, blank()),
+                by_apply_mode.setdefault(apply_mode, blank()),
             ):
                 bucket["applied"] += 1
                 if kinds & _REPLY_OUTCOME_KINDS:
@@ -1707,11 +1776,23 @@ class ProjectionBuilder:
         by_band_list = [
             {"band": band, **by_band[band]} for band in SCORE_BAND_ORDER if band in by_band
         ]
+        by_fit_band_list = [
+            {"fitBand": band, **by_fit_band[band]}
+            for band in FIT_BAND_ORDER
+            if band in by_fit_band
+        ]
+        by_apply_mode_list = [
+            {"applyMode": mode, **by_apply_mode[mode]}
+            for mode in APPLY_MODE_ORDER
+            if mode in by_apply_mode
+        ]
         return {
             "version": 1,
             "totals": totals,
             "bySource": by_source_list,
             "byBand": by_band_list,
+            "byFitBand": by_fit_band_list,
+            "byApplyMode": by_apply_mode_list,
         }
 
     def _load_outcome_kinds_by_job(self) -> dict[str, frozenset[str]]:
@@ -2873,6 +2954,13 @@ def _json_loads(value: str | None, default):
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _fit_band_from_report_json(value: str | None) -> str | None:
+    data = _json_loads(value, {})
+    if not isinstance(data, dict):
+        return None
+    return _fit_band(data.get("fitBand") or data.get("fit_band"))
 
 
 def _preview_text(value: str, limit: int) -> str:

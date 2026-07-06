@@ -57,6 +57,7 @@ import type {
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -151,6 +152,7 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
   digest(): Promise<DailyDigest>;
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;

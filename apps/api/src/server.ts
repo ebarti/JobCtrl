@@ -143,6 +143,7 @@ import {
 import {
   acknowledgeDigest,
   buildDashboardSummary,
+  buildOutcomeAnalyticsSummary,
   buildDigest,
   getActivityEvent,
   getArtifactDetail,
@@ -423,6 +424,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/analytics/outcomes", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => buildOutcomeAnalyticsSummary(db)),
   );
 
   app.get("/v1/digest", async (_request, reply) =>

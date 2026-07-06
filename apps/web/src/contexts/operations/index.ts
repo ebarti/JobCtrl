@@ -40,6 +40,7 @@ export type {
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
   OutcomeSuggestionStatus,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
   QuarantineDecision,

@@ -42,6 +42,7 @@ import type {
   JobDetail,
   JobListQuery,
   JobSummary,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   PreparationSummary,
   ProfileShape,
@@ -391,6 +392,20 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     applyRuns: recentApplyRuns(db),
     preparation: buildPreparationSummary(db, DEFAULT_TENANT),
   };
+}
+
+export function buildOutcomeAnalyticsSummary(db: SqliteDatabase): OutcomeAnalyticsSummary {
+  refreshProjections(db, DEFAULT_TENANT);
+  const dashboardRow = getRow<DashboardProjectionRow>(
+    db,
+    "SELECT * FROM dashboard_projections WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  const dashboard = dashboardRow ?? defaultDashboardRow();
+  return buildOutcomeAnalyticsFromConversion(
+    dashboard.outcome_conversion_json,
+    dashboard.generated_at || new Date().toISOString(),
+  );
 }
 
 export interface DigestBudgetSnapshot {
@@ -3819,7 +3834,7 @@ function defaultFunnel(): DashboardSummary["funnel"] {
  * uses a lower floor because applied volume accrues far more slowly than the
  * discovery volume that gates source quality.
  */
-const MIN_CONVERSION_SAMPLE = 5;
+export const MIN_CONVERSION_SAMPLE = 5;
 
 /**
  * Derive the dashboard conversion section from the materialised
@@ -3850,6 +3865,85 @@ function buildConversionSummary(json: string): DashboardSummary["conversion"] {
       ...conversionFunnelMetrics(group),
     })),
   };
+}
+
+function buildOutcomeAnalyticsFromConversion(
+  json: string,
+  generatedAt: string,
+): OutcomeAnalyticsSummary {
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(json || "{}");
+  } catch {
+    parsed = {};
+  }
+  const record = isRecord(parsed) ? parsed : {};
+  const bySource = Array.isArray(record.bySource) ? record.bySource : [];
+  const byBand = Array.isArray(record.byBand) ? record.byBand : [];
+  const byFitBand = Array.isArray(record.byFitBand) ? record.byFitBand : [];
+  const byApplyMode = Array.isArray(record.byApplyMode) ? record.byApplyMode : [];
+  return {
+    ok: true,
+    generatedAt,
+    minSample: MIN_CONVERSION_SAMPLE,
+    totals: outcomeAnalyticsMetrics(record.totals),
+    bySource: bySource.filter(isRecord).map((group) => ({
+      source: String(group.source ?? "unknown"),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byScoreBand: byBand.filter(isRecord).map((group) => ({
+      scoreBand: outcomeAnalyticsScoreBand(group.band),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byFitBand: byFitBand.filter(isRecord).map((group) => ({
+      fitBand: outcomeAnalyticsFitBand(group.fitBand),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byApplyMode: byApplyMode.filter(isRecord).map((group) => ({
+      applyMode: outcomeAnalyticsApplyMode(group.applyMode),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+  };
+}
+
+function outcomeAnalyticsMetrics(value: unknown): OutcomeAnalyticsSummary["totals"] {
+  const metrics = conversionFunnelMetrics(value);
+  return {
+    n: metrics.applied,
+    applied: metrics.applied,
+    reply: metrics.reply,
+    interview: metrics.interview,
+    offer: metrics.offer,
+    rejection: metrics.rejection,
+    replyRate: metrics.replyRate,
+    interviewRate: metrics.interviewRate,
+    offerRate: metrics.offerRate,
+    rejectionRate: metrics.rejectionRate,
+  };
+}
+
+function outcomeAnalyticsScoreBand(value: unknown): OutcomeAnalyticsSummary["byScoreBand"][number]["scoreBand"] {
+  const band = String(value ?? "unscored");
+  if (["perfect", "strong", "moderate", "weak", "poor", "unscored"].includes(band)) {
+    return band as OutcomeAnalyticsSummary["byScoreBand"][number]["scoreBand"];
+  }
+  return "unscored";
+}
+
+function outcomeAnalyticsFitBand(value: unknown): OutcomeAnalyticsSummary["byFitBand"][number]["fitBand"] {
+  const band = String(value ?? "unreported");
+  if (["excellent", "strong", "plausible", "stretch", "poor", "unreported"].includes(band)) {
+    return band as OutcomeAnalyticsSummary["byFitBand"][number]["fitBand"];
+  }
+  return "unreported";
+}
+
+function outcomeAnalyticsApplyMode(value: unknown): OutcomeAnalyticsSummary["byApplyMode"][number]["applyMode"] {
+  const mode = String(value ?? "manual_marked");
+  if (["automated_live", "manual_marked", "external_confirmed"].includes(mode)) {
+    return mode as OutcomeAnalyticsSummary["byApplyMode"][number]["applyMode"];
+  }
+  return "manual_marked";
 }
 
 function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {

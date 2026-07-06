@@ -60,6 +60,7 @@ import type {
   MarketCompensationEstimateResponse,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   PostedCompensationFactResponse,
   ProfileConfigResponse,
@@ -184,6 +185,10 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {
+    return this.get("/v1/analytics/outcomes");
   }
 
   digest(): Promise<DailyDigest> {
