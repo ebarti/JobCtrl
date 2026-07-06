@@ -165,19 +165,25 @@ class DiscoverWorkflow:
         completed: list[str] = []
         failed: list[str] = []
         failures: list[str] = []
-        # R9 Phase 1 — score-as-you-discover. After each family COMPLETES we
-        # drain that family's fresh jobs through enrichment and fan out their
-        # preparation immediately, instead of waiting for the whole run. These
+        # R9 Phase 1/2 — score-as-you-discover. After each family COMPLETES we
+        # drain that family's fresh jobs through enrichment (Phase 2 hands each
+        # job off to its own SCORE_JOB workflow the moment it is enriched) and
+        # fan out any it missed, instead of waiting for the whole run. These
         # streaming passes are progress-silent (``progress_total=0``); the Runs
         # progress bar advances on the family spine + the terminal reconcile
         # below, so it stays monotonic. Scores still surface incrementally via
-        # ``job_events`` -> projections -> SSE. ``stragglers_swept`` tracks
-        # whether the one-time ``pending_tailor`` sweep has run: the first
-        # successful fan-out derives the full set (fresh + pre-existing
-        # stragglers); every later pass is score-only so a fresh job that
-        # crosses ``pending_score`` -> ``pending_tailor`` mid-tailor is never
-        # double-fanned (I1/I4).
-        stragglers_swept = False
+        # ``job_events`` -> projections -> SSE.
+        #
+        # The one-time ``pending_tailor`` straggler sweep runs HERE, before any
+        # family is enriched — the only moment ``pending_tailor`` cannot contain
+        # a fresh job already owned by a this-run SCORE_JOB workflow (per-job
+        # handoff and the streaming fan-out both start SCORE_JOB workflows the
+        # instant a job is enriched). Every family/terminal fan-out is therefore
+        # score-only, so a fresh job crossing ``pending_score`` ->
+        # ``pending_tailor`` mid-tailor is never double-fanned (I1/I4). Doing the
+        # sweep here also keeps it correct when families run concurrently
+        # (Phase 3).
+        await self._sweep_preexisting_preparation(payload)
         for index, family in enumerate(plan.families):
             try:
                 await workflow.execute_activity(
@@ -205,9 +211,7 @@ class DiscoverWorkflow:
                 failed.append(family)
                 failures.append(f"{family}: {exc.cause if exc.cause else exc}")
                 continue
-            stragglers_swept = await self._stream_family_preparation(
-                payload, stragglers_swept=stragglers_swept
-            )
+            await self._stream_family_preparation(payload)
 
         # Legacy semantics: per-source failures are tolerated. The TERMINAL
         # reconcile enrichment + preparation below ALWAYS run so the healthy
@@ -237,9 +241,14 @@ class DiscoverWorkflow:
         preparation_started = 0
         preparation_error: ActivityError | None = None
         try:
+            # Score-only: pre-existing ``pending_tailor`` stragglers were already
+            # swept before the loop, and every fresh job is carried through
+            # tailor/cover/pdf by its own SCORE_JOB workflow — so a terminal
+            # full derive would only risk double-tailoring a fresh job that is
+            # mid-tailor right now.
             preparation_started = await _start_preparation_workflows(
                 payload,
-                include_pending_tailor=not stragglers_swept,
+                include_pending_tailor=False,
                 progress_completed=len(plan.families) + 1,
                 progress_total=plan.progress_total,
             )
@@ -287,46 +296,60 @@ class DiscoverWorkflow:
             enrichment_site_errors=enrichment_site_errors,
         )
 
-    async def _stream_family_preparation(
-        self, payload: DiscoverWorkflowInput, *, stragglers_swept: bool
-    ) -> bool:
-        """Drain + fan out the just-completed family's jobs now (R9 Phase 1).
+    async def _sweep_preexisting_preparation(self, payload: DiscoverWorkflowInput) -> None:
+        """One-time full-derive fan-out for work left over from a PRIOR run.
 
-        Progress-silent (``progress_total=0``) so the Runs bar stays monotonic
-        on the terminal spine; scores still stream via ``job_events``. This is
-        best-effort: any non-cancellation failure is left for the authoritative
-        terminal reconcile pass (which re-drains and re-derives, deduped by the
-        deterministic ``prep-{idempotency_key}`` id), so streaming never changes
-        the run's terminal status or folding. Cancellation always propagates.
-
-        Returns the (possibly updated) ``stragglers_swept`` flag: the first
-        successful fan-out sweeps ``pending_tailor`` stragglers once; thereafter
-        fan-out is score-only.
+        Runs before the family loop, when nothing this run has been enriched, so
+        ``pending_tailor`` holds only pre-existing stragglers (scored-but-not-
+        tailored in an earlier run) — the single moment a ``pending_tailor``
+        derive cannot race a fresh job's in-flight SCORE_JOB workflow. Every
+        later fan-out is score-only. Progress-silent and best-effort: a
+        non-cancellation failure is retried at the activity level and otherwise
+        left for the next run's sweep (stragglers are pre-existing, never fresh);
+        cancellation always propagates.
         """
-        try:
-            # per_job_handoff=True: each job starts its prep workflow the moment
-            # it is enriched (R9 Phase 2), tightening TTFS to per-job. The
-            # score-only fan-out below and the terminal reconcile stay as the
-            # dedup-safe backstop for anything the handoff missed.
-            await _run_enrichment_activity(
-                payload, progress_completed=0, progress_total=0, per_job_handoff=True
-            )
-        except ActivityError as exc:
-            if _activity_error_was_cancelled(exc):
-                raise CancelledError() from exc
-            return stragglers_swept
         try:
             await _start_preparation_workflows(
                 payload,
-                include_pending_tailor=not stragglers_swept,
+                include_pending_tailor=True,
                 progress_completed=0,
                 progress_total=0,
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
                 raise CancelledError() from exc
-            return stragglers_swept
-        return True
+
+    async def _stream_family_preparation(self, payload: DiscoverWorkflowInput) -> None:
+        """Drain + fan out the just-completed family's jobs now (R9 Phase 1/2).
+
+        Progress-silent (``progress_total=0``) so the Runs bar stays monotonic
+        on the terminal spine; scores still stream via ``job_events``. Phase 2
+        enrichment hands each job off to its own SCORE_JOB workflow the moment it
+        is enriched; the score-only fan-out here (and the terminal reconcile)
+        are the dedup-safe backstop for anything the handoff missed. Best-effort:
+        a non-cancellation failure is left for the authoritative terminal
+        reconcile (which re-drains and re-derives, deduped by the deterministic
+        ``prep-{idempotency_key}`` id), so streaming never changes the run's
+        terminal status or folding. Cancellation always propagates.
+        """
+        try:
+            await _run_enrichment_activity(
+                payload, progress_completed=0, progress_total=0, per_job_handoff=True
+            )
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            return
+        try:
+            await _start_preparation_workflows(
+                payload,
+                include_pending_tailor=False,
+                progress_completed=0,
+                progress_total=0,
+            )
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
 
 
 async def _run_enrichment_activity(

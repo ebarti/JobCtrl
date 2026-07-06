@@ -1349,11 +1349,16 @@ resolve the streaming plan's open decisions:
    idempotency key includes `kind`, a fresh job that crosses
    `pending_score` → `pending_tailor` mid-tailor would otherwise be re-derived as
    a second `TAILOR_RESUME` workflow racing its own in-flight `SCORE_JOB`
-   workflow. To prevent that double-tailor, the fan-out gains an
-   `include_pending_tailor` flag: the **first** fan-out sweeps pre-existing
-   `pending_tailor` stragglers once (the only moment when `pending_tailor` cannot
-   contain a job already owned by a this-run `SCORE_JOB` workflow); every later
-   pass is score-only.
+   workflow (Phase 2's per-job handoff scores jobs the instant they are
+   enriched, so this is reachable well before end-of-run). To prevent that
+   double-tailor, the fan-out gains an `include_pending_tailor` flag and a
+   one-time straggler sweep (`include_pending_tailor=True`) runs **before the
+   family loop** — the only moment `pending_tailor` holds only pre-existing
+   scored-but-not-tailored work and cannot contain a fresh job already owned by
+   a this-run `SCORE_JOB` workflow. Every family + terminal fan-out is
+   score-only. (Running the sweep up front, rather than on the first completed
+   family, is also what keeps it correct when families run concurrently in
+   Phase 3.)
 4. **Phase 2 handoff mechanism (Temporal-native, event-driven).** A job's
    preparation starts the moment it is individually enriched, not after its whole
    family. The mechanism is event-driven from **inside** the enrichment activity

@@ -77,11 +77,12 @@ Two knobs that look like Temporal concurrency but are not:
   Runs bar stays monotonic on the family + terminal spine — see
   [Operations & Events](operations.md#discovery-run-progress). Repeated fan-out
   is idempotent: the deterministic `prep-{idempotency_key}` id plus
-  `USE_EXISTING` means N invocations start exactly one workflow per job. The
-  first fan-out sweeps pre-existing `pending_tailor` stragglers once
-  (`include_pending_tailor=True`); every later pass is score-only, so a fresh
-  job crossing `pending_score` → `pending_tailor` mid-tailor is never
-  double-fanned.
+  `USE_EXISTING` means N invocations start exactly one workflow per job. A
+  one-time straggler sweep (`include_pending_tailor=True`) runs **before** the
+  family loop — the only moment `pending_tailor` holds only pre-existing
+  scored-but-not-tailored work and cannot race a fresh job's in-flight SCORE_JOB
+  workflow. Every family + terminal fan-out is score-only, so a fresh job
+  crossing `pending_score` -> `pending_tailor` mid-tailor is never double-fanned.
 - **Per-job handoff (R9 Phase 2).** Streaming enrichment passes run with
   `per_job_handoff=True`: as each job is individually enriched (committed to
   `pending_score`), the enrichment worker starts that job's `SCORE_JOB`

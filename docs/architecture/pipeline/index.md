@@ -177,8 +177,8 @@ A few catalog details worth calling out:
   authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
   completed; fail as `discovery_source_failed` only if every family failed) and
   progress finalization. Repeated starts are deduped by the deterministic
-  `prep-{idempotency_key}` id + `USE_EXISTING`; the first fan-out sweeps
-  `pending_tailor` stragglers once and later passes are score-only. See
+  `prep-{idempotency_key}` id + `USE_EXISTING`; a one-time straggler sweep runs
+  before the family loop and every family/terminal fan-out is score-only. See
   [Concurrency & Fan-out](concurrency.md#where-fan-out-happens-and-why).
 - **`JobPipelineWorkflow` is the serial batch driver.** It runs the requested
   stages in canonical order as activities, but hands `discover` and `apply` to
