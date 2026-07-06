@@ -136,6 +136,24 @@ pnpm extension:e2e
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 [Documentation Screenshots](#documentation-screenshots).
 
+## First-Run TTFV Measurement
+
+Real-path first-run time-to-value measurement is owner-run only because it uses
+real vendor auth, a real job posting, and real LLM spend. The wrapper lives at
+`scripts/ttfv-real.mjs` and is exposed through:
+
+```bash
+pnpm ttfv:real -- --job-url "$JOBHUNTER_TTFV_JOB_URL"
+pnpm ttfv:probe
+pnpm ttfv:summary -- "$HOME/.jobhunter/measurements/ttfv-real-run-"*.json
+```
+
+Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
+dependencies are installed; the wrapper records T0 immediately before it starts
+`corepack pnpm install:interactive`. See
+[`developer/first-run-ttfv.md`](developer/first-run-ttfv.md) for the clean-run
+protocol, stop conditions, record privacy rules, and three-run summary command.
+
 ## Frontend
 
 The React frontend under `apps/web` follows the architecture documented in

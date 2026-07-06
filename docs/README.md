@@ -70,6 +70,9 @@
   provenance, audit metadata, and safe change points.
 - [`local-development.md`](local-development.md): setup, run, build, test, lint
   commands, and the synthetic documentation-screenshot workflow.
+- [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): owner-run
+  real-path first-run time-to-value measurement protocol and generated record
+  commands.
 - [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app
   development notes, and the `GET /v1/events/stream` SSE contract.
 - [`local-reliability-qa.md`](local-reliability-qa.md): local QA checklist,

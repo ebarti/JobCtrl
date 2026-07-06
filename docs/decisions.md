@@ -21,6 +21,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
 - [TypeScript Product API, Python Workers](#_2026-05-01-typescript-product-api-python-workers) · 2026-05-01
 - [pnpm Workspace With Python Automation Worker](#_2026-05-04-pnpm-workspace-with-python-automation-worker) · 2026-05-04
+- [Desktop Packaging Decision Pending Owner TTFV Evidence](#_2026-07-06-desktop-packaging-decision-pending-owner-ttfv-evidence) · 2026-07-06
 
 **Local API & runtime**
 
@@ -1712,3 +1713,55 @@ Cites: plan `docs/plans/implemented/2026-07-05-outreach-planner-plan.md`
 resolved decisions 1 / 2b / 4 / 5); domain model
 `docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
 `docs/architecture/read-model.md`; `docs/local-ts-api.md`.
+
+## 2026-07-06: Desktop Packaging Decision Pending Owner TTFV Evidence
+
+Status: pending owner decision
+
+Decision: no go/defer/no-go verdict has been taken yet. The owner will decide
+after the real-path first-run TTFV baseline is measured with
+`docs/developer/first-run-ttfv.md`.
+
+Options under consideration:
+
+- **Go:** create a future dated plan for a packaged desktop install.
+- **Defer:** keep source install as the supported path and set a concrete
+  re-evaluation trigger.
+- **No-go:** record that packaging does not remove enough first-run friction to
+  justify the maintenance burden.
+
+Measured inputs required before the owner records a verdict:
+
+| Input | Evidence source | Current state |
+| --- | --- | --- |
+| TTFV-1, clean environment to first scored job | three owner-run records from `scripts/ttfv-real.mjs run`, summarized by `scripts/ttfv-real.mjs summarize` | pending owner baseline |
+| TTFV-2, clean environment to first reviewable tailored resume PDF | same measurement records and summary | pending owner baseline |
+| Friction map by phase | `install`, `workspace_init`, `stack_start`, `real_job_pipeline`, and probe timings in each measurement record | pending owner baseline |
+| Platform matrix | owner's Apple-silicon macOS run is the gate; Linux is optional owner sanity data | pending owner baseline |
+| Auth scenario | owner notes `warm-auth` or `cold-auth` for each run outside committed records | pending owner baseline |
+
+Evidence already known:
+
+- the source install path remains the baseline until the measured TTFV records
+  prove otherwise
+- a package cannot redistribute vendor binaries; Claude Code remains
+  proprietary/no-redistribution, and Codex/Antigravity runtimes arrive through
+  pinned PyPI wheels
+- a package can wrap setup, launch, shortcuts, code signing, notarization, and
+  updates, but it cannot remove real vendor auth, real model latency, or the
+  PyPI-delivered runtime install
+
+Owner verdict template:
+
+- **Verdict:** go / defer / no-go
+- **Rationale:** measured TTFV table, dominant friction phases, platform
+  coverage, and no-redistribution impact
+- **Re-evaluation trigger:** for defer/no-go, state the condition that reopens
+  the packaging question; for go, link the new dated package plan
+
+Consequences until the owner fills the verdict:
+
+- do not build or design a packaged desktop installer in this workstream
+- do not publish a packaging claim based on synthetic or fixture timing
+- keep `scripts/ttfv-real.mjs` measurement records outside commits unless they
+  have been reviewed for sensitive data
