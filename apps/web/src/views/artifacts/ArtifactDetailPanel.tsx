@@ -1,11 +1,15 @@
+import type { ArtifactSummary } from "@jobhunter/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
 import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
 import { TailoringExplanationSection } from "../../contexts/materials/components/TailoringExplanationSection.js";
 import { artifactStatusDescription } from "../../contexts/materials/lib/artifact-status-copy.js";
 import { artifactStatusTone } from "../../contexts/materials/lib/artifact-status-tone.js";
 import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtifactDetailQuery.js";
+import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
+import type { ArtifactsListInput } from "../../contexts/operations/types.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -30,6 +34,37 @@ function isSuppressed(status: string): boolean {
   return status.toLowerCase() === "suppressed";
 }
 
+function artifactComparisonListInput(type: string | null | undefined): ArtifactsListInput {
+  const input: ArtifactsListInput = {
+    pageSize: 200,
+    sort: "created_at",
+    dir: "desc",
+  };
+  if (type) {
+    input.type = type;
+  }
+  return input;
+}
+
+function comparableArtifacts(
+  artifact: ArtifactSummary,
+  candidates: readonly ArtifactSummary[],
+): ArtifactSummary[] {
+  return candidates.filter((candidate) => {
+    if (candidate.artifactId === artifact.artifactId) return false;
+    if (candidate.jobKey !== artifact.jobKey) return false;
+    if (candidate.type !== artifact.type) return false;
+    if (candidate.status.toLowerCase() === "missing") return false;
+    return true;
+  });
+}
+
+function artifactOptionLabel(artifact: ArtifactSummary): string {
+  const template = artifact.resumeTemplate?.effective.templateName ?? artifact.resumeTemplate?.effective.templateId;
+  const created = formatDateTime(artifact.createdAt);
+  return [artifact.status, template, created].filter(Boolean).join(" / ");
+}
+
 export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/artifacts" });
@@ -40,11 +75,29 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   useEscapeKey(true, close);
 
   const { data: detail, error: queryError } = useArtifactDetailQuery(artifactId);
+  const comparisonListInput = useMemo(
+    () => artifactComparisonListInput(detail?.artifact.type),
+    [detail?.artifact.type],
+  );
+  const comparisonList = useArtifactsListQuery(comparisonListInput, { enabled: Boolean(detail) });
+  const comparisonCandidates = useMemo(
+    () => (detail ? comparableArtifacts(detail.artifact, comparisonList.data?.items ?? []) : []),
+    [comparisonList.data?.items, detail],
+  );
+  const [comparisonArtifactId, setComparisonArtifactId] = useState<string>("");
   const openArtifact = useOpenArtifactMutation();
   const errorMessage =
     queryError instanceof Error
       ? queryError.message
       : openArtifact.error?.message ?? "";
+
+  useEffect(() => {
+    setComparisonArtifactId((current) =>
+      comparisonCandidates.some((candidate) => candidate.artifactId === current)
+        ? current
+        : comparisonCandidates[0]?.artifactId ?? "",
+    );
+  }, [artifactId, comparisonCandidates]);
 
   return (
     <DetailDrawerBackdrop onDismiss={close}>
@@ -136,6 +189,37 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                   </button>
                 </Section>
                 <TailoringExplanationSection explanation={detail.tailoringExplanation} />
+                <Section title="Artifact comparison">
+                  {comparisonList.isFetching && !comparisonList.data ? (
+                    <p className="meta">Loading comparable artifacts.</p>
+                  ) : null}
+                  {comparisonCandidates.length ? (
+                    <>
+                      <label className="field compact artifact-comparison-picker">
+                        <span>Compare with</span>
+                        <select
+                          value={comparisonArtifactId}
+                          onChange={(event) => setComparisonArtifactId(event.currentTarget.value)}
+                        >
+                          {comparisonCandidates.map((candidate) => (
+                            <option key={candidate.artifactId} value={candidate.artifactId}>
+                              {artifactOptionLabel(candidate)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <ArtifactComparison
+                        leftArtifactId={detail.artifact.artifactId}
+                        leftLabel="Selected"
+                        rightArtifactId={comparisonArtifactId || null}
+                        rightLabel="Comparison"
+                        showTitle={false}
+                      />
+                    </>
+                  ) : (
+                    <Empty title="No other artifact for this job and type was found in the current artifact list." />
+                  )}
+                </Section>
               </div>
               {isPreviewablePdfArtifact(detail.artifact.type, detail.artifact.localPath) ? (
                 <section className="artifact-preview-panel" aria-label="Artifact PDF preview">

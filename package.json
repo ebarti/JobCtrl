@@ -33,6 +33,10 @@
     "web:storybook": "corepack pnpm --filter @jobhunter/web storybook",
     "web:storybook:build": "corepack pnpm --filter @jobhunter/web storybook:build",
     "web:storybook:test": "corepack pnpm --filter @jobhunter/web storybook:test",
+    "extension:check": "corepack pnpm --filter @jobhunter/extension check",
+    "extension:test": "corepack pnpm --filter @jobhunter/extension test",
+    "extension:build": "corepack pnpm --filter @jobhunter/extension build",
+    "extension:e2e": "corepack pnpm --filter @jobhunter/extension e2e",
     "qa:seed": "corepack pnpm --filter @jobhunter/api qa:seed",
     "qa:test": "corepack pnpm --filter @jobhunter/api qa:test",
     "docs:screenshots": "corepack pnpm --filter @jobhunter/web e2e -- tests/docs-screenshots.spec.ts",
@@ -43,8 +47,8 @@
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
-    "check": "corepack pnpm --filter @jobhunter/contracts check && corepack pnpm --filter @jobhunter/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm python:lint",
-    "test": "corepack pnpm api:test && corepack pnpm web:build && corepack pnpm python:test"
+    "check": "corepack pnpm --filter @jobhunter/contracts check && corepack pnpm --filter @jobhunter/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm python:lint",
+    "test": "corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test"
   },
   "repository": {
     "type": "git",
@@ -86,6 +90,7 @@
       "qs@>=6.11.1 <=6.15.1": "6.15.2",
       "uuid@<11.1.1": "11.1.1",
       "vite@>=7.0.0 <=7.3.4": "7.3.5",
+      "vitepress>vite": "6.4.3",
       "ws@>=8.0.0 <8.21.0": "8.21.0"
     }
   }

@@ -63,8 +63,11 @@ interface Fixture {
     jobEmployerAnalysisFailures: Array<Record<string, unknown>>;
     artifacts: Array<Record<string, unknown>>;
     bulletProvenance: Array<Record<string, unknown>>;
+    jobInterviewPrep: Array<Record<string, unknown>>;
+    jobInterviewPrepItems: Array<Record<string, unknown>>;
     conversionJobs: Array<Record<string, unknown>>;
     applicationOutcomes: Array<Record<string, unknown>>;
+    applicationOutcomeSuggestions: Array<Record<string, unknown>>;
   };
   dashboardAggregateJobs: Array<{
     hidden: boolean;
@@ -88,6 +91,7 @@ interface Fixture {
   expectedProjections: Record<ProjectionTable, Record<string, unknown>>;
   expected: {
     employerAnalysisJson: unknown;
+    interviewPrepJson: unknown;
     bulletProvenanceJson: unknown;
     coverageAuditJson: unknown;
     voicePassJson: unknown;
@@ -262,6 +266,39 @@ function seedSchema(dbPath: string): void {
       voice_json TEXT,
       PRIMARY KEY (job_url, generation, bullet_id)
     );
+    CREATE TABLE job_interview_prep (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL,
+      model TEXT,
+      generated_at TEXT NOT NULL,
+      gate_status TEXT NOT NULL,
+      fabrication_findings_json TEXT NOT NULL DEFAULT '[]',
+      grounding_findings_json TEXT NOT NULL DEFAULT '[]',
+      judge_verdict TEXT,
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      failure_reason TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE job_interview_prep_items (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      item_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      generated_text TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      source_text_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL DEFAULT 'grounded_prep',
+      control TEXT NOT NULL DEFAULT 'never_fabricate',
+      grounding_audit_json TEXT NOT NULL DEFAULT '[]',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, generation, item_id)
+    );
     CREATE TABLE jobhunter_hidden_jobs (
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
@@ -281,6 +318,22 @@ function seedSchema(dbPath: string): void {
       evidence_id   TEXT,
       created_by    TEXT NOT NULL DEFAULT 'user',
       PRIMARY KEY (tenant_id, outcome_id)
+    );
+    CREATE TABLE application_outcome_suggestions (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      suggestion_id TEXT NOT NULL,
+      job_key TEXT NOT NULL,
+      evidence_id TEXT,
+      suggested_kind TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0,
+      rationale TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      decided_at TEXT,
+      decision TEXT,
+      decision_reason TEXT,
+      decided_outcome_id TEXT,
+      PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
   db.close();
@@ -372,10 +425,16 @@ function seedRows(dbPath: string): void {
        job_url, generation, artifact_type, artifact_id, status, path,
        render_format, size_bytes, metadata_json, created_at
      ) VALUES (@job_url, @generation, @artifact_type, @artifact_id, @status, @path,
-       @render_format, @size_bytes, '{}', @created_at)`,
+       @render_format, @size_bytes, @metadata_json, @created_at)`,
   );
   for (const artifact of fixture.rows.artifacts) {
-    insertArtifact.run({ job_url: jobUrl, generation, created_at: createdAt, ...artifact });
+    insertArtifact.run({
+      job_url: jobUrl,
+      generation,
+      created_at: createdAt,
+      metadata_json: "{}",
+      ...artifact,
+    });
   }
   const insertProvenance = db.prepare(
     `INSERT INTO job_bullet_provenance (
@@ -390,6 +449,30 @@ function seedRows(dbPath: string): void {
   );
   for (const bullet of fixture.rows.bulletProvenance) {
     insertProvenance.run({ job_url: jobUrl, ...bullet });
+  }
+  const insertInterviewPrep = db.prepare(
+    `INSERT INTO job_interview_prep (
+       job_url, generation, tenant_id, status, model, generated_at, gate_status,
+       fabrication_findings_json, grounding_findings_json, judge_verdict,
+       warnings_json, failure_reason
+     ) VALUES (@job_url, @generation, 'local', @status, @model, @generated_at, @gate_status,
+       @fabrication_findings_json, @grounding_findings_json, @judge_verdict,
+       @warnings_json, @failure_reason)`,
+  );
+  for (const prep of fixture.rows.jobInterviewPrep) {
+    insertInterviewPrep.run({ job_url: jobUrl, ...prep });
+  }
+  const insertInterviewPrepItem = db.prepare(
+    `INSERT INTO job_interview_prep_items (
+       job_url, generation, item_id, tenant_id, kind, title, generated_text,
+       evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
+       control, grounding_audit_json, warnings_json, position
+     ) VALUES (@job_url, @generation, @item_id, 'local', @kind, @title, @generated_text,
+       @evidence_ids_json, @requirement_ids_json, @source_text_json, @transform_type,
+       @control, @grounding_audit_json, @warnings_json, @position)`,
+  );
+  for (const item of fixture.rows.jobInterviewPrepItems) {
+    insertInterviewPrepItem.run({ job_url: jobUrl, ...item });
   }
   db.prepare(
     `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
@@ -508,6 +591,21 @@ function seedRows(dbPath: string): void {
       at: "2026-06-11T09:00:00+00:00",
     });
   }
+  const insertSuggestion = db.prepare(
+    `INSERT INTO application_outcome_suggestions (
+       tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+       status, created_at, decided_at, decision
+     ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+       @status, @at, @at, @status)`,
+  );
+  for (const suggestion of fixture.rows.applicationOutcomeSuggestions) {
+    insertSuggestion.run({
+      suggestion_id: suggestion.suggestionId,
+      job_key: suggestion.jobKey,
+      status: suggestion.status,
+      at: "2026-06-11T09:05:00+00:00",
+    });
+  }
   db.close();
 }
 
@@ -554,11 +652,20 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         const db = new Database(dbPath, { readonly: true });
         try {
           const detail = db
-            .prepare("SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?")
-            .get(fixture.job.url) as { employer_analysis_json: string | null };
+            .prepare(
+              "SELECT employer_analysis_json, interview_prep_json FROM job_detail_projections WHERE job_id = ?",
+            )
+            .get(fixture.job.url) as {
+            employer_analysis_json: string | null;
+            interview_prep_json: string | null;
+          };
           expect(detail?.employer_analysis_json).not.toBeNull();
           expect(JSON.parse(detail.employer_analysis_json!)).toEqual(
             fixture.expected.employerAnalysisJson,
+          );
+          expect(detail?.interview_prep_json).not.toBeNull();
+          expect(JSON.parse(detail.interview_prep_json!)).toEqual(
+            fixture.expected.interviewPrepJson,
           );
 
           const artifact = db
@@ -581,8 +688,11 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         }
 
         // (2) Read path: the read model serves the canonical employer analysis
-        // (verbatim) on the job detail.
+        // and interview prep on the job detail.
         expect(detailRes.json().employerAnalysis).toEqual(fixture.expected.employerAnalysisJson);
+        expect(detailRes.json().interviewPrep).toEqual(fixture.expected.interviewPrepJson);
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("prompt");
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("full_description");
 
         // (3) Read path: the artifact detail serves provenance + coverage + voice
         // converted to the camelCase DTO — derived from the SAME canonical rows.

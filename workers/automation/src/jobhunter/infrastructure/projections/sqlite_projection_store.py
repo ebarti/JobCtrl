@@ -43,6 +43,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "dashboard_projections",
     "job_detail_projections",
     "artifact_list_projections",
+    "evidence_usage_projections",
     "apply_run_projections",
     "workflow_run_projections",
     "source_quality_stats",
@@ -58,6 +59,11 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "score_trace_json", "TEXT"),
     ("job_list_projections", "score_correction_json", "TEXT"),
     ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
+    ("job_list_projections", "fit_band", "TEXT"),
+    ("job_list_projections", "apply_mode", "TEXT"),
+    ("job_list_projections", "resume_template_id", "TEXT"),
+    ("job_list_projections", "resume_template_name", "TEXT"),
+    ("job_list_projections", "tailoring_policy_version", "INTEGER"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
     ("job_detail_projections", "compensation_summary_json", "TEXT"),
     ("job_detail_projections", "compensation_audit_json", "TEXT"),
@@ -69,6 +75,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_correction_json", "TEXT"),
     ("job_detail_projections", "employer_analysis_json", "TEXT"),
     ("job_detail_projections", "requirement_fit_report_json", "TEXT"),
+    ("job_detail_projections", "interview_prep_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
     ("artifact_list_projections", "layout_boxes_json", "TEXT"),
     ("artifact_list_projections", "bullet_provenance_json", "TEXT"),
@@ -105,6 +112,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             description            TEXT NOT NULL DEFAULT '',
             full_description       TEXT NOT NULL DEFAULT '',
             fit_score              INTEGER,
+            fit_band               TEXT,
             compensation_summary_json TEXT,
             score_breakdown_json   TEXT,
             score_keywords_json    TEXT NOT NULL DEFAULT '[]',
@@ -125,6 +133,10 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             has_pdf                INTEGER NOT NULL DEFAULT 0,
             apply_status           TEXT,
             applied_at             TEXT,
+            apply_mode             TEXT,
+            resume_template_id     TEXT,
+            resume_template_name   TEXT,
+            tailoring_policy_version INTEGER,
             artifact_count         INTEGER NOT NULL DEFAULT 0,
             deleted_at             TEXT,
             last_updated_at        TEXT,
@@ -175,6 +187,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             stages_json            TEXT NOT NULL DEFAULT '[]',
             employer_analysis_json TEXT,
             requirement_fit_report_json TEXT,
+            interview_prep_json    TEXT,
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
         )
@@ -206,6 +219,34 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_artifact_list_projections_job
         ON artifact_list_projections(tenant_id, job_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS evidence_usage_projections (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            projection_kind        TEXT NOT NULL CHECK(projection_kind IN ('entry', 'gap')),
+            projection_id          TEXT NOT NULL,
+            evidence_id            TEXT,
+            skill_id               TEXT,
+            requirement_id         TEXT,
+            title                  TEXT NOT NULL DEFAULT '',
+            payload_json           TEXT NOT NULL,
+            last_updated_at        TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, projection_kind, projection_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_evidence
+        ON evidence_usage_projections(tenant_id, evidence_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_usage_projection_skill
+        ON evidence_usage_projections(tenant_id, skill_id)
         """
     )
     conn.execute(
@@ -398,18 +439,19 @@ class SqliteProjectionStore:
             INSERT INTO job_list_projections (
                 tenant_id, job_id, title, employer, source, strategy, location,
                 salary, application_url, discovered_at, description,
-                full_description, fit_score, compensation_summary_json,
+                full_description, fit_score, fit_band, compensation_summary_json,
                 score_breakdown_json, score_keywords_json,
                 score_reasoning, score_version, scored_at,
                 score_criteria_json, score_trace_json, score_correction_json,
                 current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
-                artifact_count, deleted_at,
+                apply_mode, resume_template_id, resume_template_name,
+                tailoring_policy_version, artifact_count, deleted_at,
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -423,6 +465,7 @@ class SqliteProjectionStore:
                 description           = excluded.description,
                 full_description      = excluded.full_description,
                 fit_score             = excluded.fit_score,
+                fit_band              = excluded.fit_band,
                 compensation_summary_json = excluded.compensation_summary_json,
                 score_breakdown_json  = excluded.score_breakdown_json,
                 score_keywords_json   = excluded.score_keywords_json,
@@ -443,6 +486,10 @@ class SqliteProjectionStore:
                 has_pdf               = excluded.has_pdf,
                 apply_status          = excluded.apply_status,
                 applied_at            = excluded.applied_at,
+                apply_mode            = excluded.apply_mode,
+                resume_template_id    = excluded.resume_template_id,
+                resume_template_name  = excluded.resume_template_name,
+                tailoring_policy_version = excluded.tailoring_policy_version,
                 artifact_count        = excluded.artifact_count,
                 deleted_at            = excluded.deleted_at,
                 last_updated_at       = excluded.last_updated_at
@@ -461,6 +508,7 @@ class SqliteProjectionStore:
                 projection.description,
                 projection.full_description,
                 projection.fit_score,
+                projection.fit_band,
                 projection.compensation_summary_json,
                 projection.score_breakdown_json,
                 projection.score_keywords_json,
@@ -481,6 +529,10 @@ class SqliteProjectionStore:
                 1 if projection.has_pdf else 0,
                 projection.apply_status,
                 projection.applied_at,
+                projection.apply_mode,
+                projection.resume_template_id,
+                projection.resume_template_name,
+                projection.tailoring_policy_version,
                 projection.artifact_count,
                 projection.deleted_at,
                 projection.last_updated_at,
@@ -552,8 +604,9 @@ class SqliteProjectionStore:
                 score_reasoning, score_version, scored_at,
                 score_criteria_json, score_trace_json, score_correction_json,
                 stages_json, employer_analysis_json, requirement_fit_report_json,
+                interview_prep_json,
                 last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 description_preview    = excluded.description_preview,
                 compensation_summary_json = excluded.compensation_summary_json,
@@ -569,6 +622,7 @@ class SqliteProjectionStore:
                 stages_json            = excluded.stages_json,
                 employer_analysis_json = excluded.employer_analysis_json,
                 requirement_fit_report_json = excluded.requirement_fit_report_json,
+                interview_prep_json    = excluded.interview_prep_json,
                 last_updated_at        = excluded.last_updated_at
             """,
             (
@@ -607,6 +661,7 @@ class SqliteProjectionStore:
                 ),
                 projection.employer_analysis_json,
                 projection.requirement_fit_report_json,
+                projection.interview_prep_json,
                 projection.last_updated_at,
             ),
         )
@@ -669,6 +724,39 @@ class SqliteProjectionStore:
         )
         for projection in projections:
             self.upsert_artifact(projection)
+
+    def replace_evidence_usage_rows(
+        self,
+        tenant_id: str,
+        rows: Iterable[dict[str, object]],
+    ) -> None:
+        """Idempotently replace the tenant-wide Career Evidence Map projection."""
+
+        self._conn.execute(
+            "DELETE FROM evidence_usage_projections WHERE tenant_id = ?",
+            (tenant_id,),
+        )
+        insert = self._conn.execute
+        for row in rows:
+            insert(
+                """
+                INSERT INTO evidence_usage_projections (
+                    tenant_id, projection_kind, projection_id, evidence_id,
+                    skill_id, requirement_id, title, payload_json, last_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    str(row["projection_kind"]),
+                    str(row["projection_id"]),
+                    row.get("evidence_id"),
+                    row.get("skill_id"),
+                    row.get("requirement_id"),
+                    str(row.get("title") or ""),
+                    str(row["payload_json"]),
+                    str(row.get("last_updated_at") or ""),
+                ),
+            )
 
     def upsert_apply_run(self, projection: ApplyRunProjection) -> None:
         self._conn.execute(

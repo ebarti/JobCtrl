@@ -27,6 +27,7 @@ from jobhunter.discovery.activities import (
     DiscoverySourceActivityOutput,
     PlanDiscoverySourcesInput,
     PlanDiscoverySourcesOutput,
+    _build_per_job_handoff,
     discovery_preparation_fanout_activity,
 )
 from jobhunter.discovery.workflow import (
@@ -51,14 +52,19 @@ _EVENTS: list[tuple[str, Any]] = []
 _FAIL_FAMILY: str | None = None
 _TARGETS: list[_Target] = []
 _RESUME_GATE: dict[str, asyncio.Event] = {}
+_MAX_PARALLEL: int = 1
+_SOURCE_CONCURRENCY: dict[str, int] = {"current": 0, "peak": 0}
 
 
 def _reset_state() -> None:
     _EVENTS.clear()
     _TARGETS.clear()
     _RESUME_GATE.clear()
-    global _FAIL_FAMILY
+    global _FAIL_FAMILY, _MAX_PARALLEL
     _FAIL_FAMILY = None
+    _MAX_PARALLEL = 1
+    _SOURCE_CONCURRENCY["current"] = 0
+    _SOURCE_CONCURRENCY["peak"] = 0
 
 
 def test_discover_workflow_detects_activity_cancellation_cause() -> None:
@@ -149,6 +155,7 @@ async def _plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDis
         families=["jobspy", "workday", "smartextract"],
         progress_total=5,
         start_count=7,
+        max_parallel_families=_MAX_PARALLEL,
     )
 
 
@@ -200,7 +207,7 @@ async def _partial_discovery_enrichment(
 async def _discovery_preparation_fanout(
     payload: DiscoveryPreparationFanoutInput,
 ) -> DiscoveryPreparationFanoutOutput:
-    _EVENTS.append(("fanout", payload.min_score, payload.limit))
+    _EVENTS.append(("fanout", payload.min_score, payload.limit, payload.include_pending_tailor))
     return DiscoveryPreparationFanoutOutput(started=len(_TARGETS), queued=0, targets=len(_TARGETS))
 
 
@@ -260,8 +267,92 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
         "tailor_judge_model": "judge",
         "tailor_judge_min_score": 8.5,
         "tenant_id": "local",
+        # R9 Phase 1: the fan-out activity forwards the score-only vs
+        # full-derive selector; default preserves the pre-streaming behavior.
+        "include_pending_tailor": True,
     }
     assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
+
+
+@pytest.mark.asyncio
+async def test_discovery_preparation_fanout_activity_forwards_score_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 1: ``include_pending_tailor=False`` reaches the fan-out so
+    streaming passes after the first derive score-only targets."""
+    captured: dict[str, Any] = {}
+
+    async def fake_run_blocking(fn, **kwargs):
+        return fn()
+
+    def fake_start_fanout(**kwargs):
+        captured["fanout_kwargs"] = kwargs
+        return {"started": {"job_preparation": 0}, "queued": {"job_preparation": 0}, "targets": 0}
+
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_discovery_preparation_workflows",
+        fake_start_fanout,
+    )
+
+    await discovery_preparation_fanout_activity(
+        DiscoveryPreparationFanoutInput(tenant_id="local", include_pending_tailor=False)
+    )
+
+    assert captured["fanout_kwargs"]["include_pending_tailor"] is False
+
+
+def test_build_per_job_handoff_disabled_returns_none() -> None:
+    assert (
+        _build_per_job_handoff(
+            DiscoveryEnrichmentActivityInput(tenant_id="local", per_job_handoff=False)
+        )
+        is None
+    )
+
+
+def test_build_per_job_handoff_starts_scored_prep_with_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 2: when enabled, the enrichment activity's handoff callback
+    starts each enriched job's preparation with the run's prep params."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_job_preparation_workflow",
+        lambda url, **kwargs: calls.append((url, kwargs)),
+    )
+
+    handoff = _build_per_job_handoff(
+        DiscoveryEnrichmentActivityInput(
+            tenant_id="local",
+            per_job_handoff=True,
+            min_score=8,
+            validation_mode="strict",
+            llm_model="local:model",
+            tailor_models=("draft",),
+            tailor_judge_model="judge",
+            tailor_judge_min_score=8.5,
+        )
+    )
+    assert handoff is not None
+    handoff("https://example.com/job/1")
+
+    assert [url for url, _ in calls] == ["https://example.com/job/1"]
+    _, kwargs = calls[0]
+    assert kwargs["min_score"] == 8
+    assert kwargs["validation_mode"] == "strict"
+    assert kwargs["llm_model"] == "local:model"
+    assert kwargs["tailor_models"] == ("draft",)
+    assert kwargs["tailor_judge_model"] == "judge"
+    assert kwargs["tailor_judge_min_score"] == 8.5
+    assert str(kwargs["tenant_id"]) == "local"
 
 
 @pytest.mark.asyncio
@@ -300,17 +391,78 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
+    # R9 Phase 1/2 — score-as-you-discover. A one-time straggler sweep fan-out
+    # runs first (pre-existing pending_tailor work), then enrichment + fan-out
+    # interleave AFTER EACH completed family (streaming) instead of once at the
+    # end, so a family's jobs are prepared before the next family runs. A
+    # terminal reconcile enrichment + fan-out still runs last (authoritative for
+    # folding + progress) — plan option (b).
     assert [event[0] for event in _EVENTS] == [
         "workflow_started",
         "plan",
-        "source",
-        "source",
-        "source",
+        "fanout",  # pre-loop straggler sweep (pre-existing pending_tailor)
+        "source",  # jobspy
         "enrichment",
+        "fanout",
+        "source",  # workday
+        "enrichment",
+        "fanout",
+        "source",  # smartextract
+        "enrichment",
+        "fanout",
+        "enrichment",  # terminal reconcile
         "fanout",
         "workflow_outcome",
     ]
+    # Prove the interleaving structurally: the first family's enrichment + fan-out
+    # both happen before the second family's source activity runs (the TTFS
+    # structural proxy — a job discovered early is prepared while later families
+    # are still discovering).
+    kinds = [event[0] for event in _EVENTS]
+    first_source = kinds.index("source")
+    second_source = kinds.index("source", first_source + 1)
+    assert "enrichment" in kinds[first_source:second_source]
+    assert "fanout" in kinds[first_source:second_source]
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@pytest.mark.asyncio
+async def test_only_the_preloop_sweep_derives_pending_tailor() -> None:
+    """R9 Phase 2 race guard: the ONE-TIME straggler sweep before the family loop
+    is the only fan-out that derives ``pending_tailor`` (include_pending_tailor=
+    True); every streaming + terminal fan-out is score-only. This is what keeps a
+    fresh job — already scored into ``pending_tailor`` by its per-job handoff —
+    from being double-fanned as a racing TAILOR_RESUME workflow."""
+    _reset_state()
+    _TARGETS.append(
+        _Target(
+            job_url="https://example.com/job/1",
+            idempotency_key="target-1",
+            target_version="3",
+            steps=["score", "tailor"],
+        )
+    )
+    queue = f"discover-scoreonly-{uuid.uuid4()}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_discovery_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"discover-scoreonly-{uuid.uuid4()}",
+                task_queue=queue,
+            )
+
+    include_tailor_flags = [event[3] for event in _EVENTS if event[0] == "fanout"]
+    # 3 families -> pre-loop sweep + 3 streaming + terminal = 5 fan-outs.
+    # Only the first (pre-loop straggler sweep) derives pending_tailor.
+    assert include_tailor_flags == [True, False, False, False, False]
 
 
 @pytest.mark.asyncio
@@ -353,6 +505,28 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
     assert result.preparation_started == 1
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
+    # I2 under streaming: jobspy completed first and its jobs were enriched +
+    # fanned out BEFORE the workday family ran and failed. A later family's
+    # failure must not undo the earlier family's streaming fan-out.
+    kinds = [event[0] for event in _EVENTS]
+    jobspy_source = next(
+        index
+        for index, event in enumerate(_EVENTS)
+        if event[0] == "source" and event[1] == "jobspy"
+    )
+    workday_source = next(
+        index
+        for index, event in enumerate(_EVENTS)
+        if event[0] == "source" and event[1] == "workday"
+    )
+    # jobspy's streaming enrichment + fan-out land between jobspy's source and
+    # workday's source.
+    assert "enrichment" in kinds[jobspy_source:workday_source]
+    assert "fanout" in kinds[jobspy_source:workday_source]
+    # A failed family produces no streaming enrichment/fanout of its own: the
+    # pre-loop straggler sweep + two completed families + one terminal reconcile
+    # give exactly four fan-outs (workday contributes none).
+    assert kinds.count("fanout") == 4
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 
@@ -453,6 +627,12 @@ async def test_discover_workflow_fails_only_when_every_source_fails() -> None:
 
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
+    # No family completed, so no streaming enrichment/fanout ran: only the
+    # pre-loop straggler sweep fan-out and the terminal reconcile
+    # (one enrichment + one fanout) run — two fan-outs, one enrichment.
+    kinds = [event[0] for event in _EVENTS]
+    assert kinds.count("enrichment") == 1
+    assert kinds.count("fanout") == 2
     assert ("workflow_outcome", "failed") in _EVENTS
     cause = excinfo.value.cause
     assert isinstance(cause, ApplicationError)
@@ -635,6 +815,187 @@ async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.Monk
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS), "prep fan-out did not run after restart"
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+# ---------------------------------------------------------------------------
+# R9 Phase 3 — parallel source families (gated)
+# ---------------------------------------------------------------------------
+
+
+@activity.defn(name="discovery_source_family")
+async def _parallel_tracking_source(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+    """Records peak concurrency and completes families in a different order than
+    they were submitted, so tests can assert both the cap and the deterministic
+    submission-order fold."""
+    _SOURCE_CONCURRENCY["current"] += 1
+    _SOURCE_CONCURRENCY["peak"] = max(_SOURCE_CONCURRENCY["peak"], _SOURCE_CONCURRENCY["current"])
+    _EVENTS.append(("source", payload.family))
+    try:
+        # Later-submitted families finish first, so completion order != order.
+        hold = {"jobspy": 0.15, "workday": 0.10, "smartextract": 0.05}.get(payload.family, 0.05)
+        await asyncio.sleep(hold)
+        if payload.family == _FAIL_FAMILY:
+            raise ApplicationError(
+                f"{payload.family} unavailable", type="source_unavailable", non_retryable=True
+            )
+        return DiscoverySourceActivityOutput(
+            family=payload.family, status="ok", result={"new": 1}, source_ids=[]
+        )
+    finally:
+        _SOURCE_CONCURRENCY["current"] -= 1
+
+
+def _parallel_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _parallel_tracking_source,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+async def _run_parallel_discover(queue: str) -> Any:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_parallel_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            return await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"{queue}-wf",
+                task_queue=queue,
+            )
+
+
+@pytest.mark.asyncio
+async def test_parallel_families_respect_the_cap() -> None:
+    """Phase 3 bound: with 3 families and a cap of 2, no more than 2 source
+    crawls run concurrently, and at least 2 do (parallelism actually happens)."""
+    _reset_state()
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 2
+    result = await _run_parallel_discover(f"discover-cap2-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert _SOURCE_CONCURRENCY["peak"] == 2
+
+
+@pytest.mark.asyncio
+async def test_sequential_default_runs_one_family_at_a_time() -> None:
+    """The default cap (1) keeps families strictly sequential — the safe,
+    unchanged behavior."""
+    _reset_state()  # _MAX_PARALLEL stays 1
+    result = await _run_parallel_discover(f"discover-cap1-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert _SOURCE_CONCURRENCY["peak"] == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_family_results_fold_in_submission_order() -> None:
+    """Determinism: even though families finish in reverse order (smartextract
+    first), the completed list is folded in submission order — the fold does not
+    depend on wall-clock completion order, so replay stays deterministic."""
+    _reset_state()
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 3
+    result = await _run_parallel_discover(f"discover-cap3-{uuid.uuid4().hex[:8]}")
+
+    assert _SOURCE_CONCURRENCY["peak"] == 3
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_partial_failure_preserves_folding() -> None:
+    """I2 under parallelism: a family failing while peers run concurrently keeps
+    the tolerated-partial-failure folding — the run SUCCEEDS with the failed
+    family recorded, and the peers' streaming fan-out still ran."""
+    _reset_state()
+    global _MAX_PARALLEL, _FAIL_FAMILY
+    _MAX_PARALLEL = 3
+    _FAIL_FAMILY = "workday"
+    _TARGETS.append(
+        _Target(job_url="https://example.com/job/1", idempotency_key="t1", target_version="3", steps=["score"])
+    )
+    result = await _run_parallel_discover(f"discover-parfail-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "smartextract"]
+    assert result.families_failed == ["workday"]
+    assert any(event[0] == "fanout" for event in _EVENTS)
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@activity.defn(name="discovery_source_family")
+async def _blocking_cancelable_source(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+    _EVENTS.append(("source", payload.family))
+    _SOURCE_CONCURRENCY["current"] += 1
+    if _SOURCE_CONCURRENCY["current"] >= _MAX_PARALLEL:
+        _RESUME_GATE["all_started"].set()
+    try:
+        while True:
+            activity.heartbeat("blocking")
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        _EVENTS.append(("source_canceled", payload.family))
+        raise
+
+
+@pytest.mark.asyncio
+async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 3 cancel-all: canceling the run while multiple families crawl in
+    parallel cooperatively cancels every in-flight family and terminalizes the
+    workflow as canceled."""
+    _reset_state()
+    monkeypatch.setattr(
+        "jobhunter.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2)
+    )
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 2
+    _RESUME_GATE["all_started"] = asyncio.Event()
+    queue = f"discover-parcancel-{uuid.uuid4().hex[:8]}"
+
+    activities = [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _blocking_cancelable_source,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"{queue}-wf",
+                task_queue=queue,
+            )
+            await asyncio.wait_for(_RESUME_GATE["all_started"].wait(), timeout=30)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as excinfo:
+                await asyncio.wait_for(handle.result(), timeout=60)
+
+    # The run terminates as a cancellation.
+    assert isinstance(excinfo.value.cause, CancelledError)
+    # Both concurrently-active families received cooperative cancellation — the
+    # cancel fans out to EVERY in-flight family, not just one.
+    canceled = {event[1] for event in _EVENTS if event[0] == "source_canceled"}
+    assert canceled == {"jobspy", "workday"}
 
 
 def test_discovery_source_progress_emits_temporal_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,8 +5,11 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
 }) => {
   await page.goto("/dashboard");
 
-  const jobsKpi = page.getByRole("button", { name: /jobs/i }).first();
+  const jobsKpi = page.locator(".kpis").getByRole("link", { name: /^Jobs\b/i }).first();
   await expect(jobsKpi).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Daily digest" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /New matches/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /mark reviewed/i })).toBeVisible();
 
   const jobsValueText = await jobsKpi.locator(".kpi-val").innerText();
   const totalJobs = Number.parseInt(jobsValueText.trim(), 10);
