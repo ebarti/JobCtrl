@@ -18,6 +18,8 @@ because it can drive browser automation and submit applications.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
+- Capture a current browser job page through the optional local browser
+  extension, which feeds the existing manual-capture import path.
 - Score jobs as an applicant-side triage aid with auditable evidence.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Review and edit generated resumes in Apply Review before approval.
@@ -57,9 +59,11 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - Scraping and source access can violate site terms. Default discovery options
   include LinkedIn and Indeed; disable any source you are not allowed to query
   automatically.
-- The local API is intended for loopback use and has no user authentication. Do
-  not bind it to a network interface or tunnel it unless you accept exposing
-  private profile, job, and artifact data.
+- The local API is intended for loopback use. Ordinary web and CLI callers use
+  the loopback boundary; browser-extension API routes additionally require a
+  local capability token shown in Settings and stored under `~/.jobhunter/`. Do
+  not bind the API to a network interface or tunnel it unless you accept
+  exposing private profile, job, and artifact data.
 - LLM work can spend money and send job, profile, and generated-material text to
   configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
   but it is an estimate rather than the provider bill.
@@ -131,6 +135,31 @@ only non-browser activities).
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
 
+### Browser Extension Capture And Autofill
+
+The optional Manifest V3 browser extension is a local capture and assist
+surface. Build it with:
+
+```bash
+pnpm extension:build
+```
+
+Load `dist/extension/` as an unpacked extension in Chrome/Chromium developer
+mode, then open JobHunter Settings and copy the browser-extension pairing token
+into the extension popup.
+
+Clicking **Save job** captures the active http(s) page URL and visible text,
+posts it over loopback to `/v1/extension/captures`, and reuses the existing
+manual-capture importer so dedupe, snapshots, quarantine, and source provenance
+remain identical to other user-mediated captures. If the local stack is down,
+the extension stores a bounded local queue in extension storage and retries
+after the next successful save.
+
+On supported ATS application pages, **Review autofill** fetches a whitelisted
+profile snapshot over loopback and shows deterministic field suggestions with
+their profile source. You choose which values to fill. The extension does not
+generate free-text answers and has no submission path.
+
 Commands that start work (`jobhunter run`, per-stage commands, `jobhunter
 apply`, `jobhunter action profile_import`, and `jobhunter
 compensation-refresh`) start Temporal workflows and wait on their handles. They require a reachable Temporal server plus a running JobHunter
@@ -158,6 +187,11 @@ Important local files include:
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 - `codex_home/`: isolated Codex SDK home when apply/review agents need it.
 - `backups/`: timestamped database snapshots written by `jobhunter backup`.
+
+The daily digest is local-only. `jobhunter digest` and the Dashboard digest read
+from `jobhunter.db` without sending notifications or advancing review state;
+only the explicit Dashboard acknowledge action or `jobhunter digest
+--acknowledge` updates the `digest_state` watermark.
 
 Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
 profiles, logs, SQLite databases, screenshots containing real data, or local
@@ -232,6 +266,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |
 | `status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
+| `digest` | Print the local daily digest (`--json`, `--acknowledge`, `--min-fit-score`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
 | `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
@@ -298,6 +333,9 @@ pnpm web:check
 pnpm web:build
 pnpm web:test
 pnpm web:e2e
+pnpm extension:check
+pnpm extension:test
+pnpm extension:e2e
 uv --project workers/automation run --extra dev pytest -q
 ```
 

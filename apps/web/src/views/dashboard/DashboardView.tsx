@@ -5,6 +5,7 @@ import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { ConversionPanel } from "./ConversionPanel.js";
+import { DigestPanel } from "./DigestPanel.js";
 import { Funnel } from "./Funnel.js";
 import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
@@ -25,6 +26,7 @@ export function DashboardView() {
       {summary ? (
         <div className="dashboard-grid">
           <ConversionPanel summary={summary} />
+          <DigestPanel />
           <Funnel summary={summary} />
           <SourceHealthCard summary={summary} />
           <ApplyRunsCard summary={summary} />

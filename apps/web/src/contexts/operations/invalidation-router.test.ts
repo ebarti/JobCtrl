@@ -8,6 +8,7 @@ import { applyReviewKeys } from "./applyReviewKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
+import { digestKeys } from "./digestKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
@@ -134,6 +135,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
   ],
+  DigestReviewed: [digestKeys.all(LOCAL_TENANT)],
   JobScored: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),

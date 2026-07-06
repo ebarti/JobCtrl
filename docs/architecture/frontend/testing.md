@@ -67,11 +67,15 @@ These tests do not mount React components.
   API method, returns the typed shape, invalidates the right keys on
   success, and rolls back on error. Per-hook coverage is the standard,
   though not yet universal — many, not all, of the query / mutation hooks
-  have a colocated test today.
+  have a colocated test today. The digest hook pair is covered here: the
+  query reads `GET /v1/digest`, while the acknowledge mutation verifies the
+  explicit timestamp payload and digest-key invalidation.
 - **Component tests with MSW:** for components with non-trivial
   interaction (filter bar binding to URL state, bulk select toolbar,
   apply timeline). Render with a router and a query client; drive via
-  RTL `userEvent`; assert observable DOM state.
+  RTL `userEvent`; assert observable DOM state. `<DigestPanel />` follows
+  this layer by asserting URL-owned deep links and the explicit
+  "mark reviewed" acknowledge action.
 - **Playwright E2E:** **smoke flows only** — navigate the dashboard,
   filter a jobs list, open a drawer, trigger a dry-run apply. Run against
   a real `apps/api` + a seeded SQLite DB.

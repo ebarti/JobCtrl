@@ -2,10 +2,12 @@ export { profileKeys } from "./queryKeys.js";
 
 export { useCredentialsQuery } from "./hooks/useCredentialsQuery.js";
 export { useDeleteCredentialMutation } from "./hooks/useDeleteCredentialMutation.js";
+export { useExtensionCapabilityTokenQuery } from "./hooks/useExtensionCapabilityTokenQuery.js";
 export { useImportResumeMutation } from "./hooks/useImportResumeMutation.js";
 export { useProfileMutationCount } from "./hooks/useProfileMutationCount.js";
 export { useProfileHtmlPreviewUrl } from "./hooks/useProfileHtmlPreviewUrl.js";
 export { useProfileQuery } from "./hooks/useProfileQuery.js";
+export { useRotateExtensionCapabilityTokenMutation } from "./hooks/useRotateExtensionCapabilityTokenMutation.js";
 export { useSettingsQuery } from "./hooks/useSettingsQuery.js";
 export { useUpdateCredentialMutation } from "./hooks/useUpdateCredentialMutation.js";
 export { useUpdateProfileMutation } from "./hooks/useUpdateProfileMutation.js";
