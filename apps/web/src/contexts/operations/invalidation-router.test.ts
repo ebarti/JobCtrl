@@ -47,6 +47,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   DiscoveryRunCompleted: [
     discoveryKeys.sourceQuality(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   DiscoveryRunFailed: [

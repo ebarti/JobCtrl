@@ -2193,6 +2193,33 @@ export interface PreparationSummary {
   };
 }
 
+export const POLITENESS_OUTCOME_REASONS = [
+  "robots_disallowed",
+  "rate_limited",
+  "budget_exhausted",
+] as const;
+export type PolitenessOutcomeReason = (typeof POLITENESS_OUTCOME_REASONS)[number];
+
+/**
+ * Per-source crawl-politeness outcomes recorded by the R10 politeness gateway.
+ *
+ * These are first-class NON-error outcomes — a robots.txt disallow, a rate-limit
+ * deferral/refusal, or a per-run request-budget exhaustion — sourced from
+ * `operational_attempt_metrics` rows written with `outcome = "blocked"` and
+ * `is_scrape_failure = 0`. They explain why a source produced nothing without
+ * being counted as a scrape failure. Counts of `0` with a `null` last reason
+ * mean no politeness outcome was recorded for the source (nothing implied).
+ */
+export interface SourcePolitenessOutcomes {
+  robotsDisallowedCount: number;
+  rateLimitedCount: number;
+  budgetExhaustedCount: number;
+  /** Most-recent block reason for the source, or null when none recorded. */
+  lastBlockedReason: PolitenessOutcomeReason | null;
+  /** ISO timestamp of the most-recent block, or null when none recorded. */
+  lastBlockedAt: string | null;
+}
+
 export interface SourceHealthSummary {
   sourceId: string;
   recommendedState: string;
@@ -2212,6 +2239,7 @@ export interface SourceHealthSummary {
   lastFailureCategory: string | null;
   lastRunId: string | null;
   lastErrorClass: string | null;
+  politeness: SourcePolitenessOutcomes;
   updatedAt: string | null;
 }
 
@@ -2931,6 +2959,7 @@ export interface SourceRegistryEntrySummary {
   activeVerificationRate: number | null;
   fullDescriptionSuccessRate: number | null;
   applyUrlSuccessRate: number | null;
+  politeness: SourcePolitenessOutcomes;
   qualityTrend: "up" | "flat" | "down" | "unknown";
 }
 

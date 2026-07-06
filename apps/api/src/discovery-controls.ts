@@ -41,6 +41,8 @@ import {
   SOURCE_STATE_VALUES,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
+import type { SourcePolitenessOutcomes } from "@jobhunter/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError } from "./write-model.js";
 
@@ -446,6 +448,7 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     [DEFAULT_TENANT],
   );
   const quality = sourceQualityById(db);
+  const politeness = politenessOutcomesBySource(db);
   const sourceIds = new Set(rows.map((row) => row.source_id));
   const summaries = new Map<string, SourceRegistryEntrySummary>();
   for (const row of rows) {
@@ -455,7 +458,10 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     if (isKnownWorkdayHostAlias(row.source_id, sourceIds)) {
       continue;
     }
-    summaries.set(row.source_id, rowToSourceSummary(row, quality.get(row.source_id)));
+    summaries.set(
+      row.source_id,
+      rowToSourceSummary(row, quality.get(row.source_id), politeness.get(row.source_id)),
+    );
   }
   for (const [sourceId, stats] of quality.entries()) {
     if (filterAmericaOnlySources && isAmericaOnlySource(sourceId, sourceId, null)) {
@@ -465,7 +471,7 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
       continue;
     }
     if (!summaries.has(sourceId)) {
-      summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats));
+      summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats, politeness.get(sourceId)));
     }
   }
   return { ok: true, sources: [...summaries.values()] };
@@ -578,7 +584,11 @@ export function upsertSourceRegistryEntry(
   if (!row) {
     throw new Error(`Unable to read source registry entry ${input.sourceId}.`);
   }
-  return rowToSourceSummary(row, sourceQualityById(db).get(input.sourceId));
+  return rowToSourceSummary(
+    row,
+    sourceQualityById(db).get(input.sourceId),
+    politenessOutcomesBySource(db).get(input.sourceId),
+  );
 }
 
 export function patchSourceState(
@@ -639,7 +649,11 @@ export function patchSourceState(
   if (!row) {
     throw new Error(`Unable to read source registry entry ${sourceId}.`);
   }
-  return rowToSourceSummary(row, sourceQualityById(db).get(sourceId));
+  return rowToSourceSummary(
+    row,
+    sourceQualityById(db).get(sourceId),
+    politenessOutcomesBySource(db).get(sourceId),
+  );
 }
 
 export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorListResponse {
@@ -1285,6 +1299,7 @@ function rowToRoleMatchSuggestion(row: RoleMatchFeedbackRow): RoleMatchFeedbackS
 function rowToSourceSummary(
   row: SourceRegistryRow,
   stats: SourceQualityRow | undefined,
+  politeness: SourcePolitenessOutcomes | undefined,
 ): SourceRegistryEntrySummary {
   return {
     sourceId: row.source_id,
@@ -1305,11 +1320,16 @@ function rowToSourceSummary(
     activeVerificationRate: nullableNumber(stats?.active_verification_rate),
     fullDescriptionSuccessRate: nullableNumber(stats?.full_description_success_rate),
     applyUrlSuccessRate: nullableNumber(stats?.apply_url_success_rate),
+    politeness: politeness ?? emptyPolitenessOutcomes(),
     qualityTrend: "unknown",
   };
 }
 
-function qualityOnlySourceSummary(sourceId: string, stats: SourceQualityRow): SourceRegistryEntrySummary {
+function qualityOnlySourceSummary(
+  sourceId: string,
+  stats: SourceQualityRow,
+  politeness: SourcePolitenessOutcomes | undefined,
+): SourceRegistryEntrySummary {
   const recommended = recommendedSourceState(stats.recommended_state);
   return {
     sourceId,
@@ -1330,6 +1350,7 @@ function qualityOnlySourceSummary(sourceId: string, stats: SourceQualityRow): So
     activeVerificationRate: nullableNumber(stats.active_verification_rate),
     fullDescriptionSuccessRate: nullableNumber(stats.full_description_success_rate),
     applyUrlSuccessRate: nullableNumber(stats.apply_url_success_rate),
+    politeness: politeness ?? emptyPolitenessOutcomes(),
     qualityTrend: "unknown",
   };
 }

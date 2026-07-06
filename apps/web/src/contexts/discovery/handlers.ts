@@ -64,6 +64,9 @@ export const discoveryRunCompletedHandler = (
   event: DiscoveryRunCompleted,
 ): readonly InvalidationItem[] => [
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+  // A completed run is when politeness outcomes (robots/rate/budget) and the
+  // per-source quality metrics are finalised, so refresh the registry list too.
+  invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 

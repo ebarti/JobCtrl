@@ -39,6 +39,11 @@ import {
 } from "../../../shared/ui/filterable-data-grid.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import {
+  SourcePolitenessBadges,
+  hasPolitenessOutcomes,
+  politenessOutcomeSummary,
+} from "./SourcePolitenessBadges.js";
+import {
   Tabs,
   TabsContent,
   TabsList,
@@ -675,6 +680,32 @@ function SourceRegistryPanel({
         },
         getSortValue: (source) => source.duplicateRate ?? -1,
         getFilterValue: (source) => sourceQualityMetric(source, 3).value,
+      },
+      {
+        id: "politeness",
+        label: "Access",
+        render: (source) =>
+          hasPolitenessOutcomes(source.politeness) ? (
+            <SourcePolitenessBadges
+              politeness={source.politeness}
+              sourceLabel={sourceCompanyName(source)}
+            />
+          ) : (
+            <span
+              className="source-table-metric unknown"
+              aria-label="No crawl-access outcomes recorded"
+            >
+              —
+            </span>
+          ),
+        getSortValue: (source) =>
+          source.politeness.robotsDisallowedCount +
+          source.politeness.rateLimitedCount +
+          source.politeness.budgetExhaustedCount,
+        getFilterValue: (source) =>
+          hasPolitenessOutcomes(source.politeness)
+            ? politenessOutcomeSummary(source.politeness)
+            : "none",
       },
       {
         id: "actions",

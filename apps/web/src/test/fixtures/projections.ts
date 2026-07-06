@@ -971,6 +971,13 @@ export const sampleDashboardSummary: DashboardSummary = {
       lastFailureCategory: "timeout",
       lastRunId: "run-1",
       lastErrorClass: "TimeoutError",
+      politeness: {
+        robotsDisallowedCount: 1,
+        rateLimitedCount: 0,
+        budgetExhaustedCount: 0,
+        lastBlockedReason: "robots_disallowed",
+        lastBlockedAt: "2026-05-06T07:40:00Z",
+      },
       updatedAt: "2026-05-06T07:40:00Z",
     },
   ],

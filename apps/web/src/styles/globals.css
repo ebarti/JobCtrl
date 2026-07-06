@@ -3273,6 +3273,32 @@ textarea:focus-visible {
   width: 1%;
 }
 
+/* Crawl-politeness outcome badges (R10). Neutral by design — these are
+   NON-error outcomes (robots disallow / rate limit / budget exhaustion), so
+   they read factually and never as a failure/error chip. */
+.source-politeness-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.source-politeness-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  background: color-mix(in oklch, var(--muted-foreground) 12%, var(--muted));
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+
+.source-politeness-badge-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
 .discovery-review-row,
 .discovery-preview-row {
   display: grid;
