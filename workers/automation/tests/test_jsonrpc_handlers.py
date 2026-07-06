@@ -450,7 +450,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     )
     conn.commit()
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
         assert max_pages == 10
         return (
             ReportedCompensationObservation(
@@ -553,7 +553,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     monkeypatch.setenv("JOBHUNTER_GLASSDOOR_ACCESS_MODE", "written_permission")
     monkeypatch.setenv("JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
         return (
             ReportedCompensationObservation(
                 source_id="euro_top_tech",

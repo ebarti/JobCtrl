@@ -22,6 +22,7 @@ SRC_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "jobhunter"
 # outbound HTTP transport. Extended per phase (P2b Workday, P2c compensation, ...).
 ROUTED_NON_BROWSER_SURFACES = [
     "infrastructure/discovery/ats_adapters.py",
+    "infrastructure/compensation/sqlite_market_repository.py",
 ]
 
 
