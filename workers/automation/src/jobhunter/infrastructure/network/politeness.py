@@ -218,6 +218,10 @@ def record_politeness_outcome(
     land in ``operational_attempt_metrics`` with ``is_operational_failure`` and
     ``is_scrape_failure`` both false, so a source that yields nothing shows *why*
     without being counted as a scrape failure (RCA discipline).
+
+    Does NOT commit: the caller owns the transaction so the outcome persists
+    atomically with the surrounding write path. A caller that records an outcome
+    and then short-circuits (e.g. breaks out of a crawl loop) must commit itself.
     """
     if decision.allowed:
         return
@@ -273,7 +277,7 @@ class PolitenessSession:
 
     @property
     def user_agent(self) -> str:
-        return self._gateway.user_agent  # type: ignore[attr-defined]
+        return self._gateway.user_agent
 
     @property
     def budget(self) -> RunBudget:
@@ -300,9 +304,7 @@ class PolitenessSession:
             yield decision
 
     def note_retry_after(self, url: str, retry_after_seconds: float) -> None:
-        note = getattr(self._gateway, "note_retry_after", None)
-        if callable(note):
-            note(url, retry_after_seconds)
+        self._gateway.note_retry_after(url, retry_after_seconds)
 
     def record_server_rate_limit(self, url: str, retry_after_seconds: float | None = None) -> None:
         """Record a server-issued 429/503 as a first-class rate-limit outcome."""

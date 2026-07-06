@@ -1,7 +1,9 @@
 """Workday ATS direct API scraper: searches employer career portals.
 
-Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.)
-via the undocumented CXS JSON API. Zero LLM, zero browser -- pure HTTP.
+Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.) via the
+Workday CXS JSON API -- the stable JSON endpoint the public career-site UI itself
+calls, treated as a documented-API-class source (robots-exempt, D2). Zero LLM,
+zero browser -- pure HTTP through the shared politeness gateway.
 
 Employer registry is loaded from config/employers.yaml instead of being
 hardcoded. Supports sequential search + detail fetching with proxy.
@@ -121,12 +123,16 @@ def strip_html(html: str) -> str:
 
 # -- Politeness gateway routing (R10) ---------------------------------------
 #
-# The Workday CXS API is a documented endpoint (robots-exempt, D2). Every fetch
-# still routes through the shared politeness gateway for the honest UA, per-host
-# rate/concurrency pacing, and a per-employer request budget. Configured once
-# per run (mirroring the old global-opener pattern); the per-employer client is
-# built lazily on the employer's own worker thread so recording uses that
-# thread's SQLite connection (get_connection is thread-local).
+# The Workday CXS API is treated as a documented-API-class source (robots-exempt,
+# D2): the stable JSON endpoint the public career-site UI calls, not an ad-hoc
+# scrape target. Every fetch still routes through the shared politeness gateway
+# for the honest UA, per-host rate/concurrency pacing, and a per-employer request
+# budget. Configured once per run (mirroring the old global-opener pattern); the
+# per-employer client is built lazily on the employer's own worker thread so
+# recording uses that thread's SQLite connection (get_connection is thread-local),
+# and is cached by employer_key (1:1 with the fan-out task/thread) so two
+# employers that resolve to the same source_id can never share one thread-bound
+# recorder connection across threads.
 
 
 class _WorkdayPoliteness:
@@ -153,13 +159,29 @@ def configure_workday_politeness(
     _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, opener)
 
 
-def _employer_source_id(employer: dict) -> str:
-    configured = str(employer.get("_source_id") or "").strip()
-    if configured:
-        return configured
-    name = str(employer.get("name") or employer.get("employer_key") or "").strip()
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+def _workday_source_id(*, configured: object = "", employer_key: object = "", name: object = "") -> str:
+    """Single source-of-truth for a Workday source_id.
+
+    Both the politeness client (:func:`_employer_source_id`) and the storage
+    posting rows (:func:`_source_id`) derive their source_id here so a source's
+    politeness outcomes join to its posting rows. Prefer a configured
+    ``_source_id``; otherwise slug the ``employer_key`` (the storage basis),
+    falling back to ``name`` only when no key is available.
+    """
+    configured_str = str(configured or "").strip()
+    if configured_str:
+        return configured_str
+    basis = str(employer_key or "").strip() or str(name or "").strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", basis.lower()).strip("-")
     return f"workday:{slug or 'unknown'}"
+
+
+def _employer_source_id(employer: dict) -> str:
+    return _workday_source_id(
+        configured=employer.get("_source_id"),
+        employer_key=employer.get("employer_key"),
+        name=employer.get("name"),
+    )
 
 
 def _employer_client(employer: dict) -> GatewayHttpClient:
@@ -169,8 +191,14 @@ def _employer_client(employer: dict) -> GatewayHttpClient:
         politeness = _politeness
     assert politeness is not None
     source_id = _employer_source_id(employer)
+    # Cache by the fan-out employer_key (1:1 with the task/thread), not by
+    # source_id: two distinct employers that resolve to the same source_id would
+    # otherwise share one client whose recorder_conn is bound to the first
+    # thread, causing cross-thread SQLite use. Falls back to source_id when no
+    # key is stamped (e.g. direct workday_search callers in tests).
+    cache_key = str(employer.get("employer_key") or "").strip() or source_id
     with politeness.lock:
-        client = politeness.clients.get(source_id)
+        client = politeness.clients.get(cache_key)
         if client is None:
             session = PolitenessSession(
                 politeness.gateway,
@@ -187,7 +215,7 @@ def _employer_client(employer: dict) -> GatewayHttpClient:
                 recorder_conn=get_connection(),
             )
             client = GatewayHttpClient(session, default_timeout=30.0, opener=politeness.opener)
-            politeness.clients[source_id] = client
+            politeness.clients[cache_key] = client
         return client
 
 
@@ -394,11 +422,8 @@ def _job_url(job: dict, employers: dict) -> str:
 def _source_id(job: dict, employers: dict) -> str:
     employer_key = str(job.get("employer_key") or "").strip()
     employer = employers.get(employer_key, {}) if employer_key else {}
-    configured = str(employer.get("_source_id") or "").strip() if isinstance(employer, dict) else ""
-    if configured:
-        return configured
-    slug = re.sub(r"[^a-z0-9]+", "-", employer_key.lower()).strip("-")
-    return f"workday:{slug or 'unknown'}"
+    configured = employer.get("_source_id") if isinstance(employer, dict) else ""
+    return _workday_source_id(configured=configured, employer_key=employer_key)
 
 
 def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
@@ -566,6 +591,9 @@ def _search_and_fetch_one(
 ) -> dict:
     """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
+    # Stamp the fan-out key so the per-employer politeness client caches by it
+    # (1:1 with this task/thread) and derives a source_id that joins to storage.
+    emp.setdefault("employer_key", employer_key)
 
     try:
         jobs = search_employer(

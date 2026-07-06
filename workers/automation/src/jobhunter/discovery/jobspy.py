@@ -50,7 +50,6 @@ from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.network import (
-    HostRateLimiter,
     PolitenessGateway,
     PolitenessSourceContext,
     RunBudgetCounter,
@@ -1133,12 +1132,17 @@ def _full_crawl(
     init_db()
 
     # Politeness invocation boundary (R10, D3): pace searches + bound the run's
-    # outbound request budget. jobspy's internal per-board transport is unpoliced.
-    # A per-crawl limiter is correct here (the crawl loop is sequential); the
-    # process-shared limiter guards the parallel ThreadPoolExecutor fan-out paths.
+    # search fan-out. jobspy owns its internal per-board tls-client transport, so
+    # we cannot count (or robots-gate) its individual outbound requests. The
+    # budget here therefore counts SEARCH INVOCATIONS, not outbound requests: one
+    # unit == one ``_run_one_search`` call (each of which fans out to up to two
+    # ``scrape_jobs`` calls with internal board x page requests we can't police).
+    # We pace on the shared process-wide limiter's "jobspy" bucket so every jobspy
+    # invocation path (this crawl + the single manual ``search_jobs``) shares one
+    # pacing budget.
     politeness_ua = PolitenessGateway().user_agent
-    limiter = HostRateLimiter()
-    request_budget = RunBudgetCounter(BROAD_BOARD_LEAD_POLICY.max_requests_per_run)
+    limiter = get_shared_rate_limiter()
+    search_budget = RunBudgetCounter(BROAD_BOARD_LEAD_POLICY.max_requests_per_run)
     politeness_context = PolitenessSourceContext(
         stage="discover",
         source_id=_JOBSPY_HOST_KEY,
@@ -1180,18 +1184,24 @@ def _full_crawl(
         remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
-        if not request_budget.try_consume(1):
+        if not search_budget.try_consume(1):
             record_politeness_outcome(
                 politeness_conn,
                 decision=PolitenessDecision(
                     allowed=False,
                     outcome=PolitenessOutcome.BUDGET_EXHAUSTED,
                     user_agent=politeness_ua,
-                    reason="jobspy per-run request budget exhausted",
+                    reason="jobspy per-run search-invocation budget exhausted",
                 ),
                 context=politeness_context,
             )
-            log.warning("JobSpy per-run request budget exhausted after %d searches", completed)
+            # record_politeness_outcome does not commit; commit here so the
+            # outcome is durable even though we break out before the crawl's
+            # normal end-of-run persistence.
+            politeness_conn.commit()
+            log.warning(
+                "JobSpy per-run search-invocation budget exhausted after %d searches", completed
+            )
             break
         emit_progress(s, "JobSpy search started")
         with limiter.slot(
