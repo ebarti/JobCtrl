@@ -2212,6 +2212,13 @@ export type PolitenessOutcomeReason = (typeof POLITENESS_OUTCOME_REASONS)[number
  */
 export interface SourcePolitenessOutcomes {
   robotsDisallowedCount: number;
+  /**
+   * Recorded rate-limited outcomes. The gateway currently enforces rate limits
+   * by waiting rather than by emitting a rate-limited verdict, so this counter
+   * legitimately reads 0 in production until the later R10 Retry-After-clamp
+   * work records RATE_LIMITED outcomes. Rendered uniformly with the other two
+   * reasons regardless — the read path and UI are already correct for it.
+   */
   rateLimitedCount: number;
   budgetExhaustedCount: number;
   /** Most-recent block reason for the source, or null when none recorded. */
