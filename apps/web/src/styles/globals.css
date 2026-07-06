@@ -989,7 +989,7 @@ textarea:focus-visible {
 
 .analytics-summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0;
   border-bottom: 1px solid var(--border);
 }

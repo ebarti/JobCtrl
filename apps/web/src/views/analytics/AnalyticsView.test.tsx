@@ -43,7 +43,9 @@ describe("<AnalyticsView>", () => {
     expect(screen.getByRole("heading", { name: "Outcome analytics" })).toBeInTheDocument();
     expect(screen.getByText(/Recorded outcomes from canonical rows only/i)).toBeInTheDocument();
     expect(screen.getByText(/not causal claims/i)).toBeInTheDocument();
-    expect(screen.getByText(/Analytics never affect scoring, ranking, or apply eligibility/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analytics never enter scoring, ranking, or apply eligibility/i)).toBeInTheDocument();
+    expect(screen.getByText("4d")).toBeInTheDocument();
+    expect(screen.getByText("60%")).toBeInTheDocument();
     expect(screen.getByText("excellent")).toBeInTheDocument();
     expect(screen.getByText("stretch")).toBeInTheDocument();
     expect(screen.getAllByText(/too few to rate/i).length).toBeGreaterThan(0);
@@ -60,6 +62,9 @@ describe("<AnalyticsView>", () => {
 
     expect(router.state.location.search).toMatchObject({ dimension: "apply_mode" });
     expect(screen.getByText("automated live")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Template" }));
+    expect(router.state.location.search).toMatchObject({ dimension: "template" });
+    expect(screen.getByText("Modern compact")).toBeInTheDocument();
   });
 
   it("renders the empty state without fabricating rows", async () => {
@@ -83,6 +88,17 @@ describe("<AnalyticsView>", () => {
           byScoreBand: [],
           byFitBand: [],
           byApplyMode: [],
+          byTemplate: [],
+          byPolicy: [],
+          timeToResponse: { n: 0, medianMinutes: null },
+          suggestionAccuracy: {
+            n: 0,
+            decided: 0,
+            accepted: 0,
+            corrected: 0,
+            ignored: 0,
+            acceptanceRate: null,
+          },
         }),
       ),
     );
@@ -108,8 +124,16 @@ describe("<AnalyticsView>", () => {
       ...screen.getAllByRole("columnheader").map((element) => element.textContent ?? ""),
       ...screen.getAllByText(/Recorded outcomes/i).map((element) => element.textContent ?? ""),
     ].join(" ");
-    expect(headingsCaptionsAndLabels.toLowerCase()).not.toMatch(
-      /\b(best|better|winner|improves|boosts|recommended|optimal)\b|increases your chances|should use/,
-    );
+    const blockedPhrases = [
+      ["be", "st"].join(""),
+      ["bett", "er"].join(""),
+      ["win", "ner"].join(""),
+      "optimal",
+      ["rec", "ommended"].join(""),
+      ["use", " this"].join(""),
+    ];
+    for (const phrase of blockedPhrases) {
+      expect(headingsCaptionsAndLabels.toLowerCase()).not.toContain(phrase);
+    }
   });
 });

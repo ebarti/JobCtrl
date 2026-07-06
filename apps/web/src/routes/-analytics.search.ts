@@ -5,6 +5,8 @@ export const ANALYTICS_DIMENSIONS = [
   "score_band",
   "fit_band",
   "apply_mode",
+  "template",
+  "policy",
 ] as const;
 
 export type AnalyticsDimension = (typeof ANALYTICS_DIMENSIONS)[number];

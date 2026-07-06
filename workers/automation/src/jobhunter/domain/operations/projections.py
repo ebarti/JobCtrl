@@ -97,6 +97,9 @@ class JobListProjection:
     apply_status: str | None = None
     applied_at: str | None = None
     apply_mode: str | None = None
+    resume_template_id: str | None = None
+    resume_template_name: str | None = None
+    tailoring_policy_version: int | None = None
     artifact_count: int = 0
     deleted_at: str | None = None
     last_updated_at: str | None = None

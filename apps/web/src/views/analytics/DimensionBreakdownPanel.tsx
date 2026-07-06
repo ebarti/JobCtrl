@@ -8,6 +8,8 @@ const DIMENSION_LABELS: Record<AnalyticsDimension, string> = {
   score_band: "Score band",
   fit_band: "Fit band",
   apply_mode: "Apply mode",
+  template: "Resume template",
+  policy: "Tailoring policy",
 };
 
 const DIMENSION_TONES: Record<AnalyticsDimension, OutcomeRateRow["badgeTone"]> = {
@@ -15,6 +17,8 @@ const DIMENSION_TONES: Record<AnalyticsDimension, OutcomeRateRow["badgeTone"]> =
   score_band: "ok",
   fit_band: "warn",
   apply_mode: "muted",
+  template: "info",
+  policy: "muted",
 };
 
 function humanizeToken(value: string): string {
@@ -59,6 +63,12 @@ export function outcomeRows(
       return analytics.byFitBand.map((group) => baseRow("fit_band", group.fitBand, group, minSample));
     case "apply_mode":
       return analytics.byApplyMode.map((group) => baseRow("apply_mode", group.applyMode, group, minSample));
+    case "template":
+      return analytics.byTemplate.map((group) =>
+        baseRow("template", group.templateName ?? group.templateId, group, minSample),
+      );
+    case "policy":
+      return analytics.byPolicy.map((group) => baseRow("policy", group.policyLabel, group, minSample));
   }
 }
 

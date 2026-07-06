@@ -146,7 +146,7 @@ silently conflated; §4.2 and decision **D2** define the resolution.
    `application_outcome_suggestions` row. No metric is inferred from the job
    description or from another derived metric.
 3. **Small-sample honesty (central invariant).** No rate is shown without its
-   `n`. Below `MIN_RATE_SAMPLE_N` (see D1) a group shows counts only — never a
+   `n`. Below `MIN_CONVERSION_SAMPLE` (see D1) a group shows counts only — never a
    percentage. See §3.1 for exact labels.
 4. **No causal language.** Copy describes *observed associations in your own
    recorded data*, never cause/effect or recommendations. See §3.1 for the exact
@@ -165,14 +165,14 @@ silently conflated; §4.2 and decision **D2** define the resolution.
 
 ### 3.1 Exact language and labels (define once, reuse everywhere)
 
-A single shared constant `MIN_RATE_SAMPLE_N` (D1) governs gating in the read
+A single shared constant `MIN_CONVERSION_SAMPLE` (D1) governs gating in the read
 model **and** the UI. Rendering rules:
 
 | Group state | Rendered |
 |---|---|
 | `applied == 0` | `no applications yet` (no rate, no `n`) |
-| `0 < applied < MIN_RATE_SAMPLE_N` | count + `n=<applied>` + `too few to rate` — **no percentage** |
-| `applied >= MIN_RATE_SAMPLE_N` | `<rate>% · n=<applied>` — rate and `n` always adjacent |
+| `0 < applied < MIN_CONVERSION_SAMPLE` | count + `n=<applied>` + `too few to rate` — **no percentage** |
+| `applied >= MIN_CONVERSION_SAMPLE` | `<rate>% · n=<applied>` — rate and `n` always adjacent |
 
 - **Persistent panel caption (required, verbatim intent):** "Descriptive
   associations from your own recorded outcomes — not causal claims. A rate
@@ -187,7 +187,7 @@ model **and** the UI. Rendering rules:
   below-threshold rows are visually de-emphasised and sorted last; the surface is
   never presented as a ranking or a recommendation.
 - **Rate semantics in the read model:** the contract carries both the count and
-  an explicit rate field that is `null` when `applied < MIN_RATE_SAMPLE_N` (not
+  an explicit rate field that is `null` when `applied < MIN_CONVERSION_SAMPLE` (not
   merely when `applied == 0`), so a client cannot accidentally render a
   small-sample percentage.
 
@@ -235,8 +235,8 @@ consumes; leave the dashboard's headline `conversion` funnel in place.
 gating, `ConversionPanel` insufficient-data state, and the `n=1` regression
 fixtures — shipped separately as PR #273. Phase 1 reuses its shipped constant
 `MIN_CONVERSION_SAMPLE` (`apps/api/src/read-model.ts`, default `5`) as the one
-shared threshold everywhere this plan says `MIN_RATE_SAMPLE_N`; D1 is now
-"confirm or tune that shipped default", not "introduce the constant".
+shared threshold; D1 is now "confirm or tune that shipped default", not
+"introduce the constant".
 
 - **Source of truth.** `application_outcomes` (`job_key`, `kind`, `occurred_at`)
   × applied `job_list_projections` rows (`source`, `fit_score`, `applied_at`,
@@ -256,8 +256,8 @@ shared threshold everywhere this plan says `MIN_RATE_SAMPLE_N`; D1 is now
   (sibling of `/v1/dashboard/summary:287`), returning an `OutcomeAnalyticsSummary`
   contract in `packages/contracts/src/schemas.ts`. Each group carries integer
   counts, an `n` (= `applied`), and a rate field that is `null` when
-  `n < MIN_RATE_SAMPLE_N`. Rate derivation lives beside `conversionFunnelMetrics`
-  in `read-model.ts` and reuses one shared `MIN_RATE_SAMPLE_N` constant.
+  `n < MIN_CONVERSION_SAMPLE`. Rate derivation lives beside `conversionFunnelMetrics`
+  in `read-model.ts` and reuses the shipped `MIN_CONVERSION_SAMPLE` constant.
 - **UI surface.** None in this phase beyond retrofitting the small-sample rule
   into the existing `ConversionPanel.tsx` (so the shipped dashboard stops showing
   100%-off-`n=1`). The full analytics view is Phase 2.
@@ -267,7 +267,7 @@ shared threshold everywhere this plan says `MIN_RATE_SAMPLE_N`; D1 is now
   shape (rate `null` below threshold); read-only (Invariant 1) guard test.
 - **Synthetic regression fixtures.**
   - **Small-sample fixture (required):** applied jobs where one source/band group
-    has `applied = 1, reply = 1` and another has `applied >= MIN_RATE_SAMPLE_N`.
+    has `applied = 1, reply = 1` and another has `applied >= MIN_CONVERSION_SAMPLE`.
     Assert the small group's rate field is `null` and the UI renders `too few to
     rate` (never `100%`), while the large group renders a numeric rate with its
     `n`. Add to both `apps/api/test/` and `apps/web/src/.../ConversionPanel` tests.
@@ -418,7 +418,7 @@ comparison to observed outcomes — all descriptive, gated, and traceable.
   (denormalised columns on `job_list_projections`, dual DDL + both builders +
   fixture per Invariant 6), then extend the outcome computation with `byTemplate`
   and `byPolicy` breakdowns and a time-to-response aggregate (median + count,
-  gated by `MIN_RATE_SAMPLE_N`). Add a suggestion-accuracy aggregate over decided
+  gated by `MIN_CONVERSION_SAMPLE`). Add a suggestion-accuracy aggregate over decided
   suggestions. Keep everything integer/duration-count in the projection; derive
   rates and medians at read time.
 - **API + contract.** Extend `OutcomeAnalyticsSummary` with `byTemplate`,
@@ -428,7 +428,7 @@ comparison to observed outcomes — all descriptive, gated, and traceable.
 - **UI surface.** Analytics view (Phase 2) gains "By resume template" and "By
   tailoring policy" panels and a time-to-response panel, all under the §3.1 rules.
   The Phase 3 comparison may show a template's observed response association only
-  when `n >= MIN_RATE_SAMPLE_N`, phrased as association, never recommendation.
+  when `n >= MIN_CONVERSION_SAMPLE`, phrased as association, never as advice.
 - **Approving user action.** None (read-only). Outcome and suggestion decisions
   remain user-gated.
 - **Invariant proven.** Read-only (never feeds scoring/apply eligibility);
@@ -559,11 +559,10 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
 
 ## 12. Open Owner Decisions
 
-- **D1 — `MIN_RATE_SAMPLE_N` value.** Recommend default **5** (single-user apply
-  volume is low; a rate off `n<5` is noise). Precedent: source-quality gates rates
-  at `sample >= 10` (`source_quality.py:433`), but that is higher-volume
-  discovery data. One shared constant governs read model + UI. *Owner: confirm 5
-  vs 10 (or per-dimension).*
+- **D1 — `MIN_CONVERSION_SAMPLE` value.** **Decision 2026-07-05:** reuse PR #273's
+  shipped `MIN_CONVERSION_SAMPLE = 5` (`apps/api/src/read-model.ts`) as the
+  single threshold for the read model and UI. Do not introduce a parallel
+  threshold for outcome analytics; future tuning changes this one constant.
 - **D2 — Band vocabulary.** Recommend keeping the existing parity-guarded
   `SCORE_BAND_ORDER` for the outcome breakdown but **labelling it "score band"**,
   and (optionally) adding a separate canonical "fit band" breakdown from

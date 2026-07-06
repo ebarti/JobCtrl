@@ -10,8 +10,8 @@ export function SmallSampleNotice({ minSample }: SmallSampleNoticeProps) {
   return (
     <p className="analytics-caption">
       Descriptive associations from your own recorded outcomes — not causal claims. Recorded outcomes from
-      canonical rows only. {sampleText}; smaller groups show counts only. Analytics never affect scoring, ranking,
-      or apply eligibility.
+      canonical rows only. {sampleText}; smaller groups show counts only. Analytics never
+      enter scoring, ranking, or apply eligibility.
     </p>
   );
 }

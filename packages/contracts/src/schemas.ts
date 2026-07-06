@@ -2317,6 +2317,20 @@ export interface OutcomeAnalyticsFunnel {
   rejectionRate: number | null;
 }
 
+export interface OutcomeAnalyticsTimeToResponse {
+  n: number;
+  medianMinutes: number | null;
+}
+
+export interface OutcomeAnalyticsSuggestionAccuracy {
+  n: number;
+  decided: number;
+  accepted: number;
+  corrected: number;
+  ignored: number;
+  acceptanceRate: number | null;
+}
+
 export interface OutcomeAnalyticsSummary {
   ok: true;
   generatedAt: string;
@@ -2326,6 +2340,10 @@ export interface OutcomeAnalyticsSummary {
   byScoreBand: Array<{ scoreBand: OutcomeAnalyticsScoreBand } & OutcomeAnalyticsFunnel>;
   byFitBand: Array<{ fitBand: OutcomeAnalyticsFitBand } & OutcomeAnalyticsFunnel>;
   byApplyMode: Array<{ applyMode: OutcomeAnalyticsApplyMode } & OutcomeAnalyticsFunnel>;
+  byTemplate: Array<{ templateId: string; templateName: string | null } & OutcomeAnalyticsFunnel>;
+  byPolicy: Array<{ tailoringPolicyVersion: number | null; policyLabel: string } & OutcomeAnalyticsFunnel>;
+  timeToResponse: OutcomeAnalyticsTimeToResponse;
+  suggestionAccuracy: OutcomeAnalyticsSuggestionAccuracy;
 }
 
 export interface DashboardSummary {

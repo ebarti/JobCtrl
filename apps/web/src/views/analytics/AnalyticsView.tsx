@@ -18,10 +18,27 @@ const DIMENSION_OPTIONS: ReadonlyArray<{
   { value: "score_band", label: "Score band" },
   { value: "fit_band", label: "Fit band" },
   { value: "apply_mode", label: "Apply mode" },
+  { value: "template", label: "Template" },
+  { value: "policy", label: "Policy" },
 ];
 
 function isAnalyticsDimension(value: string): value is AnalyticsDimension {
   return (ANALYTICS_DIMENSIONS as readonly string[]).includes(value);
+}
+
+function formatDuration(minutes: number | null | undefined, n: number, minSample: number | undefined): string {
+  if (n === 0) return "No rows";
+  if (minutes === null || minutes === undefined) return minSample === undefined ? `${n} rows` : `${n}/${minSample} rows`;
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 48) return `${Math.round(hours * 10) / 10}h`;
+  return `${Math.round((hours / 24) * 10) / 10}d`;
+}
+
+function formatAcceptance(rate: number | null | undefined, n: number, minSample: number | undefined): string {
+  if (n === 0) return "No reviews";
+  if (rate === null || rate === undefined) return minSample === undefined ? `${n} reviews` : `${n}/${minSample} reviews`;
+  return `${Math.round(rate * 100)}%`;
 }
 
 export function AnalyticsView() {
@@ -90,6 +107,30 @@ export function AnalyticsView() {
         <div>
           <span>Offers</span>
           <b>{analytics?.totals.offer ?? "-"}</b>
+        </div>
+        <div>
+          <span>Median response</span>
+          <b>
+            {analytics
+              ? formatDuration(
+                  analytics.timeToResponse.medianMinutes,
+                  analytics.timeToResponse.n,
+                  analytics.minSample,
+                )
+              : "-"}
+          </b>
+        </div>
+        <div>
+          <span>Suggestions accepted</span>
+          <b>
+            {analytics
+              ? formatAcceptance(
+                  analytics.suggestionAccuracy.acceptanceRate,
+                  analytics.suggestionAccuracy.n,
+                  analytics.minSample,
+                )
+              : "-"}
+          </b>
         </div>
       </div>
       <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />

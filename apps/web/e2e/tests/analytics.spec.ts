@@ -51,6 +51,20 @@ test("analytics view keeps small samples count-only", async ({ page }) => {
         byScoreBand: [],
         byFitBand: [],
         byApplyMode: [],
+        byTemplate: [],
+        byPolicy: [],
+        timeToResponse: {
+          n: 0,
+          medianMinutes: null,
+        },
+        suggestionAccuracy: {
+          n: 0,
+          decided: 0,
+          accepted: 0,
+          corrected: 0,
+          ignored: 0,
+          acceptanceRate: null,
+        },
       }),
     });
   });
