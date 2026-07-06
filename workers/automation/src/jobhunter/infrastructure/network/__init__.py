@@ -10,6 +10,10 @@ outbound fetch routes through: robots.txt compliance, per-host rate limiting +
 concurrency, per-run request budgets, and honest-UA stamping.
 """
 
+from jobhunter.infrastructure.network.http_client import (
+    GatewayHttpClient,
+    parse_retry_after,
+)
 from jobhunter.infrastructure.network.politeness import (
     POLITENESS_ATTEMPT_KIND,
     POLITENESS_BLOCKED_OUTCOME,
@@ -42,4 +46,6 @@ __all__ = [
     "HostRateLimiter",
     "get_shared_rate_limiter",
     "RobotsCache",
+    "GatewayHttpClient",
+    "parse_retry_after",
 ]
