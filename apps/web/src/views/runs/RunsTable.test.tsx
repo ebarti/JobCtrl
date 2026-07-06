@@ -61,6 +61,31 @@ describe("<RunsTable>", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders the standing auto-apply loop as a visible operations run", () => {
+    renderTable({
+      data: makeWorkflowRunsPage([
+        {
+          ...sampleWorkflowRun,
+          workflowId: "apply-auto-local",
+          runId: "apply-auto-local",
+          jobKey: "",
+          title: "Standing apply loop",
+          company: "Auto apply",
+          status: "in_progress",
+          dryRun: false,
+        },
+      ]),
+    });
+
+    expect(screen.getByText("Standing apply loop")).toBeInTheDocument();
+    expect(screen.getByText("Auto apply")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Stop workflow run for Standing apply loop",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("invokes onOpenRun with the workflow id when a row is activated", async () => {
     const user = userEvent.setup();
     const onOpenRun = vi.fn();

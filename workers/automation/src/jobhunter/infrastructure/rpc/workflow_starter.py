@@ -124,6 +124,7 @@ def _dispatch_input_summary(payload: object | None) -> dict[str, Any]:
         ("limit", "limit"),
         ("job_url", "jobUrl"),
         ("continuous", "continuous"),
+        ("auto_apply_loop", "autoApplyLoop"),
     ):
         if not hasattr(payload, attr):
             continue

@@ -4452,6 +4452,11 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.status-line.warning {
+  background: color-mix(in oklch, var(--warning) 12%, var(--card));
+  color: var(--warning-foreground);
+}
+
 .empty,
 .banner {
   padding: 28px 16px;

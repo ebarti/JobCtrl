@@ -260,6 +260,27 @@ rendering, and layout boxes stay tied to the same material generation.
 Apply automation can submit applications. Use dry runs and narrow targets before
 approving real submission.
 
+The web app writes the apply safety settings to `dashboard.json`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `autoApply` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs. The loop appears in Runs as the standing apply loop. Turning it back off cancels that loop. |
+| `applyApprovalRequired` | `true` | When `true`, live submit waits for Apply Review approval; the standing loop parks unapproved jobs as awaiting approval. When `false`, manually started live runs and the standing loop may submit eligible jobs without review. |
+| `minFitScore` | `7` | Minimum score for jobs claimed by apply automation, including the standing loop. |
+| `applyConcurrency` | `1` | Number of concurrent apply workers used by apply automation. The standing loop re-reads this setting when it polls. |
+
+Combinations matter:
+
+- `autoApply: false`, `applyApprovalRequired: true` is the default supervised
+  mode: no standing loop exists and live submit requires Apply Review approval.
+- `autoApply: true`, `applyApprovalRequired: true` is a supervised standing
+  loop: eligible approved jobs can submit, and unapproved jobs are parked for
+  Apply Review.
+- `autoApply: true`, `applyApprovalRequired: false` is autonomous live submit:
+  the standing loop may submit eligible prepared jobs without human review,
+  while the minimum score, daily spend ceiling, at-most-once submit intent,
+  CAPTCHA fail-closed behavior, and dry-run guard still apply.
+
 ## Gmail Connector
 
 | Variable | Default | What it does |

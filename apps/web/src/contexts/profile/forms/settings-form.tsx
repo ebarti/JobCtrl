@@ -265,44 +265,62 @@ export function DiscoveryAutomationSettingsForm({ initial }: SettingsFormProps) 
       </form.Field>
       <form.Field name="autoApply">
         {(field) => (
-          <label className="field check">
-            <input
-              type="checkbox"
-              checked={field.state.value ?? false}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.checked)}
-            />
-            <span>Auto apply</span>
-          </label>
+          <>
+            <label className="field check">
+              <input
+                type="checkbox"
+                aria-describedby="settings-auto-apply-help"
+                checked={field.state.value ?? false}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.checked)}
+              />
+              <span>Auto apply</span>
+            </label>
+            <small id="settings-auto-apply-help" className="field-hint">
+              Keep one standing apply loop running for eligible prepared jobs.
+            </small>
+          </>
         )}
       </form.Field>
       <form.Field name="applyApprovalRequired">
         {(field) => (
-          <label className="field check">
-            <input
-              type="checkbox"
-              checked={field.state.value ?? true}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.checked)}
-            />
-            <span>
+          <>
+            <label className="field check">
+              <input
+                type="checkbox"
+                aria-describedby="settings-apply-approval-required-help"
+                checked={field.state.value ?? true}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.checked)}
+              />
               <span>Require approval before live submit</span>
-              <small>
-                Live (non-dry-run) applications must be approved in Apply Review before the agent may submit.
-              </small>
-            </span>
-          </label>
+            </label>
+            <small id="settings-apply-approval-required-help" className="field-hint">
+              Live submissions wait for Apply Review approval; dry-runs can still run.
+            </small>
+          </>
         )}
       </form.Field>
-      <form.Subscribe selector={(state) => state.values.applyApprovalRequired}>
-        {(applyApprovalRequired) =>
-          applyApprovalRequired === false ? (
-            <div className="status-line warning" role="alert">
-              Approval gate is off: the agent may submit applications to employers immediately after claiming a job,
-              without human review.
+      <form.Subscribe
+        selector={(state) => ({
+          autoApply: state.values.autoApply,
+          applyApprovalRequired: state.values.applyApprovalRequired,
+        })}
+      >
+        {({ autoApply, applyApprovalRequired }) => {
+          const message = applyAutomationSummary({
+            autoApply: Boolean(autoApply),
+            applyApprovalRequired: applyApprovalRequired !== false,
+          });
+          return (
+            <div
+              className={`status-line ${message.warning ? "warning" : "info"}`}
+              role={message.warning ? "alert" : "status"}
+            >
+              {message.text}
             </div>
-          ) : null
-        }
+          );
+        }}
       </form.Subscribe>
       <form.Subscribe
         selector={(state) => ({
@@ -332,4 +350,36 @@ export function DiscoveryAutomationSettingsForm({ initial }: SettingsFormProps) 
       </form.Subscribe>
     </form>
   );
+}
+
+function applyAutomationSummary(values: {
+  autoApply: boolean;
+  applyApprovalRequired: boolean;
+}): { text: string; warning: boolean } {
+  if (values.autoApply && values.applyApprovalRequired) {
+    return {
+      text:
+        "Auto apply is supervised: a standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
+      warning: false,
+    };
+  }
+  if (values.autoApply && !values.applyApprovalRequired) {
+    return {
+      text:
+        "Autonomous submit mode: the standing loop may submit eligible jobs without human review, while min score, budget, at-most-once, dry-run, and CAPTCHA safeguards remain enforced.",
+      warning: true,
+    };
+  }
+  if (!values.autoApply && !values.applyApprovalRequired) {
+    return {
+      text:
+        "Auto apply is off. Manually started live apply runs may submit without Apply Review approval.",
+      warning: true,
+    };
+  }
+  return {
+    text:
+      "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
+    warning: false,
+  };
 }

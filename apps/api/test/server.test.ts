@@ -4830,6 +4830,51 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("surfaces the standing auto-apply loop as an operations workflow run", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO workflow_run_projections (
+         workflow_id, workflow_type, status, input_summary_json, started_at,
+         temporal_run_id, events_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "apply-auto-local",
+      "ApplyWorkflow",
+      "in_progress",
+      JSON.stringify({ continuous: true, autoApplyLoop: true, dryRun: false }),
+      "2026-04-29T10:25:00+00:00",
+      "temporal-auto-run",
+      JSON.stringify([
+        {
+          eventType: "WorkflowStarted",
+          occurredAt: "2026-04-29T10:25:00+00:00",
+          status: "in_progress",
+          message: null,
+        },
+      ]),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
+      expect(response.statusCode, response.body).toBe(200);
+      const run = response
+        .json()
+        .items.find((item: { workflowId: string }) => item.workflowId === "apply-auto-local");
+      expect(run).toMatchObject({
+        workflowId: "apply-auto-local",
+        workflowType: "ApplyWorkflow",
+        title: "Standing apply loop",
+        company: "Auto apply",
+        status: "in_progress",
+        dryRun: false,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("accepts workflow run sort fields", async () => {
     const app = buildApp(options);
     try {

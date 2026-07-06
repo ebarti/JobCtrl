@@ -28,6 +28,7 @@ class ApplyActivityInput:
     # with ``limit=0`` (the launcher's run-forever sentinel) and ignores
     # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
     continuous: bool = False
+    auto_apply_loop: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,11 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     # it on the activity event-loop thread before handing work to the executor.
     from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
-    from jobhunter.infrastructure.scoring.criteria_provider import read_apply_approval_required
+    from jobhunter.infrastructure.scoring.criteria_provider import (
+        read_apply_approval_required,
+        read_apply_concurrency,
+        read_min_fit_score,
+    )
     from jobhunter.apply.launcher import main as apply_main
 
     assert_activity_runtime(
@@ -70,14 +75,24 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         # of one to keep ``limit < 1`` calls from no-oping.
         effective_limit = 0 if payload.continuous else max(1, payload.limit)
         approval_required = read_apply_approval_required(default=payload.approval_required)
+        min_score = (
+            read_min_fit_score(default=payload.min_score)
+            if payload.auto_apply_loop
+            else payload.min_score
+        )
+        workers = (
+            read_apply_concurrency(default=payload.workers)
+            if payload.auto_apply_loop
+            else payload.workers
+        )
         return apply_main(
             limit=effective_limit,
             target_url=payload.job_url,
-            min_score=payload.min_score,
+            min_score=min_score,
             headless=payload.headless,
             model=payload.model,
             dry_run=payload.dry_run,
-            workers=payload.workers,
+            workers=workers,
             approval_required=approval_required,
             workflow_id=workflow_id,
             install_signal_handlers=False,

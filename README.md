@@ -45,15 +45,18 @@ supervised step because it can drive browser automation and submit applications.
   and records only, with no send transport of any kind.
 - Optionally run browser-based apply automation, starting with dry runs.
 
-Auto-apply is powerful and must be treated as an explicit submission tool. Use
-dry-run paths and narrow targets before allowing it to submit anything.
-Live browser submission requires an Apply Review approval by default
-(`applyApprovalRequired: true`). If you turn that gate off in Preferences, the
-settings form shows a persistent warning because the agent may submit
-applications immediately after claiming a job. Dry-run still keeps the prompt
-instruction, and it also installs a browser-layer CDP guard that blocks
-non-loopback POST/PUT/PATCH requests and form submits (only localhost
-targets are allowed).
+Auto-apply is powerful and must be treated as an explicit submission tool. It is
+off by default (`autoApply: false`), so no standing apply loop is kept running
+unless you opt in. When `autoApply: true`, a worker maintains one continuous
+Apply workflow, visible in Runs as the standing apply loop. With the default
+approval gate still on (`applyApprovalRequired: true`), that loop only submits
+jobs already approved in Apply Review and parks the rest for review. If you turn
+the approval gate off in Preferences, the settings form shows a persistent
+warning because the standing loop may submit eligible prepared jobs
+autonomously, still bounded by minimum fit score, the daily spend ceiling,
+at-most-once submit intent tracking, CAPTCHA fail-closed behavior, and the
+dry-run guard when a dry-run apply path is used. Use dry-run paths and narrow
+targets before allowing live submission.
 
 ## Responsible Use
 
@@ -61,8 +64,10 @@ JobHunter is an applicant-side automation tool. Treat the paths that touch
 employers, accounts, provider APIs, and third-party sites as live operations:
 
 - Live apply automation can submit real applications to real employers. Keep
-  `applyApprovalRequired` on, rehearse with dry runs, and target one job or site
-  at a time until you trust the behavior.
+  `autoApply` off until you intentionally want a standing loop, keep
+  `applyApprovalRequired` on unless you intentionally want autonomous submit,
+  rehearse with dry runs, and target one job or site at a time until you trust
+  the behavior.
 - Email-based application sending is also a live employer submission. JobHunter
   sends only through its owned Gmail connector after a dry-run records the
   recipient and attachment candidate and Apply Review approves that exact
@@ -326,7 +331,9 @@ sqlite3 ~/.jobhunter/jobhunter.db \
    rendered draft against the accepted artifact before approval.
 8. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the
-   backend claim can proceed.
+   backend claim can proceed. If you enable Auto apply, Runs shows the standing
+   loop; with approval still required it parks unapproved jobs for review, and
+   with approval disabled it may submit eligible jobs autonomously.
 9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence, Apply Review,
    and Debug.
 

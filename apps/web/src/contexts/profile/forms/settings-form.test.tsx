@@ -152,7 +152,27 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Approval gate is off: the agent may submit applications to employers immediately after claiming a job, without human review.",
+      "Auto apply is off. Manually started live apply runs may submit without Apply Review approval.",
+    );
+  });
+
+  it("describes supervised and autonomous auto-apply combinations", async () => {
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
+    );
+
+    fireEvent.click(screen.getByLabelText("Auto apply"));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Auto apply is supervised: a standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
+    );
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Require approval before live submit/i }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Autonomous submit mode: the standing loop may submit eligible jobs without human review",
     );
   });
 

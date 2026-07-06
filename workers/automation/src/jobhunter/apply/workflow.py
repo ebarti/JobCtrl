@@ -45,6 +45,9 @@ class ApplyWorkflowInput:
     # Run-forever poll mode — when True, the activity translates to the
     # ``apply.launcher`` ``limit=0`` sentinel that drives the continuous loop.
     continuous: bool = False
+    # Settings-controlled standing loop. The workflow id is deterministic and
+    # the activity re-reads apply settings at batch time.
+    auto_apply_loop: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,7 @@ class ApplyWorkflow:
                     workers=payload.workers,
                     approval_required=payload.approval_required,
                     continuous=False,
+                    auto_apply_loop=payload.auto_apply_loop,
                 ),
                 start_to_close_timeout=(
                     _APPLY_CONTINUOUS_BATCH_TIMEOUT
@@ -179,6 +183,7 @@ def _apply_input_summary(payload: ApplyWorkflowInput) -> dict[str, Any]:
         "jobUrl": payload.job_url,
         "dryRun": payload.dry_run,
         "continuous": payload.continuous,
+        "autoApplyLoop": payload.auto_apply_loop,
         "limit": payload.limit,
     }
 

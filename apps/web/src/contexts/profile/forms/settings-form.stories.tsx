@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
-import { SettingsForm } from "./settings-form.js";
+import { DiscoveryAutomationSettingsForm, SettingsForm } from "./settings-form.js";
 
 const meta = {
   title: "Contexts/Profile/Forms/SettingsForm",
@@ -13,6 +13,7 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+type DiscoveryAutomationStory = StoryObj<typeof DiscoveryAutomationSettingsForm>;
 
 export const Default: Story = {};
 
@@ -25,5 +26,23 @@ export const AutoApplyOn: Story = {
 export const ZeroFitMin: Story = {
   args: {
     initial: { ...sampleSettingsResponse.settings, minFitScore: 0 },
+  },
+};
+
+export const DiscoveryAutomationDefault: DiscoveryAutomationStory = {
+  render: (args) => <DiscoveryAutomationSettingsForm {...args} />,
+  args: {
+    initial: sampleSettingsResponse.settings,
+  },
+};
+
+export const DiscoveryAutomationAutonomous: DiscoveryAutomationStory = {
+  render: (args) => <DiscoveryAutomationSettingsForm {...args} />,
+  args: {
+    initial: {
+      ...sampleSettingsResponse.settings,
+      autoApply: true,
+      applyApprovalRequired: false,
+    },
   },
 };
