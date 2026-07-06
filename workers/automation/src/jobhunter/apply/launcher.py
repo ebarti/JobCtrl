@@ -1184,7 +1184,9 @@ def gen_prompt(
     prompt_file.write_text(apply_prompt.text, encoding="utf-8")
 
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
-    mcp_path.write_text(json.dumps(apply_prompt.mcp_config), encoding="utf-8")
+    from jobhunter.infrastructure.apply.claude_code_cli import _write_private_json
+
+    _write_private_json(mcp_path, apply_prompt.mcp_config)
 
     return prompt_file
 

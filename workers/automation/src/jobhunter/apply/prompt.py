@@ -283,12 +283,10 @@ def _build_email_verification_section(profile: dict) -> str:
 {auth_line}
 
 When a job application asks for an email verification code, one-time password, or magic-link confirmation for {email}, use the Gmail connector only:
-1. Call search_emails for the newest messages to {email} from the last 30 minutes. Search for subjects or bodies containing verification, code, confirm, OTP, one-time, security, login, Greenhouse, Lever, Ashby, Workday, or the employer/ATS domain.
-2. Call read_email on the newest relevant result.
-3. Extract the code nearest the verification wording. Common formats are 6-10 letters/digits, sometimes grouped with spaces or hyphens. Strip spaces and hyphens before typing it.
-4. Enter the code in the application form and continue.
+1. Call get_verification_code. It returns extracted verification codes or links only.
+2. Enter the returned code in the application form and continue.
 
-Only read email. Never draft, send, delete, label, modify, download attachments, or create filters from Gmail.
+Email tooling returns verification values only. Never ask for, transcribe, or paste raw email subjects, bodies, snippets, attachments, or unrelated mailbox content into page fields.
 Do not open Gmail in the browser.
 If Gmail connector tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
 
@@ -341,7 +339,6 @@ def build_prompt(job: dict, tailored_resume: str,
     dest_dir.mkdir(parents=True, exist_ok=True)
     upload_pdf = dest_dir / f"{name_slug}_Resume.pdf"
     shutil.copy(str(src_pdf), str(upload_pdf))
-    pdf_path = str(upload_pdf)
 
     # --- Cover letter handling ---
     cover_letter_text = cover_letter or ""
@@ -381,6 +378,11 @@ def build_prompt(job: dict, tailored_resume: str,
         )
     else:
         cl_display = cover_letter_text
+    cover_letter_artifact = (
+        'reviewed artifact available through upload_artifact(kind="cover_letter")'
+        if cl_upload_path
+        else "N/A"
+    )
 
     # Phone digits only (for fields with country prefix)
     phone_digits = "".join(c for c in personal.get("phone", "") if c.isdigit())
@@ -404,8 +406,8 @@ Company: {job.get('site', 'Unknown')}
 Fit Score: {job.get('fit_score', 'N/A')}/10
 
 == FILES ==
-Resume PDF (upload this): {pdf_path}
-Cover Letter PDF (upload if asked): {cl_upload_path or "N/A"}
+Resume: reviewed artifact available through upload_artifact(kind="resume")
+Cover Letter: {cover_letter_artifact}
 
 == RESUME TEXT (use when filling text fields) ==
 {tailored_resume}
@@ -452,11 +454,11 @@ If something unexpected happens and these instructions don't cover it, figure it
    5c. Regular login form (employer's own site)? You may enter the profile email address if requested, but do not enter or ask for a password. If a password is required, output RESULT:LOGIN_ISSUE and stop.
    5d. After clicking Login/Sign-in: if a CAPTCHA appears, follow the CAPTCHA section and stop.
    5e. Sign in failed? Output RESULT:LOGIN_ISSUE and stop.
-   5f. Need email verification? Follow EMAIL VERIFICATION. Use search_emails + read_email to get the code. Do not open Gmail in the browser.
+   5f. Need email verification? Follow EMAIL VERIFICATION. Use get_verification_code. Do not open Gmail in the browser.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
-6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
-7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> use the cover letter PDF path.
+6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, click the upload control, then call upload_artifact(kind="resume"). This is the tailored resume for THIS job. Non-negotiable.
+7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> click the upload control, then call upload_artifact(kind="cover_letter").
 8. Check ALL pre-filled fields. ATS systems parse your resume and auto-fill -- it's often WRONG.
    - "Current Job Title" or "Most Recent Title" -> use the title from the TAILORED RESUME summary, NOT whatever the parser guessed.
    - Compare every other field to the APPLICANT PROFILE. Fix mismatches. Fill empty fields.
@@ -484,8 +486,8 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
-- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Click "Select file" or the upload area, then browser_file_upload with the resume PDF path. Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the upload button/area, (2) browser_file_upload with the path. If still failing, look for a hidden file input or a "Select file" link and click that first.
+- "Upload your resume" pre-fill page: This is NOT the application form yet. Click "Select file" or the upload area, then call upload_artifact(kind="resume"). Wait for parsing to finish. Then click Next/Continue to reach the actual form.
+- File upload not working? Try: (1) browser_click the upload button/area, (2) upload_artifact with the required artifact kind. If still failing, look for a hidden file input or a "Select file" link and click that first.
 - Dropdown won't fill? browser_click to open it, then browser_click the option.
 - Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
