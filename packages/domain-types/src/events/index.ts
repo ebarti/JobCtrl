@@ -145,6 +145,15 @@ export {
 } from "./materials.js";
 
 export {
+  type InterviewPrepGeneratedPayload,
+  type InterviewPrepGenerated,
+  createInterviewPrepGenerated,
+  type InterviewPrepFailedPayload,
+  type InterviewPrepFailed,
+  createInterviewPrepFailed,
+} from "./interview.js";
+
+export {
   PREPARATION_WORK_ITEM_KINDS,
   type PreparationWorkItemKind,
   type PreparationWorkItemQueuedPayload,
@@ -300,6 +309,7 @@ import type {
   TailorRetailorRequested,
   JobResumeTemplateAssigned,
 } from "./materials.js";
+import type { InterviewPrepFailed, InterviewPrepGenerated } from "./interview.js";
 import type {
   PreparationWorkItemCompleted,
   PreparationWorkItemFailed,
@@ -370,6 +380,8 @@ export type DomainEventUnion =
   | MaterialsExhausted
   | EmployerAnalyzed
   | BulletProvenanceRecorded
+  | InterviewPrepGenerated
+  | InterviewPrepFailed
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | ResumeTemplateVersionSaved
@@ -443,6 +455,8 @@ export const DOMAIN_EVENT_TYPES = [
   "MaterialsExhausted",
   "EmployerAnalyzed",
   "BulletProvenanceRecorded",
+  "InterviewPrepGenerated",
+  "InterviewPrepFailed",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "ResumeTemplateVersionSaved",

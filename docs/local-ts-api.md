@@ -762,6 +762,18 @@ cached analysis (keyed by posting snapshot hash) rather than re-reasoning;
 `force: true` recomputes and supersedes the prior generation. The standalone
 inspector surface can build on the same method, persistence, and read path.
 
+The `generate_interview_prep` JSON-RPC method (params `jobUrl`, optional
+`llmModel`) starts `InterviewPrepWorkflow` and returns the normal workflow-start
+shape (`runId`, `workflowId`, `firstExecutionRunId`). It is an explicit
+stored-preparation action, not a pipeline stage and not an automatic discovery /
+tailoring side effect. The workflow runs the standard spend-budget preflight,
+loads the job, career evidence-map projections, requirement-fit rows, and the
+latest accepted materials, then persists generation-versioned
+`job_interview_prep` / `job_interview_prep_items` rows. Failed generations are
+durable audit history and do not supersede the last accepted prep. The method
+does not expose live, in-session, transcript, microphone, streaming, or
+real-time interview assistance surfaces.
+
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue
