@@ -1,11 +1,12 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
 > **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
-> inventory against current `main`. This is **not** a release-ready outcome:
-> W1.2–W1.7, W2.2 doctor notices, W2.4, W2.6, and owner rename/release
-> checkpoints remain open. The document is preserved as the historical work-item
-> definition source; do not treat the move to `implemented/` as proof that the
-> OSS release gate passed.
+> inventory against current `main`; that first closeout was **not** a
+> release-ready outcome. The 2026-07-06 W1 refresh in
+> `2026-07-05-oss-release-drive-to-done-plan.md` supersedes that W1 snapshot:
+> W1.1-W1.7 are complete and W1.8 is withdrawn. Non-W1 release/owner
+> checkpoints remain open, so do not treat the move to `implemented/` as proof
+> that the OSS release gate passed.
 >
 > **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
 > withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
@@ -1085,7 +1086,7 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       `docs/decisions.md` (2026-07-06); plan
       `docs/plans/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
       is merged to `main`.
-- [ ] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
+- [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
 - [ ] W2.1 name chosen and live; `publish.yml` re-enabled and gated on the
       privacy workflow.
