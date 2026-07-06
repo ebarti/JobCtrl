@@ -122,6 +122,11 @@ The employer-analysis ensemble is checked separately by `jobhunter setup` and
   enrolled with `codex login --with-api-key` before that leg is ready.
 - Antigravity uses `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env.
 
+Every run reconciles the ensemble with a Claude synthesis pass, so Claude auth is
+required even if you disable the `claude` leg via `JOBHUNTER_ANALYSIS_LEGS`. When
+it is missing, `setup` reports analysis as not ready and `doctor` shows a red
+`Claude synthesis auth` row.
+
 See [Configuration](configuration.md) for the full list of settings.
 
 ## 4. Start The App

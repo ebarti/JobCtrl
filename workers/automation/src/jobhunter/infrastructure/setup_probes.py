@@ -142,6 +142,26 @@ def probe_claude_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     )
 
 
+def probe_claude_synthesis_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
+    """Claude auth for the always-on ensemble synthesizer (D-07).
+
+    ``ClaudeAnalysisSynthesizer`` reconciles every employer-analysis run with the
+    Claude Agent SDK regardless of ``JOBHUNTER_ANALYSIS_LEGS``, so its auth is
+    required even when the ``claude`` draft leg is disabled. Reuses the Claude
+    credential resolution and only relabels the row + not-ready guidance.
+    """
+
+    result = probe_claude_auth(env)
+    if result.ok:
+        return ProbeResult("Claude synthesis auth", True, result.note)
+    return ProbeResult(
+        "Claude synthesis auth",
+        False,
+        "required for ensemble synthesis even when the claude leg is disabled; "
+        "set ANTHROPIC_API_KEY or enroll local Claude credentials",
+    )
+
+
 def probe_codex_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     values = _env(env)
     auth_path = codex_auth_path(values)
@@ -225,7 +245,10 @@ def resolve_claude_apply_binary(env: Mapping[str, str] | None = None) -> str:
     values = _env(env)
     override = values.get(CLAUDE_BIN_ENV)
     if override:
-        return override
+        # Expand ~ so a `~/...` override reaches Popen as a spawnable path, for
+        # parity with resolve_codex_binary and the _has_claude_apply_runtime
+        # existence probe (which both expanduser()).
+        return str(Path(override).expanduser())
     path_cli = shutil.which("claude")
     if path_cli:
         return path_cli
@@ -316,8 +339,12 @@ def probe_analysis_setup(env: Mapping[str, str] | None = None) -> list[ProbeResu
     results = [
         ProbeResult("analysis legs enabled", True, ",".join(legs)),
     ]
-    if "claude" in legs:
-        results.extend([probe_claude_sdk(), probe_claude_auth(values)])
+    # Synthesis reconciles EVERY ensemble run with the Claude Agent SDK
+    # (ClaudeAnalysisSynthesizer, ensemble.py) regardless of the enabled legs, so
+    # its SDK + auth are always required — probe them independently of `legs`. The
+    # claude draft leg reuses the same runtime + credentials, so it needs no
+    # extra row when enabled.
+    results.extend([probe_claude_sdk(), probe_claude_synthesis_auth(values)])
     if "codex" in legs:
         results.extend([probe_codex_sdk(values), probe_codex_auth(values)])
     if "antigravity" in legs:
@@ -343,6 +370,7 @@ __all__ = [
     "probe_antigravity_sdk",
     "probe_claude_auth",
     "probe_claude_sdk",
+    "probe_claude_synthesis_auth",
     "probe_codex_auth",
     "probe_codex_sdk",
     "resolve_bundled_claude_path",

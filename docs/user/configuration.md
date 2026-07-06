@@ -77,9 +77,16 @@ The ensemble legs use vendor SDK runtimes pinned in the Python environment. The
 setup command detects auth before prompting and writes only local `.env`
 configuration; it never commits or ships credentials.
 
+Every employer-analysis run reconciles its legs with a Claude Agent SDK
+synthesis pass, so Claude auth (`ANTHROPIC_API_KEY` or local Claude credentials)
+is required even when you disable the `claude` leg via `JOBHUNTER_ANALYSIS_LEGS`.
+`jobhunter setup` warns that analysis is not ready when synthesis auth is
+missing, and `jobhunter doctor` reports a dedicated `Claude synthesis auth` row
+that stays red until Claude auth is present.
+
 | Variable | What it does |
 | --- | --- |
-| `JOBHUNTER_ANALYSIS_LEGS` | Comma-separated enabled legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg so runs do not burn retries. |
+| `JOBHUNTER_ANALYSIS_LEGS` | Comma-separated enabled legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg so runs do not burn retries. Disabling the `claude` leg does **not** remove the Claude synthesis-auth requirement above. |
 | `ANTHROPIC_API_KEY` | Supported Claude Agent SDK auth path. |
 | `ANTHROPIC_AUTH_TOKEN` | Alternate Claude auth token path. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Local/dev Claude subscription convenience. The distributed product path remains API/provider auth. |

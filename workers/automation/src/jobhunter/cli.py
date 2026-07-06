@@ -805,6 +805,7 @@ def setup(
         probe_analysis_setup,
         probe_antigravity_auth,
         probe_claude_auth,
+        probe_claude_synthesis_auth,
         probe_codex_auth,
         resolve_bundled_codex_path,
     )
@@ -967,6 +968,22 @@ def setup(
             console.print("[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]")
     _write_env_updates(ENV_PATH, env_updates, dry_run=dry_run, quiet=json_output)
     summary["envUpdates"] = sorted(env_updates)
+
+    # Employer-analysis synthesis ALWAYS reconciles with the Claude Agent SDK
+    # (ClaudeAnalysisSynthesizer), regardless of the enabled leg set, so Claude
+    # synthesis auth is a hard requirement even when the claude draft leg is
+    # disabled. Report readiness against the post-update env so a freshly entered
+    # key counts, and never present a green analysis state without it.
+    synthesis_probe = probe_claude_synthesis_auth({**os.environ, **env_updates})
+    summary["analysisReady"] = synthesis_probe.ok
+    if not synthesis_probe.ok:
+        summary["analysisNotReadyReason"] = synthesis_probe.note
+        if not json_output:
+            console.print(
+                f"[red]Employer analysis is NOT ready:[/red] {synthesis_probe.note}"
+            )
+    elif not json_output:
+        console.print("[green]Employer analysis synthesis auth ready.[/green]")
 
     if not skip_doctor:
         if not json_output:

@@ -266,19 +266,6 @@ install_playwright_browsers() {
   run_in_root uv --project workers/automation run playwright install chromium
 }
 
-run_doctor() {
-  if [[ "$SKIP_DOCTOR" -eq 1 ]]; then
-    return 0
-  fi
-  if ! confirm "Run jobhunter doctor after dependency setup?"; then
-    return 0
-  fi
-
-  if ! run_in_root uv --project workers/automation run jobhunter doctor; then
-    warn "jobhunter doctor reported setup issues; review the output above."
-  fi
-}
-
 run_python_setup() {
   local setup_args=(--skip-system --skip-dependencies --skip-browsers)
   if [[ "$ASSUME_YES" -eq 1 ]]; then
