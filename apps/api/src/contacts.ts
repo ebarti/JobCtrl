@@ -219,8 +219,9 @@ export function updateContact(
   }
   const role = request.role ?? normalizeRole(existing.role);
   const now = new Date().toISOString();
+  const existingAttributes = readAttributes(db, contactId);
   const previousFacts = new Set(
-    readAttributes(db, contactId).map((attribute) => `${attribute.kind} ${attribute.value}`),
+    existingAttributes.map((attribute) => `${attribute.kind} ${attribute.value}`),
   );
   const provenance: ProvenanceSeed = {
     sourceKind: "user_entered",
@@ -242,7 +243,40 @@ export function updateContact(
         TENANT_ID,
         contactId,
       );
-      insertAttributes(db, contactId, nextAttributes, provenance, now);
+      // A fact whose (kind, value) is unchanged keeps its original attribute
+      // id and provenance (INV-2: editing the contact must not re-stamp
+      // imported/derived facts as user_entered); only new or value-edited
+      // facts are user-entered.
+      const remaining = new Map<string, ContactAttributeDto[]>();
+      for (const attribute of existingAttributes) {
+        const key = `${attribute.kind} ${attribute.value}`;
+        const bucket = remaining.get(key);
+        if (bucket) {
+          bucket.push(attribute);
+        } else {
+          remaining.set(key, [attribute]);
+        }
+      }
+      const rows = nextAttributes.map((seed) => {
+        const kept = remaining.get(`${seed.kind} ${seed.value}`)?.shift();
+        if (kept) {
+          return {
+            attributeId: kept.attributeId,
+            kind: seed.kind,
+            value: seed.value,
+            provenance: {
+              sourceKind: kept.provenance.sourceKind,
+              sourceRef: kept.provenance.sourceRef,
+              captureMethod: kept.provenance.captureMethod,
+              confidence: kept.provenance.confidence,
+              userConfirmed: kept.provenance.userConfirmed,
+            },
+            recordedAt: kept.provenance.capturedAt,
+          };
+        }
+        return { attributeId: seed.attributeId, kind: seed.kind, value: seed.value, provenance, recordedAt: now };
+      });
+      insertAttributeRows(db, contactId, rows);
     }
     recordContactEvent(db, {
       jobUrl: jobId,
@@ -465,6 +499,38 @@ function insertContactRow(
   ).run(TENANT_ID, input.contactId, input.employer, input.jobId, input.role, input.createdAt, input.updatedAt);
 }
 
+interface AttributeRowSeed {
+  attributeId: string;
+  kind: string;
+  value: string;
+  provenance: ProvenanceSeed;
+  recordedAt: string;
+}
+
+function insertAttributeRows(db: SqliteDatabase, contactId: string, rows: AttributeRowSeed[]): void {
+  const statement = db.prepare(
+    `INSERT INTO contact_attributes (
+       tenant_id, attribute_id, contact_id, attribute_kind, value_json,
+       source_kind, source_ref, capture_method, confidence, user_confirmed, recorded_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const row of rows) {
+    statement.run(
+      TENANT_ID,
+      row.attributeId,
+      contactId,
+      row.kind,
+      JSON.stringify(row.value),
+      row.provenance.sourceKind,
+      row.provenance.sourceRef,
+      row.provenance.captureMethod,
+      row.provenance.confidence,
+      row.provenance.userConfirmed ? 1 : 0,
+      row.recordedAt,
+    );
+  }
+}
+
 function insertAttributes(
   db: SqliteDatabase,
   contactId: string,
@@ -472,27 +538,17 @@ function insertAttributes(
   provenance: ProvenanceSeed,
   recordedAt: string,
 ): void {
-  const statement = db.prepare(
-    `INSERT INTO contact_attributes (
-       tenant_id, attribute_id, contact_id, attribute_kind, value_json,
-       source_kind, source_ref, capture_method, confidence, user_confirmed, recorded_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  for (const attribute of attributes) {
-    statement.run(
-      TENANT_ID,
-      attribute.attributeId,
-      contactId,
-      attribute.kind,
-      JSON.stringify(attribute.value),
-      provenance.sourceKind,
-      provenance.sourceRef,
-      provenance.captureMethod,
-      provenance.confidence,
-      provenance.userConfirmed ? 1 : 0,
+  insertAttributeRows(
+    db,
+    contactId,
+    attributes.map((attribute) => ({
+      attributeId: attribute.attributeId,
+      kind: attribute.kind,
+      value: attribute.value,
+      provenance,
       recordedAt,
-    );
-  }
+    })),
+  );
 }
 
 function recordAttributeEvent(
