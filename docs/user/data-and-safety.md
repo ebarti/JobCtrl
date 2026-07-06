@@ -94,8 +94,11 @@ These boundaries are the operator's responsibility:
   add or grant Gmail `gmail.send` unless you intentionally want JobHunter to send
   application email from your mailbox.
 - **Credential typing:** browser automation can type non-secret profile fields.
-  Profile passwords are not inserted into the apply agent prompt; if a password
-  login is required, the apply agent stops for operator handling.
+  For regular job-site password fields, the apply agent can call a local
+  credential tool that reads the stored profile password and types it into the
+  focused field without returning the value to the model. If the tool is
+  unavailable or the focused field is not a password field, login fails closed
+  for operator handling.
 - **CAPTCHA solving:** CAPTCHA challenges fail closed in the apply agent. It does
   not solve image/audio challenges manually, switch to stealth browsers, or send
   a CAPTCHA-provider key through the model prompt.

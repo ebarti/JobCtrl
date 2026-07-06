@@ -1,6 +1,7 @@
 """Phase 8 (S-28/S-29): ApplyPromptBuilder produces an ApplyPrompt with
 the rendered text + MCP config bound to the requested CDP port."""
 
+import json
 import pytest
 import sys
 
@@ -153,6 +154,7 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     assert "search_emails" not in rendered
     assert "read_email" not in rendered
     assert "Do not open Gmail in the browser" in rendered
+    assert 'type_credential(kind="job_site_password")' in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
 
 
@@ -260,7 +262,7 @@ def test_default_mcp_config_includes_scoped_owned_connectors() -> None:
     apply_tools = config["mcpServers"]["apply_tools"]
     assert apply_tools["command"] == sys.executable
     assert apply_tools["args"] == ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"]
-    assert apply_tools["env"] == {
-        "JOBHUNTER_APPLY_CDP_ENDPOINT": "http://localhost:9222",
-        "JOBHUNTER_APPLY_UPLOAD_DIR": "/tmp/worker-0",
-    }
+    assert apply_tools["env"]["JOBHUNTER_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
+    assert apply_tools["env"]["JOBHUNTER_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
+    assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])

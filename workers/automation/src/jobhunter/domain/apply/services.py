@@ -264,6 +264,7 @@ def _default_mcp_config(
                 "args": ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"],
                 "env": {
                     "JOBHUNTER_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
+                    "JOBHUNTER_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
                     "JOBHUNTER_APPLY_UPLOAD_DIR": upload_root,
                 },
             },

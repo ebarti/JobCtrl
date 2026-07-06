@@ -59,9 +59,11 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   employer submission. The current Gmail connector is read-only; do not grant or
   wire Gmail `gmail.send` unless you intend JobHunter to send application email
   from your account.
-- Browser automation can type non-secret profile fields. The apply agent does
-  not receive profile passwords in its prompt; if a password login is required,
-  it stops for operator handling.
+- Browser automation can type non-secret profile fields. For regular job-site
+  password fields, the apply agent can call a local credential tool that reads
+  the stored profile password and types it into the focused field without
+  returning the value to the model; if the tool is unavailable, login fails
+  closed for operator handling.
 - CAPTCHA challenges fail closed in the apply agent. Do not solve image/audio
   challenges manually, switch to stealth browsers, or bypass bot controls.
 - Scraping and source access can violate site terms. Default discovery options
@@ -246,7 +248,8 @@ opt-in and configuration-gated:
   material text).
 - **The apply agent's model** — the apply prompt during apply or dry-run (your
   profile summary and the tailored materials). The prompt does not include
-  profile passwords or CAPTCHA-provider keys.
+  profile passwords or CAPTCHA-provider keys; password typing uses a local
+  credential tool that never returns the secret to the model.
 - **Job boards, ATS APIs, and posting pages** — discovery and enrichment
   fetches.
 - **Gmail (read-only)** — verification-code and application-outcome lookups, only
