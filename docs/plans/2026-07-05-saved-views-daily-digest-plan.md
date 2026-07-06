@@ -615,22 +615,38 @@ pnpm test
 
 ## Open owner decisions
 
+All seven decisions were resolved by the owner on 2026-07-06:
+
 1. **Saved-views persistence tier** — client-only (this plan) vs server-side
    for cross-device/shareable views (promotion via `StoragePort`/a new
    aggregate). Ties to the hosted "share a jobs filter view" fitness function.
+   - **Resolved (2026-07-06):** client-only. Views persist in the local
+     Zustand store; server-side promotion remains a future hosted seam.
 2. **Digest acknowledge mechanism** — `DigestReviewed` domain event
    (architecturally consistent, realtime, +1 parity-tested event) vs direct
    `digest_state` write + invalidation (lighter).
+   - **Resolved (2026-07-06):** `DigestReviewed` domain event through the
+     standard event/projection/SSE machinery, parity-tested like every other
+     event.
 3. **Review-needed materials scope** — apply-review-queue signal only (this
    plan) vs a new global aggregate over `resume_review_drafts`.
+   - **Resolved (2026-07-06):** apply-review-queue signal only, as planned.
 4. **Follow-ups-due model** — derived heuristic (this plan) vs a first-class
    user reminder aggregate with due dates + snooze.
+   - **Resolved (2026-07-06):** derived heuristic, as planned. No new reminder
+     aggregate. (Outreach follow-ups are a separate, already-decided R6
+     surface.)
 5. **Follow-up threshold + day boundary** — the N-days value for "follow-ups
    due" and the canonical day boundary (local vs UTC) for the digest.
+   - **Resolved (2026-07-06):** N = 7 days; day boundary = the operator's
+     local timezone. The heuristic caveat is displayed alongside the number.
 6. **Scheduled digest** — keep on-demand only (this plan) vs an opt-in,
    default-off Temporal schedule mirroring discovery.
+   - **Resolved (2026-07-06):** on-demand only. No schedule, not even opt-in,
+     in this workstream.
 7. **Optional additive Jobs search params** — `stale=only` and/or
    `discoveredSince` as first-class URL filters to make digest deep-links exact.
+   - **Resolved (2026-07-06):** add both as first-class URL filters.
 
 ## Phasing (suggested, non-binding)
 
