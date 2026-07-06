@@ -484,25 +484,80 @@ Notes:
 1. **Claims-ledger location/publication** — proposed `docs/claims-ledger.md`,
    repo-only (registered in `UNPUBLISHED_FILES` + `srcExclude`). Confirm the
    path and repo-only status.
+
+   → **RESOLVED 2026-07-06 (implemented as proposed).** Shipped in #298 as
+   `docs/claims-ledger.md`, repo-only: registered in `docs/.vitepress/config.ts`
+   in both `UNPUBLISHED_FILES` (`"docs/claims-ledger.md"`) and `srcExclude`
+   (`"claims-ledger.md"`), so it is committed to the repo but never emitted to
+   the built docs site.
 2. **GitHub repo rename** — decided: the repo renames per the pre-publication
    rename train (`docs/plans/2026-07-05-rename-jobctl-plan.md`), which
    supersedes the OSS spec §1 name lock. Remaining owner action: perform the
    GitHub rename at that train's cutover (step 9.3).
+
+   → **CONFIRMED 2026-07-06 — unchanged.** The decision still stands and the
+   text is accurate: the rename is deferred to the pre-publication rename train
+   (plan `docs/plans/2026-07-05-rename-jobctl-plan.md`, tracked on branch
+   `docs/plan-rename-jobctl`; not yet merged to `main`) and runs last, right
+   before publication. No R7a reconciliation needed.
 3. **Alternatives-comparison** — which neutral capability categories are the
    rows, which external approaches are the columns (owner-supplied, kept
    private until facts-verified), the maintenance-cadence interval, and the
    sidebar label/placement.
+
+   → **OWNER-PENDING 2026-07-06 — non-gating for the R7a merge.** The neutral
+   scaffold shipped in #302 as `docs/comparison.md`: placeholder columns
+   ("Alternative approach A" / "Alternative approach B"), every alternative cell
+   a `TODO(owner)` placeholder, a facts-verified-before-publish rule, a
+   no-disparagement rule, a stated maintenance cadence, and a frozen sidebar
+   slot ("How It Compares" → `/comparison`) in `docs/.vitepress/config.ts`. The
+   specific rows, the external approaches that become the columns, the cadence
+   interval, and the final sidebar label stay owner-supplied (kept private until
+   facts-verified) and do not block merging this plan or the R7a train.
 4. **Demo-asset launch set** — which assets ship in the initial launch vs are
    deferred until their capability merges: asset 7's live blocked-channel
    evidence (OSS spec W1.1/W1.2) and asset 8's spend-ceiling stop (OSS spec
    P5/W2.4). Confirm the initial set.
+
+   → **IMPLEMENTED 2026-07-06 — owner confirmation of the initial set still
+   pending.** The shipped source of truth is the "Launch Demo Asset Inventory"
+   in `docs/local-development.md` (#304). Assets 7-evidence (live blocked-channel
+   evidence) and 8-spend-stop (spend-ceiling stop lifecycle) are recorded there
+   as defined class-C driven flows — deferred, never faked with a staged static
+   image. Their originally-named preconditions have since merged (the inventory
+   notes "approval binding + dry-run evidence" shipped for 7 and "spend ceiling
+   shipped" for 8), so what remains deferred is the capture surface / seed
+   fixture, not the capability. Asset 8's health-surface capture and assets 1–2
+   are deferred launch-set follow-ups. Confirming the initial launch set remains
+   OWNER-PENDING.
 5. **Reliability-demo format** — asset 9 as a scripted e2e artifact vs a
    synthetic screen recording vs a documented walkthrough, and where the
    artifact lives (must be synthetic and privacy-safe; recordings are binary).
+
+   → **RESOLVED 2026-07-06 (implemented).** Shipped in #304 as a scripted,
+   hermetic, self-asserting e2e artifact: `scripts/reliability-demo.sh` drives
+   the diagnostic `DurabilityProbeWorkflow`
+   (`workers/automation/src/jobhunter/infrastructure/temporal/durability_probe.py`)
+   and asserts same-workflow-id + same-run-id exactly-once recovery after a
+   worker kill, with real pass/fail assertions. It fetches no job boards and
+   spends no LLM tokens, lives in-repo, and stays true as the code evolves. The
+   synthetic-screen-recording option was rejected (binary, unverifiable).
 6. **Current vs Beta threshold** — the bar that makes a shipped-but-rough
    capability `Beta` rather than `Current` in the ledger.
+
+   → **OWNER-PENDING 2026-07-06.** For the sign-off review: the #298 ledger
+   review recorded a recommendation to reclassify CL-029 (grounded interview
+   prep) to `Beta` at sign-off — the reused truthfulness gates guarantee a
+   no-fabrication floor, not output quality, for a brand-new LLM surface a user
+   carries into a high-stakes interview. CL-029 is already listed as a §11.6
+   reclassification candidate. The threshold itself and this specific verdict
+   await the owner's bar-setting.
 7. **Sign-off owners** — who owns the claim-freeze sign-off and each Phase C
    publish step.
+
+   → **OWNER-PENDING 2026-07-06.** Unresolved by implementation — an owner
+   decision. The claims-freeze stays PROVISIONAL until the owner signs off, and
+   the owner of each Phase C publish step is still to be named.
 
 ## 12. Risks and mitigations
 
