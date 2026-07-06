@@ -13,6 +13,8 @@ import { generateJobId } from "../src/identifiers.js";
 import {
   SEARCH_STRATEGIES,
   ATS_KINDS,
+  MANUAL_ACTION_REASONS,
+  ROBOTS_POLICIES,
   SMART_EXTRACT_EXPERIMENTAL_POLICY,
   UNKNOWN_EMPLOYER,
   createSourcePolicy,
@@ -134,6 +136,45 @@ describe("Discovery types", () => {
         thirdPartyControlBypass: true as false,
       }),
     ).toThrow(/thirdPartyControlBypass/);
+  });
+
+  it("exposes the crawl-politeness robots-policy literal range", () => {
+    expect(ROBOTS_POLICIES).toEqual(["honor", "exempt_documented_api"]);
+  });
+
+  it("carries robots_disallowed as a manual-action reason", () => {
+    expect(MANUAL_ACTION_REASONS).toContain("robots_disallowed");
+  });
+
+  it("SourcePolicy mirrors the Python politeness fields with honest defaults", () => {
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.robotsPolicy).toBe("honor");
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.minRequestIntervalSeconds).toBeGreaterThan(0);
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.maxConcurrentRequestsPerHost).toBeGreaterThanOrEqual(1);
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.maxRequestsPerRun).toBeGreaterThan(0);
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.manualIntervention.triggers).toContain(
+      "robots_disallowed",
+    );
+  });
+
+  it("createSourcePolicy rejects non-positive politeness bounds", () => {
+    expect(() =>
+      createSourcePolicy({
+        ...SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        minRequestIntervalSeconds: -1,
+      }),
+    ).toThrow(/minRequestIntervalSeconds/);
+    expect(() =>
+      createSourcePolicy({
+        ...SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        maxConcurrentRequestsPerHost: 0,
+      }),
+    ).toThrow(/maxConcurrentRequestsPerHost/);
+    expect(() =>
+      createSourcePolicy({
+        ...SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        maxRequestsPerRun: 0,
+      }),
+    ).toThrow(/maxRequestsPerRun/);
   });
 
   it("validates locator candidates into promotion, manual review, or rejection", () => {

@@ -49,6 +49,22 @@ class SourcePolicyMethod(str, Enum):
     USER_MEDIATED_CAPTURE = "user_mediated_capture"
 
 
+class RobotsPolicy(str, Enum):
+    """How the politeness gateway treats robots.txt for a source.
+
+    ``HONOR`` (the fail-closed default) fetches and obeys the target host's
+    ``robots.txt`` before any page-rendering fetch. ``EXEMPT_DOCUMENTED_API``
+    marks a source that is accessed through a documented public JSON API or
+    licensed feed whose usage is governed by that documented contract rather
+    than the host's crawl directives (owner decision D2). Rate, concurrency,
+    and per-run budget still apply to exempt sources — only the robots check
+    is skipped.
+    """
+
+    HONOR = "honor"
+    EXEMPT_DOCUMENTED_API = "exempt_documented_api"
+
+
 class SourceAuthenticationMode(str, Enum):
     NONE = "none"
     USER_SESSION = "user_session"
@@ -63,6 +79,7 @@ class ManualActionReason(str, Enum):
     PAYWALL = "paywall"
     BOT_DETECTION = "bot_detection"
     RATE_LIMIT = "rate_limit"
+    ROBOTS_DISALLOWED = "robots_disallowed"
     PROTECTED_INTERNAL_SITE = "protected_internal_site"
     AMBIGUOUS_CAREER_SYSTEM = "ambiguous_career_system"
     BROWSER_EXTENSION_CAPTURE = "browser_extension_capture"
@@ -85,6 +102,7 @@ class ManualInterventionPolicy:
         ManualActionReason.PAYWALL,
         ManualActionReason.BOT_DETECTION,
         ManualActionReason.RATE_LIMIT,
+        ManualActionReason.ROBOTS_DISALLOWED,
     )
     capture_modes: tuple[ManualCaptureMode, ...] = (
         ManualCaptureMode.CURRENT_PAGE,
@@ -111,6 +129,14 @@ class SourcePolicy:
     max_pages_per_run: int = 100
     max_run_frequency: str = "PT24H"
     locator_max_requests_per_domain: int = 5
+    # Crawl-politeness enforcement (R10). These declare intent; the shared
+    # politeness gateway (``infrastructure/network``) enforces them at every
+    # fetch surface. ``max_pages_per_run`` keeps its existing meaning (result
+    # volume); ``max_requests_per_run`` is the distinct outbound-request budget.
+    robots_policy: RobotsPolicy = RobotsPolicy.HONOR
+    min_request_interval_seconds: float = 1.0
+    max_concurrent_requests_per_host: int = 1
+    max_requests_per_run: int = 500
     manual_intervention: ManualInterventionPolicy = field(default_factory=ManualInterventionPolicy)
     content_filter_override: ContentFilterOverridePolicy = field(default_factory=ContentFilterOverridePolicy)
     third_party_control_bypass: bool = False
@@ -124,6 +150,12 @@ class SourcePolicy:
             raise ValueError("SourcePolicy.max_pages_per_run must be positive")
         if self.locator_max_requests_per_domain <= 0:
             raise ValueError("SourcePolicy.locator_max_requests_per_domain must be positive")
+        if self.min_request_interval_seconds < 0:
+            raise ValueError("SourcePolicy.min_request_interval_seconds must be non-negative")
+        if self.max_concurrent_requests_per_host <= 0:
+            raise ValueError("SourcePolicy.max_concurrent_requests_per_host must be positive")
+        if self.max_requests_per_run <= 0:
+            raise ValueError("SourcePolicy.max_requests_per_run must be positive")
         if self.third_party_control_bypass is not False:
             raise ValueError("SourcePolicy.third_party_control_bypass must remain false")
 
@@ -155,6 +187,8 @@ WORKDAY_API_POLICY = SourcePolicy(
     allowed_methods=(SourcePolicyMethod.API,),
     max_pages_per_run=500,
     max_run_frequency="PT6H",
+    robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
+    max_requests_per_run=2000,
 )
 
 ATS_API_POLICY = SourcePolicy(
@@ -162,6 +196,8 @@ ATS_API_POLICY = SourcePolicy(
     allowed_methods=(SourcePolicyMethod.API,),
     max_pages_per_run=500,
     max_run_frequency="PT6H",
+    robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
+    max_requests_per_run=2000,
 )
 
 

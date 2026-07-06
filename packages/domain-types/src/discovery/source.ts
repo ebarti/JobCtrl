@@ -42,6 +42,18 @@ export const SOURCE_POLICY_METHODS = [
 ] as const;
 export type SourcePolicyMethod = (typeof SOURCE_POLICY_METHODS)[number];
 
+/**
+ * How the politeness gateway (R10) treats robots.txt for a source.
+ *
+ * `honor` (the fail-closed default) obeys the target host's robots.txt before
+ * any page-rendering fetch. `exempt_documented_api` marks a source accessed
+ * through a documented public JSON API or licensed feed governed by that
+ * contract rather than the host's crawl directives (owner decision D2). Rate,
+ * concurrency, and per-run budget still apply to exempt sources.
+ */
+export const ROBOTS_POLICIES = ["honor", "exempt_documented_api"] as const;
+export type RobotsPolicy = (typeof ROBOTS_POLICIES)[number];
+
 export const SOURCE_AUTHENTICATION_MODES = [
   "none",
   "user_session",
@@ -57,6 +69,7 @@ export const MANUAL_ACTION_REASONS = [
   "paywall",
   "bot_detection",
   "rate_limit",
+  "robots_disallowed",
   "protected_internal_site",
   "ambiguous_career_system",
   "browser_extension_capture",
@@ -92,6 +105,13 @@ export interface SourcePolicy {
   readonly maxPagesPerRun: number;
   readonly maxRunFrequency: string;
   readonly locatorMaxRequestsPerDomain: number;
+  // Crawl-politeness enforcement (R10). Declared intent; the Python politeness
+  // gateway enforces these at every fetch surface. `maxPagesPerRun` keeps its
+  // result-volume meaning; `maxRequestsPerRun` is the distinct request budget.
+  readonly robotsPolicy: RobotsPolicy;
+  readonly minRequestIntervalSeconds: number;
+  readonly maxConcurrentRequestsPerHost: number;
+  readonly maxRequestsPerRun: number;
   readonly manualIntervention: ManualInterventionPolicy;
   readonly contentFilterOverride: ContentFilterOverridePolicy;
   readonly thirdPartyControlBypass: false;
@@ -113,6 +133,18 @@ export function createSourcePolicy(policy: SourcePolicy): SourcePolicy {
   ) {
     throw new Error("SourcePolicy.locatorMaxRequestsPerDomain must be a positive integer");
   }
+  if (!(policy.minRequestIntervalSeconds >= 0)) {
+    throw new Error("SourcePolicy.minRequestIntervalSeconds must be non-negative");
+  }
+  if (
+    !Number.isInteger(policy.maxConcurrentRequestsPerHost) ||
+    policy.maxConcurrentRequestsPerHost <= 0
+  ) {
+    throw new Error("SourcePolicy.maxConcurrentRequestsPerHost must be a positive integer");
+  }
+  if (!Number.isInteger(policy.maxRequestsPerRun) || policy.maxRequestsPerRun <= 0) {
+    throw new Error("SourcePolicy.maxRequestsPerRun must be a positive integer");
+  }
   if (policy.thirdPartyControlBypass !== false) {
     throw new Error("SourcePolicy.thirdPartyControlBypass must remain false");
   }
@@ -127,9 +159,20 @@ export const SMART_EXTRACT_EXPERIMENTAL_POLICY = createSourcePolicy({
   maxPagesPerRun: 50,
   maxRunFrequency: "PT24H",
   locatorMaxRequestsPerDomain: 5,
+  robotsPolicy: "honor",
+  minRequestIntervalSeconds: 1.0,
+  maxConcurrentRequestsPerHost: 1,
+  maxRequestsPerRun: 500,
   manualIntervention: {
     allowed: true,
-    triggers: ["captcha", "login_required", "paywall", "bot_detection", "rate_limit"],
+    triggers: [
+      "captcha",
+      "login_required",
+      "paywall",
+      "bot_detection",
+      "rate_limit",
+      "robots_disallowed",
+    ],
     captureModes: ["current_page", "saved_html", "copied_url", "pasted_text", "email_import"],
   },
   contentFilterOverride: {
