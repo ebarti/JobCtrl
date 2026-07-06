@@ -5,6 +5,7 @@ import {
   createApplyRunEventRecorded,
   createApplyRunStarted,
   createApplySubmitIntended,
+  createEmailApplicationCandidateRecorded,
   createCanonicalJobIdentityResolved,
   createCompensationFactsUpdated,
   createContentDuplicateCandidateDetected,
@@ -443,6 +444,14 @@ export const eventByType = {
   ApplyRunEventRecorded: createApplyRunEventRecorded(LOCAL_TENANT, {
     runId: RUN_ID,
     event: { at: NOW, type: "navigation", url: "https://example.com/apply/1" },
+  }),
+  EmailApplicationCandidateRecorded: createEmailApplicationCandidateRecorded(LOCAL_TENANT, {
+    runId: RUN_ID,
+    recipient: "apply@example.com",
+    subject: "Application for Staff Engineer",
+    body: "Hello",
+    attachmentArtifactId: "resume-pdf-1",
+    attachmentName: "Resume.pdf",
   }),
   ApplicationEmailFeedbackIngested: createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
     jobKey: JOB_ID,

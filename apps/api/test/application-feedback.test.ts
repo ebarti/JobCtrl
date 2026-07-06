@@ -1325,6 +1325,92 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("requires submit approval to bind the email application candidate", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
+    ).run(7, NOW);
+    insertVersionedDryRunEvidence(db, {
+      applicationUrl: READY_JOB,
+      materialsGeneration: 1,
+      profileVersion: 7,
+      runId: "dry-run-email-candidate",
+    });
+    db.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES (?, 'apply', 'EmailApplicationCandidateRecorded', 'info', ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      "Email application candidate recorded",
+      "2026-06-01T12:02:00.000Z",
+      JSON.stringify({
+        run_id: "dry-run-email-candidate",
+        recipient: "apply@example.com",
+        subject: "Application for Staff Engineer",
+        body: "Hello",
+        attachment_artifact_id: "resume-pdf-1",
+        attachment_name: "Resume.pdf",
+      }),
+    );
+    db.close();
+    const app = buildApp(options);
+    const readyKey = encodeURIComponent(READY_JOB);
+    const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(queue.json(), READY_JOB)?.emailApplication).toMatchObject({
+      recipient: "apply@example.com",
+      subject: "Application for Staff Engineer",
+      attachmentArtifactId: "resume-pdf-1",
+      attachmentName: "Resume.pdf",
+      candidateRunId: "dry-run-email-candidate",
+    });
+
+    const missingBinding = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+      },
+    });
+    expect(missingBinding.statusCode, missingBinding.body).toBe(409);
+    expect(missingBinding.json()).toMatchObject({
+      ok: false,
+      error: "approval_stale_email_candidate",
+    });
+
+    const bound = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      payload: {
+        decision: "approve_submit",
+        materialsGeneration: 1,
+        profileVersion: 7,
+        applicationUrl: READY_JOB,
+        emailRecipient: "apply@example.com",
+        emailAttachmentArtifactId: "resume-pdf-1",
+      },
+    });
+    expect(bound.statusCode, bound.body).toBe(200);
+    expect(bound.json().decision).toMatchObject({
+      emailRecipient: "apply@example.com",
+      emailAttachmentArtifactId: "resume-pdf-1",
+    });
+
+    await app.close();
+  });
+
   it("rejects submit approval when the displayed review binding is stale", async () => {
     const db = new Database(options.dbPath);
     db.exec(`

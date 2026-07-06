@@ -447,7 +447,7 @@ If something unexpected happens and these instructions don't cover it, figure it
 2. browser_snapshot to read the page. If a CAPTCHA or bot-check appears, follow the CAPTCHA section and stop.
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
 4. Find and click the Apply button. If email-only (page says "email resume to X"):
-   - Output RESULT:FAILED:email_application_required. Do not draft, send, or claim an email application was submitted.
+   - Output RESULT:EMAIL_ONLY:<address> using only the email address visible on the page, then stop. Do not draft, send, or claim an email application was submitted.
    After clicking Apply: browser_snapshot. Many sites trigger CAPTCHAs right after the Apply click; if one appears, follow the CAPTCHA section and stop.
 5. Login wall?
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.

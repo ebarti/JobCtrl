@@ -78,6 +78,7 @@ from jobhunter.database import (
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
     _order_rows_by_feedback,
+    ensure_application_review_decision_columns,
     get_connection,
 )
 from jobhunter.domain.apply.services import ApplyPromptBuilder
@@ -175,10 +176,11 @@ def _attempt_count_for(conn, url: str) -> int:
 
 
 def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
+    ensure_application_review_decision_columns(conn)
     row = conn.execute(
         """
         SELECT decision, materials_generation, profile_version, application_url,
-               partial_override_run_id
+               partial_override_run_id, email_recipient, email_attachment_artifact_id
         FROM application_review_decisions
         WHERE tenant_id = ? AND job_key = ?
         ORDER BY decided_at DESC, decision_id DESC
@@ -194,7 +196,35 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict
         "profile_version": row[2],
         "application_url": row[3],
         "partial_override_run_id": row[4],
+        "email_recipient": row[5],
+        "email_attachment_artifact_id": row[6],
     }
+
+
+def _latest_email_application_candidate(conn, *, job_key: str) -> dict[str, Any] | None:
+    try:
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM job_events
+            WHERE job_url = ?
+              AND stage = 'apply'
+              AND event_type = 'EmailApplicationCandidateRecorded'
+            ORDER BY occurred_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (job_key,),
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    if row is None:
+        return None
+    raw = row["payload_json"] if hasattr(row, "keys") else row[0]
+    try:
+        payload = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _current_profile_version(conn, *, tenant_id: str = "local") -> int | None:
@@ -419,6 +449,15 @@ def _approval_refusal_reason(
         return "approval_stale_profile"
     if str(decision.get("application_url") or "") != application_url:
         return "approval_stale_url"
+    email_candidate = _latest_email_application_candidate(conn, job_key=job_key)
+    if email_candidate:
+        if (
+            str(decision.get("email_recipient") or "").lower()
+            != str(email_candidate.get("recipient") or "").lower()
+            or str(decision.get("email_attachment_artifact_id") or "")
+            != str(email_candidate.get("attachment_artifact_id") or "")
+        ):
+            return "approval_stale_email_candidate"
     if _dry_run_evidence_exists(
         conn,
         job_key=job_key,
@@ -487,9 +526,10 @@ def acquire_job(
             f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
             f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "
             f"jm.jm_resume_pdf_path AS resume_pdf_path, "
+            f"jm.jm_resume_pdf_artifact_id AS resume_pdf_artifact_id, "
             f"jm.jm_generation AS materials_generation, "
             f"{_EFFECTIVE_FIT_SCORE} AS fit_score, "
-            f"jobs.location AS location, "
+            f"jobs.location AS location, jobs.description AS description, "
             f"{_EFFECTIVE_FULL_DESCRIPTION} AS full_description, "
             f"{_EFFECTIVE_COVER_PATH} AS cover_letter_path, "
             f"{_EFFECTIVE_APPLIED_AT} AS applied_at, "
@@ -715,7 +755,18 @@ def acquire_job(
                 tenant_id=LOCAL_TENANT,
             )
 
-        return _row_to_job_dict(row, run_id=run_id)
+        job_dict = _row_to_job_dict(row, run_id=run_id)
+        decision = _latest_apply_review_decision(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            job_key=url,
+        )
+        if decision:
+            job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
+            job_dict["approved_email_attachment_artifact_id"] = str(
+                decision.get("email_attachment_artifact_id") or ""
+            )
+        return job_dict
     except Exception:
         conn.rollback()
         raise
@@ -1213,6 +1264,7 @@ def _build_use_case():
     from jobhunter.domain.apply.use_cases import SubmitApplicationUseCase
     from jobhunter.infrastructure.apply import (
         ClaudeCodeCliAdapter,
+        GmailEmailApplicationSender,
         LocalChromeAdapter,
     )
     from jobhunter.infrastructure.events import get_default_publisher
@@ -1223,6 +1275,7 @@ def _build_use_case():
         browser_port=browser_port,
         agent_port=agent_port,
         repository=SqliteApplyRunRepository(),
+        email_sender=GmailEmailApplicationSender(),
         timeout_seconds=config.get_apply_timeout_seconds(),
     )
     return SubmitApplicationUseCase(

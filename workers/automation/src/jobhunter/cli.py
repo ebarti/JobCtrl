@@ -2575,7 +2575,7 @@ def doctor() -> None:
         results.append((
             "Gmail connector auth",
             warn_mark,
-            f"{gmail_note}; email verification will stop as login_issue",
+            f"{gmail_note}; email verification will stop as login_issue and email applications cannot send",
         ))
 
     # CapSolver (optional; the owned solve_captcha tool fails closed when absent)
@@ -2731,7 +2731,7 @@ def gmail_auth(
     no_browser: bool = typer.Option(False, "--no-browser", help="Print the auth URL without opening a browser."),
     timeout_seconds: int = typer.Option(180, "--timeout-seconds", help="Seconds to wait for the local OAuth callback."),
 ) -> None:
-    """Authenticate the first-party Gmail readonly connector."""
+    """Authenticate the first-party Gmail connector."""
     from jobhunter.infrastructure.gmail.auth import GmailAuthError, authenticate
 
     try:
@@ -2739,7 +2739,7 @@ def gmail_auth(
     except GmailAuthError as exc:
         console.print(f"[red]Gmail auth failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    console.print(f"[green]Gmail readonly token saved:[/green] {token_path}")
+    console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
 if __name__ == "__main__":

@@ -2816,6 +2816,65 @@ describe("<ApplyReviewView>", () => {
     expect(applyJob).not.toHaveBeenCalled();
   });
 
+  it("previews email applications and binds recipient approval", async () => {
+    const user = userEvent.setup();
+    const decideApplyReview = vi.fn(async () => ({
+      ok: true as const,
+      decision: {
+        decisionId: "decision-email",
+        jobKey: "job-2",
+        decision: "approve_submit" as const,
+        reason: "approved",
+        decidedBy: "user",
+        decidedAt: "2026-05-06T08:30:00Z",
+      },
+    }));
+    const emailQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              emailApplication: {
+                recipient: "apply@example.com",
+                subject: "Application for Principal Platform Engineer",
+                body: "Hello,\n\nPlease find attached my resume.",
+                attachmentArtifactId: "resume-pdf-2",
+                attachmentName: "Jordan_Resume.pdf",
+                candidateRunId: "dry-run-email",
+                recordedAt: "2026-05-06T06:35:00Z",
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => emailQueue),
+          decideApplyReview,
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Email application")).toBeInTheDocument();
+    expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
+    expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /approve submit for principal platform engineer/i }));
+
+    await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
+    expect(decideApplyReview).toHaveBeenCalledWith(
+      "job-2",
+      expect.objectContaining({
+        decision: "approve_submit",
+        emailRecipient: "apply@example.com",
+        emailAttachmentArtifactId: "resume-pdf-2",
+      }),
+    );
+  });
+
   it("offers submit approval with a partial dry-run override only when partial evidence exists", async () => {
     const user = userEvent.setup();
     const decideApplyReview = vi.fn(async () => ({

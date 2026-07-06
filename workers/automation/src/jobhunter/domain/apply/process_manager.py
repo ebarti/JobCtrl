@@ -49,10 +49,13 @@ from typing import Any, Mapping
 
 from jobhunter.domain.apply.aggregate import ApplyRun
 from jobhunter.domain.apply.value_objects import (
+    Applied,
     ApplyPrompt,
     BrowserWorkerConfig,
     DryRunComplete,
+    EmailOnlyApplication,
     Failed,
+    Manual,
     SubmissionResult,
 )
 from jobhunter.domain.ports.apply import (
@@ -61,6 +64,8 @@ from jobhunter.domain.ports.apply import (
     AutonomousAgentPort,
     BrowserPort,
     BrowserSession,
+    EmailApplicationCandidate,
+    EmailApplicationSenderPort,
 )
 
 log = logging.getLogger(__name__)
@@ -88,6 +93,21 @@ class SagaOutcome:
     apply_run: ApplyRun
     browser_launched: bool
     agent_invoked: bool
+
+
+@dataclass(frozen=True)
+class EmailApplicationContext:
+    """Owned context used to turn email-only detection into an approval-bound candidate."""
+
+    job_title: str
+    company: str
+    posting_text: str
+    applicant_name: str
+    attachment_artifact_id: str
+    attachment_name: str
+    attachment_path: str
+    approved_recipient_email: str = ""
+    approved_attachment_artifact_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +141,13 @@ class ApplySaga:
         browser_port: BrowserPort,
         agent_port: AutonomousAgentPort,
         repository: ApplyRunRepository,
+        email_sender: EmailApplicationSenderPort | None = None,
         timeout_seconds: int | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
         self._repository = repository
+        self._email_sender = email_sender
         self._timeout_seconds = timeout_seconds
 
     # ------------------------------------------------------------------
@@ -143,6 +165,7 @@ class ApplySaga:
         materials_generation: int | str | None = None,
         application_url: str | None = None,
         profile_version: int | str | None = None,
+        email_application_context: EmailApplicationContext | None = None,
     ) -> SagaOutcome:
         """Run the saga end-to-end.
 
@@ -306,9 +329,25 @@ class ApplySaga:
                 else int((time.time() - start) * 1000)
             )
             submission_result = agent_result.submission_result
+            if isinstance(submission_result, EmailOnlyApplication):
+                run, submission_result = self._handle_email_only_result(
+                    run,
+                    submission_result,
+                    email_application_context,
+                    duration_ms=duration_ms,
+                )
             dry_run_evidence = _empty_dry_run_evidence()
             if run.dry_run and isinstance(submission_result, DryRunComplete):
                 dry_run_evidence = _collect_dry_run_evidence(session)
+                if (
+                    not dry_run_evidence["blocked_channels"]
+                    and submission_result.blocked_channels
+                ):
+                    dry_run_evidence = {
+                        "coverage": submission_result.coverage,
+                        "blocked_channels": submission_result.blocked_channels,
+                        "blocked_requests": (),
+                    }
                 submission_result = DryRunComplete(
                     navigated_to=submission_result.navigated_to,
                     coverage=str(dry_run_evidence["coverage"]),
@@ -391,6 +430,101 @@ class ApplySaga:
     # Compensation helpers
     # ------------------------------------------------------------------
 
+    def _handle_email_only_result(
+        self,
+        run: ApplyRun,
+        result: EmailOnlyApplication,
+        context: EmailApplicationContext | None,
+        *,
+        duration_ms: int,
+    ) -> tuple[ApplyRun, SubmissionResult]:
+        if context is None:
+            run = run.record_event(
+                event_type="EmailApplicationCandidateRejected",
+                occurred_at=_utc_now(),
+                level="warn",
+                message="email application context is unavailable",
+                payload={"recipient": result.recipient_email, "reason": "email_context_unavailable"},
+            )
+            return run, Manual(reason="email_context_unavailable")
+
+        if not _recipient_in_posting(result.recipient_email, context.posting_text):
+            run = run.record_event(
+                event_type="EmailApplicationCandidateRejected",
+                occurred_at=_utc_now(),
+                level="warn",
+                message="email recipient was not found in stored posting text",
+                payload={"recipient": result.recipient_email, "reason": "email_recipient_unverified"},
+            )
+            return run, Manual(reason="email_recipient_unverified")
+
+        candidate = _build_email_application_candidate(result.recipient_email, context)
+        candidate_payload = _candidate_payload(candidate, run_id=str(run.run_id), duration_ms=duration_ms)
+        run = run.record_event(
+            event_type="EmailApplicationCandidateRecorded",
+            occurred_at=_utc_now(),
+            level="info",
+            message="email application candidate recorded for review",
+            payload=candidate_payload,
+        )
+
+        if run.dry_run:
+            return run, DryRunComplete(
+                navigated_to="",
+                coverage="full",
+                blocked_channels=("email_application",),
+            )
+
+        if not _candidate_matches_approval(candidate, context):
+            run = run.record_event(
+                event_type="EmailApplicationApprovalMissing",
+                occurred_at=_utc_now(),
+                level="warn",
+                message="email application candidate is not bound to the approval decision",
+                payload={
+                    "recipient": candidate.recipient_email,
+                    "attachment_artifact_id": candidate.attachment_artifact_id,
+                },
+            )
+            return run, Manual(reason="email_application_approval_required")
+
+        if self._email_sender is None:
+            run = run.record_event(
+                event_type="EmailApplicationSendFailed",
+                occurred_at=_utc_now(),
+                level="error",
+                message="email application sender is unavailable",
+                payload={"reason": "email_sender_unavailable"},
+            )
+            return run, Failed(error="email_sender_unavailable", retryable=False)
+
+        try:
+            send_result = self._email_sender.send_email_application(candidate)
+        except Exception as exc:  # noqa: BLE001 - translate provider failures into terminal apply state
+            run = run.record_event(
+                event_type="EmailApplicationSendFailed",
+                occurred_at=_utc_now(),
+                level="error",
+                message=str(exc)[:500],
+                payload={"reason": "email_send_failed"},
+            )
+            return run, Failed(error=f"email_send_failed:{str(exc)[:120]}", retryable=False)
+
+        run = run.record_event(
+            event_type="EmailApplicationSent",
+            occurred_at=_utc_now(),
+            level="info",
+            message="email application sent by owned adapter",
+            payload={
+                "recipient": candidate.recipient_email,
+                "attachment_artifact_id": candidate.attachment_artifact_id,
+                "provider": send_result.provider,
+                "message_id": send_result.message_id,
+                "thread_id": send_result.thread_id,
+            },
+        )
+        return run, Applied(applied_at=_utc_now(), verification_confidence=0.9)
+
     def _compensate_failure(
         self,
         run: ApplyRun,
@@ -419,6 +553,60 @@ class ApplySaga:
             finished_at=_utc_now(),
             duration_ms=duration_ms,
         )
+
+def _recipient_in_posting(recipient: str, posting_text: str) -> bool:
+    return recipient.strip().lower() in (posting_text or "").lower()
+
+
+def _build_email_application_candidate(
+    recipient: str,
+    context: EmailApplicationContext,
+) -> EmailApplicationCandidate:
+    title = context.job_title.strip() or "the role"
+    company = context.company.strip() or "your team"
+    applicant = context.applicant_name.strip() or "the candidate"
+    subject = f"Application for {title}"
+    body = (
+        f"Hello,\n\n"
+        f"Please find attached my resume for {title} at {company}.\n\n"
+        f"Best,\n{applicant}"
+    )
+    return EmailApplicationCandidate(
+        recipient_email=recipient.strip(),
+        subject=subject,
+        body=body,
+        attachment_artifact_id=context.attachment_artifact_id,
+        attachment_name=context.attachment_name,
+        attachment_path=context.attachment_path,
+    )
+
+
+def _candidate_payload(
+    candidate: EmailApplicationCandidate,
+    *,
+    run_id: str,
+    duration_ms: int,
+) -> dict[str, object]:
+    return {
+        "run_id": run_id,
+        "recipient": candidate.recipient_email,
+        "subject": candidate.subject,
+        "body": candidate.body,
+        "attachment_artifact_id": candidate.attachment_artifact_id,
+        "attachment_name": candidate.attachment_name,
+        "duration_ms": duration_ms,
+    }
+
+
+def _candidate_matches_approval(
+    candidate: EmailApplicationCandidate,
+    context: EmailApplicationContext,
+) -> bool:
+    return (
+        context.approved_recipient_email.strip().lower() == candidate.recipient_email.lower()
+        and context.approved_attachment_artifact_id == candidate.attachment_artifact_id
+    )
+
 
 def _describe_result(result: SubmissionResult) -> str:
     """Compact human-readable description of a submission result."""
@@ -475,5 +663,6 @@ def _coerce_optional_int(value: int | str | None) -> int | None:
 
 __all__ = [
     "ApplySaga",
+    "EmailApplicationContext",
     "SagaOutcome",
 ]

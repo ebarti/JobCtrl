@@ -10,6 +10,7 @@ import {
   applyRunEventRecordedHandler,
   applyRunStartedHandler,
   applySubmitIntendedHandler,
+  emailApplicationCandidateRecordedHandler,
 } from "../apply/handlers.js";
 import {
   canonicalJobIdentityResolvedHandler,
@@ -178,6 +179,7 @@ export const handlers: HandlerMap = {
   ApplyRunStarted: applyRunStartedHandler,
   ApplySubmitIntended: applySubmitIntendedHandler,
   ApplyRunEventRecorded: applyRunEventRecordedHandler,
+  EmailApplicationCandidateRecorded: emailApplicationCandidateRecordedHandler,
   ApplicationEmailFeedbackIngested: applicationEmailFeedbackIngestedHandler,
   ApplicationSubmitted: applicationSubmittedHandler,
   ApplicationFailed: applicationFailedHandler,

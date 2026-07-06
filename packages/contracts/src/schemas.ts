@@ -355,6 +355,8 @@ export const ApplyReviewDecisionRequestSchema = z
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
+    emailRecipient: z.string().trim().email().optional(),
+    emailAttachmentArtifactId: z.string().trim().min(1).max(160).optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -370,6 +372,8 @@ export interface ApplyReviewDecision {
   profileVersion?: number | null;
   applicationUrl?: string | null;
   partialOverrideRunId?: string | null;
+  emailRecipient?: string | null;
+  emailAttachmentArtifactId?: string | null;
 }
 
 export interface ApplyReviewDecisionResponse {
@@ -786,6 +790,7 @@ export type ApplyReviewApprovalGateReason =
   | "approval_stale_materials"
   | "approval_stale_profile"
   | "approval_stale_url"
+  | "approval_stale_email_candidate"
   | "override_evidence_invalid";
 
 export interface ApplyReviewDryRunEvidence {
@@ -802,6 +807,16 @@ export interface ApplyReviewApprovalGate {
   dryRunEvidence: ApplyReviewDryRunEvidence | null;
   partialDryRunEvidence: ApplyReviewDryRunEvidence | null;
   reasons: ApplyReviewApprovalGateReason[];
+}
+
+export interface ApplyReviewEmailApplicationPreview {
+  recipient: string;
+  subject: string;
+  body: string;
+  attachmentArtifactId: string;
+  attachmentName: string;
+  candidateRunId: string;
+  recordedAt: string | null;
 }
 
 export interface ApplyReviewQueueItem {
@@ -838,6 +853,7 @@ export interface ApplyReviewQueueItem {
     startedAt: string | null;
     finishedAt: string | null;
   } | null;
+  emailApplication: ApplyReviewEmailApplicationPreview | null;
   review: {
     state: "pending" | "approved_submit" | "approved_dry_run" | "deferred" | "declined";
     decision: ApplyReviewDecisionValue | null;
@@ -846,6 +862,8 @@ export interface ApplyReviewQueueItem {
     profileVersion?: number | null;
     applicationUrl?: string | null;
     partialOverrideRunId?: string | null;
+    emailRecipient?: string | null;
+    emailAttachmentArtifactId?: string | null;
   };
   approvalGate: ApplyReviewApprovalGate;
   blockers: string[];

@@ -200,7 +200,7 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "browser_evaluate" not in rendered
     assert "browser_file_upload" not in rendered
     assert "send_email" not in rendered
-    assert "email_application_required" in rendered
+    assert "RESULT:EMAIL_ONLY:<address>" in rendered
     assert "Age 18+: Yes" not in rendered
     assert "Felony: No" not in rendered
     assert "Background check consent: Yes" in rendered

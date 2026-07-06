@@ -9,6 +9,7 @@ import time
 import httpx
 
 from jobhunter.infrastructure.gmail.auth import (
+    GMAIL_SEND_SCOPE,
     GmailAuthError,
     OAuthClient,
     build_authorization_url,
@@ -44,7 +45,7 @@ def test_web_oauth_requires_local_redirect() -> None:
         raise AssertionError("expected GmailAuthError")
 
 
-def test_authorization_url_requests_readonly_scope() -> None:
+def test_authorization_url_requests_read_and_send_scopes() -> None:
     client = OAuthClient(
         client_id="client",
         client_secret="secret",
@@ -54,6 +55,7 @@ def test_authorization_url_requests_readonly_scope() -> None:
     url = build_authorization_url(client, "http://127.0.0.1:38123/oauth2callback", "state")
 
     assert "https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly" in url
+    assert "https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.send" in url
     assert "gmail.modify" not in url
 
 
@@ -163,6 +165,61 @@ def test_gmail_client_reads_message_body(monkeypatch) -> None:
 
     assert message["subject"] == "Code"
     assert "654321" in message["body_text"]
+
+
+def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.gmail.client.load_token",
+        lambda: {"scope": f"https://www.googleapis.com/auth/gmail.readonly {GMAIL_SEND_SCOPE}"},
+    )
+    attachment = tmp_path / "resume.pdf"
+    attachment.write_bytes(b"%PDF")
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/messages/send")
+        seen["auth"] = request.headers["Authorization"]
+        payload = json.loads(request.content.decode("utf-8"))
+        seen["raw"] = payload["raw"]
+        return httpx.Response(200, json={"id": "m1", "threadId": "t1"})
+
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    result = client.send_email_application(
+        to_email="apply@example.com",
+        subject="Application for Staff Engineer",
+        body="Hello",
+        attachment_path=str(attachment),
+        attachment_name="resume.pdf",
+    )
+
+    assert result == {"id": "m1", "threadId": "t1"}
+    assert seen["auth"] == "Bearer token"
+    assert seen["raw"]
+
+
+def test_gmail_client_refuses_send_without_send_scope(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.gmail.client.load_token",
+        lambda: {"scope": "https://www.googleapis.com/auth/gmail.readonly"},
+    )
+    attachment = tmp_path / "resume.pdf"
+    attachment.write_bytes(b"%PDF")
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))))
+
+    try:
+        client.send_email_application(
+            to_email="apply@example.com",
+            subject="Application",
+            body="Hello",
+            attachment_path=str(attachment),
+            attachment_name="resume.pdf",
+        )
+    except GmailAuthError as exc:
+        assert "gmail.send scope" in str(exc)
+    else:
+        raise AssertionError("expected GmailAuthError")
 
 
 def test_mcp_server_exposes_only_scoped_verification_tool() -> None:

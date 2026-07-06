@@ -55,10 +55,10 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - Live apply automation can submit real applications to real employers. Keep
   `applyApprovalRequired` on, rehearse with dry runs, and target one job or site
   at a time until you trust the behavior.
-- Email-based application sending, if you enable or build it, is also a live
-  employer submission. The current Gmail connector is read-only; do not grant or
-  wire Gmail `gmail.send` unless you intend JobHunter to send application email
-  from your account.
+- Email-based application sending is also a live employer submission. JobHunter
+  sends only through its owned Gmail connector after a dry-run records the
+  recipient and attachment candidate and Apply Review approves that exact
+  binding; the path requires Gmail `gmail.send` and otherwise fails closed.
 - Browser automation can type non-secret profile fields. For regular job-site
   password fields, the apply agent can call a local credential tool that reads
   the stored profile password and types it into the focused field without
@@ -254,8 +254,9 @@ opt-in and configuration-gated:
   credential tool that never returns the secret to the model.
 - **Job boards, ATS APIs, and posting pages** — discovery and enrichment
   fetches.
-- **Gmail (read-only)** — verification-code and application-outcome lookups, only
-  if you authenticate the connector; it never requests `gmail.send`.
+- **Gmail** — verification-code and application-outcome lookups, plus approved
+  email application sends, only if you authenticate the connector. Raw email
+  bodies stay local; outgoing sends require the `gmail.send` scope.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
 - **CAPTCHA solving** — supported widgets are handled only through the owned
@@ -348,7 +349,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
 | `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
 | `migrate-resume-html` | Convert/refresh approved resume PDFs onto the HTML/CSS renderer. |
-| `gmail-auth` | Authenticate the read-only Gmail connector. |
+| `gmail-auth` | Authenticate the Gmail connector for verification, outcome lookup, and approved email application sends. |
 
 ## Configuration
 

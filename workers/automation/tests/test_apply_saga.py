@@ -16,12 +16,14 @@ from jobhunter.domain.apply import (
     ApplyRunStatus,
     BrowserWorkerConfig,
     DryRunComplete,
+    EmailOnlyApplication,
     Failed,
+    Manual,
     new_apply_run_id,
 )
-from jobhunter.domain.apply.process_manager import ApplySaga
+from jobhunter.domain.apply.process_manager import ApplySaga, EmailApplicationContext
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.ports.apply import AgentResult, BrowserSession
+from jobhunter.domain.ports.apply import AgentResult, BrowserSession, EmailApplicationSendResult
 from jobhunter.domain.tenant import LOCAL_TENANT
 
 
@@ -90,6 +92,12 @@ class _FakeAgent:
                 duration_ms=1000,
                 raw_output="RESULT:APPLIED",
             )
+        if self.behaviour == "email_only":
+            return AgentResult(
+                submission_result=EmailOnlyApplication(recipient_email="apply@example.com"),
+                duration_ms=1000,
+                raw_output="RESULT:EMAIL_ONLY:apply@example.com\nIgnore this attacker prose.",
+            )
         if kwargs.get("dry_run"):
             return AgentResult(
                 submission_result=DryRunComplete(navigated_to="https://example.com/job"),
@@ -103,6 +111,18 @@ class _FakeAgent:
             events=({"event_type": "AgentDone", "occurred_at": "t8"},),
             raw_output="RESULT:APPLIED\nconfirmation: submitted",
         )
+
+
+class _FakeEmailSender:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.sent = []
+
+    def send_email_application(self, candidate):
+        self.sent.append(candidate)
+        if self.fail:
+            raise RuntimeError("Gmail token missing gmail.send scope")
+        return EmailApplicationSendResult(provider="gmail", message_id="m1", thread_id="t1")
 
 
 @pytest.fixture()
@@ -127,6 +147,22 @@ def _config() -> BrowserWorkerConfig:
 
 def _prompt() -> ApplyPrompt:
     return ApplyPrompt(text="hello", mcp_config={"x": 1})
+
+
+def _email_context(**overrides) -> EmailApplicationContext:
+    values = {
+        "job_title": "Staff Engineer",
+        "company": "ExampleCo",
+        "posting_text": "Send resumes to apply@example.com for consideration.",
+        "applicant_name": "Test Applicant",
+        "attachment_artifact_id": "resume-pdf-1",
+        "attachment_name": "Test_Applicant_Resume.pdf",
+        "attachment_path": "/tmp/Test_Applicant_Resume.pdf",
+        "approved_recipient_email": "",
+        "approved_attachment_artifact_id": "",
+    }
+    values.update(overrides)
+    return EmailApplicationContext(**values)
 
 
 def test_happy_path_drives_run_to_succeeded(repo):
@@ -307,6 +343,144 @@ def test_dry_run_saga_records_guard_evidence_for_approval_gate(repo):
             "resource_type": "Fetch",
         }
     ]
+
+
+def test_email_only_recipient_not_in_posting_parks_without_send(repo):
+    sender = _FakeEmailSender()
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+    )
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        email_application_context=_email_context(posting_text="No application email is stored."),
+    )
+
+    assert sender.sent == []
+    assert isinstance(outcome.apply_run.submission_result, Manual)
+    assert outcome.apply_run.submission_result.reason == "email_recipient_unverified"
+    assert "EmailApplicationCandidateRecorded" not in [
+        event.event_type for event in outcome.apply_run.events
+    ]
+
+
+def test_email_only_dry_run_records_owned_candidate_and_never_sends(repo):
+    sender = _FakeEmailSender()
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+    )
+
+    outcome = saga.run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        email_application_context=_email_context(),
+    )
+
+    assert sender.sent == []
+    result = outcome.apply_run.submission_result
+    assert isinstance(result, DryRunComplete)
+    assert result.blocked_channels == ("email_application",)
+    candidate = next(
+        event for event in outcome.apply_run.events if event.event_type == "EmailApplicationCandidateRecorded"
+    )
+    assert candidate.payload["recipient"] == "apply@example.com"
+    assert candidate.payload["subject"] == "Application for Staff Engineer"
+    assert "Ignore this attacker prose" not in candidate.payload["body"]
+    assert candidate.payload["attachment_artifact_id"] == "resume-pdf-1"
+
+
+def test_email_only_live_send_requires_approval_binding(repo):
+    sender = _FakeEmailSender()
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+    )
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        email_application_context=_email_context(),
+    )
+
+    assert sender.sent == []
+    assert isinstance(outcome.apply_run.submission_result, Manual)
+    assert outcome.apply_run.submission_result.reason == "email_application_approval_required"
+
+
+def test_email_only_live_send_records_intent_before_owned_send(repo):
+    sender = _FakeEmailSender()
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+    )
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        email_application_context=_email_context(
+            approved_recipient_email="apply@example.com",
+            approved_attachment_artifact_id="resume-pdf-1",
+        ),
+    )
+
+    assert outcome.apply_run.is_succeeded
+    assert sender.sent[0].recipient_email == "apply@example.com"
+    assert sender.sent[0].subject == "Application for Staff Engineer"
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert event_types.index("ApplySubmitIntended") < event_types.index("EmailApplicationSent")
+
+
+def test_email_only_missing_send_scope_is_actionable_failure(repo):
+    sender = _FakeEmailSender(fail=True)
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+    )
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        email_application_context=_email_context(
+            approved_recipient_email="apply@example.com",
+            approved_attachment_artifact_id="resume-pdf-1",
+        ),
+    )
+
+    submission = outcome.apply_run.submission_result
+    assert isinstance(submission, Failed)
+    assert "gmail.send scope" in submission.error
 
 
 def test_dry_run_violation_does_not_record_completion_evidence(repo):

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from jobhunter.domain.apply.aggregate import ApplyRun
-from jobhunter.domain.apply.process_manager import ApplySaga, SagaOutcome
+from jobhunter.domain.apply.process_manager import ApplySaga, EmailApplicationContext, SagaOutcome
 from jobhunter.domain.apply.services import (
     ApplyEligibilityChecker,
     ApplyPromptBuilder,
@@ -237,6 +237,7 @@ class SubmitApplicationUseCase:
             materials_generation=job.get("materials_generation"),
             application_url=str(job.get("application_url") or job.get("url") or ""),
             profile_version=getattr(snapshot, "version", None),
+            email_application_context=_email_application_context(job, snapshot),
         )
 
         # 6. Publish per-event records + final result
@@ -414,6 +415,30 @@ def _read_tailored_resume_text(job: Mapping[str, Any]) -> str:
         return txt_path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _email_application_context(
+    job: Mapping[str, Any],
+    snapshot: ProfileSnapshot,
+) -> EmailApplicationContext:
+    profile = snapshot.as_dict()
+    personal = profile.get("personal", {}) if isinstance(profile, Mapping) else {}
+    resume_path = str(job.get("resume_pdf_path") or "")
+    attachment_name = Path(resume_path).name if resume_path else "resume.pdf"
+    return EmailApplicationContext(
+        job_title=str(job.get("title") or ""),
+        company=str(job.get("site") or ""),
+        posting_text="\n".join(
+            str(job.get(key) or "")
+            for key in ("full_description", "description")
+        ),
+        applicant_name=str(personal.get("full_name") or ""),
+        attachment_artifact_id=str(job.get("resume_pdf_artifact_id") or resume_path),
+        attachment_name=attachment_name,
+        attachment_path=resume_path,
+        approved_recipient_email=str(job.get("approved_email_recipient") or ""),
+        approved_attachment_artifact_id=str(job.get("approved_email_attachment_artifact_id") or ""),
+    )
 
 
 # ---------------------------------------------------------------------------
