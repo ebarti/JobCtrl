@@ -22,20 +22,23 @@ in one hop.
 ## Freeze status
 
 > **PROVISIONAL FREEZE — not yet owner-signed.** Re-anchored and verified
-> against `main` @ `a4001862` on **2026-07-06**, after the R3 browser-extension
-> and R4 outcome-analytics / artifact-comparison trains merged (this pass added
-> CL-005, CL-027, CL-038, CL-055 for the capabilities those merges put on public
-> surfaces). Every `Current` and `Beta` row's verification pointer resolved at
-> that sha. GATE G1 is satisfied only once the repository owner reviews this
-> ledger, assigns per-claim sign-off owners (§11.7 of the plan), and re-stamps
-> this line with the dated `main` sha at actual freeze time. `main` is advancing
-> quickly while the launch trains merge, so the freeze sha **must be re-recorded
-> at sign-off**; the pointers below are stable handles (`docs/requirements.md`
-> BR/TR ids, architecture docs, source/test paths) that resolve at any recent
-> `main`.
+> against `main` @ `e54dd903` on **2026-07-06**, after the R5 career-evidence-map
+> / interview-prep stack merged and the duplicated `BR-052` autofill handle was
+> renumbered to `BR-056` (#309). This pass added CL-028, CL-029, CL-056 for the
+> capabilities that stack put on public surfaces (README, normal flows), and
+> updated CL-038's citation to `BR-056`. (The prior pass @ `a4001862` added
+> CL-005, CL-027, CL-038, CL-055 for the R3 browser-extension and R4
+> outcome-analytics / artifact-comparison trains.) Every `Current` and `Beta`
+> row's verification pointer resolved at `e54dd903`. GATE G1 is satisfied only
+> once the repository owner reviews this ledger, assigns per-claim sign-off
+> owners (§11.7 of the plan), and re-stamps this line with the dated `main` sha
+> at actual freeze time. `main` is advancing quickly while the launch trains
+> merge, so the freeze sha **must be re-recorded at sign-off**; the pointers
+> below are stable handles (`docs/requirements.md` BR/TR ids, architecture docs,
+> source/test paths) that resolve at any recent `main`.
 >
 > Unless a row's `Last verified` says otherwise, every row was last verified in
-> this pass (2026-07-06 @ `a4001862`).
+> this pass (2026-07-06 @ `e54dd903`).
 
 ## How to read this ledger
 
@@ -95,10 +98,22 @@ path, or test path that resolves on `main`.
 | CL-021 | Deterministic fabrication gates block invented facts (no fabricated metric, date, title, employer, or ungrounded named technology); the gate fails closed. | Hero (Audited Materials) | Current | repo owner | [tailoring](architecture/tailoring.md) (Fabrication gate: `fabrication_detector.py`, `claim_grounding.py`) | 2026-07-06 |
 | CL-022 | Keyword coverage is computed against the actual rendered resume text, never inferred from the job keywords alone. | Hero (Audited Materials) | Current | repo owner | [tailoring](architecture/tailoring.md) ("computed against the rendered resume text"); [materials](architecture/materials.md) | 2026-07-06 |
 | CL-023 | Apply Review renders the current HTML/CSS resume from the same source that prints the final PDF, with line selection and in-document audit annotations, and lets the user edit before approval. | README (Review and edit …); Tour (Apply Review) | Current | repo owner | `BR-046` (requirements.md) | 2026-07-06 |
-| CL-024 | Apply Review supports draft edits, named revisions, and comment threads with draft-aware approval; revising never destroys the last accepted artifact. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `BR-052` (Apply Review interactive revision, 2026-07-04 row — the handle is duplicated on `main`, see [Owner decisions](#owner-decisions-for-this-ledger)) | 2026-07-06 |
+| CL-024 | Apply Review supports draft edits, named revisions, and comment threads with draft-aware approval; revising never destroys the last accepted artifact. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `BR-052` (requirements.md) | 2026-07-06 |
 | CL-025 | A failed material refresh (including a template change) preserves the last accepted artifacts instead of destroying them. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `TR-032`, `BR-041` (requirements.md) | 2026-07-06 |
 | CL-026 | Resume PDF style templates are editable in Preferences with a default template and a per-job override, without modifying candidate profile data. | README (Edit resume PDF style templates …) | Current | repo owner | [materials](architecture/materials.md) | 2026-07-06 |
 | CL-027 | Apply Review can compare a freshly rendered resume draft against the last accepted artifact before approval, using the same rendered text and keyword-coverage source the audit uses; the comparison is read-only and does not replace the accepted artifact. | README (Normal Flow, step 6) | Current | repo owner | [materials](architecture/materials.md) (rendered text + coverage source); `apps/web/src/contexts/materials/selectors/compareCoverage.ts` | 2026-07-06 |
+
+### Career evidence map
+
+| Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
+| --- | --- | --- | --- | --- | --- | --- |
+| CL-028 | The evidence map inverts the profile's achievements and skills into how they were actually used — resume-bullet usage, requirement-fit usage, generation-time skill coverage, and missing / blocked / transferable gaps — computed only from recorded generation-time linkages, with deleted or hidden jobs excluded. | README (What It Does); Normal Flows (Inspect The Evidence Map) | Current | repo owner | [read model](architecture/read-model.md) (`evidence_usage_projections`); `apps/api/src/server.ts` (`GET /v1/evidence-map` → `listEvidenceMap`) | 2026-07-06 |
+
+### Interview preparation
+
+| Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
+| --- | --- | --- | --- | --- | --- | --- |
+| CL-029 | Grounded, stored interview prep is generated per job, reusing the resume-tailoring fabrication, claim-grounding, and adversarial-review gates behind a spend preflight; generation is a durable workflow (deterministic id, heartbeats, run-scoped retry idempotency via `origin_run_id`) and a failed refresh preserves the last accepted prep. It is stored pre-interview material with inspectable evidence links — explicitly not a live interview assistant (no transcript, no real-time copilot). | README (What It Does; Responsible Use); Normal Flows (Generate Interview Prep) | Current | repo owner | [materials](architecture/materials.md) (Stored Interview Preparation); `workers/automation/src/jobhunter/interview/workflow.py` (spend preflight, deterministic id); `.../interview/activities.py` (`origin_run_id` idempotency, heartbeats); `.../domain/interview/use_cases.py` (materials gates reused, preserve-on-failure) | 2026-07-06 |
 
 ### Apply safety
 
@@ -112,7 +127,7 @@ path, or test path that resolves on `main`.
 | CL-035 | JobHunter never submits applications, runs destructive profile/database actions, or bypasses third-party controls (CAPTCHA, paywall, login, rate-limit, bot-control) without explicit user authorization; the apply agent stops on SSO, declines permission prompts, refuses ID/biometric verification, and never enters payment details. | README (Responsible Use); Security (No Third-Party Bypass; The Apply Agent) | Current | repo owner | `BR-001` (requirements.md); [security](user/security.md) | 2026-07-06 |
 | CL-036 | Application outcomes can be recorded manually without browser automation, and web approval facts do not submit anything by themselves. | Data & Safety (Auto-Apply Safety) | Current | repo owner | [security](user/security.md); `apps/api/src/application-feedback.ts` | 2026-07-06 |
 | CL-037 | The apply agent is a local Claude Code CLI subprocess that reads untrusted job pages; prompt injection is a real exposure that the listed controls limit but do not remove. | Security (The Apply Agent) | Current | repo owner | [security](user/security.md) (`--permission-mode bypassPermissions`, prompt-injection controls) | 2026-07-06 |
-| CL-038 | On supported ATS pages the browser extension offers deterministic, profile-backed field suggestions and shows each value's profile source; the user chooses what to fill, the extension generates no free-text answers, and it has no submission path (it prevents the form's own submit and never submits on the user's behalf). | README (Browser Extension Capture And Autofill); Security (Browser Extension Pairing) | Current | repo owner | `BR-052` (browser-extension autofill, 2026-07-05 row — duplicate handle, see [Owner decisions](#owner-decisions-for-this-ledger)); [local TS API](local-ts-api.md) (`GET /v1/extension/autofill/profile`); `apps/extension/src/content-script.ts` (submit prevented) | 2026-07-06 |
+| CL-038 | On supported ATS pages the browser extension offers deterministic, profile-backed field suggestions and shows each value's profile source; the user chooses what to fill, the extension generates no free-text answers, and it has no submission path (it prevents the form's own submit and never submits on the user's behalf). | README (Browser Extension Capture And Autofill); Security (Browser Extension Pairing) | Current | repo owner | `BR-056` (requirements.md); [local TS API](local-ts-api.md) (`GET /v1/extension/autofill/profile`); `apps/extension/src/content-script.ts` (submit prevented) | 2026-07-06 |
 
 ### LLM spend
 
@@ -133,6 +148,7 @@ path, or test path that resolves on `main`.
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-055 | A local Analytics view summarizes recorded application outcomes as a conversion funnel (applied → reply → interview → offer / rejection) broken down by source, score band, fit band, apply mode, accepted resume template, and tailoring policy. Low-sample cells are suppressed and rates are presented descriptively, without causal claims. | README (Track progress … Analytics) | Beta | repo owner | [read model](architecture/read-model.md) (`dashboard_projections` `outcome_conversion_json`); `apps/web/src/views/analytics/SmallSampleNotice.tsx` (small-sample suppression) | 2026-07-06 |
+| CL-056 | Post-interview reflection notes can be recorded against the specific accepted prep generation they followed, via a nullable, immutable link on `application_outcomes`; recording a reflection does not change outcome-conversion counts. | README (Responsible Use) | Current | repo owner | [read model](architecture/read-model.md) (nullable `interview_prep_generation` link; conversion counts unaffected) | 2026-07-06 |
 
 > **Why Beta.** The capability is shipped and pointer-backed, but the honest
 > reading of outcome rates requires a load-bearing qualifier (small samples are
@@ -175,7 +191,8 @@ release**. The review process:
 
 1. Enumerate candidate claims from the live public surfaces (`README.md`,
    `docs/index.md` hero `features`, `docs/user/screenshots.md` captions,
-   `docs/user/data-and-safety.md`, `docs/user/security.md`).
+   `docs/user/normal-flows.md`, `docs/user/data-and-safety.md`,
+   `docs/user/security.md`).
 2. For each, confirm Status + owner + verification pointer and resolve every
    `Current` pointer.
 3. Reconcile against `ROADMAP.md` so nothing labelled `Current` is actually a
@@ -199,18 +216,14 @@ Carried from the plan's open owner decisions (§11); resolve at sign-off:
   live auto-apply as `Beta` even though each gate is shipped and pointer-backed);
   **CL-040** (the spend ceiling's "estimate, not billing truth" and
   "per-workflow preflight, not mid-call interrupt" qualifiers are load-bearing);
-  and **CL-005/CL-038** (the browser extension ships but is loaded unpacked in
+  **CL-005/CL-038** (the browser extension ships but is loaded unpacked in
   developer mode, not from a browser store — the owner may treat "unpacked
-  developer-mode only" as a maturity qualifier warranting `Beta`). **CL-055** is
-  already classified `Beta` (see its "Why Beta" note); confirm at sign-off.
-- **Requirements-integrity defect (flag, not owned here).** On `main`
-  @ `a4001862` the handle **`BR-052` is duplicated** in
-  [`requirements.md`](requirements.md): a 2026-07-04 row ("Apply Review must
-  support interactive resume revision …", cited by CL-024) and a 2026-07-05 row
-  ("Browser-extension assisted autofill …", cited by CL-038). This ledger cites
-  each with a date/topic disambiguator, but the duplicate breaks the one-hop
-  handle contract. The fix (renumbering the newer row to a free handle) belongs
-  to whoever owns `requirements.md`, not to this launch-artifacts change; it is
-  reported for follow-up.
+  developer-mode only" as a maturity qualifier warranting `Beta`); and
+  **CL-029** (grounded interview-prep generation is a new LLM-generated surface a
+  user takes into an interview — the owner may prefer `Beta` despite the reused
+  fabrication / grounding / adversarial gates). **CL-055** is already classified
+  `Beta` (see its "Why Beta" note); confirm at sign-off. The earlier `BR-052`
+  duplicate-handle defect was resolved on `main` by #309 (autofill renumbered to
+  `BR-056`), so CL-024 and CL-038 now carry clean one-hop citations.
 - **§11.7 Sign-off owners.** Replace the `repo owner` default in the Owner column
   with named accountable owners, and record who owns the claim-freeze sign-off.
