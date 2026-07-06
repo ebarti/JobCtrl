@@ -378,15 +378,26 @@ Beyond §0.3:
 
 ## 13. Open owner decisions
 
+All nine decisions were resolved by the owner on 2026-07-06:
+
 - **D-1 (P0):** Exact token model — header name, storage location under `~/.jobhunter/`, pairing UX (Settings copy vs. localhost pairing page), and whether a valid token relaxes the mutation-origin gate (recommended: yes, with loopback `Host` still required).
+  - **Resolved (2026-07-06):** recommended defaults accepted — token under `~/.jobhunter/` with restrictive permissions, one-time pairing via the Settings surface, `Authorization: Bearer <token>`; a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
 - **D-2 (P0):** Do existing unauthenticated loopback API reads stay open, or does the owner want auth required for all non-web clients? (Recommended: keep additive; extension routes require token; web app unchanged.)
+  - **Resolved (2026-07-06):** keep additive. Extension routes require the token; existing unauthenticated loopback reads and the web app are unchanged.
 - **D-3 (P1):** Extension provenance fields and source-id scheme (recommended `source_id = manual_capture:extension`, provenance `capture_client="browser_extension"` + version) and whether to add a `browser_extension_capture` manual-action reason.
+  - **Resolved (2026-07-06):** recommended defaults accepted (`source_id = manual_capture:extension`, `capture_client="browser_extension"` + version, new `browser_extension_capture` manual-action reason).
 - **D-4 (P2):** Starting ATS family set and rollout order among Workday/Greenhouse/Lever/Ashby.
+  - **Resolved (2026-07-06):** all four families (Greenhouse, Lever, Workday, Ashby) ship in the first P2a release. The content-script host allowlist is exactly these ATS domains.
 - **D-5 (P0/P1):** Offline capture queue retention policy (size/age limits, clear-on-pair-change).
+  - **Resolved (2026-07-06):** recommended defaults accepted — bounded size + age caps, queue cleared on pair change.
 - **D-6 (P3):** Go/no-go to begin Phase 3 once §6.1 is satisfied.
+  - **Resolved (2026-07-06):** Phase 3 (R11) stays **closed until an explicit owner go**, even after §6.1's technical preconditions (P1–P2 shipped + QA'd, W1 apply hardening merged) are satisfied. The owner is the third lock; the decision brief in the R1 close-out inventory is the input for that future call. No agent may start R11 work without the explicit go.
 - **D-7 (§9):** Distribution channel (self-distributed signed package vs. public store) and signing key ownership.
+  - **Resolved (2026-07-06):** self-distributed signed package for v1; a Chrome Web Store listing is a post-launch follow-up. Signing key owned by the owner.
 - **D-8 (§3):** Target browser/engine for v1 (single MV3 target vs. more).
+  - **Resolved (2026-07-06):** single Chromium MV3 target for v1; Firefox later.
 - **D-9 (P2b):** Whether to ship LLM-assisted free-text drafts at all, or keep Phase 2 deterministic-only for v1.
+  - **Resolved (2026-07-06):** deterministic **values** with LLM-assisted **field matching**. Fill values come only from actual profile data (source-attributed, never generated). When deterministic label matching fails, an LLM may map the form label to an existing profile field (e.g. "Birth name" → the profile's "Maiden name" fact). The LLM never authors fill content — it only resolves label synonyms; unmatched fields stay empty and are visibly flagged. Free-text answer drafting (P2b as originally scoped) stays deferred.
 
 ## 14. Requirements traceability
 
