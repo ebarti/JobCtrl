@@ -23,6 +23,7 @@ SRC_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "jobhunter"
 ROUTED_NON_BROWSER_SURFACES = [
     "infrastructure/discovery/ats_adapters.py",
     "infrastructure/compensation/sqlite_market_repository.py",
+    "discovery/workday.py",
 ]
 
 

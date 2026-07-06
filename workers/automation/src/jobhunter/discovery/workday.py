@@ -7,13 +7,11 @@ Employer registry is loaded from config/employers.yaml instead of being
 hardcoded. Supports sequential search + detail fetching with proxy.
 """
 
-import json
 import logging
 import re
 import sqlite3
 import threading
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -22,6 +20,7 @@ from jobhunter import config
 from jobhunter.config import CONFIG_DIR
 from jobhunter.database import get_connection, init_db
 from jobhunter.domain.discovery.identity import AtsKind
+from jobhunter.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobhunter.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobhunter.domain.errors import TransientNetworkError
@@ -31,6 +30,13 @@ from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobhunter.infrastructure.network import (
+    GatewayHttpClient,
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+    build_opener,
 )
 from jobhunter.discovery.target_queries import query_specs_for_source, title_matches_any_query
 from jobhunter.discovery.title_filter import title_matches_query
@@ -113,44 +119,76 @@ def strip_html(html: str) -> str:
     return stripper.get_text()
 
 
-# -- Proxy -------------------------------------------------------------------
-
-_opener = None
-
-
-def setup_proxy(proxy_str: str | None) -> None:
-    """Configure a global urllib opener with proxy support."""
-    global _opener
-    if not proxy_str:
-        _opener = urllib.request.build_opener()
-        return
-
-    parts = proxy_str.split(":")
-    if len(parts) == 4:
-        host, port, user, passwd = parts
-        proxy_url = f"http://{user}:{passwd}@{host}:{port}"
-    elif len(parts) == 2:
-        proxy_url = f"http://{parts[0]}:{parts[1]}"
-    else:
-        log.warning("Proxy format not recognized: %s (expected host:port:user:pass or host:port)", proxy_str)
-        _opener = urllib.request.build_opener()
-        return
-
-    proxy_handler = urllib.request.ProxyHandler(
-        {
-            "http": proxy_url,
-            "https": proxy_url,
-        }
-    )
-    _opener = urllib.request.build_opener(proxy_handler)
-    log.info("Proxy configured: %s:%s", parts[0], parts[1])
+# -- Politeness gateway routing (R10) ---------------------------------------
+#
+# The Workday CXS API is a documented endpoint (robots-exempt, D2). Every fetch
+# still routes through the shared politeness gateway for the honest UA, per-host
+# rate/concurrency pacing, and a per-employer request budget. Configured once
+# per run (mirroring the old global-opener pattern); the per-employer client is
+# built lazily on the employer's own worker thread so recording uses that
+# thread's SQLite connection (get_connection is thread-local).
 
 
-def _urlopen(req, timeout=30):
-    """Open a URL using the configured opener (with or without proxy)."""
-    if _opener:
-        return _opener.open(req, timeout=timeout)
-    return urllib.request.urlopen(req, timeout=timeout)
+class _WorkdayPoliteness:
+    def __init__(self, gateway: PolitenessGateway, run_id: str | None, opener) -> None:
+        self.gateway = gateway
+        self.run_id = run_id
+        self.opener = opener
+        self.clients: dict[str, GatewayHttpClient] = {}
+        self.lock = threading.Lock()
+
+
+_politeness: _WorkdayPoliteness | None = None
+
+
+def configure_workday_politeness(
+    *,
+    gateway: PolitenessGateway | None = None,
+    run_id: str | None = None,
+    proxy: str | None = None,
+) -> None:
+    """Configure the politeness gateway for a Workday run (optional proxy)."""
+    global _politeness
+    opener = build_opener(proxy)
+    _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, opener)
+
+
+def _employer_source_id(employer: dict) -> str:
+    configured = str(employer.get("_source_id") or "").strip()
+    if configured:
+        return configured
+    name = str(employer.get("name") or employer.get("employer_key") or "").strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"workday:{slug or 'unknown'}"
+
+
+def _employer_client(employer: dict) -> GatewayHttpClient:
+    politeness = _politeness
+    if politeness is None:
+        configure_workday_politeness()
+        politeness = _politeness
+    assert politeness is not None
+    source_id = _employer_source_id(employer)
+    with politeness.lock:
+        client = politeness.clients.get(source_id)
+        if client is None:
+            session = PolitenessSession(
+                politeness.gateway,
+                policy=WORKDAY_API_POLICY,
+                budget=politeness.gateway.new_run_budget(WORKDAY_API_POLICY.max_requests_per_run),
+                context=PolitenessSourceContext(
+                    stage="discover",
+                    source_id=source_id,
+                    source_kind="ats_api",
+                    source_role="workday",
+                    adapter="workday_api",
+                    run_id=politeness.run_id,
+                ),
+                recorder_conn=get_connection(),
+            )
+            client = GatewayHttpClient(session, default_timeout=30.0, opener=politeness.opener)
+            politeness.clients[source_id] = client
+        return client
 
 
 # -- Workday API -------------------------------------------------------------
@@ -159,34 +197,24 @@ def _urlopen(req, timeout=30):
 def workday_search(employer: dict, search_text: str, limit: int = 20, offset: int = 0) -> dict:
     """Search jobs via Workday CXS API. Returns JSON with total + jobPostings."""
     url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}/jobs"
-    payload = json.dumps(
-        {
+    payload = _employer_client(employer).fetch_json(
+        url,
+        method="POST",
+        json_body={
             "appliedFacets": {},
             "limit": limit,
             "offset": offset,
             "searchText": search_text,
-        }
-    ).encode()
-
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-    with _urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+        },
+    )
+    return payload or {}
 
 
 def workday_detail(employer: dict, external_path: str) -> dict:
     """Fetch full job detail via Workday CXS API."""
     url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}{external_path}"
-
-    req = urllib.request.Request(url)
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-    with _urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    payload = _employer_client(employer).fetch_json(url)
+    return payload or {}
 
 
 # -- Search + paginate -------------------------------------------------------
@@ -794,8 +822,7 @@ def run_workday_discovery(
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
 
     proxy = search_cfg.get("proxy")
-    if proxy:
-        setup_proxy(proxy)
+    configure_workday_politeness(run_id=run_id, proxy=proxy)
 
     location_filter = search_cfg.get("workday_location_filter", True)
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)
