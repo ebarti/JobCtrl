@@ -47,6 +47,7 @@ import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
 import { resumeTemplateStateForJob } from "./resume-templates.js";
+import { sampleJobKeySet } from "./sample-data.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
@@ -396,9 +397,10 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   );
 
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
+  const sampleKeys = sampleJobKeySet(db);
   return {
     ok: true,
-    items: rows.map((row) => reviewQueueItemFromRow(db, row, profileSourceFields)),
+    items: rows.map((row) => reviewQueueItemFromRow(db, row, profileSourceFields, sampleKeys)),
   };
 }
 
@@ -800,6 +802,7 @@ function reviewQueueItemFromRow(
   db: SqliteDatabase,
   row: ReviewQueueRow,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  sampleKeys: ReadonlySet<string>,
 ): ApplyReviewQueueItem {
   const currentState = stageState(row.current_state);
   const currentSubstage = stage(row.current_substage ?? row.current_stage);
@@ -884,6 +887,7 @@ function reviewQueueItemFromRow(
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
+    isSample: sampleKeys.has(row.job_id),
     compensationSummary: parseQueueCompensationSummary(row.compensation_summary_json),
     fitScore: nullableNumber(row.fit_score),
     scoreBreakdown,

@@ -133,6 +133,20 @@ pnpm extension:build
 pnpm extension:e2e
 ```
 
+For first-run or onboarding time-to-value changes, also run the synthetic TTFV
+probe against a disposable workspace:
+
+```bash
+pnpm ttfv:synthetic -- --app-dir /tmp/jobhunter-ttfv --record /tmp/jobhunter-ttfv.json
+```
+
+The script initializes the disposable workspace, loads the product-owned sample
+dataset through the same API/CLI loader used by the app, probes the projected
+first scored job and resume PDF, and writes one JSON timing record. It does not
+start the local dev servers or bind the API, Vite, or Temporal ports. Add
+`--include-setup` when you need the record to include `pnpm install
+--frozen-lockfile` and `uv --project workers/automation sync --extra dev`.
+
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 [Documentation Screenshots](#documentation-screenshots).
 

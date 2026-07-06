@@ -8,6 +8,11 @@
     "start": "tsx src/main.ts",
     "check": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run test",
+    "sample-data": "tsx src/sample-data-cli.ts",
+    "sample-data:status": "tsx src/sample-data-cli.ts status",
+    "sample-data:load": "tsx src/sample-data-cli.ts load",
+    "sample-data:clear": "tsx src/sample-data-cli.ts clear",
+    "sample-data:probe": "tsx src/sample-data-cli.ts probe",
     "qa:seed": "tsx test/qa-seed.ts",
     "qa:test": "vitest run test/qa-workflow.test.ts"
   },

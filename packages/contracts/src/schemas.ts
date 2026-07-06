@@ -809,6 +809,7 @@ export interface ApplyReviewQueueItem {
   title: string;
   company: string;
   source: string;
+  isSample: boolean;
   compensationSummary: JobCompensationSummary | null;
   fitScore: number | null;
   scoreBreakdown: ScoreBreakdown | null;
@@ -2289,6 +2290,7 @@ export interface JobSummary {
   title: string;
   company: string;
   source: string;
+  isSample: boolean;
   discoverySource: string;
   postingSource: string;
   postingSourceUrl: string | null;
@@ -2351,6 +2353,53 @@ export interface PaginatedResponse<T> {
     dir: "asc" | "desc";
   };
   filter: Record<string, unknown>;
+}
+
+export type SampleDataState = "not_initialized" | "empty" | "loaded" | "blocked";
+
+export interface SampleDataJob {
+  jobKey: string;
+  title: string;
+  company: string;
+  fitScore: number | null;
+  hasPdf: boolean;
+}
+
+export interface SampleDataStatus {
+  ok: true;
+  state: SampleDataState;
+  dbExists: boolean;
+  canLoad: boolean;
+  canClear: boolean;
+  jobCount: number;
+  sampleJobCount: number;
+  loadedAt: string | null;
+  sampleJobs: SampleDataJob[];
+  message: string;
+}
+
+export interface SampleDataMutationResponse {
+  ok: true;
+  loaded: boolean;
+  cleared: boolean;
+  status: SampleDataStatus;
+  message: string;
+}
+
+export interface SampleDataTtfvProbeResponse {
+  ok: true;
+  mode: "synthetic_sample";
+  checkedAt: string;
+  ttfv1: {
+    passed: boolean;
+    job: SampleDataJob | null;
+  };
+  ttfv2: {
+    passed: boolean;
+    job: SampleDataJob | null;
+    artifactId: string | null;
+    artifactBytes: number | null;
+  };
 }
 
 export interface ActivityEventSummary {

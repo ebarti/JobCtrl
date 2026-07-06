@@ -102,6 +102,9 @@ import type {
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
+  SampleDataMutationResponse,
+  SampleDataStatus,
+  SampleDataTtfvProbeResponse,
   SettingsUpdateRequest,
   SettingsResponse,
   SourceLocatorListResponse,
@@ -187,6 +190,22 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  sampleDataStatus(): Promise<SampleDataStatus> {
+    return this.get("/v1/sample-data/status");
+  }
+
+  loadSampleData(): Promise<SampleDataMutationResponse> {
+    return this.post("/v1/sample-data/load", {});
+  }
+
+  clearSampleData(): Promise<SampleDataMutationResponse> {
+    return this.post("/v1/sample-data/clear", {});
+  }
+
+  sampleDataTtfvProbe(): Promise<SampleDataTtfvProbeResponse> {
+    return this.get("/v1/sample-data/ttfv-probe");
   }
 
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {

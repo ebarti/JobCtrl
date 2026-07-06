@@ -467,7 +467,16 @@ export function jobColumns(
       sortable: true,
       rowHeader: true,
       getFilterValue: (row) => row.title,
-      render: (row) => <TitleStack primary={row.title} />,
+      render: (row) => (
+        <TitleStack
+          primary={
+            <>
+              {row.title}
+              {row.isSample ? <span className="tag info sample-tag">sample</span> : null}
+            </>
+          }
+        />
+      ),
     },
     {
       id: "company",
@@ -491,7 +500,12 @@ export function jobColumns(
         <TitleStack
           primary={row.postingSource ? `posting ${row.postingSource}` : "-"}
           secondary={
-            row.discoverySource ? `discovered via ${row.discoverySource}` : null
+            row.discoverySource ? (
+              <>
+                discovered via {row.discoverySource}
+                {row.isSample ? <span className="tag info sample-tag">sample data</span> : null}
+              </>
+            ) : null
           }
         />
       ),

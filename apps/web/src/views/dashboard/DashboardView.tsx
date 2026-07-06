@@ -1,4 +1,5 @@
 import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import { SampleDataPanel } from "../../contexts/operations/components/SampleDataPanel.js";
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
@@ -23,6 +24,7 @@ export function DashboardView() {
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? <div className="banner">{message}</div> : null}
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}
+      <SampleDataPanel />
       {summary ? (
         <div className="dashboard-grid">
           <ConversionPanel summary={summary} />

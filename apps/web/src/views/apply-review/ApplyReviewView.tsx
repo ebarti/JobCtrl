@@ -431,6 +431,7 @@ function ApplyReviewQueue({
               <span className="apply-review-queue-title">
                 <span className="tag ok">{item.fitScore ?? "-"}</span>
                 <b>{item.title}</b>
+                {item.isSample ? <span className="tag info">sample</span> : null}
               </span>
               <span className="meta">
                 {item.company} · {item.source}
@@ -1143,6 +1144,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           aria-label={`Review controls and material facts for ${item.title}`}
         >
           {reviewState ? <span className="tag muted">Current decision: {reviewState}.</span> : null}
+          {item.isSample ? <span className="tag info">Sample data cannot be submitted.</span> : null}
           <CompensationSummaryStrip
             summary={item.compensationSummary}
             label="Compensation"
@@ -1178,7 +1180,11 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           ) : null}
           <ApplyReviewDecisionControls
             item={item}
-            approvalDisabledReason={draftGate.reason}
+            approvalDisabledReason={
+              item.isSample
+                ? "Sample jobs cannot start apply automation."
+                : draftGate.reason
+            }
             approvalNotice={draftGate.notice}
             approvalPreparing={draftGate.preparing}
             onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}

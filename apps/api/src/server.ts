@@ -159,6 +159,14 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { refreshProjections } from "./projections.js";
+import {
+  clearSampleData,
+  isSampleJob,
+  loadSampleData,
+  missingDatabaseSampleDataStatus,
+  readSampleDataStatus,
+  sampleDataTtfvProbe,
+} from "./sample-data.js";
 import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   createOrLoadResumeReviewDraft,
@@ -351,6 +359,34 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     llmSpend: readLlmSpendHealth(options.dbPath, options.settingsPath),
     worker: readWorkerHealth(options.dbPath),
   }));
+
+  app.get("/v1/sample-data/status", async (_request, reply) => {
+    if (!databaseExists(options.dbPath)) {
+      return missingDatabaseSampleDataStatus();
+    }
+    return withDb(reply, options.dbPath, (db) => readSampleDataStatus(db));
+  });
+
+  app.post("/v1/sample-data/load", async (_request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => loadSampleData(db, appDir)),
+  );
+
+  app.post("/v1/sample-data/clear", async (_request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => clearSampleData(db, appDir)),
+  );
+
+  app.get("/v1/sample-data/ttfv-probe", async (_request, reply) => {
+    if (!databaseExists(options.dbPath)) {
+      return {
+        ok: true,
+        mode: "synthetic_sample" as const,
+        checkedAt: new Date().toISOString(),
+        ttfv1: { passed: false, job: null },
+        ttfv2: { passed: false, job: null, artifactId: null, artifactBytes: null },
+      };
+    }
+    return withDb(reply, options.dbPath, (db) => sampleDataTtfvProbe(db));
+  });
 
   app.get(EXTENSION_PAIRING_TOKEN_PATH, async (request, reply) => {
     if (resolveExtensionCorsOrigin(request.headers.origin)) {
@@ -1155,9 +1191,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body),
-      );
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const jobKey = decodeRouteParam(request.params.jobKey);
+        if (body.decision === "approve_submit" && isSampleJob(db, jobKey)) {
+          void reply.code(409);
+          return sampleApplyBlockedResponse();
+        }
+        return recordApplyReviewDecision(db, jobKey, body);
+      });
     },
   );
 
@@ -1608,6 +1649,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
+      }
+      if (isSampleJob(db, jobUrl)) {
+        void reply.code(409);
+        return sampleApplyBlockedResponse();
       }
       const command = {
         action: "apply" as const,
@@ -2229,6 +2274,14 @@ function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolea
     worker,
   });
   return false;
+}
+
+function sampleApplyBlockedResponse() {
+  return {
+    ok: false,
+    error: "sample_job_apply_blocked",
+    message: "Sample jobs cannot start apply automation. Clear sample data before starting real applications.",
+  };
 }
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {

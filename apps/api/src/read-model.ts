@@ -81,6 +81,7 @@ import {
   resumeTemplateStateForArtifact,
   resumeTemplateStateForJob,
 } from "./resume-templates.js";
+import { sampleJobKeySet } from "./sample-data.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
@@ -968,6 +969,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
   const filter = jobSqlFilter(db, query);
   const projectionSelect = jobProjectionSelect(db);
+  const sampleKeys = sampleJobKeySet(db);
 
   if (!query.q && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
     const total = countJobProjections(db, filter);
@@ -980,7 +982,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
       `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
       [...filter.params, query.pageSize, offset],
     );
-    const summaries = rows.map((row) => rowToJobSummary(row, db));
+    const summaries = rows.map((row) => rowToJobSummary(row, db, sampleKeys));
     return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
   }
 
@@ -994,7 +996,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   );
   const normalizedQuery = query.q.toLowerCase();
   const filtered = allMatching
-    .map((row) => rowToJobSummary(row, db))
+    .map((row) => rowToJobSummary(row, db, sampleKeys))
     .filter((job) => !query.q || filterJob(job, query, normalizedQuery));
   filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
   return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
@@ -1004,6 +1006,7 @@ export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutat
   const query = normalizeMutationFilter(filter);
   refreshProjections(db, DEFAULT_TENANT);
   const sqlFilter = jobSqlFilter(db, query);
+  const sampleKeys = sampleJobKeySet(db);
   const rows = allRows<JobListProjectionRow>(
     db,
     `SELECT ${jobProjectionSelect(db)} FROM job_list_projections${sqlFilter.where}`,
@@ -1011,7 +1014,7 @@ export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutat
   );
   const normalizedQuery = query.q.toLowerCase();
   return rows
-    .map((row) => rowToJobSummary(row, db))
+    .map((row) => rowToJobSummary(row, db, sampleKeys))
     .filter((job) => filterJob(job, query, normalizedQuery))
     .map((job) => job.jobKey);
 }
@@ -1061,7 +1064,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, listRow.job_id);
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
-  const jobSummary = rowToJobSummary(listRow, db);
+  const jobSummary = rowToJobSummary(listRow, db, sampleJobKeySet(db));
   const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
   return {
     ok: true,
@@ -2373,7 +2376,11 @@ export function readSettingsConfig(paths: { settingsPath: string }): SettingsRes
 
 // ============================================================== mappings
 
-function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
+function rowToJobSummary(
+  row: JobListProjectionRow,
+  db?: SqliteDatabase,
+  sampleKeys: ReadonlySet<string> = new Set(),
+): JobSummary {
   const jobKey = row.job_id;
   return {
     jobKey,
@@ -2381,6 +2388,7 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
+    isSample: sampleKeys.has(jobKey),
     discoverySource: displayDiscoverySource(row.discovery_source, row.strategy, row.source),
     postingSource: displayPostingSource(row.posting_source_ats_kind, row.posting_source_url),
     postingSourceUrl: row.posting_source_url,

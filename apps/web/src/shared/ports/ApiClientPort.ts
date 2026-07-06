@@ -98,6 +98,9 @@ import type {
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
+  SampleDataMutationResponse,
+  SampleDataStatus,
+  SampleDataTtfvProbeResponse,
   SettingsResponse,
   SettingsUpdateRequest,
   SourceLocatorListResponse,
@@ -154,6 +157,10 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  sampleDataStatus(): Promise<SampleDataStatus>;
+  loadSampleData(): Promise<SampleDataMutationResponse>;
+  clearSampleData(): Promise<SampleDataMutationResponse>;
+  sampleDataTtfvProbe(): Promise<SampleDataTtfvProbeResponse>;
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
   digest(): Promise<DailyDigest>;
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;

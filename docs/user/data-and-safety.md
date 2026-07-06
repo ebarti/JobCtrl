@@ -35,6 +35,7 @@ Common files and directories:
 | `.env` | Provider keys and runtime settings. |
 | `tailored_resumes/` | Generated resumes and related HTML/PDF outputs. |
 | `cover_letters/` | Generated cover letters. |
+| `sample-data/` | Synthetic first-run sample artifacts when you load the optional sample dataset. |
 | `logs/` | Local worker and apply logs. |
 | `chrome-workers/` | Browser profiles and state for local browser tasks. |
 | `apply-workers/` | Apply-run worker state. |
@@ -119,6 +120,10 @@ These boundaries are the operator's responsibility:
   whitelisted profile fields needed for deterministic suggestions. Profile
   passwords, resume bullets, generated materials, and free-text answer drafts
   are not sent to the extension autofill route.
+- **Sample data:** first-run sample records are synthetic and labeled in the UI.
+  They are useful for learning the product and measuring the synthetic TTFV
+  path, but clear them before real discovery. The API blocks apply automation
+  and submit approval for sample jobs.
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.

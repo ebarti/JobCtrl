@@ -39,6 +39,18 @@ pnpm extension:test
 pnpm extension:e2e
 ```
 
+For first-run onboarding or sample-data changes, also run:
+
+```bash
+pnpm ttfv:synthetic -- --app-dir /tmp/jobhunter-ttfv --record /tmp/jobhunter-ttfv.json
+```
+
+The record must stay honest: `mode` is `synthetic_sample`, the phases are real
+wall-clock subprocess timings, `pass.ttfv1FirstScoredJob` comes from the
+projected scored sample job, and `pass.ttfv2FirstReviewedResumePdf` comes from a
+real generated sample PDF artifact. The script must not start apply automation
+or bind the normal API, web, or Temporal ports.
+
 For browser smoke, run the TypeScript API and web app:
 
 ```bash
@@ -117,6 +129,7 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | The daily LLM spend ceiling stops gating workflows: the budget preflight is skipped before heavy activities, an exceeded budget fails as retryable instead of a non-retryable `BudgetExceededError`, or a zero budget stops meaning unlimited | `workers/automation/tests/test_llm_spend_budget.py` |
 | LLM HTTP retries stop being bounded (persistent transient failures retry forever), retry on client errors, or honor hostile `Retry-After` headers uncapped | `workers/automation/tests/test_llm_client.py` |
 | First-run setup or doctor overstates vendor readiness: one general LLM key is treated as enough for the employer-analysis ensemble, the enabled leg set is treated as governing synthesis so a Claude-less leg set reports analysis-ready even though every run reconciles with a required Claude synthesis pass, Codex is marked ready without persisted `CODEX_HOME/auth.json`, a system `codex` on PATH silently overrides the pinned runtime, intentionally disabled analysis legs still burn retries or reuse stale cache keys, or the apply-binary resolver falls back to a missing system `claude` (or leaves a `~` override unexpanded) despite the bundled SDK runtime being available | `workers/automation/tests/test_setup_probes.py`; `workers/automation/tests/test_setup_synthesis_auth.py`; `workers/automation/tests/test_employer_analysis_leg_config.py`; `workers/automation/tests/test_codex_home_isolation.py`; `apps/api/test/install-script-contract.test.ts` |
+| First-run sample data or TTFV measurement overstates product readiness: sample rows are not labeled, sample jobs can reach apply automation or `approve_submit`, sample data loads into a workspace that already has real jobs, the measurement record presents pre-baked results as live pipeline output, or the probe reports success without a projected scored job plus a real resume PDF artifact | `apps/api/test/sample-data.test.ts`; `apps/web/src/contexts/operations/components/SampleDataPanel.test.tsx`; `apps/web/src/contexts/operations/hooks/useSampleDataQuery.test.ts`; `pnpm ttfv:synthetic -- --app-dir /tmp/jobhunter-ttfv --record /tmp/jobhunter-ttfv.json` |
 | Dry run marks a job applied | `workers/automation/tests/test_apply_regressions.py` |
 | Apply process hangs while stdout stays open | `workers/automation/tests/test_apply_regressions.py` |
 | Targeted apply skips fresh jobs | `workers/automation/tests/test_apply_regressions.py` |

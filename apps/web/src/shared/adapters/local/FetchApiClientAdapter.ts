@@ -14,6 +14,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   dashboardSummary() {
     return this.client.dashboardSummary();
   }
+  sampleDataStatus() {
+    return this.client.sampleDataStatus();
+  }
+  loadSampleData() {
+    return this.client.loadSampleData();
+  }
+  clearSampleData() {
+    return this.client.clearSampleData();
+  }
+  sampleDataTtfvProbe() {
+    return this.client.sampleDataTtfvProbe();
+  }
   outcomeAnalytics() {
     return this.client.outcomeAnalytics();
   }

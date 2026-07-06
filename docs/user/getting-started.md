@@ -177,7 +177,40 @@ application pages, **Review autofill** opens deterministic profile-backed
 suggestions that you accept before fields are filled. The extension talks only
 to the local API. It cannot submit applications.
 
-## 5. Use A Disposable Workspace For Testing
+## 5. Try The First-Run Sample Path
+
+When your workspace is empty, the Dashboard and Jobs pages show a **Sample
+data** panel. Loading it creates two fictitious jobs, one scored high enough to
+show generated sample materials and one lower-fit job to show ranking behavior.
+These are real JobHunter rows and artifacts, not a static screenshot or
+pre-baked UI response.
+
+Sample jobs are labeled in the Jobs and Apply Review surfaces. They cannot be
+submitted: the API blocks apply automation and `approve_submit` decisions for
+sample rows. Clear the sample dataset before starting real discovery.
+
+CLI equivalents:
+
+```bash
+pnpm sample-data:status
+pnpm sample-data:load
+pnpm sample-data:probe
+pnpm sample-data:clear
+```
+
+To record the synthetic first-run time-to-value path without starting the dev
+servers:
+
+```bash
+pnpm ttfv:synthetic -- --app-dir /tmp/jobhunter-ttfv --record /tmp/jobhunter-ttfv.json
+```
+
+The JSON record includes real wall-clock durations for workspace init, sample
+load, and the probe that confirms a scored sample job and generated resume PDF.
+It is explicitly labeled `synthetic_sample`; it does not measure live crawling,
+LLM scoring, or application submission.
+
+## 6. Use A Disposable Workspace For Testing
 
 Use a throwaway workspace when testing risky flows, taking screenshots, or
 preparing a bug report — never your real `~/.jobhunter` data.
@@ -196,7 +229,7 @@ The seeded workspace is synthetic and safe to share. Keep it separate from your
 real `~/.jobhunter` workspace so real data never mixes in.
 :::
 
-## 6. First Useful Checks
+## 7. First Useful Checks
 
 ```bash
 uv --project workers/automation run jobhunter status

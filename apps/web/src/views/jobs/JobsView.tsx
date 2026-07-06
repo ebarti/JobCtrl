@@ -19,6 +19,7 @@ import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJ
 import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
+import { SampleDataPanel } from "../../contexts/operations/components/SampleDataPanel.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
 import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
@@ -733,6 +734,7 @@ export function JobsView() {
           onResetStaleSuccess={clearSelection}
           onMaintenanceSuccess={clearSelection}
         />
+        <SampleDataPanel compact />
         <JobsTable
           data={data ?? null}
           loading={isFetching}

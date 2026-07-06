@@ -303,6 +303,50 @@ textarea:focus-visible {
   width: 100%;
 }
 
+.sample-data-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  background: color-mix(in oklch, var(--status-info) 7%, var(--card));
+}
+
+.sample-data-panel.compact {
+  background: color-mix(in oklch, var(--status-info) 5%, var(--card));
+}
+
+.sample-data-panel h2 {
+  margin: 2px 0 4px;
+  font-size: 15px;
+}
+
+.sample-data-panel p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.sample-data-panel .status-line {
+  grid-column: 1 / -1;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.sample-data-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sample-tag {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .card-hd {
   display: flex;
   align-items: center;

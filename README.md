@@ -160,6 +160,25 @@ only non-browser activities).
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
 
+An empty workspace can load a small synthetic first-run dataset from the
+Dashboard or Jobs page. It creates fictitious jobs, scores, and sample materials
+so you can inspect the real read model, job ranking, artifacts, and Apply Review
+surfaces before connecting real providers or crawling real sites. Sample jobs
+are marked in the UI and the API blocks apply automation and submit approval for
+them. Clear the sample data before starting real discovery.
+
+You can measure that path from the CLI without starting the dev servers:
+
+```bash
+pnpm ttfv:synthetic -- --app-dir /tmp/jobhunter-ttfv --record /tmp/jobhunter-ttfv.json
+```
+
+The record reports real wall-clock phases for workspace init, sample-data load,
+and the probe that confirms the first scored job and resume PDF. It is labeled
+`synthetic_sample`; it does not measure live crawling, LLM scoring, or
+submission. Add `--include-setup` when you want dependency sync included in the
+recorded wall-clock.
+
 ### Browser Extension Capture And Autofill
 
 The optional Manifest V3 browser extension is a local capture and assist
@@ -209,6 +228,8 @@ Important local files include:
   projections, settings, and artifact metadata.
 - `.env`: provider keys and local runtime settings.
 - `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts and logs.
+- `sample-data/`: synthetic first-run sample artifacts when you load the
+  optional sample dataset.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 - `codex_home/`: isolated Codex SDK home when apply/review agents need it.
 - `backups/`: timestamped database snapshots written by `jobhunter backup`.
