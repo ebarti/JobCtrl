@@ -48,6 +48,33 @@ def test_routed_non_browser_surfaces_have_no_adhoc_urllib() -> None:
         assert offenders == [], f"{rel} still imports raw HTTP transport: {offenders}"
 
 
+# Browser surfaces whose Playwright contexts must carry the honest UA, never a
+# spoofed desktop browser. The authenticated LinkedIn persistent context is the
+# owner-scoped exception (real user session, user_agent=None) per D1/D3.
+BROWSER_UA_SURFACES = [
+    "enrichment/detail.py",
+    "discovery/smartextract.py",
+    "infrastructure/enrichment/playwright_fetcher.py",
+]
+
+
+def test_browser_surfaces_have_no_spoofed_browser_ua() -> None:
+    for rel in BROWSER_UA_SURFACES:
+        source = (SRC_ROOT / rel).read_text(encoding="utf-8")
+        assert "Mozilla" not in source, f"{rel} still contains a spoofed browser UA"
+        assert "AppleWebKit" not in source, f"{rel} still contains a spoofed browser UA"
+
+
+def test_browser_ua_constants_resolve_to_the_honest_identity() -> None:
+    from jobhunter.discovery.smartextract import UA as smartextract_ua
+    from jobhunter.enrichment.detail import UA as detail_ua
+    from jobhunter.infrastructure.enrichment.playwright_fetcher import _USER_AGENT
+
+    for ua in (detail_ua, smartextract_ua, _USER_AGENT):
+        assert ua.startswith("JobHunter/")
+        assert "Mozilla" not in ua
+
+
 def test_ats_adapter_uses_gateway_client_when_no_http_injected() -> None:
     source = SimpleNamespace(
         source_id="greenhouse:acme",
