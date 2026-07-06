@@ -808,22 +808,63 @@ Targeted tests this work must add/extend (by surface):
    context** (Contact & Outreach). Confirm, or direct that contacts/outreach live
    inside Apply Automation. (Recommendation: new context — distinct vocabulary,
    lifecycle, and data.)
+
+   **Resolved (2026-07-06, dispatch):** Take the plan's recommendation — a **new
+   ninth bounded context "Contact & Outreach"** (not an Apply extension).
+   Documentation consequence: every doc that currently states "eight bounded
+   contexts" (`docs/architecture/index.md`, `docs/architecture/domain-model/`,
+   `docs/architecture/frontend/`) MUST be updated to nine in the SAME PR that
+   introduces the context, per the CLAUDE.md documentation table.
 2. **`job_events` keying for contact-only events (§10.1).** `job_events` is keyed
    by `job_url`. Options: (a) reuse `job_url` to hold a contact entity key for
    contact-only events; (b) add a generic `entity_kind`/`entity_ref` column to
    the event log. Application-linked outreach events key naturally on the job.
    (Recommendation: (b) — a small, generic event-log extension keeps contact
    identity honest and reusable; confirm the schema-version bump.)
+
+   **Resolved (2026-07-06, dispatch):** Take option **(b)** — extend the event log
+   with generic `entity_kind` / `entity_ref` columns so contact-only events carry
+   honest identity instead of overloading `job_url`. This requires a `job_events`
+   schema `user_version` bump with forward-migration guard handling (in-code
+   `PRAGMA table_info` add-column, no migrations directory), landed in Phase 0
+   with the schema-version bump on both runtimes (`SCHEMA_VERSION` in
+   `database.py`, `SUPPORTED_SCHEMA_VERSION` in `apps/api/src/db.ts`).
+   Application-linked outreach events still key naturally on the job's `job_url`.
 3. **Which public sources are enabled by default (§5).** Recommendation: **none
    auto-fetched**; the user opts in per source (company careers page, a
    user-supplied URL), and protected/login-walled URLs always route to
    manual-capture. Confirm the conservative default.
+
+   **Resolved (2026-07-06, dispatch):** Take the plan's recommendation — **no
+   public sources are auto-fetched by default.** Each source (e.g. a company
+   careers page, a user-supplied URL) is enabled only by explicit per-source user
+   opt-in (mirroring the compensation-source `availability` / `disabledReason` /
+   `configured` display idiom). Any login-walled, paywalled, or bot-protected URL
+   ALWAYS routes to the manual-capture path (`ManualCaptureMode`) and is never
+   auto-fetched. All permitted fetching routes through the merged politeness
+   gateway (§5.3), never a new fetch path.
 4. **Contact-list import format.** Which local formats to accept for
    user-imported lists (e.g. CSV/vCard). Confirm the minimal set; keep it local
    and provenance-tagged.
+
+   **Resolved (2026-07-06, dispatch):** **CSV only** in this scope — local file
+   parse, every imported fact provenance-tagged with `sourceKind =
+   user_imported_list`, `sourceRef` = the import filename, `captureMethod =
+   manual`. vCard import is deferred and recorded as a backlog note in
+   `docs/backlog.md` (not implemented here).
 5. **Follow-up cadence defaults.** The default suggested follow-up interval(s)
    after submission / after a recruiter reply. Recommendation: conservative
    defaults, fully user-editable, surfaced-only (never auto-acted).
+
+   **Resolved (2026-07-06, dispatch):** §9 states the posture (conservative,
+   user-editable, surfaced-only) but no numeric values, so we choose conservative
+   defaults: **7 calendar days after `ApplicationSubmitted`** for the first
+   suggested follow-up, and **14 calendar days** for any subsequent nudge if the
+   thread has no logged reply. These are suggestions only — surfaced as **due
+   follow-ups** (a derived read-model signal over schedule + clock), **never
+   auto-acted and never sent** (INV-1). Every value is fully user-editable per
+   thread, and any optional recurring reminder is **default-off** (mirroring
+   discovery `scheduling_enabled = false`).
 
 ---
 
