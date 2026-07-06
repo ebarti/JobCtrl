@@ -139,12 +139,18 @@ to attempt CAPTCHAs at all.
 Every discovery and enrichment fetch — `urllib` API calls and Playwright
 navigations alike — routes through one crawl-politeness gateway. It:
 
-- **Honors `robots.txt`** for page-rendering fetches. An unreachable
-  `robots.txt` (a `5xx` or timeout) fails **closed** — the path is treated as
-  disallowed until robots can be re-checked — while a definitive `404` allows,
-  per RFC 9309. (JobHunter uses the standard-library `robotparser`, which is
-  first-match rather than RFC 9309 longest-match; it can over-block an `Allow`
-  exception, which is the safe direction.)
+- **Honors `robots.txt`** for page-rendering fetches, following owner decision
+  D6 when the file cannot be read: a `2xx` is parsed and enforced; a `4xx`
+  (including `404`) means the file is genuinely absent, so the fetch is allowed
+  (per RFC 9309); a `5xx` or a timeout is *inconclusive* and fails **closed** —
+  the path is treated as disallowed and re-checked on a short TTL; and a DNS
+  failure or a refused connection is a *definitive network absence* of the robots
+  endpoint and fails **open with a warning** (allow), since a genuinely down host
+  simply fails the follow-on content fetch harmlessly. The trade-off this accepts
+  is that a host which refuses `/robots.txt` while still serving content is
+  crawled unenforced. JobHunter also uses the standard-library `robotparser`,
+  which is first-match rather than RFC 9309 longest-match, so it can over-block an
+  `Allow` exception — the safe direction.
 - **Stamps one honest `User-Agent`** — `JobHunter/<version> (+<repo url>)` by
   default — that **never impersonates a browser** on a surface it controls. You
   can override the product token and contact via

@@ -150,14 +150,66 @@ def test_browser_surfaces_have_no_spoofed_browser_ua() -> None:
         assert "AppleWebKit" not in source, f"{rel} still contains a spoofed browser UA"
 
 
-def test_browser_ua_constants_resolve_to_the_honest_identity() -> None:
-    from jobhunter.discovery.smartextract import UA as smartextract_ua
-    from jobhunter.enrichment.detail import UA as detail_ua
-    from jobhunter.infrastructure.enrichment.playwright_fetcher import _USER_AGENT
+def _browser_context_ua_args(source: str) -> list[ast.expr]:
+    """The ``user_agent`` argument for every Playwright ``new_context`` /
+    ``new_page`` construction in *source*. Calls that omit the keyword (the
+    authenticated-LinkedIn ``resolver.new_page()``, which keeps the owner's real
+    browser identity) are skipped."""
+    tree = ast.parse(source)
+    args: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"new_context", "new_page"}
+        ):
+            ua = next((kw.value for kw in node.keywords if kw.arg == "user_agent"), None)
+            if ua is not None:
+                args.append(ua)
+    return args
 
-    for ua in (detail_ua, smartextract_ua, _USER_AGENT):
-        assert ua.startswith("JobHunter/")
-        assert "Mozilla" not in ua
+
+def _module_constant_names(source: str) -> set[str]:
+    tree = ast.parse(source)
+    return {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def test_browser_context_ua_comes_from_the_gateway_not_a_constant() -> None:
+    """#316 High: a Playwright context bound its UA from an import-time
+    ``default_honest_user_agent()`` module constant, so an owner env override
+    never reached the fetch and ``robots.txt`` was evaluated as one identity
+    while the page fetched as another. Every ``new_context``/``new_page`` that
+    stamps a UA must read it from the gateway-resolved value at call time
+    (``session``/``decision``/``gateway`` ``.user_agent``, or a local threaded
+    directly from it), never a module-level constant -- this is the structural
+    tripwire that would have caught the divergence."""
+    for rel in BROWSER_UA_SURFACES:
+        source = (SRC_ROOT / rel).read_text(encoding="utf-8")
+        module_constants = _module_constant_names(source)
+        ua_args = _browser_context_ua_args(source)
+        assert ua_args, f"{rel} has no user_agent-bearing browser context to check"
+        for ua in ua_args:
+            if isinstance(ua, ast.Attribute):
+                assert ua.attr == "user_agent", (
+                    f"{rel} stamps a browser user_agent from {ast.dump(ua)}; "
+                    "expected a gateway-resolved *.user_agent"
+                )
+            elif isinstance(ua, ast.Name):
+                assert ua.id not in module_constants, (
+                    f"{rel} stamps the browser user_agent from module constant "
+                    f"{ua.id!r}; resolve it from the gateway at call time so an "
+                    "owner override propagates and robots identity == fetch identity"
+                )
+            else:
+                raise AssertionError(
+                    f"{rel}: unexpected user_agent expression {ast.dump(ua)}"
+                )
 
 
 # Browser surfaces that drive ``page.goto`` and must route every navigation

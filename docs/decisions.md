@@ -1324,8 +1324,10 @@ Status: accepted
 Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
 `python-jobspy` invocation boundary, and every Playwright navigation — routes
 through one process-shared politeness gateway (`infrastructure/network/`). The
-gateway honors `robots.txt` for page-rendering methods (fail-closed when robots
-is unreachable), paces per host (min-interval + concurrency cap), bounds each
+gateway honors `robots.txt` for page-rendering methods (D6: fail-closed on an
+inconclusive fetch — `5xx` or timeout — but fail-open with a warning when the
+robots endpoint is definitively absent — DNS failure or refused connection),
+paces per host (min-interval + concurrency cap), bounds each
 run's request budget, and stamps a single honest, owner-configurable
 `User-Agent` that never impersonates a browser. Robots-deny, rate-limit, and
 budget-exhaustion are recorded as first-class **outcomes** (never scrape errors)
@@ -1346,6 +1348,11 @@ Consequences:
 
 - documented public JSON APIs (Greenhouse/Lever/Ashby/Workday CXS) are
   robots-exempt at their API host (D2); page-rendering methods are robots-checked
+- robots unreachability follows the D6 split: a `4xx`/`404` is *no restrictions*
+  (allow), a `5xx`/timeout fails closed and re-checks on a short TTL, and a DNS
+  failure / refused connection fails open with a warning — so a host that refuses
+  `/robots.txt` while still serving content is crawled unenforced (the accepted
+  D6 trade-off)
 - broad boards fetched by `python-jobspy` are policed only at the invocation
   boundary (budget + pacing) because that library owns its internal transport;
   `jobhunter doctor` discloses when they are active

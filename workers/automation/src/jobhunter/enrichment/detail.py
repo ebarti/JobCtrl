@@ -87,7 +87,6 @@ from jobhunter.domain.ports.politeness import (
     PolitenessDecision,
     PolitenessOutcome,
     RobotsVerdict,
-    default_honest_user_agent,
 )
 from jobhunter.infrastructure.network import (
     PolitenessGateway,
@@ -98,12 +97,6 @@ from jobhunter.infrastructure.network import (
 )
 
 log = logging.getLogger(__name__)
-
-# Honest outbound identity for anonymous crawl paths (R10). Never impersonate a
-# browser on a surface we control. The authenticated LinkedIn persistent context
-# is the owner's real Chrome session and presents its own browser identity
-# (user_agent=None) rather than this bot UA — an owner-scoped posture (D1/D3).
-UA = default_honest_user_agent().header_value()
 
 
 class _OwnerAuthenticatedRobots:
@@ -282,7 +275,9 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
             return 0
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page(user_agent=UA)
+            # Present the gateway-resolved honest UA (the same identity robots was
+            # evaluated with in the guard above), never an import-time constant.
+            page = browser.new_page(user_agent=decision.user_agent)
             page.on("response", capture_algolia)
             page.goto(listing_url, timeout=60000)
             page.wait_for_load_state("networkidle")
@@ -919,18 +914,14 @@ def scrape_site_batch(
             else:
                 page = None
 
-            if page is None:
-                launch_opts: dict = {"headless": True}
-                if _PROXY_CONFIG is not None:
-                    launch_opts["proxy"] = _PROXY_CONFIG.playwright
-                browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=UA)
-                page = context.new_page()
-
             # The authenticated LinkedIn context is the owner's logged-in session,
             # so robots.txt is an owner decision there (D1/D3) — pace + budget it,
             # but do not enforce an anonymous robots verdict on the owner's own
-            # account. Every other (anonymous) batch honors robots.
+            # account. Every other (anonymous) batch honors robots. This gateway
+            # also resolves the honest UA for the anonymous context below, so the
+            # identity robots is evaluated with is exactly the identity the fetch
+            # presents (never an import-time constant, so an owner UA override
+            # reaches the browser).
             if resolver is not None:
                 batch_gateway: PolitenessGateway = PolitenessGateway(
                     robots=_OwnerAuthenticatedRobots(),
@@ -938,6 +929,18 @@ def scrape_site_batch(
                 )
             else:
                 batch_gateway = gateway or PolitenessGateway()
+
+            if page is None:
+                launch_opts: dict = {"headless": True}
+                if _PROXY_CONFIG is not None:
+                    launch_opts["proxy"] = _PROXY_CONFIG.playwright
+                browser = p.chromium.launch(**launch_opts)
+                # Anonymous context presents the gateway's honest UA; the
+                # authenticated-LinkedIn page above keeps the owner's real
+                # browser identity (user_agent=None) and never enters here.
+                context = browser.new_context(user_agent=batch_gateway.user_agent)
+                page = context.new_page()
+
             session = _enrichment_session(batch_gateway, run_budget, conn, site=site)
 
             for i, (url, title) in enumerate(jobs):

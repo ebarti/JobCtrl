@@ -44,7 +44,6 @@ from jobhunter.domain.events import (
 )
 from jobhunter.domain.discovery.source_registry import SMART_EXTRACT_EXPERIMENTAL_POLICY
 from jobhunter.domain.ports.discovery import ContentOwnerMatch
-from jobhunter.domain.ports.politeness import default_honest_user_agent
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.network import (
     PolitenessGateway,
@@ -74,10 +73,6 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-
-# Honest outbound identity (R10) — never impersonate a browser on a surface we
-# control. Sourced from the single honest-UA policy.
-UA = default_honest_user_agent().header_value()
 
 
 def _smart_extract_session() -> PolitenessSession:
@@ -430,7 +425,10 @@ def collect_page_intelligence(
     session = session or _smart_extract_session()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        page = browser.new_page(user_agent=UA)
+        # Present the gateway-resolved honest UA (the same identity robots is
+        # evaluated with in session.guard below), never an import-time constant —
+        # so an owner UA override reaches the browser fetch.
+        page = browser.new_page(user_agent=session.user_agent)
         page.on("response", on_response)
 
         with session.guard(url) as decision:
