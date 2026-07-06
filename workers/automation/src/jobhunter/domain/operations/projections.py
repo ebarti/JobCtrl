@@ -301,6 +301,37 @@ class ContactProjection:
 
 
 @dataclass(frozen=True)
+class ContactResearchTaskProjection:
+    """Read-side row for one supervised research task (ninth context).
+
+    Sensitivity: this projection carries NO candidate attribute *values*
+    (names, emails live only in ``contact_candidates.attributes_json`` on the
+    canonical write side). It carries the task lifecycle, counts, the
+    source-attempt outcomes (provenance of the search — §5.3), and per-candidate
+    provenance metadata (INV-2). The read model joins canonical candidate values
+    at read time to render a task for review.
+    """
+
+    tenant_id: TenantId
+    task_id: str
+    employer: str | None = None
+    job_id: str | None = None
+    status: str = "queued"
+    candidate_count: int = 0
+    needs_review_count: int = 0
+    confirmed_count: int = 0
+    source_attempts: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    candidates: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    started_at: str | None = None
+    updated_at: str | None = None
+    needs_review_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    error_class: str | None = None
+    last_updated_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SourceQualityStats:
     """Operations projection for source health and scheduling feedback."""
 

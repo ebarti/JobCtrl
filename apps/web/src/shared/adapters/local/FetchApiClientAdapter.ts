@@ -5,6 +5,9 @@ import type {
   ContactImportRequest,
   ContactListQuery,
   ContactUpdateRequest,
+  ConfirmContactCandidateRequest,
+  ContactResearchListQuery,
+  RunContactResearchRequest,
 } from "@jobhunter/contracts";
 import type { ApiClientPort } from "../../ports/ApiClientPort.js";
 
@@ -374,5 +377,21 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   importContacts(body: ContactImportRequest) {
     return this.client.importContacts(body);
+  }
+  researchTasks(query: Partial<ContactResearchListQuery> = {}) {
+    return this.client.researchTasks(query);
+  }
+  researchTask(taskId: string) {
+    return this.client.researchTask(taskId);
+  }
+  runContactResearch(body: RunContactResearchRequest) {
+    return this.client.runContactResearch(body);
+  }
+  confirmContactCandidate(
+    taskId: string,
+    candidateId: string,
+    body: ConfirmContactCandidateRequest = {},
+  ) {
+    return this.client.confirmContactCandidate(taskId, candidateId, body);
   }
 }

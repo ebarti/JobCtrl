@@ -4378,3 +4378,150 @@ export interface ContactDeleteResponse {
   contactId: string;
   deletedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Contact & Outreach (R6 Phase 2 — supervised research)
+// ---------------------------------------------------------------------------
+//
+// Research proposes candidates from the conservative opt-in allowlist (INV-3),
+// fetched only through the merged politeness gateway; candidates land
+// needs_review and require an explicit user confirmation before becoming a
+// stored Contact fact (INV-4). Every candidate + attribute carries provenance
+// (INV-2). Candidate VALUES reach the client only through the detail DTO below,
+// never through events, projections, logs, or telemetry (plan §6).
+
+export const RESEARCH_TASK_STATUSES = [
+  "queued",
+  "running",
+  "needs_review",
+  "completed",
+  "failed",
+] as const;
+export type ResearchTaskStatus = (typeof RESEARCH_TASK_STATUSES)[number];
+
+export const CANDIDATE_STATUSES = ["needs_review", "confirmed", "dismissed"] as const;
+export type CandidateStatus = (typeof CANDIDATE_STATUSES)[number];
+
+export const RESEARCH_SOURCE_OUTCOMES = [
+  "allowed",
+  "no_candidates",
+  "robots_disallowed",
+  "rate_limited",
+  "budget_exhausted",
+  "manual_capture_required",
+  "rejected",
+  "extraction_failed",
+] as const;
+export type ResearchSourceOutcome = (typeof RESEARCH_SOURCE_OUTCOMES)[number];
+
+export const RESEARCH_SOURCE_CATEGORIES = [
+  "user_entered",
+  "public_web_page",
+  "user_imported_list",
+] as const;
+export type ResearchSourceCategory = (typeof RESEARCH_SOURCE_CATEGORIES)[number];
+
+/** Provenance of the search itself: which allowed source was tried + its outcome. */
+export interface ContactResearchSourceAttempt {
+  sourceKind: string;
+  sourceRef: string;
+  outcome: ResearchSourceOutcome | string;
+  attemptedAt: string;
+  detail: string;
+}
+
+/** A proposed candidate. `attributes` carry values (served only in the detail DTO). */
+export interface ContactCandidateDto {
+  candidateId: string;
+  taskId: string;
+  role: ContactRole;
+  status: CandidateStatus;
+  confidence: number;
+  provenance: ContactFactProvenance;
+  attributes: ContactAttributeDto[];
+  confirmedContactId: string | null;
+  confirmedAt: string | null;
+}
+
+export interface ContactResearchTaskSummary {
+  taskId: string;
+  employer: string | null;
+  jobId: string | null;
+  status: ResearchTaskStatus;
+  candidateCount: number;
+  needsReviewCount: number;
+  confirmedCount: number;
+  startedAt: string | null;
+  updatedAt: string | null;
+  needsReviewAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  errorClass: string | null;
+}
+
+export interface ContactResearchTaskDetail extends ContactResearchTaskSummary {
+  sourceAttempts: ContactResearchSourceAttempt[];
+  candidates: ContactCandidateDto[];
+}
+
+export const ContactResearchSourceRequestSchema = z
+  .object({
+    category: z.enum(RESEARCH_SOURCE_CATEGORIES).default("public_web_page"),
+    url: z.string().trim().max(2000).default(""),
+    label: z.string().trim().max(200).default(""),
+  })
+  .strict();
+export type ContactResearchSourceRequest = z.infer<typeof ContactResearchSourceRequestSchema>;
+
+export const RunContactResearchRequestSchema = z
+  .object({
+    employer: contactEmployerField,
+    jobId: contactJobIdField,
+    sources: z.array(ContactResearchSourceRequestSchema).max(25).default([]),
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict()
+  .refine((request) => Boolean(request.employer) || Boolean(request.jobId), {
+    message: "A research task must be scoped to at least one of employer or jobId.",
+    path: ["employer"],
+  });
+export type RunContactResearchRequest = z.infer<typeof RunContactResearchRequestSchema>;
+
+export const ContactResearchListQuerySchema = z
+  .object({
+    jobId: optionalText,
+    employer: optionalText,
+  })
+  .strict();
+export type ContactResearchListQuery = z.infer<typeof ContactResearchListQuerySchema>;
+
+export const ConfirmContactCandidateRequestSchema = z
+  .object({
+    role: ContactRoleSchema.optional(),
+  })
+  .strict();
+export type ConfirmContactCandidateRequest = z.infer<typeof ConfirmContactCandidateRequestSchema>;
+
+export interface ContactResearchStartResponse {
+  ok: true;
+  taskId: string;
+  runId: string | null;
+  workflowId: string | null;
+  status: string;
+}
+
+export interface ContactResearchListResponse {
+  ok: true;
+  items: ContactResearchTaskSummary[];
+}
+
+export interface ContactResearchDetailResponse {
+  ok: true;
+  task: ContactResearchTaskDetail;
+}
+
+export interface ConfirmContactCandidateResponse {
+  ok: true;
+  contact: ContactDetail;
+  task: ContactResearchTaskSummary;
+}

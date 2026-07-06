@@ -8,6 +8,12 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobhunter.contact.activities import ResearchSourceInput
+from jobhunter.contact.workflow import (
+    ContactResearchWorkflow,
+    ContactResearchWorkflowInput,
+    contact_research_workflow_id,
+)
 from jobhunter.discovery.workflow import (
     DiscoverWorkflow,
     DiscoverWorkflowInput,
@@ -174,6 +180,48 @@ def build_interview_prep_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
         workflow=InterviewPrepWorkflow,
         args=(payload,),
         workflow_id=interview_prep_workflow_id(tenant_id, job_url),
+    )
+
+
+def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
+    """Build the spec for a supervised ``ContactResearchWorkflow`` run.
+
+    The caller (TS API) supplies a fresh ``taskId`` so it can return it and the
+    UI can poll the task immediately. At least one of ``employer`` / ``jobUrl``
+    is required (a task must be scoped to a company or an application).
+    """
+    tenant_id = _tenant_id(params)
+    task_id = str(_require(params, "taskId"))
+    employer = str(params.get("employer") or "").strip() or None
+    job_url = str(params.get("jobUrl") or "").strip() or None
+    if not employer and not job_url:
+        raise ValueError("provide at least one of employer or jobUrl")
+    raw_sources = params.get("sources") or []
+    if not isinstance(raw_sources, list):
+        raise ValueError("sources must be an array")
+    sources = tuple(
+        ResearchSourceInput(
+            category=str(source.get("category") or ""),
+            url=str(source.get("url") or ""),
+            label=str(source.get("label") or ""),
+        )
+        for source in raw_sources
+        if isinstance(source, dict) and source.get("category")
+    )
+    payload = ContactResearchWorkflowInput(
+        tenant_id=tenant_id,
+        task_id=task_id,
+        employer=employer,
+        job_url=job_url,
+        sources=sources,
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+    )
+    return WorkflowStartSpec(
+        workflow=ContactResearchWorkflow,
+        args=(payload,),
+        workflow_id=contact_research_workflow_id(task_id),
     )
 
 

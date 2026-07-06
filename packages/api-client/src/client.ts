@@ -13,6 +13,13 @@ import type {
   ContactListResponse,
   ContactMutationResponse,
   ContactUpdateRequest,
+  ConfirmContactCandidateRequest,
+  ConfirmContactCandidateResponse,
+  ContactResearchDetailResponse,
+  ContactResearchListQuery,
+  ContactResearchListResponse,
+  ContactResearchStartResponse,
+  RunContactResearchRequest,
   ApplicationOutcomeListResponse,
   ApplicationOutcomeWriteResponse,
   ApplyJobRequest,
@@ -487,6 +494,31 @@ export class JobHunterApiClient {
 
   importContacts(body: ContactImportRequest): Promise<ContactImportResponse> {
     return this.post("/v1/contacts/import", body);
+  }
+
+  researchTasks(
+    query: Partial<ContactResearchListQuery> = {},
+  ): Promise<ContactResearchListResponse> {
+    return this.get("/v1/contacts/research", query);
+  }
+
+  researchTask(taskId: string): Promise<ContactResearchDetailResponse> {
+    return this.get(`/v1/contacts/research/${encodeURIComponent(taskId)}`);
+  }
+
+  runContactResearch(body: RunContactResearchRequest): Promise<ContactResearchStartResponse> {
+    return this.post("/v1/contacts/research", body);
+  }
+
+  confirmContactCandidate(
+    taskId: string,
+    candidateId: string,
+    body: ConfirmContactCandidateRequest = {},
+  ): Promise<ConfirmContactCandidateResponse> {
+    return this.post(
+      `/v1/contacts/research/${encodeURIComponent(taskId)}/candidates/${encodeURIComponent(candidateId)}/confirm`,
+      body,
+    );
   }
 
   deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {

@@ -213,8 +213,9 @@ agents are managed fleet resources.
 
 ### 5.9 Contact & Outreach Context
 
-Phase 1 realises the `Contact` aggregate's ports; the research-task and
-outreach-thread ports land with their aggregates in later phases.
+Phase 1 realises the `Contact` aggregate's ports; Phase 2 adds the
+supervised-research ports. The outreach-thread ports land with their aggregate in
+a later phase.
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -222,18 +223,30 @@ outreach-thread ports land with their aggregates in later phases.
 | **Driving** | `UpdateContactUseCase` | Update a contact's link, role, or attributes |
 | **Driving** | `ImportContactsUseCase` | Import a user-provided CSV contact list (CSV only), tagging every fact `user_imported_list` |
 | **Driving** | `DeleteContactUseCase` | Soft-delete a contact |
+| **Driving** | `RunContactResearchUseCase` | Start a supervised research run: authorise sources (INV-3), fetch allowed public pages through the gateway, propose candidates in `needs_review` (INV-4) |
+| **Driving** | `ConfirmContactCandidateUseCase` | Promote a `needs_review` candidate into a stored `Contact` fact, preserving provenance (INV-2) |
 | **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
-| **Driven** | `EventPublisher` | Publish contact domain events |
+| **Driven** | `ContactResearchTaskRepository` | Persist and retrieve the `ContactResearchTask` aggregate (task + candidates + source attempts) |
+| **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (robots/rate-limit/budget are first-class outcomes) |
+| **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page |
+| **Driven** | `EventPublisher` | Publish contact + research domain events |
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `ContactRepository` | `SqliteContactRepository` (publisher-injected; writes `contacts` + `contact_attributes`, then records contact events to `job_events`) | `PostgresContactRepository` (RDS Postgres, tenant-scoped) |
+| `ContactResearchTaskRepository` | `SqliteContactResearchTaskRepository` (publisher-injected; writes `contact_research_tasks` + `contact_candidates`, records research events to `job_events`) | `PostgresContactResearchTaskRepository` (tenant-scoped) |
+| `ResearchPageFetcherPort` | `GatewayContactResearchFetcher` (wraps `PolitenessSession.guard` + urllib) | Hosted fetch behind the same gateway contract |
 
 **Hosting.** Phase 1's contact state-transition commands (create / update / CSV
 import / soft-delete) are simple, LLM-free, and browser-free, so they are hosted
 directly in the TypeScript API (`apps/api/src/contacts.ts`) per
 [§6.8](integration.md); the Python worker exposes the same use cases and
 `SqliteContactRepository`, writing the same canonical tables and event types.
+Phase 2's research **run** (LLM + fetch) executes on the Python worker via
+Temporal (`ContactResearchWorkflow`), started through the `run_contact_research`
+JSON-RPC method; candidate **confirmation** is a simple state transition hosted
+directly in the TypeScript API (`apps/api/src/contact-research.ts`) per
+[§6.8](integration.md).
 
 **Seam justification:** the repository port isolates contact storage exactly like
 every other aggregate — local SQLite today, hosted Postgres tomorrow — with no

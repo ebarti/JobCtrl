@@ -377,14 +377,24 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     outreachKeys.contactLists(LOCAL_TENANT),
   ],
   WarmIntroIdentified: [outreachKeys.contactDetail(LOCAL_TENANT, "contact-1")],
-  ContactResearchTaskStarted: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
+  ContactResearchTaskStarted: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
+  ],
   ContactCandidateProposed: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
-  ContactResearchTaskNeedsReview: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
+  ContactResearchTaskNeedsReview: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
+  ],
   ContactResearchTaskCompleted: [
     outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
     outreachKeys.contactLists(LOCAL_TENANT),
   ],
-  ContactResearchTaskFailed: [outreachKeys.researchTask(LOCAL_TENANT, "research-2")],
+  ContactResearchTaskFailed: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-2"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
+  ],
   OutreachDraftGenerated: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
   OutreachDraftRevised: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
   OutreachDraftApproved: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],

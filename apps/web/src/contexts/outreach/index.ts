@@ -6,6 +6,10 @@ export { useCreateContactMutation } from "./hooks/useCreateContactMutation.js";
 export { useUpdateContactMutation } from "./hooks/useUpdateContactMutation.js";
 export { useDeleteContactMutation } from "./hooks/useDeleteContactMutation.js";
 export { useImportContactsMutation } from "./hooks/useImportContactsMutation.js";
+export { useResearchTasksListQuery } from "./hooks/useResearchTasksListQuery.js";
+export { useResearchTaskQuery } from "./hooks/useResearchTaskQuery.js";
+export { useRunResearchMutation } from "./hooks/useRunResearchMutation.js";
+export { useConfirmCandidateMutation } from "./hooks/useConfirmCandidateMutation.js";
 
 export { ContactCreateButton } from "./components/ContactCreateButton.js";
 export { ContactDeleteButton } from "./components/ContactDeleteButton.js";
@@ -15,6 +19,12 @@ export { ContactProvenanceList } from "./components/ContactProvenanceList.js";
 export { ContactProvenanceSummary } from "./components/ContactProvenanceSummary.js";
 export { ContactRoleBadge } from "./components/ContactRoleBadge.js";
 export { JobContactsPanel } from "./components/JobContactsPanel.js";
+export { ContactResearchPanel } from "./components/ContactResearchPanel.js";
+export { CandidateReviewList } from "./components/CandidateReviewList.js";
+export { CandidateReviewCard } from "./components/CandidateReviewCard.js";
+export { ConfirmCandidateButton } from "./components/ConfirmCandidateButton.js";
+export { RunResearchButton } from "./components/RunResearchButton.js";
+export { ResearchSourceAttemptList } from "./components/ResearchSourceAttemptList.js";
 
 export { ContactForm } from "./forms/contact-form.js";
 export { ContactImportWizard } from "./forms/contact-import-wizard.js";

@@ -194,6 +194,21 @@ parallel config surface:
   now **fails loud** rather than silently degrading to a direct connection, so a
   crawl never quietly runs without the proxy you intended.
 
+## Contact Research
+
+Supervised contact research has no configuration keys and no schedule — it runs
+only when you start a run from the UI. Its posture is conservative by design:
+
+- **No public source is auto-fetched.** A public page is fetched only when you
+  supply its URL for that run (per-source opt-in); with no URL, the run fetches
+  nothing and just records the source-attempt audit.
+- **Login-walled / paywalled / bot-protected pages are never auto-fetched** — they
+  are routed to the manual-capture path instead.
+- **Fetching reuses the crawl-politeness gateway above** (`robots.txt` + per-host
+  rate limit + per-run budget + the same honest user-agent).
+- **LLM spend reuses the daily budget** (`dailyBudgetUsd`) and the same preflight
+  as every other spendful workflow — there is no separate research budget.
+
 ## Materials And Resume Rendering
 
 | Variable | Default | What it does |

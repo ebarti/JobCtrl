@@ -27,6 +27,11 @@ generic rate, so the ledger is an estimate, not billing truth. The ceiling is a 
 mid-call interrupt: a single expensive run already in flight is not aborted, but
 the next spendful workflow will not start once the day's ledger is at the cap.
 
+Supervised contact research (`ContactResearchWorkflow`, Contact & Outreach) is a
+spendful workflow and reuses this **same** preflight — the `check_spend_budget`
+activity + the `dailyBudgetUsd` ledger — before its LLM candidate extraction.
+There is no second spend table or preflight.
+
 ## Discovery Schedule
 
 Scheduled discovery is **off by default**. A single Temporal Schedule,
@@ -43,6 +48,11 @@ it is reconciled from settings only at **worker startup**
 **The gotcha:** because reconciliation happens once at startup, toggling the
 schedule setting has no effect until the worker is restarted. Turning the
 schedule on or off, or changing its cron, requires bouncing the worker.
+
+Supervised contact research has **no schedule at all** — `ContactResearchWorkflow`
+runs only when the user explicitly starts a run (there is no automation, and no
+public source is auto-fetched by default; see the source-access policy in the
+[domain model](../domain-model/tactical.md)).
 
 ## Discovery Run Progress
 
@@ -79,6 +89,7 @@ spine.
 | Scoring | `job_scores`, `scoring_policies`, `job_score_staleness`, employer analysis |
 | Materials | materials sets / tailored resumes, cover letters, rendered PDFs, `tailoring_policies` |
 | Apply | apply stage state + apply lifecycle in `job_events` (see note) |
+| Contact & Outreach | `contacts`, `contact_attributes`, `contact_research_tasks` (+ `source_attempts_json`), `contact_candidates`; projected into `contact_projections` + `contact_research_task_projections` |
 | Orchestration / read model | `job_events` (append-only), `operational_attempt_metrics`, `job_stage_states`, `workflow_run_projections`, `job_list_projections`, `job_detail_projections`, `dashboard_projections`, artifact projections, `apply_run_projections` |
 | Spend | `llm_spend` |
 | Runtime | worker heartbeat / runtime identity |

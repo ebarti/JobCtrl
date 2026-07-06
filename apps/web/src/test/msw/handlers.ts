@@ -16,6 +16,12 @@ import {
   sampleSecondaryContactSummary,
 } from "../fixtures/contacts.js";
 import {
+  makeConfirmCandidateResponse,
+  makeResearchDetailResponse,
+  makeResearchListResponse,
+  sampleResearchTaskSummary,
+} from "../fixtures/contact-research.js";
+import {
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
   makeActivityPage,
@@ -852,6 +858,29 @@ export const handlers = [
       ),
     );
   }),
+  // Research routes must precede ``/v1/contacts/:contactId`` (MSW matches in
+  // array order; ``/v1/contacts/research`` would otherwise bind :contactId).
+  http.get("*/v1/contacts/research", ({ request }) => {
+    const url = new URL(request.url);
+    const jobId = url.searchParams.get("jobId");
+    const employer = url.searchParams.get("employer");
+    const items = [sampleResearchTaskSummary].filter(
+      (task) => (!jobId || task.jobId === jobId) && (!employer || task.employer === employer),
+    );
+    return HttpResponse.json(makeResearchListResponse(items));
+  }),
+  http.get("*/v1/contacts/research/:taskId", () =>
+    HttpResponse.json(makeResearchDetailResponse()),
+  ),
+  http.post("*/v1/contacts/research", () =>
+    HttpResponse.json(
+      { ok: true, taskId: "task-new", runId: "run-1", workflowId: "contact-research-x", status: "queued" },
+      { status: 202 },
+    ),
+  ),
+  http.post("*/v1/contacts/research/:taskId/candidates/:candidateId/confirm", () =>
+    HttpResponse.json(makeConfirmCandidateResponse()),
+  ),
   http.get("*/v1/contacts/:contactId", ({ params }) =>
     HttpResponse.json(
       makeContactDetailResponse(

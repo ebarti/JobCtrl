@@ -50,6 +50,13 @@ const CONTACT_EVENT_TYPES = new Set([
   "ContactDeleted",
   "WarmIntroIdentified",
 ]);
+const CONTACT_RESEARCH_EVENT_TYPES = new Set([
+  "ContactResearchTaskStarted",
+  "ContactCandidateProposed",
+  "ContactResearchTaskNeedsReview",
+  "ContactResearchTaskCompleted",
+  "ContactResearchTaskFailed",
+]);
 const COMPENSATION_PROJECTION_VERSION = 1;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -664,6 +671,28 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     );
     CREATE INDEX IF NOT EXISTS idx_contact_projections_lookup
       ON contact_projections(tenant_id, employer, job_id);
+    CREATE TABLE IF NOT EXISTS contact_research_task_projections (
+      tenant_id            TEXT NOT NULL DEFAULT 'local',
+      task_id              TEXT NOT NULL,
+      employer             TEXT,
+      job_id               TEXT,
+      status               TEXT NOT NULL DEFAULT 'queued',
+      candidate_count      INTEGER NOT NULL DEFAULT 0,
+      needs_review_count   INTEGER NOT NULL DEFAULT 0,
+      confirmed_count      INTEGER NOT NULL DEFAULT 0,
+      source_attempts_json TEXT NOT NULL DEFAULT '[]',
+      candidates_json      TEXT NOT NULL DEFAULT '[]',
+      started_at           TEXT,
+      updated_at           TEXT,
+      needs_review_at      TEXT,
+      completed_at         TEXT,
+      failed_at            TEXT,
+      error_class          TEXT,
+      last_updated_at      TEXT,
+      PRIMARY KEY (tenant_id, task_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_research_task_projections_lookup
+      ON contact_research_task_projections(tenant_id, employer, job_id);
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
@@ -772,6 +801,17 @@ function setWatermark(db: SqliteDatabase, projection: string, eventId: number): 
  * dashboards, lists, and detail views always reflect the latest
  * worker writes (which also bump ``job_events``).
  */
+/**
+ * Force-rebuild the research-task read model from canonical rows. Confirming a
+ * candidate that leaves other candidates awaiting review advances no research
+ * lifecycle event, so the event-watermark path would not mark the read model
+ * dirty; the confirm route calls this directly to keep the projection honest.
+ */
+export function refreshContactResearchProjections(db: SqliteDatabase, tenantId = "local"): void {
+  ensureProjectionTables(db);
+  rebuildContactResearchProjections(db, tenantId);
+}
+
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
@@ -784,6 +824,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   let sourceQualityDirty = false;
   let evidenceUsageDirty = projectionSchemaChanged;
   let contactsDirty = projectionSchemaChanged;
+  let contactResearchDirty = projectionSchemaChanged;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {
     const rows = allRows<{ event_id: number; job_url: string | null; event_type: string }>(
@@ -801,6 +842,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (CONTACT_EVENT_TYPES.has(String(row.event_type))) {
         contactsDirty = true;
       }
+      if (CONTACT_RESEARCH_EVENT_TYPES.has(String(row.event_type))) {
+        contactResearchDirty = true;
+      }
       evidenceUsageDirty = true;
     }
   }
@@ -808,6 +852,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   // empty (e.g. tables recreated). Mirrors the Python builder's backfill.
   if (!contactsDirty && contactsBackfillPending(db, tenantId)) {
     contactsDirty = true;
+  }
+  if (!contactResearchDirty && contactResearchBackfillPending(db, tenantId)) {
+    contactResearchDirty = true;
   }
   const evidenceProjectionCount =
     getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM evidence_usage_projections WHERE tenant_id = ?", [
@@ -872,6 +919,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     !sourceQualityDirty &&
     !evidenceUsageDirty &&
     !contactsDirty &&
+    !contactResearchDirty &&
     (sourceQualityExists > 0 || !sourceQualityHistory) &&
     maxEventId === watermark
   ) {
@@ -883,6 +931,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   }
   if (contactsDirty) {
     rebuildContactProjections(db, tenantId);
+  }
+  if (contactResearchDirty) {
+    rebuildContactResearchProjections(db, tenantId);
   }
 
   for (const jobUrl of dirtyJobs) {
@@ -3926,6 +3977,181 @@ function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
       drop.run(tenantId, String(row.contact_id));
     }
   }
+}
+
+function contactResearchBackfillPending(db: SqliteDatabase, tenantId: string): boolean {
+  if (
+    !tableExists(db, "contact_research_tasks") ||
+    !tableExists(db, "contact_research_task_projections")
+  ) {
+    return false;
+  }
+  const projected =
+    getRow<{ c: number }>(
+      db,
+      "SELECT COUNT(*) AS c FROM contact_research_task_projections WHERE tenant_id = ?",
+      [tenantId],
+    )?.c ?? 0;
+  if (projected > 0) {
+    return false;
+  }
+  const canonical =
+    getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM contact_research_tasks WHERE tenant_id = ?", [
+      tenantId,
+    ])?.c ?? 0;
+  return canonical > 0;
+}
+
+/**
+ * Rematerialise every ``contact_research_task_projections`` row from canonical
+ * research rows (ninth context). Candidate VALUES are never read into the
+ * projection — only the task lifecycle, counts, source-attempt outcomes
+ * (provenance of the search), and per-candidate provenance metadata +
+ * attribute kinds (INV-2). Mirrors the Python
+ * ``ProjectionBuilder._rebuild_contact_research`` for cross-runtime parity.
+ */
+function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "contact_research_tasks") || !tableExists(db, "contact_candidates")) {
+    return;
+  }
+  const tasks = allRows<{
+    task_id: string;
+    employer: string | null;
+    job_url: string | null;
+    status: string | null;
+    source_attempts_json: string | null;
+    started_at: string | null;
+    updated_at: string | null;
+    needs_review_at: string | null;
+    completed_at: string | null;
+    failed_at: string | null;
+    error_class: string | null;
+  }>(
+    db,
+    `SELECT task_id, employer, job_url, status, source_attempts_json,
+            started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
+     FROM contact_research_tasks
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  const liveIds = new Set<string>();
+  const upsert = db.prepare(
+    `INSERT INTO contact_research_task_projections (
+       tenant_id, task_id, employer, job_id, status,
+       candidate_count, needs_review_count, confirmed_count,
+       source_attempts_json, candidates_json, started_at, updated_at,
+       needs_review_at, completed_at, failed_at, error_class, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, task_id) DO UPDATE SET
+       employer             = excluded.employer,
+       job_id               = excluded.job_id,
+       status               = excluded.status,
+       candidate_count      = excluded.candidate_count,
+       needs_review_count   = excluded.needs_review_count,
+       confirmed_count      = excluded.confirmed_count,
+       source_attempts_json = excluded.source_attempts_json,
+       candidates_json      = excluded.candidates_json,
+       started_at           = excluded.started_at,
+       updated_at           = excluded.updated_at,
+       needs_review_at      = excluded.needs_review_at,
+       completed_at         = excluded.completed_at,
+       failed_at            = excluded.failed_at,
+       error_class          = excluded.error_class,
+       last_updated_at      = excluded.last_updated_at`,
+  );
+  for (const task of tasks) {
+    const taskId = String(task.task_id);
+    liveIds.add(taskId);
+    const candidateRows = allRows<{
+      candidate_id: string;
+      role: string | null;
+      source_kind: string;
+      source_ref: string;
+      capture_method: string | null;
+      confidence: number | null;
+      status: string | null;
+      proposed_at: string | null;
+      confirmed_contact_id: string | null;
+      confirmed_at: string | null;
+      attributes_json: string | null;
+    }>(
+      db,
+      `SELECT candidate_id, role, source_kind, source_ref, capture_method,
+              confidence, status, proposed_at, confirmed_contact_id, confirmed_at, attributes_json
+       FROM contact_candidates
+       WHERE tenant_id = ? AND task_id = ?
+       ORDER BY proposed_at ASC, candidate_id ASC`,
+      [tenantId, taskId],
+    );
+    let needsReview = 0;
+    let confirmed = 0;
+    const candidates = candidateRows.map((candidate) => {
+      const status = String(candidate.status ?? "needs_review");
+      if (status === "needs_review") {
+        needsReview += 1;
+      } else if (status === "confirmed") {
+        confirmed += 1;
+      }
+      return {
+        candidateId: String(candidate.candidate_id),
+        role: String(candidate.role ?? "other"),
+        sourceKind: String(candidate.source_kind),
+        sourceRef: String(candidate.source_ref),
+        captureMethod: String(candidate.capture_method ?? "llm_assisted"),
+        confidence: Number(candidate.confidence ?? 0),
+        status,
+        proposedAt: String(candidate.proposed_at ?? ""),
+        confirmedContactId: candidate.confirmed_contact_id ?? null,
+        confirmedAt: candidate.confirmed_at ?? null,
+        attributeKinds: researchAttributeKinds(candidate.attributes_json),
+      };
+    });
+    upsert.run(
+      tenantId,
+      taskId,
+      task.employer,
+      task.job_url,
+      String(task.status ?? "queued"),
+      candidateRows.length,
+      needsReview,
+      confirmed,
+      JSON.stringify(parseJsonArray(task.source_attempts_json)),
+      JSON.stringify(candidates),
+      task.started_at,
+      task.updated_at,
+      task.needs_review_at,
+      task.completed_at,
+      task.failed_at,
+      task.error_class,
+      task.updated_at,
+    );
+  }
+  const existing = allRows<{ task_id: string }>(
+    db,
+    "SELECT task_id FROM contact_research_task_projections WHERE tenant_id = ?",
+    [tenantId],
+  );
+  const drop = db.prepare(
+    "DELETE FROM contact_research_task_projections WHERE tenant_id = ? AND task_id = ?",
+  );
+  for (const row of existing) {
+    if (!liveIds.has(String(row.task_id))) {
+      drop.run(tenantId, String(row.task_id));
+    }
+  }
+}
+
+function researchAttributeKinds(attributesJson: string | null): string[] {
+  const kinds: string[] = [];
+  for (const item of parseJsonArray(attributesJson)) {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const kind = String((item as Record<string, unknown>).kind ?? "").trim();
+      if (kind && !kinds.includes(kind)) {
+        kinds.push(kind);
+      }
+    }
+  }
+  return kinds;
 }
 
 function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): void {

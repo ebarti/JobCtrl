@@ -42,7 +42,7 @@ need:
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
 | [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
 | [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
-| [Contacts](#contacts) | The six `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, and CSV import. |
+| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, and the supervised-research run / list / detail / confirm-candidate routes. |
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
@@ -645,9 +645,9 @@ link signals, and note/body presence flags.
 
 ## Contacts
 
-The Contact & Outreach context exposes six local, loopback-only JSON routes for
-contact records. Phase 1 is contact records only — there is no send, drafting, or
-research route, and nothing here sends anything. Writes are hosted directly in the
+The Contact & Outreach context exposes local, loopback-only JSON routes for
+contact records and supervised research. There is still no send or drafting route,
+and nothing here sends anything. Contact-record writes are hosted directly in the
 TypeScript API (`apps/api/src/contacts.ts`): they write the canonical
 `contacts` / `contact_attributes` rows, append durable, SSE-visible events to
 `job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`), and refresh
@@ -687,6 +687,37 @@ Contact DTOs and request/response schemas live in `packages/contracts`
 (`ContactSummary`, `ContactDetail`, `ContactAttributeDto`,
 `ContactFactProvenance`, and the create / update / import / delete request and
 response shapes).
+
+### Contact research
+
+Supervised research (Phase 2) adds four routes. The **run** is not a direct
+SQLite write — the API dispatches the `run_contact_research` JSON-RPC method to
+the Python worker, which starts `ContactResearchWorkflow` on Temporal. Fetching
+routes only through the merged politeness gateway against the conservative
+per-source opt-in allowlist (no public source is auto-fetched by default;
+login-walled URLs route to manual capture). Candidates land `needs_review` and
+require an explicit confirm command before becoming stored contact facts (INV-4).
+
+- `GET /v1/contacts/research` lists `ContactResearchTaskSummary` rows from
+  `contact_research_task_projections`; optional `jobId` / `employer` filters.
+- `GET /v1/contacts/research/:taskId` returns a `ContactResearchTaskDetail` — the
+  summary plus `sourceAttempts[]` (the per-source outcome audit) and
+  `candidates[]`, each with its proposed `attributes[]` (value + provenance).
+  An unknown id returns `{ ok: false, error: "research_task_not_found" }`.
+- `POST /v1/contacts/research` (`RunContactResearchRequest`: optional `employer` /
+  `jobId` — at least one required — plus opted-in `sources[]`) mints a `taskId`,
+  pre-creates a `queued` task, dispatches `run_contact_research`, and returns
+  `202 { ok, taskId, runId, workflowId, status }`.
+- `POST /v1/contacts/research/:taskId/candidates/:candidateId/confirm`
+  (`ConfirmContactCandidateRequest`, optional `role`) promotes a `needs_review`
+  candidate into a stored `Contact` (preserving its research provenance,
+  marking it user-confirmed) and returns `{ ok, contact, task }`. A candidate
+  that is unknown or already resolved returns `research_candidate_not_found` /
+  `invalid_confirm`.
+
+The `run_contact_research` JSON-RPC method (params `taskId`, optional `employer` /
+`jobUrl`, `sources[]`, `llmModel`) is a workflow-mode method returning the
+`{ runId, workflowId, firstExecutionRunId }` start shape.
 
 ## Pipeline and preparation actions
 

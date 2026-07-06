@@ -401,3 +401,43 @@ cancellation, not an application signal. The cancel propagates through
 cooperatively; the terminal state is recorded as `WorkflowCanceled` (by finalize
 on the cancel path, or by the reconciler). The post-hoc SQLite stage-canceled
 write is the API's `cancelJobAction`.
+
+### Contact Research (supervised, off-pipeline)
+
+`ContactResearchWorkflow` (Contact & Outreach) is not a pipeline stage — it is a
+user-started, supervised run that *proposes* contacts for review. The API mints a
+`taskId`, pre-creates a `queued` task so the UI can read it immediately, then
+dispatches `run_contact_research`. The workflow runs the shared spend preflight,
+then one source-family activity that fetches only policy-permitted, opted-in
+public pages through the merged politeness gateway and extracts candidates with a
+schema-driven LLM call. Candidates land `needs_review`; the user confirms them
+one at a time (a TypeScript-API state transition), which promotes a candidate
+into a stored `Contact` fact (INV-4).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Web as Web UI
+    participant Api as TypeScript API
+    participant Rpc as JSON-RPC
+    participant CW as ContactResearchWorkflow
+    participant Act as run_contact_research activity
+    participant GW as Politeness gateway + LLM
+    participant DB as job_events + contact_research_task_projections
+
+    Web->>Api: POST /v1/contacts/research (employer/jobId, opted-in sources)
+    Api->>DB: pre-create queued task, ContactResearchTaskStarted
+    Api->>Rpc: run_contact_research(taskId, sources)
+    Rpc->>CW: start (contact-research-{taskId})
+    CW->>Act: check_spend_budget, then research activity
+    Act->>GW: guard(url) per source; robots/rate-limit/budget are outcomes
+    GW-->>Act: allowed page text -> LLM candidate extraction
+    Act->>DB: ContactCandidateProposed*, ContactResearchTaskNeedsReview
+    Web->>Api: POST .../candidates/:id/confirm (explicit user command, INV-4)
+    Api->>DB: ContactCreated + ContactAttributeRecorded; ContactResearchTaskCompleted
+```
+
+Robots-denial, rate-limit, and budget-exhaustion are recorded as first-class
+`ResearchSourceAttempt` outcomes (the provenance of the search), never scrape
+errors. No candidate value ever enters an event or projection — only
+`contact_candidates.attributes_json` holds the proposed names/emails.

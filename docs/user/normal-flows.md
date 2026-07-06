@@ -254,6 +254,22 @@ manager, or referrer — attached to a company or a specific job:
 - Every fact you store shows its **provenance** — where it came from — in the list
   and detail views, so you can always see the source of a name or email.
 
+You can also run **supervised research** from a job's Contacts panel to propose
+contacts:
+
+- Click **run research** (optionally pasting one public source URL, such as a
+  company team page). JobHunter starts a supervised run; with no URL it simply
+  records which sources it could and could not use.
+- Research **proposes** candidates for review — it never stores them automatically
+  (supervised, INV-4). Each proposed candidate shows its provenance (the page it
+  came from, the capture method, and a confidence), and the run shows the
+  per-source outcomes (fetched, blocked by `robots.txt`, rate-limited, or routed
+  to manual capture because the page needs a login).
+- Review each candidate and click **confirm contact** to promote it into your
+  contacts. Only then does it become a stored fact — with its research provenance
+  preserved and marked confirmed by you. No public page is fetched unless you
+  supply its URL, and login-walled pages are never fetched automatically.
+
 Contacts are records only. JobHunter never sends anything to them: there is no
-email, message, or outreach sending in this workflow, and contact data never
-affects scoring or apply decisions.
+email, message, or outreach sending in this workflow, and contact or research
+data never affects scoring or apply decisions.
