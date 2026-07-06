@@ -208,30 +208,14 @@ Out of scope for the local stack (tracked under
   wording, relevance to a target job, achievement framing, evidence strength,
   and whether the item deserves required placement in the final resume.
 
-### Known-Failing Web E2E Baseline (2026-07-03)
+### Known-Failing Web E2E Baseline
 
-Five Playwright specs fail identically on `main` and on every Temporal
-rearchitecture validation run (isolated stacks, 2026-07-02 → 2026-07-03,
-PR #233 / #235 / #237 gate runs). They pre-date that work and are not caused
-by it. QA gates treat them as the known baseline: "e2e passes" means **no NEW
-failures beyond these five**. Fixing any of them must remove it from this
-list so the baseline shrinks instead of masking regressions.
-
-- `apps/web/e2e/tests/dashboard.spec.ts:3` — dashboard KPIs render; clicking
-  the Jobs KPI navigates to `/jobs` with a matching row count.
-- `apps/web/e2e/tests/jobs-drawer.spec.ts:297` — compensation source-conflict
-  evidence stays product-visible on mobile viewport without unsafe requests.
-- `apps/web/e2e/tests/jobs-drawer.spec.ts:371` — job drawer opens with
-  requirement fit / stages / artifacts, survives reload, and close preserves
-  the URL filter.
-- `apps/web/e2e/tests/route-visual-qa.spec.ts:507` — requirement-fit drawer
-  and Apply Review cards visual regression coverage.
-- `apps/web/e2e/tests/token-foundation.spec.ts:349` — domain status surfaces
-  use painted semantic token classes (funnel segments, apply-run dots, tags).
-
-Root causes are untriaged; failure modes are assertion-level (seeded-fixture
-expectations and visual/painted-style assertions), not infrastructure. Triage
-each spec, fix or re-fixture it, and delete its bullet here.
+No known-failing Playwright specs are exempted. The 2026-07-03 baseline was
+burned down on 2026-07-06: dashboard KPI navigation and semantic-token status
+paint already passed on current `main`, the jobs-drawer assertions were
+updated to the current split compensation columns and Role Analysis section,
+and the route visual snapshot was refreshed for the current requirement-fit
+card layout. QA gates should treat any `pnpm web:e2e` failure as actionable.
 
 ## SaaS And Commercialization
 
@@ -341,29 +325,10 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-10 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
-they exercise pre-existing production accessibility defects that are scoped
-out of the Phase 7 baseline. Each defect needs a follow-up production fix;
-once fixed, the deferral is removed from the corresponding story
-parameters.
-
-| Production file | Defect | Stories that defer |
-| --- | --- | --- |
-| `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
-| `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
-| `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
-| `apps/web/src/contexts/apply/components/ApplyHistory.tsx` | TanStack Router `<Link>` rendered as a button without an accessible name. | `ApplyHistory.stories.tsx` |
-| Radix `DropdownMenu` portal | `aria-hidden-focus` violation reported during the open animation (Radix transient internal state). | `dropdown-menu.stories.tsx` |
-| Radix `Select` portal | `aria-hidden-focus` violation during the open transition. | `select.stories.tsx` |
-| Radix `Popover` portal | Portal role / ARIA labelling requirements not satisfied by the stock Radix wrapper. | `popover.stories.tsx` |
-| Radix `ScrollArea` viewport | `scrollable-region-focusable` axe rule fires because the viewport is not focusable. | `scroll-area.stories.tsx` |
-| `cmdk` initial mount | `aria-required-children` violation during initial mount of the command palette. | `command.stories.tsx` |
-
-Production fixes for the remaining in-repo files (`ArtifactFilterBar.tsx`,
-`StructuredProfileEditor.tsx`, `ApplyHistory.tsx`) unblock the in-repo
-production-file deferrals immediately. The five remaining wrapper/library
-deferrals (Radix transient internals + cmdk) need either upstream fixes or
-local wrappers with the missing ARIA plumbing.
+No Storybook stories currently defer the a11y bar. The Phase 7 deferrals
+were burned down on 2026-07-06; new production accessibility defects must be
+fixed in the owning component or recorded here with the story path and a
+concrete follow-up.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 
@@ -387,16 +352,6 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   exit criteria) but never landed. There is no ESLint config in
   `apps/web/` today, and no `lint` script in either the web package or
   the root. Lands together with the ESLint setup item above.
-- **CI does not run `web:test`, `web:test-d`, or `web:e2e`.**
-  `.github/workflows/typescript.yml` runs `pnpm -r check`,
-  `pnpm --filter @jobhunter/api test`, `pnpm --filter @jobhunter/web build`,
-  `pnpm --filter @jobhunter/web storybook:build`, and
-  `pnpm --filter @jobhunter/web storybook:test` (with Playwright Chromium
-  installed for the Storybook test runner). The Vitest unit / hook /
-  component suite, the type-level tests, and the standalone Playwright e2e
-  specs at `apps/web/e2e/` are developer-local only — a regression in any
-  of those does not fail CI today. Wire the three root aliases into
-  `typescript.yml`.
 - **Frontend ACL `JobId` is unbranded** —
   `apps/web/src/contexts/operations/types.ts` exports
   `type JobId = string` rather than re-exporting the branded

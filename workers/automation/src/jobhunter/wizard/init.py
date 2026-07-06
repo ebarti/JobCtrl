@@ -465,8 +465,11 @@ def _setup_auto_apply() -> None:
             "Run [bold]jobhunter setup[/bold] after dependency sync or set [bold]JOBHUNTER_CLAUDE_BIN[/bold]."
         )
 
-    # Optional: CapSolver for CAPTCHAs
-    console.print("\n[dim]Some job sites use CAPTCHAs. CapSolver can handle them automatically.[/dim]")
+    # Optional: retain a CapSolver key for future owned CAPTCHA tooling.
+    console.print(
+        "\n[dim]CAPTCHA challenges currently fail closed during apply runs. "
+        "You may still store a CapSolver key for future owned CAPTCHA tooling.[/dim]"
+    )
     if Confirm.ask("Configure CapSolver API key? (optional)", default=False):
         capsolver_key = Prompt.ask("CapSolver API key")
         # Append to existing .env or create
@@ -481,7 +484,7 @@ def _setup_auto_apply() -> None:
             ENV_PATH.write_text(f"# JobHunter configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
         console.print("[green]CapSolver key saved.[/green]")
     else:
-        console.print("[dim]Skipped. Add CAPSOLVER_API_KEY to .env later if needed.[/dim]")
+        console.print("[dim]Skipped. CAPTCHA challenges will fail closed.[/dim]")
 
 
 # ---------------------------------------------------------------------------

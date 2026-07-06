@@ -17,6 +17,7 @@ class _FakeSnapshot:
             "personal": {
                 "full_name": "Test Applicant",
                 "email": "test@example.com",
+                "password": "DistinctivePasswordShouldNeverRender",
                 "phone": "+1 555 0100",
                 "address": "",
                 "city": "Barcelona",
@@ -38,6 +39,10 @@ class _FakeSnapshot:
             },
             "availability": {"earliest_start_date": "Immediately"},
             "eeo_voluntary": {},
+            "application_attestations": {
+                "background_check_consent": True,
+            },
+            "application_preferences": {"how_heard": "Referral"},
         }
 
 
@@ -131,13 +136,57 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     expected_upload = worker_dir / "Test_Applicant_Resume.pdf"
     assert expected_upload.exists()
     assert f"Resume PDF (upload this): {expected_upload}" in rendered
-    assert "Do not attempt to solve CAPTCHAs manually" in rendered
+    assert "Do not solve CAPTCHAs manually" in rendered
     assert "RESULT:CAPTCHA and stop" in rendered
     assert "== EMAIL VERIFICATION ==" in rendered
     assert "search_emails" in rendered
     assert "read_email" in rendered
     assert "Do not open Gmail in the browser" in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
+
+
+def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_context(
+    monkeypatch, tmp_path
+):
+    worker_dir = tmp_path / "worker-0"
+    materials_dir = tmp_path / "materials"
+    materials_dir.mkdir()
+    resume_txt = materials_dir / "resume.txt"
+    resume_txt.write_text("Tailored resume", encoding="utf-8")
+    resume_pdf = materials_dir / "resume.pdf"
+    resume_pdf.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-secret-never-render")
+    monkeypatch.setattr(prompt_mod.config, "load_env", lambda: None)
+    monkeypatch.setattr(
+        prompt_mod.config,
+        "gmail_mcp_auth_status",
+        lambda: (False, "missing OAuth client"),
+    )
+
+    rendered = prompt_mod.build_prompt(
+        job={
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "Engineering Manager",
+            "site": "ExampleCo",
+            "fit_score": 9,
+            "tailored_resume_path": str(resume_txt),
+        },
+        tailored_resume="Tailored resume text",
+        snapshot=_FakeSnapshot(),
+        search_config={"location": {"accept_patterns": ["Barcelona"]}},
+        upload_dir=worker_dir,
+    )
+
+    assert "DistinctivePasswordShouldNeverRender" not in rendered
+    assert "capsolver-secret-never-render" not in rendered
+    assert "API key:" not in rendered
+    assert "browser_evaluate" not in rendered
+    assert "send_email" not in rendered
+    assert "email_application_required" in rendered
+    assert "Age 18+: Yes" not in rendered
+    assert "Felony: No" not in rendered
+    assert "Background check consent: Yes" in rendered
 
 
 def test_default_mcp_config_includes_gmail_read_connector() -> None:

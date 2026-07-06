@@ -15,16 +15,19 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
   };
   return (
     <div className="toolbar">
-      <select
-        value={search.status}
-        onChange={(event) => apply({ status: event.target.value as ArtifactsSearch["status"] })}
-      >
-        {ARTIFACT_STATUSES.map((item) => (
-          <option key={item} value={item}>
-            {item}
-          </option>
-        ))}
-      </select>
+      <label className="field">
+        <span>Status</span>
+        <select
+          value={search.status}
+          onChange={(event) => apply({ status: event.target.value as ArtifactsSearch["status"] })}
+        >
+          {ARTIFACT_STATUSES.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }
