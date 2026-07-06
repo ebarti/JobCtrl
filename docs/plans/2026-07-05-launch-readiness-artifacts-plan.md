@@ -515,6 +515,12 @@ Notes:
    specific rows, the external approaches that become the columns, the cadence
    interval, and the final sidebar label stay owner-supplied (kept private until
    facts-verified) and do not block merging this plan or the R7a train.
+
+   → **RESOLVED 2026-07-06 (owner).** Delegated draft: the maintainer agent
+   derives the neutral capability rows and the anonymized external-approach
+   columns, verifies every cell against live sources, and the owner approves
+   the result before it is committed. Maintenance cadence: quarterly
+   re-verification. Sidebar label stays "How It Compares".
 4. **Demo-asset launch set** — which assets ship in the initial launch vs are
    deferred until their capability merges: asset 7's live blocked-channel
    evidence (OSS spec W1.1/W1.2) and asset 8's spend-ceiling stop (OSS spec
@@ -531,6 +537,11 @@ Notes:
    fixture, not the capability. Asset 8's health-surface capture and assets 1–2
    are deferred launch-set follow-ups. Confirming the initial launch set remains
    OWNER-PENDING.
+
+   → **RESOLVED 2026-07-06 (owner).** Ship what's ready: launch proceeds with
+   the assets already captured or scripted; assets 1–2, 7-evidence, and
+   8-spend-stop remain deferred post-launch follow-ups exactly as the
+   inventory records them. Launch is not blocked on producing the full set.
 5. **Reliability-demo format** — asset 9 as a scripted e2e artifact vs a
    synthetic screen recording vs a documented walkthrough, and where the
    artifact lives (must be synthetic and privacy-safe; recordings are binary).
@@ -553,12 +564,31 @@ Notes:
    carries into a high-stakes interview. CL-029 is already listed as a §11.6
    reclassification candidate. The threshold itself and this specific verdict
    await the owner's bar-setting.
+
+   → **RESOLVED 2026-07-06 (owner).** Bar set: any brand-new LLM-generated
+   user-facing surface without real-usage validation is labeled `Beta` in
+   public copy even when its truthfulness gates pass — the gates guarantee a
+   no-fabrication floor, not output quality. Verdict: **CL-029 reclassifies to
+   `Beta`** (apply in the next ledger currency pass). Additional owner rule
+   recorded the same day: **synthetic data may illustrate, never measure** —
+   screenshots/GIFs may use clearly-captioned fictional data, but no
+   performance, speed, or outcome number in public copy may ever be derived
+   from synthetic data (see the R2 plan's TTFV amendment).
 7. **Sign-off owners** — who owns the claim-freeze sign-off and each Phase C
    publish step.
 
    → **OWNER-PENDING 2026-07-06.** Unresolved by implementation — an owner
    decision. The claims-freeze stays PROVISIONAL until the owner signs off, and
    the owner of each Phase C publish step is still to be named.
+
+   → **RESOLVED 2026-07-06 (owner).** The owner is the single sign-off holder
+   for the claims freeze and executes every Phase C publish step (repository
+   visibility flip, DNS, git tag, PyPI upload). The freeze converts from
+   PROVISIONAL to signed only after a mandatory guided review in which the
+   maintainer agent walks the owner through every ledger claim and its
+   evidence anchor. Follow-up recorded: re-enable the "Python CI" GitHub
+   workflow (currently disabled to conserve Actions minutes) before the
+   repository goes public.
 
 ## 12. Risks and mitigations
 
