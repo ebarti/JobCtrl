@@ -60,6 +60,10 @@ Use the Discovery page to set:
 - minimum fit score and automation preferences;
 - manual capture and quarantined source decisions.
 
+The optional browser extension's **Save job** action also lands here: it records
+the active page as a user-mediated manual capture, then the normal discovery
+import path dedupes, snapshots, and surfaces the job in Jobs.
+
 Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.
@@ -177,12 +181,14 @@ Useful command-line checks:
 
 ```bash
 uv --project workers/automation run jobhunter status
+uv --project workers/automation run jobhunter digest
 uv --project workers/automation run jobhunter runs
 uv --project workers/automation run jobhunter runs --failed-only
 ```
 
-These print your pipeline status, list all workflow runs, and list only failed
-runs, respectively.
+These print your pipeline status, show the local daily digest, list all workflow
+runs, and list only failed runs, respectively. The digest is read-only unless
+you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 Useful web app views:
 

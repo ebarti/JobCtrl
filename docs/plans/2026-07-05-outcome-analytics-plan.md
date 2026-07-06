@@ -579,6 +579,9 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
   **defer** (non-goal for v1); if wanted, derive from title via the existing
   `role_title_matcher` / `ROLE_FAMILY_MARKERS` and persist a `role_family` on the
   job projection, accepting classification-accuracy risk. *Owner: defer vs build.*
+  **Decision 2026-07-05:** defer role-family analytics for R4. Do not add
+  `role_family` persistence or a role-family breakdown in this train; revisit as
+  a separate plan if a persisted classifier is approved.
 - **D4 — Apply-mode definition.** Recommend `apply_mode ∈ {automated_live,
   manual_marked, external_confirmed}` (from non-dry-run apply run success /
   MarkApplied / `applied_confirmation` outcome without an apply run), dry-runs
@@ -593,6 +596,9 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
   non-goal** (`costPerInterview` stays `null`); if wanted, add a cost column to
   `apply_run_projections` fed from apply run token/cost telemetry, then aggregate.
   *Owner: defer vs build.*
+  **Decision 2026-07-05:** defer cost analytics for R4. Keep
+  `costPerInterview` null; do not add cost columns or cost aggregations in this
+  train. Revisit when per-run apply cost telemetry has a separate approved plan.
 - **D6 — Endpoint shape.** Recommend a dedicated `GET /v1/analytics/outcomes`
   (keeps the dashboard summary payload bounded and gives the analytics view its
   own query key) over extending `DashboardSummary.conversion`. *Owner: confirm.*

@@ -1,0 +1,308 @@
+{
+  "description": "Shared TS<->Python daily digest parity fixture. Both runtimes seed the same projection-style SQLite rows, read the same digest_state watermark, and assert identical digest counts. The fixture uses UTC timestamps to lock the digest day-boundary decision: the watermark and follow-up cutoff are timestamp-based, not local calendar buckets.",
+  "now": "2026-07-05T12:00:00.000Z",
+  "since": "2026-07-01T00:00:00.000Z",
+  "minFitScore": 7,
+  "budget": {
+    "day": "2026-07-05",
+    "inputTokens": 1000,
+    "outputTokens": 2000,
+    "estimatedUsd": 12.5,
+    "dailyBudgetUsd": 10
+  },
+  "jobs": [
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-strong",
+      "title": "Pre Watermark Strong",
+      "employer": "OldCo",
+      "source": "greenhouse",
+      "discoveredAt": "2026-06-28T09:00:00.000Z",
+      "scoredAt": "2026-06-29T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "discover",
+      "currentState": "succeeded",
+      "hasResume": false,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://oldco.example/apply/strong"
+    },
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-low",
+      "title": "Pre Watermark Low",
+      "employer": "OldCo",
+      "source": "lever",
+      "discoveredAt": "2026-06-28T11:00:00.000Z",
+      "scoredAt": "2026-06-29T12:00:00.000Z",
+      "fitScore": 5,
+      "currentStage": "discover",
+      "currentState": "succeeded",
+      "hasResume": false,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://oldco.example/apply/low"
+    },
+    {
+      "jobId": "https://example.com/jobs/post-watermark-ready",
+      "title": "Post Watermark Ready",
+      "employer": "NewCo",
+      "source": "greenhouse",
+      "discoveredAt": "2026-07-02T09:00:00.000Z",
+      "scoredAt": "2026-07-02T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": true,
+      "applicationUrl": "https://newco.example/apply/ready"
+    },
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-failed-dry-run",
+      "title": "Pre Watermark Failed Dry Run",
+      "employer": "RetryCo",
+      "source": "greenhouse",
+      "discoveredAt": "2026-06-29T09:00:00.000Z",
+      "scoredAt": "2026-06-29T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": true,
+      "applicationUrl": "https://retryco.example/apply/failed-dry-run"
+    },
+    {
+      "jobId": "https://example.com/jobs/post-watermark-materials",
+      "title": "Post Watermark Materials",
+      "employer": "DraftCo",
+      "source": "ashby",
+      "discoveredAt": "2026-07-03T09:00:00.000Z",
+      "scoredAt": "2026-07-03T10:00:00.000Z",
+      "fitScore": 6,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://draftco.example/apply/materials"
+    },
+    {
+      "jobId": "https://example.com/jobs/post-watermark-scored",
+      "title": "Post Watermark Scored",
+      "employer": "ScoreCo",
+      "source": "workday",
+      "discoveredAt": "2026-06-30T09:00:00.000Z",
+      "scoredAt": "2026-07-04T10:00:00.000Z",
+      "fitScore": 9,
+      "currentStage": "score",
+      "currentState": "stale",
+      "hasResume": false,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://scoreco.example/apply/scored"
+    },
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-eligibility-blocked",
+      "title": "Pre Watermark Eligibility Blocked",
+      "employer": "BlockCo",
+      "source": "greenhouse",
+      "discoveredAt": "2026-06-29T09:00:00.000Z",
+      "scoredAt": "2026-06-29T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": true,
+      "applicationUrl": "https://blockco.example/apply/eligibility",
+      "eligibilityStatus": "blocked"
+    },
+    {
+      "jobId": "https://example.com/jobs/post-watermark-hidden-materials",
+      "title": "Post Watermark Hidden Materials",
+      "employer": "HiddenCo",
+      "source": "ashby",
+      "discoveredAt": "2026-07-04T09:00:00.000Z",
+      "scoredAt": "2026-07-04T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://hiddenco.example/apply/materials",
+      "hidden": true
+    },
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-closed-materials",
+      "title": "Pre Watermark Closed Materials",
+      "employer": "ClosedCo",
+      "source": "lever",
+      "discoveredAt": "2026-06-29T09:00:00.000Z",
+      "scoredAt": "2026-06-29T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "apply",
+      "currentState": "pending",
+      "hasResume": true,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://closedco.example/apply/materials",
+      "activeState": "closed"
+    },
+    {
+      "jobId": "https://example.com/jobs/pre-watermark-closed-stale",
+      "title": "Pre Watermark Closed Stale",
+      "employer": "ClosedScoreCo",
+      "source": "workday",
+      "discoveredAt": "2026-06-29T09:00:00.000Z",
+      "scoredAt": "2026-06-29T10:00:00.000Z",
+      "fitScore": 8,
+      "currentStage": "score",
+      "currentState": "stale",
+      "hasResume": false,
+      "hasCoverLetter": false,
+      "hasPdf": false,
+      "applicationUrl": "https://closedscoreco.example/apply/stale",
+      "activeState": "closed"
+    }
+  ],
+  "sourceQuality": [
+    {
+      "sourceId": "workday:unstable-example",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    }
+  ],
+  "operationalAttempts": [
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:00:00.000Z"
+    },
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:01:00.000Z"
+    },
+    {
+      "sourceId": "greenhouse:ops-only",
+      "stage": "discover",
+      "outcome": "failed",
+      "occurredAt": "2026-07-04T08:02:00.000Z"
+    }
+  ],
+  "applicationReviewDecisions": [
+    {
+      "decisionId": "decision-ready-reset",
+      "jobKey": "https://example.com/jobs/post-watermark-ready",
+      "decision": "reset",
+      "decidedAt": "2026-07-04T08:00:00.000Z"
+    },
+    {
+      "decisionId": "decision-failed-dry-run-reviewed",
+      "jobKey": "https://example.com/jobs/pre-watermark-failed-dry-run",
+      "decision": "approve_dry_run",
+      "decidedAt": "2026-07-04T09:00:00.000Z"
+    },
+    {
+      "decisionId": "decision-eligibility-blocked-reviewed",
+      "jobKey": "https://example.com/jobs/pre-watermark-eligibility-blocked",
+      "decision": "approve_dry_run",
+      "decidedAt": "2026-07-04T09:30:00.000Z"
+    }
+  ],
+  "applyRuns": [
+    {
+      "runId": "run-failed-dry-run",
+      "jobId": "https://example.com/jobs/pre-watermark-failed-dry-run",
+      "status": "failed",
+      "result": "captcha_failed",
+      "dryRun": true,
+      "startedAt": "2026-07-04T10:00:00.000Z",
+      "finishedAt": "2026-07-04T10:01:00.000Z"
+    }
+  ],
+  "scoreStaleness": [
+    {
+      "jobUrl": "https://example.com/jobs/post-watermark-scored",
+      "scoreVersion": 1
+    },
+    {
+      "jobUrl": "https://example.com/jobs/pre-watermark-closed-stale",
+      "scoreVersion": 1
+    }
+  ],
+  "applicationOutcomes": [
+    {
+      "outcomeId": "outcome-due-applied",
+      "jobKey": "https://example.com/jobs/pre-watermark-strong",
+      "kind": "applied_confirmation",
+      "occurredAt": "2026-06-20T09:00:00.000Z"
+    },
+    {
+      "outcomeId": "outcome-not-due-applied",
+      "jobKey": "https://example.com/jobs/post-watermark-ready",
+      "kind": "applied_confirmation",
+      "occurredAt": "2026-07-03T09:00:00.000Z"
+    },
+    {
+      "outcomeId": "outcome-stopped-applied",
+      "jobKey": "https://example.com/jobs/pre-watermark-low",
+      "kind": "applied_confirmation",
+      "occurredAt": "2026-06-20T09:00:00.000Z"
+    },
+    {
+      "outcomeId": "outcome-stopped-reply",
+      "jobKey": "https://example.com/jobs/pre-watermark-low",
+      "kind": "recruiter_reply",
+      "occurredAt": "2026-06-25T09:00:00.000Z"
+    }
+  ],
+  "expected": {
+    "since": "2026-07-01T00:00:00.000Z",
+    "generatedAt": "2026-07-05T12:00:00.000Z",
+    "highFitThreshold": 7,
+    "newMatches": {
+      "count": 3,
+      "highFitCount": 2
+    },
+    "blockedSources": {
+      "count": 2,
+      "sources": [
+        {
+          "sourceId": "workday:unstable-example",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3
+        },
+        {
+          "sourceId": "greenhouse:ops-only",
+          "recommendedState": "normal",
+          "consecutiveFailures": 3
+        }
+      ]
+    },
+    "reviewNeededMaterials": {
+      "count": 3
+    },
+    "staleScores": {
+      "count": 1
+    },
+    "pendingApprovals": {
+      "count": 2
+    },
+    "followUpsDue": {
+      "count": 1,
+      "thresholdDays": 7,
+      "dayBoundary": "UTC"
+    },
+    "budget": {
+      "status": "over_budget",
+      "estimatedUsd": 12.5,
+      "dailyBudgetUsd": 10,
+      "remainingUsd": 0,
+      "unlimited": false
+    }
+  }
+}

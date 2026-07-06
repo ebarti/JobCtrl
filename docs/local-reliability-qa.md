@@ -25,14 +25,18 @@ uv --project workers/automation run --extra dev ruff check .
 git diff --check
 ```
 
-`pnpm test` runs the API Vitest suite, the web build, and the Python tests —
-it does not run the web unit/hook/component suite, the type-level tests, or
-the Playwright e2e specs. For frontend-touching changes, also run:
+`pnpm test` runs the API Vitest suite, the web build, the extension unit tests,
+the extension built-bundle privacy e2e, and the Python tests — it does not run
+the web unit/hook/component suite, the type-level tests, or the Playwright e2e
+specs. For frontend-touching changes, also run:
 
 ```bash
 pnpm web:test
 pnpm web:test-d
 pnpm web:e2e
+pnpm extension:check
+pnpm extension:test
+pnpm extension:e2e
 ```
 
 For browser smoke, run the TypeScript API and web app:
@@ -93,7 +97,8 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Workflow cancellation leaves a zombie activity thread, fails to set the cooperative source cancel event, drops the cancellation projection, or hides a thread that ignored cancellation instead of emitting `abandoned_thread` operational evidence | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_workflow_finalize.py` |
 | Worker lifecycle regresses: the reconciler stops terminalizing lost open workflow rows, the worker heartbeat loop stops writing `worker_runtime_heartbeats`, duplicate workflow starts overlap instead of reusing the open run, or the workflow starter drops its dispatch-time open row | `workers/automation/tests/test_worker_reconciler.py`; `workers/automation/tests/test_worker_heartbeat_loop.py`; `workers/automation/tests/test_workflow_id_overlap.py`; `workers/automation/tests/test_workflow_starter_cache.py` |
 | Discovery source cancellation reaches only JobSpy, leaving ATS, Workday, or Smart Extract in-flight after a workflow cancel | `workers/automation/tests/test_p1b_error_inversion.py` |
-| The TypeScript API drops its loopback `Host`-header allowlist (DNS-rebinding defense) or serves/opens an artifact whose resolved path escapes the JobHunter app directory | `apps/api/test/server.test.ts` (`rejects requests whose Host header is not a loopback host`; `blocks foreign-Host mutations before the handler runs`; `allows loopback Host headers with and without a port`; `refuses to open an artifact whose path resolves outside the app directory`; `refuses to preview a PDF artifact whose path resolves outside the app directory`) |
+| The TypeScript API drops its loopback `Host`-header allowlist (DNS-rebinding defense), lets browser-extension CORS/token trust escape `/v1/extension/*`, lets a valid extension token bypass the loopback Host gate, fails to seed extension captures through `manual_capture_queue`, or serves/opens an artifact whose resolved path escapes the JobHunter app directory | `apps/api/test/server.test.ts` (`rejects requests whose Host header is not a loopback host`; `blocks foreign-Host mutations before the handler runs`; `keeps the Host gate mandatory for valid extension bearer tokens`; `allows CORS preflight only for authenticated extension API routes`; `trusts valid extension bearer tokens only on extension API routes without weakening CSRF`; `refuses to open an artifact whose path resolves outside the app directory`; `refuses to preview a PDF artifact whose path resolves outside the app directory`); `apps/api/test/discovery-controls.test.ts` (`seeds extension captures into the manual capture queue before worker import`) |
+| The browser extension broadens network permissions beyond loopback, allows content scripts outside the supported ATS allowlist, ships a non-loopback network literal, loses the stack-down local queue bound, stops sending captures/profile reads with a local bearer token, fabricates missing autofill values, or gains a submit path | `apps/extension/src/privacy.test.ts`; `apps/extension/src/privacy.e2e.test.ts`; `apps/extension/src/local-api.test.ts`; `apps/extension/src/queue.test.ts`; `apps/extension/src/ats.test.ts`; `apps/extension/src/content-script.test.ts` |
 | The release privacy gate regresses: `scripts/release_check.py` stops catching a seeded violation class (owner-derived needles, secrets, prompt tripwires, blocked file types, publish-tag/distribution paths) or its CLI exit code stops failing CI | `workers/automation/tests/test_release_check.py` |
 | Operational metrics collapse scraper, manual abort, reload, harness, and unknown failures into one failed status | `workers/automation/tests/test_operational_metrics.py`; `apps/api/test/projections.test.ts` |
 | Discovery cancel-all-sources regresses, so stopping `DiscoverWorkflow` reaches JobSpy but leaves ATS, Workday, Smart Extract, or enrichment running without observing the cooperative cancel event | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_detects_activity_cancellation_cause`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_records_canceled_outcome`; manual QA: start Discover against all source families in a disposable workspace, cancel from Runs, and confirm no source-family activity continues writing progress after cancellation |
@@ -111,6 +116,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | A cover letter ships to the employer with a fabricated metric/date/title/employer or a job-target skill/tool the profile cannot back, because its only gate is structural (banned words, dashes, word count, salutation/closing). The cover-letter body must run the same deterministic grounding gates the resume uses (never-fabricate detector + prose skill/tool gate) before acceptance, hard-reject a fabrication (letter REJECTED, aggregate stays `resume_approved`, failure kept as `fabrication_audit` history), and never false-reject legitimate content (the `Dear` salutation, the target company/role, declared skills, evidence tools, real profile numbers, or JD concept keywords in varied word forms such as scalability/reliability/observability — the skill gate is scoped to named technologies with word-form-tolerant grounding) | `workers/automation/tests/test_materials_use_cases.py` |
 | Profile PDF import corrupts defaults or drops tailoring claim/evidence controls | `workers/automation/tests/test_profile_import.py`; `workers/automation/tests/test_profile_aggregate.py`; `workers/automation/tests/test_sqlite_profile_repository.py`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
 | API list filtering/sorting/pagination or shared data-grid filtering/sorting/pagination/column resizing regresses | `apps/api/test/server.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx` |
+| Saved Jobs table views stop treating URL filters/sort as the active source of truth, lose migration safety for renamed/removed columns, or fail to restore column visibility/order/widths and table density after a reload | `apps/web/src/shared/stores/saved-table-views.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx`; browser smoke on `/jobs` |
 | Dashboard KPI drilldowns stop matching their Jobs list filters | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/KpiGrid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Apply-run drawers show roadmap placeholder copy instead of persisted timeline events | `apps/api/test/server.test.ts`; `apps/web/src/contexts/apply/components/ApplyRunTimeline.test.tsx` |
 | Activity events overload Dashboard or stop being inspectable from the Debug tab | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/DashboardView.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx`; `apps/web/src/views/debug/DebugView.test.tsx` |
@@ -178,6 +184,50 @@ synthetic dimensions, deterministic policy outputs, aggregate anchor/stale
 counts, and correction agreement. Do not add raw job URLs, correction
 rationales, anchors, resumes, or local paths to eval reports or committed
 fixtures.
+
+### Saved Views Smoke
+
+For Jobs table saved-view changes, run the targeted web fixtures and one browser
+smoke on `/jobs`:
+
+```bash
+pnpm --dir apps/web exec vitest run src/shared/stores/saved-table-views.test.ts src/shared/ui/filterable-data-grid.test.tsx src/views/jobs/JobsView.test.tsx
+```
+
+Manual smoke:
+
+1. Open `/jobs` with at least one Discover-stage and one Apply-stage synthetic
+   job.
+2. Filter the Stage column to `apply`, hide one non-critical column, reorder a
+   column, resize a column, set the table density to `compact`, group by Stage,
+   and add one semantic color rule.
+3. Save the current template as a named view, switch to `Default`, then switch
+   back to the named view.
+4. Reload the page and confirm the named template restores column visibility,
+   order, widths, density, grouping, color rules, and the URL-backed stage
+   filter/sort.
+5. Rename the view, delete it, and confirm the table falls back to `Default`.
+
+### Daily Digest Smoke
+
+For daily digest changes, run the TypeScript/Python parity fixtures plus the
+CLI smoke:
+
+```bash
+pnpm --dir apps/api exec vitest run test/digest.test.ts
+uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_digest_parity.py workers/automation/tests/test_digest_cli.py
+```
+
+Manual smoke:
+
+1. Open Dashboard and confirm the Digest panel renders the same counts as
+   `uv --project workers/automation run jobhunter digest --json` for the same
+   local database.
+2. Run `uv --project workers/automation run jobhunter digest` and confirm it
+   does not change `digest_state.last_acknowledged_at`.
+3. Run `uv --project workers/automation run jobhunter digest --acknowledge`
+   and confirm the watermark advances to the displayed digest timestamp and a
+   `DigestReviewed` event is recorded.
 
 ### Resume Tailoring Quality Eval Gate
 
@@ -409,6 +459,19 @@ type system provides; each lives next to its subject:
 | --- | --- | --- | --- |
 | `every-event-has-handler.test.ts` | `apps/web/src/contexts/operations/` | Every `DomainEvent["eventType"]` variant has a registered handler in `invalidation-router.ts`, and the handler body is not the obvious empty stub `() => []`. | Backstop to `Record<DomainEvent["eventType"], InvalidationHandler>` — target §7.4. Mirrors the backend's `scripts/check-domain-type-parity.py` pattern. |
 | `every-stage-state-has-badge.test.tsx` | `apps/web/src/contexts/pipeline/components/` | Every `STAGE_STATE_KINDS` value is rendered by a non-default `<StageBadge>` arm. | Backstop to the exhaustive `switch (state.kind)` in `<StageBadge>` — target §10.2. |
+
+### Browser Extension QA
+
+Manual extension QA uses a disposable workspace. Start `pnpm dev`, build the
+extension with `pnpm extension:build`, load `dist/extension/` unpacked in
+Chrome/Chromium developer mode, pair it with the Settings token, save a
+synthetic posting, and confirm the job appears in Jobs and the Discovery Manual
+capture tab with `manual_capture:extension` provenance. Stop the stack, save
+another synthetic posting, restart the stack, save once more, and confirm the
+queued capture syncs locally. For deterministic autofill, open a synthetic
+Workday/Greenhouse/Lever/Ashby form, click **Review autofill**, accept selected
+values, and confirm the page's submit handler is not invoked. Do not use real
+applications or submit anything from this flow.
 
 ### Accessibility bar
 

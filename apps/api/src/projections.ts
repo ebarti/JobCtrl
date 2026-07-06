@@ -433,6 +433,11 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       last_event_id       INTEGER NOT NULL DEFAULT 0,
       updated_at          TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS digest_state (
+      tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
+      last_acknowledged_at   TEXT,
+      updated_at             TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS job_list_projections (
       tenant_id              TEXT NOT NULL DEFAULT 'local',
       job_id                 TEXT NOT NULL,

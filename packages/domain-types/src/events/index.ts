@@ -229,6 +229,12 @@ export {
 } from "./compensation.js";
 
 export {
+  type DigestReviewedPayload,
+  type DigestReviewed,
+  createDigestReviewed,
+} from "./operations.js";
+
+export {
   type WorkflowLifecycleStatus,
   type WorkflowStartedPayload,
   type WorkflowStarted,
@@ -320,6 +326,7 @@ import type {
 } from "./orchestration.js";
 import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
 import type { CompensationFactsUpdated } from "./compensation.js";
+import type { DigestReviewed } from "./operations.js";
 import type {
   WorkflowStarted,
   WorkflowCompleted,
@@ -392,6 +399,7 @@ export type DomainEventUnion =
   | ProfileImported
   | TailoringPolicyUpdated
   | CompensationFactsUpdated
+  | DigestReviewed
   | WorkflowStarted
   | WorkflowCompleted
   | WorkflowFailed
@@ -464,6 +472,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ProfileImported",
   "TailoringPolicyUpdated",
   "CompensationFactsUpdated",
+  "DigestReviewed",
   "WorkflowStarted",
   "WorkflowCompleted",
   "WorkflowFailed",

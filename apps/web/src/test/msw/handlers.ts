@@ -11,8 +11,10 @@ import {
   makeWorkflowRunsPage,
   makeWorkflowRunDetail,
   sampleCredentialsResponse,
+  sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
+  sampleExtensionCapabilityTokenResponse,
   sampleHealthResponse,
   sampleOutcomeAnalyticsSummary,
   sampleProfileResponse,
@@ -152,6 +154,17 @@ export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
   http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),
+  http.get("*/v1/digest", () => HttpResponse.json(sampleDailyDigest)),
+  http.post("*/v1/digest/acknowledge", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { acknowledgedAt?: string };
+    return HttpResponse.json({
+      ok: true,
+      state: {
+        lastAcknowledgedAt: body.acknowledgedAt ?? sampleDailyDigest.generatedAt,
+        updatedAt: sampleDailyDigest.generatedAt,
+      },
+    });
+  }),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),
@@ -708,6 +721,16 @@ export const handlers = [
 
   http.get("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
   http.patch("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
+  http.get("*/v1/extension/pairing-token", () =>
+    HttpResponse.json(sampleExtensionCapabilityTokenResponse),
+  ),
+  http.post("*/v1/extension/pairing-token/rotate", () =>
+    HttpResponse.json({
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
+    }),
+  ),
 
   http.get("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
