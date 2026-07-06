@@ -60,6 +60,10 @@ Use the Discovery page to set:
 - minimum fit score and automation preferences;
 - manual capture and quarantined source decisions.
 
+The optional browser extension's **Save job** action also lands here: it records
+the active page as a user-mediated manual capture, then the normal discovery
+import path dedupes, snapshots, and surfaces the job in Jobs.
+
 Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.
@@ -122,7 +126,16 @@ Use the job detail drawer to inspect:
 Failed preparation work can be retried per job or in bulk without automatically
 starting apply automation.
 
-## 5. Generate And Inspect Materials
+## 5. Inspect The Evidence Map
+
+Open Evidence from the main navigation, the Profile page, or a job detail
+drawer. The Evidence map shows the canonical profile achievements and declared
+skills currently reused by generated resume bullets, requirement-fit decisions,
+keyword coverage, and recorded gaps. Links in the usage lists return to the
+owning artifact or job detail so you can audit the source before editing profile
+evidence or re-running materials.
+
+## 6. Generate And Inspect Materials
 
 Eligible jobs receive tailored resumes and cover letters during Discover. You can
 also generate materials for a single job from the job detail drawer.
@@ -131,7 +144,28 @@ Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
 
-## 6. Review And Edit The Resume
+## 7. Generate Interview Prep
+
+From a job detail drawer, use "generate interview prep" when you want stored
+pre-interview notes for that job. Prep is generated only after you ask for it and
+uses JobHunter's grounded data: profile evidence, requirement fit, accepted
+materials, employer analysis, and evidence-map usage.
+
+The drawer shows the latest accepted prep as themes, STAR-story drafts, gap
+drills, and company notes. Each item keeps its evidence IDs, requirement IDs, and
+profile source snippets visible, with evidence links back into the Evidence map.
+Regeneration keeps the last accepted prep visible until a replacement is
+accepted.
+
+After the interview, record reflection notes from the same prep panel. Each
+reflection is saved as a normal manual `interview` outcome linked to that prep
+generation, so it also appears in the job's application outcome timeline.
+
+Interview prep is not live interview assistance. JobHunter does not provide
+in-session answers, transcript upload, microphone input, websocket streaming, or
+real-time interview participation.
+
+## 8. Review And Edit The Resume
 
 Apply Review opens the generated resume in an in-browser editor. The editor keeps
 the final PDF link, the source behind each line, risk flags, JobHunter's line
@@ -146,12 +180,14 @@ Typical review actions:
 - reply to JobHunter line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;
+- compare the accepted artifact with the rendered draft using stored coverage,
+  validation, judge, template, and risk-label rows;
 - approve only after the edited draft is saved, valid, and rendered.
 
 Failed validation stays as audit history and does not hide the last accepted
 artifact.
 
-## 7. Rehearse With A Dry Run
+## 9. Rehearse With A Dry Run
 
 Apply automation can submit real applications, so start with dry runs:
 
@@ -171,25 +207,32 @@ Apply Review, and requires full dry-run evidence unless you explicitly accept a
 listed partial dry-run with its blocked channels. The full approval model is on
 the [Security](security.md) page.
 
-## 8. Inspect Progress
+## 10. Inspect Progress
 
 Useful command-line checks:
 
 ```bash
 uv --project workers/automation run jobhunter status
+uv --project workers/automation run jobhunter digest
 uv --project workers/automation run jobhunter runs
 uv --project workers/automation run jobhunter runs --failed-only
 ```
 
-These print your pipeline status, list all workflow runs, and list only failed
-runs, respectively.
+These print your pipeline status, show the local daily digest, list all workflow
+runs, and list only failed runs, respectively. The digest is read-only unless
+you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 Useful web app views:
 
 - Dashboard for high-level counts and source health.
+- Analytics for recorded outcome counts and sample-gated rates by source, score
+  band, fit band, and apply mode. The page reads canonical application outcome
+  rows and projections only; groups below the minimum sample count stay
+  count-only.
 - Jobs for triage and per-job actions.
 - Runs for workflow history.
-- Artifacts for generated files.
+- Evidence for profile-evidence reuse, generated-material usage, and gaps.
+- Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
 

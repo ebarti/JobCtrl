@@ -127,6 +127,10 @@ pnpm api:test
 pnpm web:check
 pnpm web:build
 pnpm qa:test
+pnpm extension:check
+pnpm extension:test
+pnpm extension:build
+pnpm extension:e2e
 ```
 
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
@@ -187,6 +191,25 @@ pnpm web:storybook:test
 `web:storybook:test` runs the Storybook test runner over the static build,
 which executes the per-story `play()` interactions and the
 `@storybook/addon-a11y` axe checks (critical+serious violations fail).
+
+## Browser Extension
+
+The Manifest V3 browser extension lives under `apps/extension`. It is a local
+capture client for the TypeScript API, not a hosted/browser-store package.
+
+```bash
+pnpm extension:check
+pnpm extension:test
+pnpm extension:build
+pnpm extension:e2e
+```
+
+`pnpm extension:build` writes the unpacked extension bundle to
+`dist/extension/`; load that directory in Chrome/Chromium developer mode for
+manual QA. The extension uses `activeTab`, `scripting`, and `storage`, and its
+manifest network permissions are limited to `http://127.0.0.1:8766/*` and
+`http://localhost:8766/*`. `pnpm extension:e2e` builds the bundle and scans the
+built manifest/assets for the localhost-only invariant.
 
 ## Docs Site
 

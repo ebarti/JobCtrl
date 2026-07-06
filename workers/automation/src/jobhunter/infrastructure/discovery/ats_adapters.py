@@ -26,11 +26,8 @@ counts, and error classes from spans in addition to events.
 
 from __future__ import annotations
 
-import json
 import logging
 import html
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Iterator
 
@@ -63,44 +60,15 @@ HttpFetcher = Callable[..., Any]
 """Callable signature shared by every adapter.
 
 Accepts a fully-formed HTTP URL and optional method/body kwargs, then
-returns the decoded JSON payload (typically a ``dict`` or ``list``).
-Tests inject a fixture-backed fetcher; production injects
-:func:`default_http_fetcher`.
+returns the decoded JSON payload (typically a ``dict`` or ``list``), or
+``None`` when the politeness gateway blocked the fetch. The fetcher is
+**required** — production injects a gateway-routed
+:class:`~jobhunter.infrastructure.network.http_client.GatewayHttpClient`
+(robots + rate + budget + honest UA) at the composition root
+(``run_scheduled_ats_sources`` / ``_adapter_for_source``); tests inject a
+fixture-backed fetcher. Adapters no longer build their own ``urllib`` transport
+(R10): every outbound request routes through the gateway.
 """
-
-
-def default_http_fetcher(
-    url: str,
-    *,
-    method: str = "GET",
-    json_body: dict[str, Any] | None = None,
-    timeout: float = 20.0,
-) -> Any:
-    """Production fetcher — JSON request with a regular browser UA.
-
-    We deliberately use ``urllib`` rather than ``requests`` so the
-    workers package keeps its current minimal dependency surface.
-    """
-
-    data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Accept", "application/json")
-    if json_body is not None:
-        req.add_header("Content-Type", "application/json")
-    req.add_header(
-        "User-Agent",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 "
-        "JobHunter/1.0 (+https://github.com/ebarti/JobHunter)",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        log.warning("ATS adapter HTTP %s for %s: %s", exc.code, url, exc.reason)
-        raise
-    except urllib.error.URLError as exc:
-        log.warning("ATS adapter URL error for %s: %s", url, exc.reason)
-        raise
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +110,7 @@ class WorkdayBoardAdapter:
         *,
         source_id: str,
         employer: WorkdayEmployer,
-        http: HttpFetcher | None = None,
+        http: HttpFetcher,
         page_size: int = 20,
         max_pages: int = 25,
         location_accept: Iterable[str] = (),
@@ -150,7 +118,7 @@ class WorkdayBoardAdapter:
     ) -> None:
         self._source_id = source_id
         self._employer = employer
-        self._http = http or default_http_fetcher
+        self._http = http
         self._page_size = page_size
         self._max_pages = max_pages
         self._location_accept = tuple(location_accept)
@@ -286,14 +254,14 @@ class GreenhouseBoardAdapter:
         *,
         source_id: str,
         board_token: str,
-        http: HttpFetcher | None = None,
+        http: HttpFetcher,
         company: str | None = None,
         location_accept: Iterable[str] = (),
         location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._board_token = board_token
-        self._http = http or default_http_fetcher
+        self._http = http
         self._company = company
         self._location_accept = tuple(location_accept)
         self._location_reject = tuple(location_reject)
@@ -401,14 +369,14 @@ class LeverBoardAdapter:
         *,
         source_id: str,
         site: str,
-        http: HttpFetcher | None = None,
+        http: HttpFetcher,
         company: str | None = None,
         location_accept: Iterable[str] = (),
         location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._site = site
-        self._http = http or default_http_fetcher
+        self._http = http
         self._company = company
         self._location_accept = tuple(location_accept)
         self._location_reject = tuple(location_reject)
@@ -507,14 +475,14 @@ class AshbyBoardAdapter:
         *,
         source_id: str,
         board_name: str,
-        http: HttpFetcher | None = None,
+        http: HttpFetcher,
         company: str | None = None,
         location_accept: Iterable[str] = (),
         location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._board_name = board_name
-        self._http = http or default_http_fetcher
+        self._http = http
         self._company = company
         self._location_accept = tuple(location_accept)
         self._location_reject = tuple(location_reject)
@@ -639,5 +607,4 @@ __all__ = [
     "LeverBoardAdapter",
     "WorkdayBoardAdapter",
     "WorkdayEmployer",
-    "default_http_fetcher",
 ]

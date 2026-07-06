@@ -233,6 +233,12 @@ function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
       next[key] = Math.round(numeric);
     }
   }
+  for (const key of ["discoveredSince", "scoredSince"] as const) {
+    const timestamp = source[key];
+    if (typeof timestamp === "string" && timestamp.trim()) {
+      next[key] = timestamp.trim();
+    }
+  }
   return next;
 }
 

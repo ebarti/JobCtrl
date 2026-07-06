@@ -122,6 +122,7 @@ budget, and the Preferences form edits the value.
 | --- | --- | --- |
 | `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER` | `auto` | Uses an LLM to adjudicate loose role-title matches when an LLM provider is configured. Set `0` to force deterministic matching only. |
 | `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL` | configured LLM model | Optional model spec for discovery role adjudication. |
+| `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` | `1` | How many discovery source families (`jobspy`, `ats_api`, `workday`, `smartextract`) crawl at once. `1` (default) keeps families sequential — the safe, isolated behavior. Values `> 1` run that many source crawls concurrently to cut total discovery wall-clock; enrichment still runs once per batch (never concurrently). Read at run start and applied for the whole run; change it in the worker environment and restart the worker. **Tune conservatively:** each concurrent family may launch its own headless browser, so keep this ≤ `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` and mind memory (~roughly 300–600 MB per Chromium). Uncontrolled browser concurrency has historically destabilized long runs — see [Concurrency & Fan-out](../architecture/pipeline/concurrency.md) for the worker-capacity analysis before raising it. |
 
 Discovery target roles, locations, seniority, work models, source controls, and
 automation preferences are normally edited in the Discovery page and stored in

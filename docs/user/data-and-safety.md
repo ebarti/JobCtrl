@@ -57,7 +57,8 @@ letters.
 
 Depending on configuration, JobHunter can call:
 
-- LLM providers for scoring, employer analysis, tailoring, and cover letters;
+- LLM providers for scoring, employer analysis, tailoring, cover letters, and
+  stored interview prep;
 - job boards, ATS APIs, or public posting pages for discovery and enrichment;
 - Gmail read-only APIs for verification-code or outcome feedback flows. The
   current connector does not request `gmail.send`; granting or wiring that scope
@@ -91,13 +92,30 @@ These boundaries are the operator's responsibility:
 - **Scraping and source terms:** source access can violate provider or site
   terms. Default discovery options include LinkedIn and Indeed; disable any
   source you are not allowed to query automatically.
-- **Local API exposure:** the TypeScript API is a local, unauthenticated API
-  intended for loopback use. The default host is `127.0.0.1`; opting into a
-  non-loopback bind or exposing it through a tunnel can expose private profile,
-  job, artifact, and credential-adjacent metadata.
+- **Local API exposure:** the TypeScript API is intended for loopback use. The
+  default host is `127.0.0.1`; opting into a non-loopback bind or exposing it
+  through a tunnel can expose private profile, job, artifact, and
+  credential-adjacent metadata. Browser-extension routes add a local capability
+  token stored under `~/.jobhunter/`, but that token does not make a remote bind
+  safe.
+- **Browser-extension captures:** the optional extension stores its pairing
+  token and any stack-down capture queue in browser extension storage. Queued
+  captures contain page URLs and visible posting text, expire under the
+  extension's bounded local policy, and are cleared when you save a new pairing
+  token.
+- **Browser-extension autofill:** supported ATS pages receive only the
+  whitelisted profile fields needed for deterministic suggestions. Profile
+  passwords, resume bullets, generated materials, and free-text answer drafts
+  are not sent to the extension autofill route.
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
+- **Interview prep:** JobHunter can generate stored pre-interview notes for a
+  job from grounded profile/job/material evidence. Post-interview reflection
+  notes can be linked to an accepted prep generation, but they stay local manual
+  outcome notes. JobHunter is not a live interview assistant and has no
+  transcript upload, microphone input, streaming, websocket, in-session state, or
+  real-time answer surface.
 
 ## Auto-Apply Safety
 
@@ -114,8 +132,8 @@ in [Security](security.md).
 
 Two guarantees stay here because they are about your local artifacts:
 
-- manual outcomes can be recorded without browser automation, and web approval
-  facts do not submit by themselves;
+- manual outcomes, including interview-prep reflections, can be recorded without
+  browser automation, and web approval facts do not submit by themselves;
 - failed refreshes or invalid edited drafts must not destroy current accepted
   materials.
 

@@ -354,6 +354,51 @@ describe("FilterableDataGrid", () => {
     );
   });
 
+  it("groups page rows and applies semantic color-rule classes", () => {
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        grouping={{ columnId: "provider" }}
+        colorRules={[
+          {
+            columnId: "company",
+            predicate: { op: "contains", value: "Acme" },
+            tone: "success",
+          },
+          {
+            columnId: "observed",
+            predicate: { op: "gte", value: 8 },
+            tone: "warning",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("row", { name: /Workday ATS 2/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    expect(screen.getByRole("row", { name: /JobSpy board 1/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
+    expect(acmeRow).toHaveClass("data-grid-row-tone-success");
+    expect(within(acmeRow).getByRole("rowheader")).toHaveClass(
+      "data-grid-cell-tone-success",
+    );
+    const boardRow = screen.getByRole("row", { name: /BoardCo JobSpy board 8/i });
+    expect(boardRow).toHaveClass("data-grid-row-tone-warning");
+    expect(within(boardRow).getByText("8").closest("td")).toHaveClass(
+      "data-grid-cell-tone-warning",
+    );
+  });
+
   it("keeps dense grid focus indicators tied to the standard ring token", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
 

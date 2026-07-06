@@ -1481,6 +1481,173 @@ def job(
 
 
 @app.command()
+def digest(
+    acknowledge: bool = typer.Option(
+        False,
+        "--acknowledge",
+        help="Mark the generated digest as reviewed after printing it.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    min_fit_score: Optional[int] = typer.Option(
+        None,
+        "--min-fit-score",
+        min=1,
+        max=10,
+        help="Override the high-fit score threshold for this digest.",
+    ),
+) -> None:
+    """Show the local daily digest."""
+    _bootstrap()
+
+    from jobhunter.database import get_connection
+    from jobhunter.digest import acknowledge_digest, build_digest
+    from jobhunter.infrastructure.scoring.criteria_provider import read_min_fit_score
+
+    threshold = min_fit_score if min_fit_score is not None else read_min_fit_score()
+    conn = get_connection()
+    digest_payload = build_digest(conn, min_fit_score=threshold)
+    acknowledge_payload = None
+    if acknowledge:
+        acknowledge_payload = acknowledge_digest(
+            conn,
+            acknowledged_at=str(digest_payload["generatedAt"]),
+        )
+
+    if json_output:
+        payload = (
+            {"digest": digest_payload, "acknowledge": acknowledge_payload}
+            if acknowledge_payload
+            else digest_payload
+        )
+        console.print_json(data=payload)
+        return
+
+    since = digest_payload.get("since") or "first run"
+    console.print("\n[bold]Daily digest[/bold]")
+    console.print(
+        "[dim]"
+        f"Since {since} · generated {digest_payload.get('generatedAt')} · "
+        f"high-fit {digest_payload.get('highFitThreshold')}+"
+        "[/dim]\n"
+    )
+    console.print(_render_digest_table(digest_payload))
+    links_table = _render_digest_links_table(digest_payload)
+    if links_table:
+        console.print()
+        console.print(links_table)
+    if acknowledge_payload:
+        state = acknowledge_payload.get("state", {})
+        console.print(f"\n[green]Marked reviewed:[/green] {state.get('lastAcknowledgedAt')}")
+    else:
+        console.print("\n[dim]Run with --acknowledge after reviewing to move the digest watermark.[/dim]")
+
+
+def _render_digest_table(digest_payload: dict[str, Any]) -> Table:
+    new_matches = _dict(digest_payload.get("newMatches"))
+    blocked_sources = _dict(digest_payload.get("blockedSources"))
+    follow_ups = _dict(digest_payload.get("followUpsDue"))
+    budget = _dict(digest_payload.get("budget"))
+    table = Table(title="Review Queue", show_lines=False)
+    table.add_column("Area", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Notes")
+    table.add_row(
+        "New matches",
+        str(new_matches.get("count", 0)),
+        f"{new_matches.get('highFitCount', 0)} at high-fit threshold",
+    )
+    table.add_row(
+        "Blocked sources",
+        str(blocked_sources.get("count", 0)),
+        _blocked_source_note(blocked_sources),
+    )
+    table.add_row(
+        "Materials review",
+        str(_dict(digest_payload.get("reviewNeededMaterials")).get("count", 0)),
+        "Candidates needing resume or cover-letter review",
+    )
+    table.add_row(
+        "Pending approvals",
+        str(_dict(digest_payload.get("pendingApprovals")).get("count", 0)),
+        "Apply-review decisions waiting on the user",
+    )
+    table.add_row(
+        "Stale scores",
+        str(_dict(digest_payload.get("staleScores")).get("count", 0)),
+        "Jobs needing current-policy score refresh",
+    )
+    table.add_row(
+        "Follow-ups due",
+        str(follow_ups.get("count", 0)),
+        f"{follow_ups.get('thresholdDays', 7)} days, {follow_ups.get('dayBoundary', 'UTC')} boundary",
+    )
+    table.add_row("Budget", _budget_status_label(budget), _budget_note(budget))
+    return table
+
+
+def _render_digest_links_table(digest_payload: dict[str, Any]) -> Table | None:
+    links = _dict(digest_payload.get("deepLinks"))
+    if not links:
+        return None
+    table = Table(title="Open In Web App", show_lines=False)
+    table.add_column("Area", style="bold")
+    table.add_column("Path")
+    labels = {
+        "newMatches": "New matches",
+        "blockedSources": "Blocked sources",
+        "reviewNeededMaterials": "Materials review",
+        "staleScores": "Stale scores",
+        "pendingApprovals": "Pending approvals",
+        "followUpsDue": "Follow-ups due",
+        "budget": "Budget",
+    }
+    for key, label in labels.items():
+        value = links.get(key)
+        if value:
+            table.add_row(label, str(value))
+    return table
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _blocked_source_note(blocked_sources: dict[str, Any]) -> str:
+    sources = blocked_sources.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return "No blocked or failing sources"
+    names = [
+        str(_dict(source).get("sourceId") or "")
+        for source in sources[:3]
+        if str(_dict(source).get("sourceId") or "")
+    ]
+    extra = len(sources) - len(names)
+    if extra > 0:
+        names.append(f"+{extra} more")
+    return ", ".join(names)
+
+
+def _budget_status_label(budget: dict[str, Any]) -> str:
+    status = str(budget.get("status") or "unknown")
+    if status == "over_budget":
+        return "[red]over budget[/red]"
+    if status == "ok":
+        return "[green]ok[/green]"
+    return status
+
+
+def _budget_note(budget: dict[str, Any]) -> str:
+    if budget.get("unlimited"):
+        return "Unlimited local daily budget"
+    estimated = float(budget.get("estimatedUsd") or 0.0)
+    daily = float(budget.get("dailyBudgetUsd") or 0.0)
+    remaining = budget.get("remainingUsd")
+    if remaining is None:
+        return f"${estimated:.2f} estimated of ${daily:.2f}"
+    return f"${estimated:.2f} estimated, ${float(remaining):.2f} remaining of ${daily:.2f}"
+
+
+@app.command()
 def status() -> None:
     """Show pipeline statistics from the database."""
     _bootstrap()

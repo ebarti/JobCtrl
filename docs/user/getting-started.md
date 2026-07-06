@@ -162,6 +162,21 @@ The first lists the running services and their health; the second streams the
 Python worker's logs. Stop the whole stack with Ctrl-C in the terminal running
 `pnpm dev`.
 
+### Optional Browser Extension
+
+To save a job directly from the current browser tab, build the local extension:
+
+```bash
+pnpm extension:build
+```
+
+Then load `dist/extension/` as an unpacked Chrome/Chromium extension, open
+JobHunter Settings, copy the browser-extension pairing token into the extension
+popup, and click **Save job** on an http(s) job page. On supported ATS
+application pages, **Review autofill** opens deterministic profile-backed
+suggestions that you accept before fields are filled. The extension talks only
+to the local API. It cannot submit applications.
+
 ## 5. Use A Disposable Workspace For Testing
 
 Use a throwaway workspace when testing risky flows, taking screenshots, or

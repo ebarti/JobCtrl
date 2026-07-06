@@ -1438,6 +1438,7 @@ describe("application feedback API", () => {
       kind: "interview",
       source: "manual",
       note,
+      interviewPrepGeneration: null,
     });
 
     const jobOutcomes = await app.inject({
@@ -1458,6 +1459,74 @@ describe("application feedback API", () => {
     ]);
 
     expect(eventPayloadText(options.dbPath)).not.toContain(note);
+    await app.close();
+  });
+
+  it("links post-interview reflections to an accepted prep generation without leaking notes", async () => {
+    seedInterviewPrepGeneration(options.dbPath, READY_JOB, 2);
+    const app = buildApp(options);
+    const note = "private reflection after a platform design interview";
+
+    const write = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
+      payload: {
+        kind: "interview",
+        occurredAt: "2026-06-01T12:00:00.000Z",
+        note,
+        interviewPrepGeneration: 2,
+      },
+    });
+
+    expect(write.statusCode, write.body).toBe(200);
+    const outcome = write.json().outcome;
+    expect(outcome).toMatchObject({
+      jobKey: READY_JOB,
+      kind: "interview",
+      source: "manual",
+      note,
+      interviewPrepGeneration: 2,
+    });
+
+    const jobOutcomes = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
+    });
+    expect(jobOutcomes.statusCode, jobOutcomes.body).toBe(200);
+    expect(jobOutcomes.json().outcomes).toEqual([
+      expect.objectContaining({
+        outcomeId: outcome.outcomeId,
+        interviewPrepGeneration: 2,
+      }),
+    ]);
+
+    const payloadText = eventPayloadText(options.dbPath);
+    expect(payloadText).toContain('"interviewPrepGeneration":2');
+    expect(payloadText).not.toContain(note);
+    await app.close();
+  });
+
+  it("rejects reflection links that do not resolve to stored prep", async () => {
+    const app = buildApp(options);
+
+    const write = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
+      payload: {
+        kind: "interview",
+        occurredAt: "2026-06-01T12:00:00.000Z",
+        note: "private reflection",
+        interviewPrepGeneration: 99,
+      },
+    });
+
+    expect(write.statusCode, write.body).toBe(404);
+    expect(write.json()).toMatchObject({
+      ok: false,
+      error: "not_found",
+      message: "Interview prep generation not found.",
+    });
+    expect(eventPayloadText(options.dbPath)).not.toContain("private reflection");
     await app.close();
   });
 
@@ -2664,6 +2733,31 @@ function eventPayloadText(dbPath: string): string {
       .prepare("SELECT payload_json FROM job_events ORDER BY event_id ASC")
       .all() as Array<{ payload_json: string | null }>;
     return rows.map((row) => row.payload_json ?? "").join("\n");
+  } finally {
+    db.close();
+  }
+}
+
+function seedInterviewPrepGeneration(dbPath: string, jobUrl: string, generation: number): void {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS job_interview_prep (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        model TEXT,
+        gate_audit_json TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY (job_url, generation)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO job_interview_prep (
+         tenant_id, job_url, generation, status, generated_at, model, gate_audit_json
+       ) VALUES ('local', ?, ?, 'accepted', '2026-06-01T10:30:00.000Z', 'gpt-test', '{}')`,
+    ).run(jobUrl, generation);
   } finally {
     db.close();
   }
