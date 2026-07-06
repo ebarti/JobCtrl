@@ -268,6 +268,69 @@ export {
   createWorkflowTerminated,
 } from "./workflow.js";
 
+export {
+  CONTACT_SOURCE_KINDS,
+  type ContactSourceKind,
+  CONTACT_ROLES,
+  type ContactRoleValue,
+  OUTREACH_DRAFT_KINDS,
+  type OutreachDraftKind,
+  type ContactCreatedPayload,
+  type ContactCreated,
+  createContactCreated,
+  type ContactUpdatedPayload,
+  type ContactUpdated,
+  createContactUpdated,
+  type ContactAttributeRecordedPayload,
+  type ContactAttributeRecorded,
+  createContactAttributeRecorded,
+  type ContactDeletedPayload,
+  type ContactDeleted,
+  createContactDeleted,
+  type WarmIntroIdentifiedPayload,
+  type WarmIntroIdentified,
+  createWarmIntroIdentified,
+  type ContactResearchTaskStartedPayload,
+  type ContactResearchTaskStarted,
+  createContactResearchTaskStarted,
+  type ContactCandidateProposedPayload,
+  type ContactCandidateProposed,
+  createContactCandidateProposed,
+  type ContactResearchTaskNeedsReviewPayload,
+  type ContactResearchTaskNeedsReview,
+  createContactResearchTaskNeedsReview,
+  type ContactResearchTaskCompletedPayload,
+  type ContactResearchTaskCompleted,
+  createContactResearchTaskCompleted,
+  type ContactResearchTaskFailedPayload,
+  type ContactResearchTaskFailed,
+  createContactResearchTaskFailed,
+  type OutreachDraftGeneratedPayload,
+  type OutreachDraftGenerated,
+  createOutreachDraftGenerated,
+  type OutreachDraftRevisedPayload,
+  type OutreachDraftRevised,
+  createOutreachDraftRevised,
+  type OutreachDraftApprovedPayload,
+  type OutreachDraftApproved,
+  createOutreachDraftApproved,
+  type OutreachDraftRejectedPayload,
+  type OutreachDraftRejected,
+  createOutreachDraftRejected,
+  type OutreachSendLoggedPayload,
+  type OutreachSendLogged,
+  createOutreachSendLogged,
+  type FollowUpScheduledPayload,
+  type FollowUpScheduled,
+  createFollowUpScheduled,
+  type FollowUpCompletedPayload,
+  type FollowUpCompleted,
+  createFollowUpCompleted,
+  type FollowUpDismissedPayload,
+  type FollowUpDismissed,
+  createFollowUpDismissed,
+} from "./contact.js";
+
 import type {
   JobDeleted,
   JobDiscovered,
@@ -349,6 +412,26 @@ import type {
   WorkflowTimedOut,
   WorkflowTerminated,
 } from "./workflow.js";
+import type {
+  ContactCreated,
+  ContactUpdated,
+  ContactAttributeRecorded,
+  ContactDeleted,
+  WarmIntroIdentified,
+  ContactResearchTaskStarted,
+  ContactCandidateProposed,
+  ContactResearchTaskNeedsReview,
+  ContactResearchTaskCompleted,
+  ContactResearchTaskFailed,
+  OutreachDraftGenerated,
+  OutreachDraftRevised,
+  OutreachDraftApproved,
+  OutreachDraftRejected,
+  OutreachSendLogged,
+  FollowUpScheduled,
+  FollowUpCompleted,
+  FollowUpDismissed,
+} from "./contact.js";
 
 export type DomainEventUnion =
   | JobDiscovered
@@ -422,7 +505,25 @@ export type DomainEventUnion =
   | WorkflowFailed
   | WorkflowCanceled
   | WorkflowTimedOut
-  | WorkflowTerminated;
+  | WorkflowTerminated
+  | ContactCreated
+  | ContactUpdated
+  | ContactAttributeRecorded
+  | ContactDeleted
+  | WarmIntroIdentified
+  | ContactResearchTaskStarted
+  | ContactCandidateProposed
+  | ContactResearchTaskNeedsReview
+  | ContactResearchTaskCompleted
+  | ContactResearchTaskFailed
+  | OutreachDraftGenerated
+  | OutreachDraftRevised
+  | OutreachDraftApproved
+  | OutreachDraftRejected
+  | OutreachSendLogged
+  | FollowUpScheduled
+  | FollowUpCompleted
+  | FollowUpDismissed;
 
 export type DomainEventType = DomainEventUnion["eventType"];
 
@@ -499,6 +600,24 @@ export const DOMAIN_EVENT_TYPES = [
   "WorkflowCanceled",
   "WorkflowTimedOut",
   "WorkflowTerminated",
+  "ContactCreated",
+  "ContactUpdated",
+  "ContactAttributeRecorded",
+  "ContactDeleted",
+  "WarmIntroIdentified",
+  "ContactResearchTaskStarted",
+  "ContactCandidateProposed",
+  "ContactResearchTaskNeedsReview",
+  "ContactResearchTaskCompleted",
+  "ContactResearchTaskFailed",
+  "OutreachDraftGenerated",
+  "OutreachDraftRevised",
+  "OutreachDraftApproved",
+  "OutreachDraftRejected",
+  "OutreachSendLogged",
+  "FollowUpScheduled",
+  "FollowUpCompleted",
+  "FollowUpDismissed",
 ] as const satisfies readonly DomainEventType[];
 
 type EnumeratedDomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];

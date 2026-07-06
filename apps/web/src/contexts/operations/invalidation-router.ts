@@ -88,6 +88,26 @@ import {
   scoreCorrectedHandler,
   scoreRescoreRequestedHandler,
 } from "../scoring/handlers.js";
+import {
+  contactCreatedHandler,
+  contactUpdatedHandler,
+  contactAttributeRecordedHandler,
+  contactDeletedHandler,
+  warmIntroIdentifiedHandler,
+  contactResearchTaskStartedHandler,
+  contactCandidateProposedHandler,
+  contactResearchTaskNeedsReviewHandler,
+  contactResearchTaskCompletedHandler,
+  contactResearchTaskFailedHandler,
+  outreachDraftGeneratedHandler,
+  outreachDraftRevisedHandler,
+  outreachDraftApprovedHandler,
+  outreachDraftRejectedHandler,
+  outreachSendLoggedHandler,
+  followUpScheduledHandler,
+  followUpCompletedHandler,
+  followUpDismissedHandler,
+} from "../outreach/handlers.js";
 import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { digestKeys } from "./digestKeys.js";
@@ -201,6 +221,24 @@ export const handlers: HandlerMap = {
   WorkflowCanceled: workflowCanceledHandler,
   WorkflowTimedOut: workflowTimedOutHandler,
   WorkflowTerminated: workflowTerminatedHandler,
+  ContactCreated: contactCreatedHandler,
+  ContactUpdated: contactUpdatedHandler,
+  ContactAttributeRecorded: contactAttributeRecordedHandler,
+  ContactDeleted: contactDeletedHandler,
+  WarmIntroIdentified: warmIntroIdentifiedHandler,
+  ContactResearchTaskStarted: contactResearchTaskStartedHandler,
+  ContactCandidateProposed: contactCandidateProposedHandler,
+  ContactResearchTaskNeedsReview: contactResearchTaskNeedsReviewHandler,
+  ContactResearchTaskCompleted: contactResearchTaskCompletedHandler,
+  ContactResearchTaskFailed: contactResearchTaskFailedHandler,
+  OutreachDraftGenerated: outreachDraftGeneratedHandler,
+  OutreachDraftRevised: outreachDraftRevisedHandler,
+  OutreachDraftApproved: outreachDraftApprovedHandler,
+  OutreachDraftRejected: outreachDraftRejectedHandler,
+  OutreachSendLogged: outreachSendLoggedHandler,
+  FollowUpScheduled: followUpScheduledHandler,
+  FollowUpCompleted: followUpCompletedHandler,
+  FollowUpDismissed: followUpDismissedHandler,
 };
 
 export interface InvalidationRouter {

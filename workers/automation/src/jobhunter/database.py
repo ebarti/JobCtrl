@@ -21,7 +21,12 @@ from jobhunter.config import DB_PATH, DEFAULTS
 # helpers below are additive and idempotent, so this is a lightweight
 # forward-incompatibility guard (refuse a DB written by a newer build), not a
 # migration framework. Bump it only when the schema shape changes.
-SCHEMA_VERSION = 1
+#
+# v2 (Contact & Outreach): generic ``entity_kind``/``entity_ref`` columns on
+# ``job_events`` so contact-only events carry honest identity without
+# overloading ``job_url`` (outreach planner plan §10.1, owner decision 2b), plus
+# the ninth-context canonical tables (``ensure_contact_tables``).
+SCHEMA_VERSION = 2
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -280,6 +285,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_source_observation_tables(conn)
     ensure_discovery_control_tables(conn)
     ensure_discovery_settings_tables(conn)
+    ensure_contact_tables(conn)
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
 
@@ -302,6 +308,167 @@ def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> li
     )
 
     return ensure_projection_tables(conn)
+
+
+def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the Contact & Outreach (ninth bounded context) canonical tables.
+
+    These are the write-side aggregate tables for the outreach planner
+    (contacts, contact attributes with provenance, supervised research tasks and
+    their proposed candidates, outreach threads, generation-versioned drafts, and
+    user-attested send logs). Phase 0 creates the shells; later phases fill them.
+
+    Sensitivity: attribute *values* live only in ``contact_attributes.value_json``
+    (canonical write side), never in ``job_events`` payloads, projections, logs,
+    or telemetry (outreach planner plan §6; CLAUDE.md sensitive-data rule). Every
+    stored attribute carries inspectable provenance columns (INV-2). There is no
+    send transport anywhere in this schema — ``outreach_send_logs`` records only a
+    user-attested fact that the user sent an approved draft (INV-1).
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS contacts (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            contact_id          TEXT NOT NULL,
+            employer            TEXT,
+            job_url             TEXT,
+            role                TEXT NOT NULL DEFAULT 'other',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            deleted_at          TEXT,
+            PRIMARY KEY (tenant_id, contact_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS contact_attributes (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            attribute_id        TEXT NOT NULL,
+            contact_id          TEXT NOT NULL,
+            attribute_kind      TEXT NOT NULL,
+            value_json          TEXT,
+            source_kind         TEXT NOT NULL,
+            source_ref          TEXT NOT NULL,
+            capture_method      TEXT NOT NULL,
+            confidence          REAL NOT NULL DEFAULT 0,
+            user_confirmed      INTEGER NOT NULL DEFAULT 0,
+            recorded_at         TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, attribute_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS contact_research_tasks (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            task_id             TEXT NOT NULL,
+            employer            TEXT,
+            job_url             TEXT,
+            status              TEXT NOT NULL DEFAULT 'queued',
+            started_at          TEXT,
+            updated_at          TEXT NOT NULL,
+            needs_review_at     TEXT,
+            completed_at        TEXT,
+            failed_at           TEXT,
+            error_class         TEXT,
+            PRIMARY KEY (tenant_id, task_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS contact_candidates (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            candidate_id        TEXT NOT NULL,
+            task_id             TEXT NOT NULL,
+            role                TEXT NOT NULL DEFAULT 'other',
+            attributes_json     TEXT,
+            source_kind         TEXT NOT NULL,
+            source_ref          TEXT NOT NULL,
+            capture_method      TEXT NOT NULL,
+            confidence          REAL NOT NULL DEFAULT 0,
+            status              TEXT NOT NULL DEFAULT 'needs_review',
+            proposed_at         TEXT NOT NULL,
+            confirmed_contact_id TEXT,
+            confirmed_at        TEXT,
+            PRIMARY KEY (tenant_id, candidate_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS outreach_threads (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            thread_id           TEXT NOT NULL,
+            contact_id          TEXT NOT NULL,
+            job_url             TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            follow_up_due_at    TEXT,
+            follow_up_basis     TEXT,
+            follow_up_state     TEXT NOT NULL DEFAULT 'none',
+            PRIMARY KEY (tenant_id, thread_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS outreach_drafts (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            draft_id            TEXT NOT NULL,
+            thread_id           TEXT NOT NULL,
+            generation          INTEGER NOT NULL DEFAULT 1,
+            kind                TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'candidate',
+            body_text           TEXT,
+            gate_results_json   TEXT,
+            provenance_json     TEXT,
+            created_at          TEXT NOT NULL,
+            approved_at         TEXT,
+            rejected_at         TEXT,
+            reason              TEXT,
+            PRIMARY KEY (tenant_id, draft_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS outreach_send_logs (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            send_log_id         TEXT NOT NULL,
+            thread_id           TEXT NOT NULL,
+            draft_id            TEXT NOT NULL,
+            channel             TEXT NOT NULL,
+            sent_at             TEXT NOT NULL,
+            logged_at           TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, send_log_id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contacts_lookup
+        ON contacts(tenant_id, employer, job_url)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contact_attributes_contact
+        ON contact_attributes(tenant_id, contact_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
+        ON contact_candidates(tenant_id, task_id, status)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
+        ON outreach_threads(tenant_id, contact_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_outreach_drafts_thread
+        ON outreach_drafts(tenant_id, thread_id, generation DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_outreach_send_logs_thread
+        ON outreach_send_logs(tenant_id, thread_id)
+    """)
+    conn.commit()
+    return [
+        "contacts",
+        "contact_attributes",
+        "contact_research_tasks",
+        "contact_candidates",
+        "outreach_threads",
+        "outreach_drafts",
+        "outreach_send_logs",
+    ]
 
 
 def ensure_discovery_run_tables(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -709,9 +876,19 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             message             TEXT,
             occurred_at         TEXT NOT NULL,
             payload_json        TEXT,
+            entity_kind         TEXT,
+            entity_ref          TEXT,
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
+    # Forward-migrate (schema v2): the generic entity_kind/entity_ref columns
+    # let contact-only events (which have no job_url) carry honest identity
+    # without overloading job_url — outreach planner plan §10.1, decision 2b.
+    event_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_events)").fetchall()}
+    if "entity_kind" not in event_cols:
+        conn.execute("ALTER TABLE job_events ADD COLUMN entity_kind TEXT")
+    if "entity_ref" not in event_cols:
+        conn.execute("ALTER TABLE job_events ADD COLUMN entity_ref TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS job_artifacts (
             artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -742,6 +919,10 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_events_stage_time
         ON job_events(stage, occurred_at DESC, event_id DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_job_events_entity
+        ON job_events(entity_kind, entity_ref, occurred_at DESC, event_id DESC)
     """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_artifacts_job_stage
