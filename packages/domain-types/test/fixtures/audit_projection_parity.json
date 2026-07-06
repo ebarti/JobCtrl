@@ -179,7 +179,8 @@
         "status": "approved",
         "path": "/tmp/parity-resume.txt",
         "render_format": "text",
-        "size_bytes": 10
+        "size_bytes": 10,
+        "metadata_json": "{\"tailoring_policy_version\": 3, \"resume_template\": {\"templateId\": \"template-modern\", \"templateName\": \"Modern compact\"}}"
       },
       {
         "artifact_id": "resume-pdf-1",
@@ -187,7 +188,8 @@
         "status": "approved",
         "path": "/tmp/parity-resume.pdf",
         "render_format": "pdf",
-        "size_bytes": 20
+        "size_bytes": 20,
+        "metadata_json": "{}"
       }
     ],
     "bulletProvenance": [
@@ -228,6 +230,76 @@
         "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
       }
     ],
+    "jobInterviewPrep": [
+      {
+        "generation": 1,
+        "status": "superseded",
+        "model": "gpt-test-old",
+        "generated_at": "2026-06-08T12:20:00+00:00",
+        "gate_status": "passed",
+        "fabrication_findings_json": "[]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "grounded",
+        "warnings_json": "[]",
+        "failure_reason": ""
+      },
+      {
+        "generation": 2,
+        "status": "accepted",
+        "model": "gpt-test",
+        "generated_at": "2026-06-08T12:25:00+00:00",
+        "gate_status": "passed",
+        "fabrication_findings_json": "[]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "grounded",
+        "warnings_json": "[\"Mention Kubernetes scope without adding new metrics.\"]",
+        "failure_reason": ""
+      },
+      {
+        "generation": 3,
+        "status": "failed",
+        "model": "gpt-test",
+        "generated_at": "2026-06-08T12:30:00+00:00",
+        "gate_status": "failed",
+        "fabrication_findings_json": "[\"Invented Kafka production ownership.\"]",
+        "grounding_findings_json": "[]",
+        "judge_verdict": "blocked",
+        "warnings_json": "[\"Rejected by fabrication gate.\"]",
+        "failure_reason": "Invented Kafka production ownership."
+      }
+    ],
+    "jobInterviewPrepItems": [
+      {
+        "generation": 2,
+        "item_id": "prep-star-platform",
+        "kind": "star_draft",
+        "title": "Developer platform ownership",
+        "generated_text": "Use the developer platform story to explain how you owned paved paths across product teams.",
+        "evidence_ids_json": "[\"ev_platform\"]",
+        "requirement_ids_json": "[\"r1\"]",
+        "source_text_json": "[\"Owned the developer platform across the fleet.\"]",
+        "transform_type": "grounded_prep",
+        "control": "never_fabricate",
+        "grounding_audit_json": "[\"ev_platform supports the STAR draft.\"]",
+        "warnings_json": "[]",
+        "position": 0
+      },
+      {
+        "generation": 2,
+        "item_id": "prep-gap-kafka",
+        "kind": "gap_drill",
+        "title": "Kafka gap",
+        "generated_text": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+        "evidence_ids_json": "[]",
+        "requirement_ids_json": "[\"r1\"]",
+        "source_text_json": "[]",
+        "transform_type": "grounded_gap_drill",
+        "control": "honest_gap",
+        "grounding_audit_json": "[\"Gap drill avoids unsupported Kafka ownership.\"]",
+        "warnings_json": "[\"Accepted residual gap: Kafka is only adjacent.\"]",
+        "position": 1
+      }
+    ],
     "conversionJobs": [
       {
         "url": "https://example.com/jobs/parity-conversion-offer",
@@ -261,6 +333,23 @@
         "outcomeId": "parity-outcome-rejection",
         "jobKey": "https://example.com/jobs/parity-conversion-rejection",
         "kind": "rejection"
+      }
+    ],
+    "applicationOutcomeSuggestions": [
+      {
+        "suggestionId": "parity-suggestion-accepted",
+        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "status": "accepted"
+      },
+      {
+        "suggestionId": "parity-suggestion-corrected",
+        "jobKey": "https://example.com/jobs/parity-conversion-offer",
+        "status": "corrected"
+      },
+      {
+        "suggestionId": "parity-suggestion-ignored",
+        "jobKey": "https://example.com/jobs/parity-conversion-rejection",
+        "status": "ignored"
       }
     ]
   },
@@ -332,7 +421,8 @@
         "score_correction_json",
         "stages_json",
         "employer_analysis_json",
-        "requirement_fit_report_json"
+        "requirement_fit_report_json",
+        "interview_prep_json"
       ],
       "dashboard": [
         "funnel_json",
@@ -404,6 +494,8 @@
       "has_resume": 1,
       "job_id": "https://example.com/jobs/parity-developer-platform",
       "location": "Berlin, Germany (Remote)",
+      "resume_template_id": "template-modern",
+      "resume_template_name": "Modern compact",
       "salary": "EUR 90000-120000/year",
       "score_breakdown_json": {
         "confidence": "high",
@@ -462,8 +554,11 @@
       "scored_at": "2026-06-08T12:05:00+00:00",
       "source": "linkedin",
       "strategy": "jobspy",
+      "tailoring_policy_version": 3,
       "tenant_id": "local",
-      "title": "Senior Platform Engineer"
+      "title": "Senior Platform Engineer",
+      "fit_band": "unreported",
+      "apply_mode": "manual_marked"
     },
     "jobDetail": {
       "compensation_audit_json": {
@@ -584,6 +679,66 @@
       },
       "job_id": "https://example.com/jobs/parity-developer-platform",
       "requirement_fit_report_json": null,
+      "interview_prep_json": {
+        "gateAudit": {
+          "fabricationFindings": [],
+          "groundingFindings": [],
+          "judgeVerdict": "grounded",
+          "status": "passed",
+          "warnings": [
+            "Mention Kubernetes scope without adding new metrics."
+          ]
+        },
+        "generatedAt": "2026-06-08T12:25:00+00:00",
+        "generation": 2,
+        "items": [
+          {
+            "control": "never_fabricate",
+            "evidenceIds": [
+              "ev_platform"
+            ],
+            "generatedText": "Use the developer platform story to explain how you owned paved paths across product teams.",
+            "groundingAudit": [
+              "ev_platform supports the STAR draft."
+            ],
+            "itemId": "prep-star-platform",
+            "kind": "star_draft",
+            "position": 0,
+            "requirementIds": [
+              "r1"
+            ],
+            "sourceText": [
+              "Owned the developer platform across the fleet."
+            ],
+            "title": "Developer platform ownership",
+            "transformType": "grounded_prep",
+            "warnings": []
+          },
+          {
+            "control": "honest_gap",
+            "evidenceIds": [],
+            "generatedText": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+            "groundingAudit": [
+              "Gap drill avoids unsupported Kafka ownership."
+            ],
+            "itemId": "prep-gap-kafka",
+            "kind": "gap_drill",
+            "position": 1,
+            "requirementIds": [
+              "r1"
+            ],
+            "sourceText": [],
+            "title": "Kafka gap",
+            "transformType": "grounded_gap_drill",
+            "warnings": [
+              "Accepted residual gap: Kafka is only adjacent."
+            ]
+          }
+        ],
+        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "model": "gpt-test",
+        "status": "accepted"
+      },
       "score_breakdown_json": {
         "confidence": "high",
         "eligibility": {
@@ -805,7 +960,7 @@
         }
       ],
       "outcome_conversion_json": {
-        "version": 1,
+        "version": 2,
         "totals": {
           "applied": 3,
           "reply": 3,
@@ -848,7 +1003,78 @@
             "offer": 1,
             "rejection": 0
           }
-        ]
+        ],
+        "byFitBand": [
+          {
+            "fitBand": "unreported",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
+          }
+        ],
+        "byApplyMode": [
+          {
+            "applyMode": "manual_marked",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
+          }
+        ],
+        "byTemplate": [
+          {
+            "templateId": "unreported",
+            "templateName": null,
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 1
+          },
+          {
+            "templateId": "template-modern",
+            "templateName": "Modern compact",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "byPolicy": [
+          {
+            "tailoringPolicyVersion": null,
+            "policyLabel": "Unreported",
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 1
+          },
+          {
+            "tailoringPolicyVersion": 3,
+            "policyLabel": "Policy v3",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "timeToResponseMinutes": [
+          1200,
+          2640,
+          4080
+        ],
+        "suggestionAccuracy": {
+          "decided": 3,
+          "accepted": 1,
+          "corrected": 1,
+          "ignored": 1
+        }
       },
       "ready": 0,
       "score_distribution_json": [
@@ -940,6 +1166,66 @@
           "model_id": "gpt-5.4",
           "error": "codex app-server timeout",
           "raw_output": null
+        }
+      ]
+    },
+    "interviewPrepJson": {
+      "jobKey": "https://example.com/jobs/parity-developer-platform",
+      "generation": 2,
+      "status": "accepted",
+      "generatedAt": "2026-06-08T12:25:00+00:00",
+      "model": "gpt-test",
+      "gateAudit": {
+        "status": "passed",
+        "fabricationFindings": [],
+        "groundingFindings": [],
+        "judgeVerdict": "grounded",
+        "warnings": [
+          "Mention Kubernetes scope without adding new metrics."
+        ]
+      },
+      "items": [
+        {
+          "itemId": "prep-star-platform",
+          "kind": "star_draft",
+          "title": "Developer platform ownership",
+          "generatedText": "Use the developer platform story to explain how you owned paved paths across product teams.",
+          "evidenceIds": [
+            "ev_platform"
+          ],
+          "requirementIds": [
+            "r1"
+          ],
+          "sourceText": [
+            "Owned the developer platform across the fleet."
+          ],
+          "transformType": "grounded_prep",
+          "control": "never_fabricate",
+          "groundingAudit": [
+            "ev_platform supports the STAR draft."
+          ],
+          "warnings": [],
+          "position": 0
+        },
+        {
+          "itemId": "prep-gap-kafka",
+          "kind": "gap_drill",
+          "title": "Kafka gap",
+          "generatedText": "Be ready to state that Kafka is adjacent experience rather than a direct production claim.",
+          "evidenceIds": [],
+          "requirementIds": [
+            "r1"
+          ],
+          "sourceText": [],
+          "transformType": "grounded_gap_drill",
+          "control": "honest_gap",
+          "groundingAudit": [
+            "Gap drill avoids unsupported Kafka ownership."
+          ],
+          "warnings": [
+            "Accepted residual gap: Kafka is only adjacent."
+          ],
+          "position": 1
         }
       ]
     },

@@ -1,4 +1,10 @@
-import type { ProfileConfigResponse, ProfileShape, ProfileUpdateRequest } from "./contracts.js";
+import type {
+  ExtensionAutofillProfileField,
+  ExtensionAutofillProfileResponse,
+  ProfileConfigResponse,
+  ProfileShape,
+  ProfileUpdateRequest,
+} from "./contracts.js";
 import { ProfileSchema } from "./contracts.js";
 import type { SqliteDatabase } from "./db.js";
 
@@ -401,6 +407,20 @@ export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   };
 }
 
+export function readExtensionAutofillProfile(db: SqliteDatabase): ExtensionAutofillProfileResponse {
+  ensureProfileTables(db);
+  const row = getProfileRow(db);
+  if (!row) {
+    return { ok: true, profileVersion: null, fields: [] };
+  }
+  const profile = rowToProfile(db, row);
+  return {
+    ok: true,
+    profileVersion: Number(row.version ?? 1),
+    fields: extensionAutofillFields(profile),
+  };
+}
+
 export function writeProfileConfig(
   db: SqliteDatabase,
   request: ProfileUpdateRequest,
@@ -681,6 +701,77 @@ function rowToProfile(db: SqliteDatabase, row: ProfileRow): ProfileShape {
     },
   };
   return ProfileSchema.parse(profile);
+}
+
+function extensionAutofillFields(profile: ProfileShape): ExtensionAutofillProfileField[] {
+  const fields: ExtensionAutofillProfileField[] = [];
+  addProfileField(fields, profile, "personal.full_name", "Profile > Personal information > Full name");
+  addProfileField(fields, profile, "personal.preferred_name", "Profile > Personal information > Preferred name");
+  addProfileField(fields, profile, "personal.email", "Profile > Personal information > Email");
+  addProfileField(fields, profile, "personal.phone", "Profile > Personal information > Phone");
+  addProfileField(fields, profile, "personal.address", "Profile > Personal information > Address");
+  addProfileField(fields, profile, "personal.city", "Profile > Personal information > City");
+  addProfileField(fields, profile, "personal.province_state", "Profile > Personal information > State / province");
+  addProfileField(fields, profile, "personal.country", "Profile > Personal information > Country");
+  addProfileField(fields, profile, "personal.postal_code", "Profile > Personal information > Postal code");
+  addProfileField(fields, profile, "personal.linkedin_url", "Profile > Personal information > LinkedIn URL");
+  addProfileField(fields, profile, "personal.github_url", "Profile > Personal information > GitHub URL");
+  addProfileField(fields, profile, "personal.portfolio_url", "Profile > Personal information > Portfolio URL");
+  addProfileField(fields, profile, "personal.website_url", "Profile > Personal information > Website URL");
+  addProfileField(
+    fields,
+    profile,
+    "work_authorization.legally_authorized_to_work",
+    "Profile > Work authorization > Legally authorized to work",
+  );
+  addProfileField(
+    fields,
+    profile,
+    "work_authorization.require_sponsorship",
+    "Profile > Work authorization > Requires sponsorship",
+  );
+  addProfileField(fields, profile, "work_authorization.work_permit_type", "Profile > Work authorization > Work permit type");
+  addProfileField(fields, profile, "compensation.salary_expectation", "Profile > Compensation > Salary expectation");
+  addProfileField(fields, profile, "compensation.salary_currency", "Profile > Compensation > Currency");
+  addProfileField(fields, profile, "compensation.salary_range_min", "Profile > Compensation > Salary range minimum");
+  addProfileField(fields, profile, "compensation.salary_range_max", "Profile > Compensation > Salary range maximum");
+  addProfileField(fields, profile, "availability.earliest_start_date", "Profile > Availability > Earliest start date");
+  addProfileField(fields, profile, "availability.available_for_full_time", "Profile > Availability > Full time");
+  addProfileField(fields, profile, "availability.available_for_contract", "Profile > Availability > Contract");
+  addProfileField(fields, profile, "eeo_voluntary.gender", "Profile > Voluntary EEO > Gender");
+  addProfileField(fields, profile, "eeo_voluntary.race_ethnicity", "Profile > Voluntary EEO > Race / ethnicity");
+  addProfileField(fields, profile, "eeo_voluntary.veteran_status", "Profile > Voluntary EEO > Veteran status");
+  addProfileField(fields, profile, "eeo_voluntary.disability_status", "Profile > Voluntary EEO > Disability status");
+  return fields;
+}
+
+function addProfileField(
+  fields: ExtensionAutofillProfileField[],
+  profile: ProfileShape,
+  path: string,
+  label: string,
+): void {
+  const value = textAtPath(profile, path);
+  if (!value) {
+    return;
+  }
+  fields.push({
+    path,
+    label,
+    value,
+    source: { kind: "profile", path, label },
+  });
+}
+
+function textAtPath(value: unknown, path: string): string {
+  let current = value;
+  for (const part of path.split(".")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return "";
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return typeof current === "string" ? current.trim() : "";
 }
 
 function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {

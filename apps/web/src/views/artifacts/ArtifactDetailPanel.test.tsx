@@ -1,4 +1,4 @@
-import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
+import type { ArtifactSummary, ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
 import { buildProviderHarness } from "../../test/render.js";
-import { sampleArtifact } from "../../test/fixtures/projections.js";
+import { makeArtifactsPage, sampleArtifact } from "../../test/fixtures/projections.js";
 import { ArtifactDetailPanel } from "./ArtifactDetailPanel.js";
 
 vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
@@ -29,6 +29,7 @@ function renderArtifactRoute(
   children: ReactNode,
   status = "approved",
   tailoringExplanation: ArtifactTailoringExplanation | null = null,
+  comparisonArtifacts: readonly ArtifactSummary[] = [],
 ) {
   const artifact = {
     ...sampleArtifact,
@@ -38,13 +39,21 @@ function renderArtifactRoute(
     localPath: "/tmp/artifact-preview.pdf",
     sizeBytes: 1234,
   };
+  const artifactList = [artifact, ...comparisonArtifacts];
   const ports = buildProviderHarness().ports;
   const artifactPreviewPdfUrl = vi.fn(() => "/v1/artifacts/artifact-preview/preview.pdf?v=test");
   const harness = buildProviderHarness({
     ports: {
       ...ports,
       api: Object.assign(Object.create(Object.getPrototypeOf(ports.api)), ports.api, {
-        artifact: vi.fn(async () => ({ ok: true as const, artifact, layoutBoxes: [], tailoringExplanation })),
+        artifacts: vi.fn(async () => makeArtifactsPage(artifactList)),
+        artifact: vi.fn(async (artifactId: string) => ({
+          ok: true as const,
+          artifact:
+            artifactList.find((candidate) => candidate.artifactId === artifactId) ?? artifact,
+          layoutBoxes: [],
+          tailoringExplanation,
+        })),
         artifactPreviewPdfUrl,
       }),
     },
@@ -394,5 +403,27 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.queryByText("Found in tailored resume")).not.toBeInTheDocument();
     expect(screen.queryByText("No resume keyword match found")).not.toBeInTheDocument();
     expect(screen.queryByText(/0\/4 demonstrated in resume/i)).not.toBeInTheDocument();
+  });
+
+  it("offers same-job same-type artifacts for comparison", async () => {
+    renderArtifactRoute(
+      <ArtifactDetailPanel artifactId="artifact-preview" />,
+      "approved",
+      null,
+      [
+        {
+          ...sampleArtifact,
+          artifactId: "artifact-template-b",
+          jobKey: "job-1",
+          type: "resume_pdf",
+          status: "candidate",
+          createdAt: "2026-05-03T08:00:00Z",
+        },
+      ],
+    );
+
+    expect(await screen.findByText("Artifact comparison")).toBeInTheDocument();
+    expect(screen.getByLabelText("Compare with")).toHaveValue("artifact-template-b");
+    expect(screen.getByRole("option", { name: /candidate/ })).toBeInTheDocument();
   });
 });

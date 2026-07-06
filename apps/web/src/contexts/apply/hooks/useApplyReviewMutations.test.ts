@@ -26,7 +26,14 @@ describe("apply review mutations", () => {
     await act(async () => {
       result.current.mutate({
         jobId: "job-2",
-        body: { decision: "approve_submit", reason: "approved", decidedBy: "user" },
+        body: {
+          decision: "approve_submit",
+          reason: "approved",
+          decidedBy: "user",
+          materialsGeneration: 1,
+          profileVersion: 3,
+          applicationUrl: "https://example.com/apply",
+        },
       });
     });
 

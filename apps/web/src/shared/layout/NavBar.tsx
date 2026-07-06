@@ -4,24 +4,28 @@ const NAV_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly to:
     | "/dashboard"
+    | "/analytics"
     | "/apply-review"
     | "/jobs"
     | "/pipelines"
     | "/discovery"
     | "/runs"
     | "/debug"
+    | "/evidence-map"
     | "/artifacts"
     | "/profile"
     | "/preferences"
     | "/settings";
 }> = [
   { label: "Dashboard", to: "/dashboard" },
+  { label: "Analytics", to: "/analytics" },
   { label: "Apply review", to: "/apply-review" },
   { label: "Jobs", to: "/jobs" },
   { label: "Pipelines", to: "/pipelines" },
   { label: "Discovery", to: "/discovery" },
   { label: "Runs", to: "/runs" },
   { label: "Debug", to: "/debug" },
+  { label: "Evidence", to: "/evidence-map" },
   { label: "Artifacts", to: "/artifacts" },
   { label: "Profile", to: "/profile" },
   { label: "Preferences", to: "/preferences" },
