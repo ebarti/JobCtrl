@@ -50,6 +50,7 @@ from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.operations.projections import (
     ApplyRunProjection,
     ArtifactListProjection,
+    ContactProjection,
     DashboardFunnelStage,
     DashboardProjection,
     JobDetailProjection,
@@ -124,6 +125,20 @@ _WORKFLOW_TERMINAL_STATUS: dict[str, str] = {
 # once a run is terminal, a later terminal ``Workflow*`` event for the same
 # ``workflowId`` cannot replace it (see ``_project_workflow_run``).
 _WORKFLOW_TERMINAL_STATUSES: frozenset[str] = frozenset(_WORKFLOW_TERMINAL_STATUS.values())
+
+# Contact aggregate events (Contact & Outreach, ninth context). Any of these
+# marks the contact read model dirty; ``_rebuild_contacts`` then rematerialises
+# every contact projection from the canonical ``contacts`` / ``contact_attributes``
+# rows (values never enter the projection — sensitivity rule, plan §6).
+CONTACT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "ContactCreated",
+        "ContactUpdated",
+        "ContactAttributeRecorded",
+        "ContactDeleted",
+        "WarmIntroIdentified",
+    }
+)
 POSTED_COMPENSATION_WARNING_MESSAGES = {
     "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
     "bonus_component": "The source text mentions bonus compensation.",
@@ -637,6 +652,7 @@ class ProjectionBuilder:
         dirty_jobs: set[str] = set()
         source_quality_dirty = False
         workflow_runs_dirty = False
+        contacts_dirty = False
         evidence_usage_dirty = bool(rows)
         max_event_id = watermark
         for row in rows:
@@ -651,6 +667,13 @@ class ProjectionBuilder:
                 source_quality_dirty = True
             if str(event_type) in WORKFLOW_EVENT_TYPES:
                 workflow_runs_dirty = True
+            if str(event_type) in CONTACT_EVENT_TYPES:
+                contacts_dirty = True
+
+        # First-run backfill for contacts: if the contact read model is empty
+        # but canonical contact rows exist (e.g. tables recreated), rebuild.
+        if not contacts_dirty and self._contacts_backfill_pending():
+            contacts_dirty = True
 
         # First-run backfill: if projections are empty, mark every
         # existing job as dirty so pre-event-history rows still get
@@ -718,6 +741,7 @@ class ProjectionBuilder:
             and not audit_backfill_pending
             and not workflow_runs_backfill_pending
             and not evidence_usage_dirty
+            and not contacts_dirty
         ):
             return 0
 
@@ -738,6 +762,8 @@ class ProjectionBuilder:
                 self._rebuild_source_quality()
             if workflow_runs_dirty or workflow_runs_backfill_pending:
                 self._rebuild_workflow_runs()
+            if contacts_dirty:
+                self._rebuild_contacts()
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
@@ -760,6 +786,8 @@ class ProjectionBuilder:
             self._rebuild_workflow_runs()
         if source_quality_dirty or (not source_quality_exists and source_quality_history):
             self._rebuild_source_quality()
+        if contacts_dirty:
+            self._rebuild_contacts()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
@@ -775,6 +803,97 @@ class ProjectionBuilder:
         return len(dirty_jobs)
 
     # -------------------------------------------------------------- builders
+
+    def _contacts_backfill_pending(self) -> bool:
+        if self._store.count_contacts(str(self._tenant_id)) > 0:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM contacts WHERE tenant_id = ? AND deleted_at IS NULL LIMIT 1",
+                (str(self._tenant_id),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+    def _rebuild_contacts(self) -> None:
+        """Rematerialise every contact projection from canonical rows.
+
+        Idempotent full rebuild for the tenant (contacts are few in a local
+        workspace). Values are never read into the projection — only the link,
+        role, counts, distinct source kinds, and per-attribute provenance
+        (INV-2). Projections for soft-deleted / purged contacts are dropped.
+        """
+        tenant = str(self._tenant_id)
+        try:
+            contact_rows = self._conn.execute(
+                """
+                SELECT contact_id, employer, job_url, role, created_at, updated_at
+                FROM contacts
+                WHERE tenant_id = ? AND deleted_at IS NULL
+                """,
+                (tenant,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+        live_ids: set[str] = set()
+        for row in contact_rows:
+            contact_id = str(row[0])
+            live_ids.add(contact_id)
+            attribute_rows = self._conn.execute(
+                """
+                SELECT attribute_id, attribute_kind, source_kind, source_ref,
+                       capture_method, confidence, user_confirmed, recorded_at
+                FROM contact_attributes
+                WHERE tenant_id = ? AND contact_id = ?
+                ORDER BY recorded_at ASC, attribute_id ASC
+                """,
+                (tenant, contact_id),
+            ).fetchall()
+            provenance: list[dict[str, Any]] = []
+            source_kinds: list[str] = []
+            confirmed = 0
+            for attr in attribute_rows:
+                source_kind = str(attr[2])
+                if source_kind not in source_kinds:
+                    source_kinds.append(source_kind)
+                user_confirmed = bool(attr[6])
+                if user_confirmed:
+                    confirmed += 1
+                provenance.append(
+                    {
+                        "attributeId": str(attr[0]),
+                        "attributeKind": str(attr[1]),
+                        "sourceKind": source_kind,
+                        "sourceRef": str(attr[3]),
+                        "captureMethod": str(attr[4] or "manual"),
+                        "confidence": float(attr[5] or 0.0),
+                        "userConfirmed": user_confirmed,
+                        "recordedAt": str(attr[7] or ""),
+                    }
+                )
+            self._store.upsert_contact(
+                ContactProjection(
+                    tenant_id=self._tenant_id,
+                    contact_id=contact_id,
+                    employer=row[1],
+                    job_id=row[2],
+                    role=str(row[3] or "other"),
+                    attribute_count=len(attribute_rows),
+                    confirmed_count=confirmed,
+                    source_kinds=tuple(source_kinds),
+                    provenance=tuple(provenance),
+                    created_at=str(row[4] or ""),
+                    updated_at=str(row[5] or ""),
+                    last_updated_at=str(row[5] or ""),
+                )
+            )
+        for existing in self._conn.execute(
+            "SELECT contact_id FROM contact_projections WHERE tenant_id = ?", (tenant,)
+        ).fetchall():
+            contact_id = str(existing[0])
+            if contact_id not in live_ids:
+                self._store.delete_contact(tenant, contact_id)
 
     def _rebuild_job(self, job_url: str) -> None:
         job_row = self._conn.execute(

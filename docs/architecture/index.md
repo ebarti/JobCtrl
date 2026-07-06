@@ -112,7 +112,7 @@ spawns on the first JSON-RPC call and reuses for dispatch. Work-starting
 commands, from the CLI and the API alike, start Temporal workflows; the
 long-lived worker executes them.
 
-The codebase is organised around the **eight bounded contexts** defined in the
+The codebase is organised around the **nine bounded contexts** defined in the
 Backend Domain Model's [strategic design](domain-model/strategic.md) (§3):
 
 | Bounded context             | Aggregate root                | Where it lives                                                    |
@@ -125,6 +125,7 @@ Backend Domain Model's [strategic design](domain-model/strategic.md) (§3):
 | Apply Automation            | `ApplyRun`                    | `workers/automation/src/jobhunter/domain/apply/`                  |
 | Pipeline Orchestration      | `JobPipelineState`            | `workers/automation/src/jobhunter/domain/pipeline/`               |
 | Operations / Read-Side      | _(no aggregate — projections)_| `workers/automation/src/jobhunter/domain/operations/`             |
+| Contact & Outreach          | `Contact`                     | `workers/automation/src/jobhunter/domain/contact/`               |
 
 Repository ownership mirrors the runtime boundaries:
 

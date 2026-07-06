@@ -8,6 +8,7 @@ import {
   JobOutcomePanel,
 } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
+import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
@@ -194,6 +195,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <Section title="Application outcomes">
                   <JobOutcomePanel jobId={detail.job.jobKey} />
                 </Section>
+                <JobContactsPanel
+                  jobId={detail.job.jobKey}
+                  {...(detail.job.company ? { employer: detail.job.company } : {})}
+                />
                 <JobAuditHistorySection entries={detail.auditHistory} />
               </div>
             </div>

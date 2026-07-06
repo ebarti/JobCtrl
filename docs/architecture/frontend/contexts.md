@@ -1,13 +1,13 @@
 # 3. Strategic Design — Frontend Bounded Contexts
 
-The eight frontend contexts mirroring the backend 1:1, and the view-vs-context
+The nine frontend contexts mirroring the backend 1:1, and the view-vs-context
 dichotomy. Part of the [Frontend Architecture](index.md) reference.
 
 **Read this if** you need to know which context owns a given hook, component, or
 mutation — or why a user-facing page is not itself a context.
 
 A *bounded context* is a self-contained slice of the domain with its own model
-and vocabulary; the backend defines the eight this app mirrors in
+and vocabulary; the backend defines the nine this app mirrors in
 [Strategic Design — Bounded Contexts](../domain-model/strategic.md). This page
 does not redefine them — it shows how each maps to a folder under
 `apps/web/src/contexts/` and how views compose them.
@@ -17,9 +17,9 @@ contexts (in the DDD sense): the frontend consumes the backend's
 ubiquitous language as-is and does not push back against the shape.
 There is **one frontend context folder per backend context** — Discovery,
 Enrichment, Profile, Scoring, Materials, Apply, Pipeline Orchestration,
-Operations. Views (Dashboard, Jobs, Artifacts, Apply Review, Runs,
-Pipelines, Discovery, Debug) are **not** contexts; they are composers that
-live under `views/` (§3.10, §11).
+Operations, and Contact & Outreach. Views (Dashboard, Jobs, Artifacts, Apply
+Review, Runs, Pipelines, Discovery, Contacts, Debug) are **not** contexts; they
+are composers that live under `views/` (§3.10, §11).
 
 ### 3.1 Frontend Context Map
 
@@ -34,6 +34,7 @@ graph TB
         APP["apply/<br/>apply / dry-run / cancel,<br/>apply-run timeline"]
         PIP["pipeline/<br/>retry / cancel / mark-applied / mark-skipped<br/>+ stage badges + timeline"]
         OPS["operations/<br/>read hooks, query-key registry,<br/>SSE subscription, invalidation router"]
+        OUT["outreach/<br/>contact records + provenance,<br/>CSV import"]
     end
 
     subgraph "View composers (NOT bounded contexts)"
@@ -45,6 +46,7 @@ graph TB
         VRUN["views/runs/<br/>workflow runs table + drawer"]
         VPIP["views/pipelines/<br/>StageTriggerPanel"]
         VDISC["views/discovery/<br/>sources + schedule settings"]
+        VOUT["views/outreach/<br/>ContactsTable + detail drawer"]
     end
 
     subgraph "Routes (URL → typed search params)"
@@ -59,6 +61,7 @@ graph TB
         RRUN["/runs (+/$runId)"]
         RPIP["/pipelines"]
         RDISC["/discovery"]
+        ROUT["/outreach"]
     end
 
     subgraph "Shared kernel"
@@ -81,6 +84,7 @@ graph TB
     RRUN --> VRUN
     RPIP --> VPIP
     RDISC --> VDISC
+    ROUT --> VOUT
 
     VD --> OPS
     VD --> APP
@@ -103,6 +107,9 @@ graph TB
     VPIP --> PIP
     VDISC --> DSC
     VDISC --> PRO
+    VOUT --> OPS
+    VOUT --> OUT
+    VJ --> OUT
 
     DSC --> OPS
     ENR --> OPS
@@ -111,6 +118,7 @@ graph TB
     MAT --> OPS
     APP --> OPS
     PIP --> OPS
+    OUT --> OPS
 
     OPS --> PORT
     VD --> UI
@@ -477,9 +485,9 @@ the SSE subscription that fans events out to invalidate query keys.
 
 ### 3.10 Views (Composition Layer — NOT Bounded Contexts)
 
-The `views/` folder holds eight sibling composers of `contexts/`:
+The `views/` folder holds the sibling composers of `contexts/`, including
 `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
-`pipelines/`, `discovery/`, and `debug/`. They are *not* bounded contexts;
+`pipelines/`, `discovery/`, `outreach/`, and `debug/`. They are *not* bounded contexts;
 they are presentation composers. The dichotomy is intentional and binding:
 
 - A **context** owns a slice of the backend's domain language and the
@@ -494,7 +502,7 @@ they are presentation composers. The dichotomy is intentional and binding:
 contexts; a context never depends on a view. A view never depends on
 another view (cross-view navigation goes through the URL).
 
-**The eight views:**
+**The views:**
 
 | View | Composition |
 |---|---|
@@ -506,9 +514,42 @@ another view (cross-view navigation goes through the URL).
 | `views/pipelines/` | `<PipelinesView>` — renders the pipeline context's `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). |
 | `views/discovery/` | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery). |
 | `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), `<ActivityDetailDrawer>` (operations: `useActivityEventQuery`) at `/activity/$eventId`. |
+| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-badge cells), `<OutreachDetailDrawer>` (outreach: contact detail; renders provenance for every fact) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs drawer. |
 
 **The view's only owned components are layout and view-local affordances**
 (filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
 forms, and timelines are imported from the contexts that own them.
+
+### 3.11 Contact & Outreach (Frontend)
+
+**Backend mirror:** Contact & Outreach (backend domain model [§3.11](../domain-model/strategic.md), [§4.9](../domain-model/tactical.md), [§5.9](../domain-model/ports.md)).
+
+**Purpose:** Surface the `Contact` aggregate — keep recruiter / hiring-manager /
+referrer contact records per company or application, render every fact with its
+provenance, and import contacts from a CSV file. Phase 1 is **contact records
+only**; there is no research, drafting, or sending in the UI (and the product
+never sends).
+
+**Ubiquitous language** (matches backend):
+- **Contact** — the `Contact` aggregate identified by `(TenantId, ContactId)`.
+- **ContactAttribute** — one fact (name, title, email, phone, profile URL, note) with mandatory provenance.
+- **ContactFactProvenance** — `sourceKind` / `sourceRef` / `captureMethod` / `capturedAt` / `confidence` / `userConfirmed`.
+- **ContactRole** — `recruiter | hiring_manager | referrer | warm_intro | other`.
+
+**Responsibilities:**
+- Contact read hooks, context-owned (mirroring how Profile owns `useProfileQuery`): `useContactsListQuery`, `useContactDetailQuery`.
+- Contact mutation hooks via `createOptimisticMutation` with real patchers + settle sets: `useCreateContactMutation`, `useUpdateContactMutation`, `useDeleteContactMutation`, `useImportContactsMutation`.
+- Query keys: `outreachKeys` (hierarchical, tenant-first), re-exported through `contexts/operations/queryKeys.ts`.
+- Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
+- Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
+- Components: `<ContactRoleBadge>`, `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs drawer).
+
+**What it does NOT own:**
+- Job / dashboard / artifact / apply-run projections (those stay in `operations/`).
+- Any send/transport affordance — none exists.
+
+**Audit rendering:** the contact list and detail render provenance for every
+stored fact (INV-2); attribute values reach the UI only through the read DTOs and
+never leave the local machine.
 
 ---

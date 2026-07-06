@@ -35,7 +35,7 @@ command syntax.
 
 The frontend follows its own DDD + hexagonal target documented in the
 [Frontend](frontend/index.md) section — three-layer state separation,
-eight bounded contexts that mirror the backend 1:1, view-vs-context dichotomy,
+nine bounded contexts that mirror the backend 1:1, view-vs-context dichotomy,
 hexagonal frontend ports, Server-Sent Events (SSE) realtime via the invalidation
 router, and a projection-typed Operations read-side. The summary below
 cross-links to those pages; the Frontend section is the canonical detail.
@@ -75,7 +75,7 @@ truth per fact; components consume state through hooks (never raw stores or the
 
 ### Frontend Bounded Contexts
 
-`apps/web/src/contexts/<name>/` mirrors the backend's eight bounded contexts
+`apps/web/src/contexts/<name>/` mirrors the backend's nine bounded contexts
 1:1 (Frontend §3, §11):
 
 | Frontend folder | Owns | Backend mirror |
@@ -88,10 +88,12 @@ truth per fact; components consume state through hooks (never raw stores or the
 | `apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyButton>`, `<DryRunButton>`, `<ApplyRunBadge>`, `<ApplyRunTimeline>`, `<ApplyHistory>`. | Apply Automation |
 | `pipeline/` | `useRunPipelineStagesMutation`, `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageTriggerPanel>`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
 | `operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
+| `outreach/` | Contact records with provenance: `useContactsListQuery` / `useContactDetailQuery`, create / update / delete / import-contact mutations, contact provenance + role components, the Contacts view + job-drawer panel, and contact event handlers. | Contact & Outreach |
 
-The eight view folders (`views/dashboard/`, `views/jobs/`, `views/artifacts/`,
-`views/apply-review/`, `views/pipelines/`, `views/runs/`, `views/discovery/`,
-and `views/debug/`) are **composers, not contexts**
+The view folders under `views/` (`views/dashboard/`, `views/jobs/`,
+`views/artifacts/`, `views/apply-review/`, `views/pipelines/`, `views/runs/`,
+`views/discovery/`, `views/outreach/` (Contacts), and `views/debug/`) are
+**composers, not contexts**
 (Frontend §3.10). They import hooks from
 `contexts/operations/` and components / mutations from aggregate contexts;
 they own layout and view-local ephemeral UI (e.g., bulk-selection sets) and

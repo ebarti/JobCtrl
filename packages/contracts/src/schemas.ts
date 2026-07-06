@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobhunter/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -4220,4 +4221,160 @@ export interface ManualCaptureDismissResponse {
   itemId: string;
   status: "dismissed";
   dismissedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Contact & Outreach (R6 Phase 1 — Contact records)
+//
+// The ninth bounded context. Phase 1 ships contact records only: create,
+// update, CSV import (resolved decision 4), delete, and provenance-bearing
+// reads. No research, no drafts, no send (INV-1). Attribute VALUES (names,
+// emails, notes) live only in contact_attributes.value_json and reach the
+// client solely through these read DTOs — never through events, projections,
+// logs, or telemetry (outreach planner plan §6; CLAUDE.md sensitive-data rule).
+// Every rendered fact carries inspectable provenance (INV-2).
+// ---------------------------------------------------------------------------
+
+export const ContactRoleSchema = z.enum(CONTACT_ROLES).catch("other");
+export type ContactRole = (typeof CONTACT_ROLES)[number];
+
+export const ContactSourceKindSchema = z.enum(CONTACT_SOURCE_KINDS);
+export type ContactSourceKind = (typeof CONTACT_SOURCE_KINDS)[number];
+
+export const CONTACT_ATTRIBUTE_KINDS = [
+  "name",
+  "title",
+  "email",
+  "phone",
+  "profile_url",
+  "note",
+] as const;
+export const ContactAttributeKindSchema = z.enum(CONTACT_ATTRIBUTE_KINDS);
+export type ContactAttributeKind = (typeof CONTACT_ATTRIBUTE_KINDS)[number];
+
+/** Where one contact fact came from (INV-2). Safe references only — never a value. */
+export interface ContactFactProvenance {
+  sourceKind: ContactSourceKind;
+  sourceRef: string;
+  captureMethod: string;
+  capturedAt: string;
+  confidence: number;
+  userConfirmed: boolean;
+}
+
+/** One contact fact. `value` is sensitive and served only through read DTOs. */
+export interface ContactAttributeDto {
+  attributeId: string;
+  kind: string;
+  value: string;
+  provenance: ContactFactProvenance;
+}
+
+export interface ContactSummary {
+  contactId: string;
+  displayName: string;
+  role: ContactRole;
+  employer: string | null;
+  jobId: string | null;
+  attributeCount: number;
+  confirmedCount: number;
+  sourceKinds: ContactSourceKind[];
+  allConfirmed: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ContactDetail {
+  contactId: string;
+  displayName: string;
+  role: ContactRole;
+  employer: string | null;
+  jobId: string | null;
+  attributes: ContactAttributeDto[];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export const ContactAttributeInputSchema = z
+  .object({
+    kind: ContactAttributeKindSchema,
+    value: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+export type ContactAttributeInput = z.infer<typeof ContactAttributeInputSchema>;
+
+const contactEmployerField = z.string().trim().min(1).max(200).nullish();
+const contactJobIdField = z.string().trim().min(1).max(2000).nullish();
+
+export const ContactCreateRequestSchema = z
+  .object({
+    role: ContactRoleSchema.default("other"),
+    employer: contactEmployerField,
+    jobId: contactJobIdField,
+    attributes: z.array(ContactAttributeInputSchema).max(50).default([]),
+  })
+  .strict()
+  .refine(
+    (value) => Boolean((value.employer ?? "").trim()) || Boolean((value.jobId ?? "").trim()),
+    { message: "A contact must link to at least one of employer or jobId.", path: ["employer"] },
+  );
+export type ContactCreateRequest = z.infer<typeof ContactCreateRequestSchema>;
+
+export const ContactUpdateRequestSchema = z
+  .object({
+    role: ContactRoleSchema.optional(),
+    employer: contactEmployerField,
+    jobId: contactJobIdField,
+    attributes: z.array(ContactAttributeInputSchema).max(50).optional(),
+  })
+  .strict();
+export type ContactUpdateRequest = z.infer<typeof ContactUpdateRequestSchema>;
+
+export const ContactImportRequestSchema = z
+  .object({
+    filename: z.string().trim().min(1).max(300),
+    csvText: z.string().min(1).max(1_000_000),
+  })
+  .strict();
+export type ContactImportRequest = z.infer<typeof ContactImportRequestSchema>;
+
+export const ContactListQuerySchema = z
+  .object({
+    jobId: optionalText,
+    employer: optionalText,
+  })
+  .strict();
+export type ContactListQuery = z.infer<typeof ContactListQuerySchema>;
+
+export const ContactDeleteRequestSchema = z
+  .object({ reason: z.string().trim().max(400).optional() })
+  .strict();
+export type ContactDeleteRequest = z.infer<typeof ContactDeleteRequestSchema>;
+
+export interface ContactListResponse {
+  ok: true;
+  items: ContactSummary[];
+}
+
+export interface ContactDetailResponse {
+  ok: true;
+  contact: ContactDetail;
+}
+
+export interface ContactMutationResponse {
+  ok: true;
+  contact: ContactDetail;
+}
+
+export interface ContactImportResponse {
+  ok: true;
+  imported: number;
+  skipped: number;
+  contactIds: string[];
+}
+
+export interface ContactDeleteResponse {
+  ok: true;
+  contactId: string;
+  deletedAt: string;
 }

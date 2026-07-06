@@ -1,12 +1,12 @@
 # 3. Strategic Design — Bounded Contexts
 
-The eight bounded contexts, their ubiquitous language, and the relationships
+The nine bounded contexts, their ubiquitous language, and the relationships
 between them. Part of the [Domain Model](index.md) reference.
 
 A **bounded context** is a slice of the backend with its own vocabulary and its
 own data, where a term like "Job" carries one precise meaning. Drawing these
 boundaries explicitly is what stops one context's assumptions from leaking into
-another. This page names the eight contexts, says what each owns (and does not
+another. This page names the nine contexts, says what each owns (and does not
 own), and maps how they hand work to one another.
 
 ### Context Map
@@ -26,6 +26,7 @@ graph TB
         PO["Pipeline Orchestration"]
         PREP["Preparation (per-job)"]
         CMP["Compensation"]
+        CO["Contact & Outreach"]
     end
 
     subgraph "Generic Subdomain"
@@ -59,6 +60,8 @@ graph TB
 
     PO -->|"starts JobPreparationWorkflow ▸"| PREP
     CMP -.->|"CompensationFactsUpdated"| OPS
+    JD -.->|"Employer / JobId (Conformist)"| CO
+    CO -.->|"Contact events"| OPS
 
     OPS -.->|"Projection queries"| JD
     OPS -.->|"Projection queries"| SC
@@ -78,7 +81,7 @@ graph TB
     classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
-    class JD,JE,SC,MG,AA,CP,PO,PREP,CMP py
+    class JD,JE,SC,MG,AA,CP,PO,PREP,CMP,CO py
     class OPS store
     class IAM,BILL,AUDIT,SECRETS ext
 ```
@@ -477,5 +480,54 @@ per-job stage truth remains in `JobPipelineState`.
 **What it does NOT own:** Stage-state invariants (owned by Pipeline
 Orchestration) or the actual work of each stage (owned by the processing
 contexts).
+
+---
+
+### 3.11 Contact & Outreach (Supporting Domain)
+
+**Purpose:** Keep durable **contact records** — the people relevant to a company
+or a specific application (recruiter, hiring manager, referrer, warm intro) —
+with **inspectable provenance for every stored fact**. This is the ninth bounded
+context; it owns a person/relationship concept that none of the other eight own.
+
+> **Scope today.** This section documents the contact-records capability that
+> ships in Phase 1: contact create/update, CSV import, soft-delete, and
+> provenance. Supervised contact *research*, outreach *drafting*, and send
+> *logging* are later phases and are not part of the current implementation. One
+> invariant holds for the whole context from day one: **JobHunter never sends** —
+> there is no send transport of any kind (see below).
+
+**Ubiquitous Language:**
+- **Contact** — a person relevant to a company or application. Entity with identity `(TenantId, ContactId)`.
+- **ContactAttribute** — one fact about a contact (name, title, email, phone, profile URL, note). Value object; **carries a mandatory `ContactFactProvenance`**.
+- **ContactFactProvenance** — where a fact came from: `sourceKind` (`user_entered | public_web_page | user_imported_list | derived`), a safe `sourceRef`, `captureMethod`, `capturedAt`, `confidence`, and `userConfirmed`.
+- **ContactLink** — a contact's link to an `Employer` and/or a `JobId`; a contact must link to at least one.
+- **ContactRole** — enum: `recruiter | hiring_manager | referrer | warm_intro | other`.
+- **WarmIntroSignal** — a value-object placeholder only in Phase 1; warm-intro identification (from user-provided relationship data) is a later phase.
+
+**Upstream/Downstream:**
+- **Consumes** job identity from Job Discovery (a `Contact` links to an `Employer` and optionally a `JobId`); it does not own job identity.
+- **Projected by** Operations / Read-Side exactly like every other context (the `contact_projections` read model).
+- It **never** feeds apply eligibility, scoring, ranking, or thresholds — contact data is advisory.
+
+**Responsibilities:**
+- Own the `Contact` aggregate and its provenance-bearing attributes.
+- Create, update, CSV-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
+- Emit contact domain events (`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`, `ContactDeleted`) carrying only identifiers, kinds, provenance metadata, and timestamps.
+
+**What it does NOT own:**
+- Job identity, scoring, materials, or apply (each stays in its own context).
+- Any send/transport capability — none exists (INV-1: the product never sends).
+
+**Boundary justification:** Contacts have their own vocabulary (person, role,
+relationship), lifecycle, and data, distinct from Discovery's `Employer` value
+object and Apply's `ApplyRun`. Modelling them as their own context keeps that
+language honest and gives the person/relationship concept a home. See the
+2026-07-06 "Ninth Bounded Context — Contact & Outreach" decision in
+`docs/decisions.md`.
+
+**Sensitivity:** attribute *values* (names, emails, notes) live only on the
+canonical write side (`contact_attributes.value_json`); event payloads,
+projections, logs, and telemetry carry only safe references.
 
 ---

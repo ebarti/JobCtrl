@@ -13,6 +13,7 @@ const NAV_ITEMS: ReadonlyArray<{
     | "/debug"
     | "/evidence-map"
     | "/artifacts"
+    | "/outreach"
     | "/profile"
     | "/preferences"
     | "/settings";
@@ -27,6 +28,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { label: "Debug", to: "/debug" },
   { label: "Evidence", to: "/evidence-map" },
   { label: "Artifacts", to: "/artifacts" },
+  { label: "Contacts", to: "/outreach" },
   { label: "Profile", to: "/profile" },
   { label: "Preferences", to: "/preferences" },
   { label: "Settings", to: "/settings" },

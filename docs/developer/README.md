@@ -57,7 +57,7 @@ flowchart LR
   class Providers ext
 ```
 
-The domain is organized around eight bounded contexts:
+The domain is organized around nine bounded contexts:
 
 - Discovery
 - Enrichment
@@ -67,6 +67,7 @@ The domain is organized around eight bounded contexts:
 - Apply
 - Pipeline
 - Operations / Read-Side
+- Contact & Outreach
 
 The web app mirrors those contexts under `apps/web/src/contexts/`. Views under
 `apps/web/src/views/` compose context-owned hooks and components.

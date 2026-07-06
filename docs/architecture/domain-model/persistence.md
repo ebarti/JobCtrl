@@ -28,6 +28,7 @@ mid-flight.
 | `MaterialsSet` | `MaterialsRepository` | `jobs` (tailor/cover columns) + `job_artifacts` | `job_materials` (new) + `job_artifacts` (existing, enriched) |
 | `ApplyRun` | `ApplyRunRepository` / workflow-run projection | `job_events` + `apply_run_projections` | `job_events` + workflow-run projections keyed by Temporal workflow id |
 | `JobPipelineState` | `PipelineStateRepository` | `job_stage_states` | `job_stage_states` (existing, largely correct) |
+| `Contact` (Contact & Outreach) | `ContactRepository` | `contacts` + `contact_attributes` | `contacts` + `contact_attributes` (hosted: Postgres, tenant-scoped) |
 | Read-model projections | `ReadModelStore` | Computed at read time from `jobs` + `job_stage_states` | `job_list_view` (materialized/denormalized), `dashboard_stats` (materialized) |
 
 ### 7.2 Decoupling Persistence Schema from Domain Types
@@ -80,6 +81,13 @@ This decoupling means:
 - **`job_events` + `apply_run_projections`** → `ApplyRun` lifecycle and
   telemetry read model. The bespoke `apply_runs` / `apply_run_events` tables
   have been retired; workflow ids are the durable run handles.
+- **`contacts` + `contact_attributes`** → `Contact` aggregate (Contact &
+  Outreach). Attribute *values* live only in `contact_attributes.value_json`;
+  `job_events` (keyed by the generic `entity_kind` / `entity_ref` columns added
+  in schema v2) and the `contact_projections` read model carry only safe
+  references — ids, kinds, and provenance metadata, never a value. The SQLite
+  `user_version` is bumped to `2` (`SCHEMA_VERSION` in `database.py`,
+  `SUPPORTED_SCHEMA_VERSION` in `apps/api/src/db.ts`).
 
 ---
 

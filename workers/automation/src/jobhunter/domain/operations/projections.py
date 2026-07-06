@@ -275,6 +275,32 @@ class WorkflowRunProjection:
 
 
 @dataclass(frozen=True)
+class ContactProjection:
+    """Read-side row for one contact (Contact & Outreach, ninth context).
+
+    Sensitivity: this projection is derived data and carries NO attribute
+    *values* (names, emails, notes live only in ``contact_attributes.value_json``
+    on the canonical write side). It carries identifiers, the link, the role,
+    counts, the distinct source-kind set, and per-attribute PROVENANCE metadata
+    (INV-2: provenance is projected) — all safe references. The read model joins
+    this row with canonical attribute values at read time to render a contact.
+    """
+
+    tenant_id: TenantId
+    contact_id: str
+    employer: str | None = None
+    job_id: str | None = None
+    role: str = "other"
+    attribute_count: int = 0
+    confirmed_count: int = 0
+    source_kinds: tuple[str, ...] = ()
+    provenance: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_updated_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SourceQualityStats:
     """Operations projection for source health and scheduling feedback."""
 

@@ -164,6 +164,16 @@ event store:
 The `event_type` field becomes a discriminated union of all domain event types.
 The `payload_json` field contains the event-specific data (typed per event).
 
+**Generic entity keys (schema v2).** `job_events` is keyed by `job_url`
+(nullable). So that events which are not about a job can still carry honest
+identity, the table also has generic `entity_kind` / `entity_ref` columns (added
+in-code with a `PRAGMA table_info` forward-migration; the SQLite `user_version`
+is bumped to `2` — `SCHEMA_VERSION` in `database.py`, `SUPPORTED_SCHEMA_VERSION`
+in `apps/api/src/db.ts`). The Contact & Outreach context uses them for contact
+events (`entity_kind = 'contact'`, `entity_ref = <contactId>`); a contact event
+that also concerns an application additionally keys on that job's `job_url`, so it
+appears in the job's audit history.
+
 ### 6.5 TS API ↔ Python Worker Integration Protocol
 
 **Chosen application protocol: JSON-RPC 2.0 request/response.**
@@ -322,6 +332,7 @@ commands are dispatched to the Python worker via JSON-RPC.
 | `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TypeScript API** | Tombstone write. No Python needed. |
 | `restoreJob` | `RestoreJobUseCase` (Discovery) | **TypeScript API** | Tombstone removal. |
 | `updateProfile` | `UpdateProfileUseCase` (Profile) | **TypeScript API** | Shared schema validation and normalized SQLite write. |
+| contact create / update / CSV import / soft-delete | `CreateContactUseCase` / `UpdateContactUseCase` / `ImportContactsUseCase` / `DeleteContactUseCase` (Contact & Outreach) | **TypeScript API** | Simple provenance-tagged SQLite writes; no LLM or browser. The Python worker's `SqliteContactRepository` writes the same tables and event types. |
 | pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands that start Temporal workflows | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
 

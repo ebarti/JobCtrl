@@ -211,4 +211,32 @@ agents are managed fleet resources.
 | `ReadModelStore` | `SqliteReadModelStore` (same DB, denormalized views) | `PostgresReadModelStore` (**AWS RDS Postgres read replica**; tenant-scoped queries via RLS; optional **ElastiCache Redis** for dashboard aggregation caching) |
 | `EventSubscriber` | `InProcessEventBus` | `SqsEventConsumer` (**AWS SQS FIFO** consumer; reads from per-context queues; processes events in tenant-ordered batches; dead-letter queue for failed projections) |
 
+### 5.9 Contact & Outreach Context
+
+Phase 1 realises the `Contact` aggregate's ports; the research-task and
+outreach-thread ports land with their aggregates in later phases.
+
+| Port Type | Port | Description |
+|---|---|---|
+| **Driving** | `CreateContactUseCase` | Create a contact linked to an employer and/or application, with user-entered provenance |
+| **Driving** | `UpdateContactUseCase` | Update a contact's link, role, or attributes |
+| **Driving** | `ImportContactsUseCase` | Import a user-provided CSV contact list (CSV only), tagging every fact `user_imported_list` |
+| **Driving** | `DeleteContactUseCase` | Soft-delete a contact |
+| **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
+| **Driven** | `EventPublisher` | Publish contact domain events |
+
+| Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
+|---|---|---|
+| `ContactRepository` | `SqliteContactRepository` (publisher-injected; writes `contacts` + `contact_attributes`, then records contact events to `job_events`) | `PostgresContactRepository` (RDS Postgres, tenant-scoped) |
+
+**Hosting.** Phase 1's contact state-transition commands (create / update / CSV
+import / soft-delete) are simple, LLM-free, and browser-free, so they are hosted
+directly in the TypeScript API (`apps/api/src/contacts.ts`) per
+[§6.8](integration.md); the Python worker exposes the same use cases and
+`SqliteContactRepository`, writing the same canonical tables and event types.
+
+**Seam justification:** the repository port isolates contact storage exactly like
+every other aggregate — local SQLite today, hosted Postgres tomorrow — with no
+change to the contact domain logic.
+
 ---

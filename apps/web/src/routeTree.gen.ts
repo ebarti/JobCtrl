@@ -14,6 +14,7 @@ import { Route as RunsRouteImport } from "./routes/runs";
 import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
+import { Route as OutreachRouteImport } from "./routes/outreach";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
 import { Route as DiscoveryRouteImport } from "./routes/discovery";
@@ -26,12 +27,14 @@ import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
 import { Route as RunsIndexRouteImport } from "./routes/runs.index";
 import { Route as ProfileIndexRouteImport } from "./routes/profile.index";
+import { Route as OutreachIndexRouteImport } from "./routes/outreach.index";
 import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
 import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
 import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
 import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
 import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
 import { Route as ProfileImportRouteImport } from "./routes/profile.import";
+import { Route as OutreachContactIdRouteImport } from "./routes/outreach.$contactId";
 import { Route as JobsJobIdRouteImport } from "./routes/jobs.$jobId";
 import { Route as ArtifactsArtifactIdRouteImport } from "./routes/artifacts.$artifactId";
 import { Route as ActivityEventIdRouteImport } from "./routes/activity.$eventId";
@@ -63,6 +66,11 @@ const PreferencesRoute = PreferencesRouteImport.update({
 const PipelinesRoute = PipelinesRouteImport.update({
   id: "/pipelines",
   path: "/pipelines",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const OutreachRoute = OutreachRouteImport.update({
+  id: "/outreach",
+  path: "/outreach",
   getParentRoute: () => rootRouteImport,
 } as any);
 const JobsRoute = JobsRouteImport.update({
@@ -125,6 +133,11 @@ const ProfileIndexRoute = ProfileIndexRouteImport.update({
   path: "/",
   getParentRoute: () => ProfileRoute,
 } as any);
+const OutreachIndexRoute = OutreachIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => OutreachRoute,
+} as any);
 const JobsIndexRoute = JobsIndexRouteImport.update({
   id: "/",
   path: "/",
@@ -154,6 +167,11 @@ const ProfileImportRoute = ProfileImportRouteImport.update({
   id: "/import",
   path: "/import",
   getParentRoute: () => ProfileRoute,
+} as any);
+const OutreachContactIdRoute = OutreachContactIdRouteImport.update({
+  id: "/$contactId",
+  path: "/$contactId",
+  getParentRoute: () => OutreachRoute,
 } as any);
 const JobsJobIdRoute = JobsJobIdRouteImport.update({
   id: "/$jobId",
@@ -201,6 +219,7 @@ export interface FileRoutesByFullPath {
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
@@ -209,12 +228,14 @@ export interface FileRoutesByFullPath {
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
+  "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
+  "/outreach/": typeof OutreachIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
   "/runs/": typeof RunsIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
@@ -236,12 +257,14 @@ export interface FileRoutesByTo {
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
+  "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts": typeof ArtifactsIndexRoute;
   "/jobs": typeof JobsIndexRoute;
+  "/outreach": typeof OutreachIndexRoute;
   "/profile": typeof ProfileIndexRoute;
   "/runs": typeof RunsIndexRoute;
   "/settings": typeof SettingsIndexRoute;
@@ -261,6 +284,7 @@ export interface FileRoutesById {
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
@@ -269,12 +293,14 @@ export interface FileRoutesById {
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
+  "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
+  "/outreach/": typeof OutreachIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
   "/runs/": typeof RunsIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
@@ -295,6 +321,7 @@ export interface FileRouteTypes {
     | "/discovery"
     | "/evidence-map"
     | "/jobs"
+    | "/outreach"
     | "/pipelines"
     | "/preferences"
     | "/profile"
@@ -303,12 +330,14 @@ export interface FileRouteTypes {
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
+    | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
+    | "/outreach/"
     | "/profile/"
     | "/runs/"
     | "/settings/"
@@ -330,12 +359,14 @@ export interface FileRouteTypes {
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
+    | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
     | "/spikes/table-filters"
     | "/artifacts"
     | "/jobs"
+    | "/outreach"
     | "/profile"
     | "/runs"
     | "/settings"
@@ -354,6 +385,7 @@ export interface FileRouteTypes {
     | "/discovery"
     | "/evidence-map"
     | "/jobs"
+    | "/outreach"
     | "/pipelines"
     | "/preferences"
     | "/profile"
@@ -362,12 +394,14 @@ export interface FileRouteTypes {
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
+    | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
+    | "/outreach/"
     | "/profile/"
     | "/runs/"
     | "/settings/"
@@ -387,6 +421,7 @@ export interface RootRouteChildren {
   DiscoveryRoute: typeof DiscoveryRoute;
   EvidenceMapRoute: typeof EvidenceMapRoute;
   JobsRoute: typeof JobsRouteWithChildren;
+  OutreachRoute: typeof OutreachRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
   ProfileRoute: typeof ProfileRouteWithChildren;
@@ -431,6 +466,13 @@ declare module "@tanstack/react-router" {
       path: "/pipelines";
       fullPath: "/pipelines";
       preLoaderRoute: typeof PipelinesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/outreach": {
+      id: "/outreach";
+      path: "/outreach";
+      fullPath: "/outreach";
+      preLoaderRoute: typeof OutreachRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/jobs": {
@@ -517,6 +559,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ProfileIndexRouteImport;
       parentRoute: typeof ProfileRoute;
     };
+    "/outreach/": {
+      id: "/outreach/";
+      path: "/";
+      fullPath: "/outreach/";
+      preLoaderRoute: typeof OutreachIndexRouteImport;
+      parentRoute: typeof OutreachRoute;
+    };
     "/jobs/": {
       id: "/jobs/";
       path: "/";
@@ -558,6 +607,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/profile/import";
       preLoaderRoute: typeof ProfileImportRouteImport;
       parentRoute: typeof ProfileRoute;
+    };
+    "/outreach/$contactId": {
+      id: "/outreach/$contactId";
+      path: "/$contactId";
+      fullPath: "/outreach/$contactId";
+      preLoaderRoute: typeof OutreachContactIdRouteImport;
+      parentRoute: typeof OutreachRoute;
     };
     "/jobs/$jobId": {
       id: "/jobs/$jobId";
@@ -649,6 +705,20 @@ const JobsRouteChildren: JobsRouteChildren = {
 
 const JobsRouteWithChildren = JobsRoute._addFileChildren(JobsRouteChildren);
 
+interface OutreachRouteChildren {
+  OutreachContactIdRoute: typeof OutreachContactIdRoute;
+  OutreachIndexRoute: typeof OutreachIndexRoute;
+}
+
+const OutreachRouteChildren: OutreachRouteChildren = {
+  OutreachContactIdRoute: OutreachContactIdRoute,
+  OutreachIndexRoute: OutreachIndexRoute,
+};
+
+const OutreachRouteWithChildren = OutreachRoute._addFileChildren(
+  OutreachRouteChildren,
+);
+
 interface ProfileImportRouteChildren {
   ProfileImportConfirmRoute: typeof ProfileImportConfirmRoute;
   ProfileImportPreviewRoute: typeof ProfileImportPreviewRoute;
@@ -714,6 +784,7 @@ const rootRouteChildren: RootRouteChildren = {
   DiscoveryRoute: DiscoveryRoute,
   EvidenceMapRoute: EvidenceMapRoute,
   JobsRoute: JobsRouteWithChildren,
+  OutreachRoute: OutreachRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,
   ProfileRoute: ProfileRouteWithChildren,

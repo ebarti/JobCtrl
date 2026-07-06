@@ -165,6 +165,13 @@ Out of scope for the local stack (tracked under
   legacy free-text reasoning as a compatibility path. Promote keywords to a
   searchable/indexed contract field with aggregate views.
 
+### Contact & Outreach
+
+- Contact-list import supports CSV only in Phase 1. vCard (`.vcf`) import is
+  deferred and not implemented. The CSV path tags every imported fact
+  `sourceKind = user_imported_list` with the filename as the source reference;
+  a vCard importer would need the same provenance tagging before it ships.
+
 ### UI Quality
 
 - Extend saved table views to the Discovery source registry. The R8 Jobs-table

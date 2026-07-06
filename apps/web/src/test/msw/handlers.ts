@@ -1,5 +1,20 @@
+import type {
+  ContactAttributeDto,
+  ContactCreateRequest,
+  ContactUpdateRequest,
+} from "@jobhunter/contracts";
 import { http, HttpResponse } from "msw";
 
+import {
+  makeContactDetail,
+  makeContactDetailResponse,
+  makeContactListResponse,
+  makeContactMutationResponse,
+  makeContactProvenance,
+  sampleContactDetail,
+  sampleContactSummary,
+  sampleSecondaryContactSummary,
+} from "../fixtures/contacts.js";
 import {
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
@@ -791,6 +806,80 @@ export const handlers = [
   http.get("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.delete("*/v1/credentials/:key", () => HttpResponse.json(sampleCredentialsResponse)),
+
+  http.get("*/v1/contacts", ({ request }) => {
+    const url = new URL(request.url);
+    const jobId = url.searchParams.get("jobId");
+    const employer = url.searchParams.get("employer");
+    const all = [sampleContactSummary, sampleSecondaryContactSummary];
+    const items = all.filter(
+      (contact) =>
+        (!jobId || contact.jobId === jobId) &&
+        (!employer || contact.employer === employer),
+    );
+    return HttpResponse.json(makeContactListResponse(items));
+  }),
+  http.post("*/v1/contacts/import", async ({ request }) => {
+    const body = (await request.json()) as { csvText?: string };
+    const rows = (body.csvText ?? "").split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const imported = Math.max(rows.length - 1, 0);
+    return HttpResponse.json({
+      ok: true,
+      imported,
+      skipped: 0,
+      contactIds: Array.from({ length: imported }, (_, index) => `imported-contact-${index + 1}`),
+    });
+  }),
+  http.post("*/v1/contacts", async ({ request }) => {
+    const body = (await request.json()) as ContactCreateRequest;
+    const attributes: ContactAttributeDto[] = (body.attributes ?? []).map((attribute, index) => ({
+      attributeId: `new-attr-${index + 1}`,
+      kind: attribute.kind,
+      value: attribute.value,
+      provenance: makeContactProvenance(),
+    }));
+    const nameValue = attributes.find((attribute) => attribute.kind === "name")?.value;
+    return HttpResponse.json(
+      makeContactMutationResponse(
+        makeContactDetail({
+          contactId: "contact-created",
+          displayName: nameValue ?? body.employer ?? "New contact",
+          role: body.role,
+          employer: body.employer ?? null,
+          jobId: body.jobId ?? null,
+          attributes,
+        }),
+      ),
+    );
+  }),
+  http.get("*/v1/contacts/:contactId", ({ params }) =>
+    HttpResponse.json(
+      makeContactDetailResponse(
+        makeContactDetail({ contactId: String(params["contactId"]) }),
+      ),
+    ),
+  ),
+  http.patch("*/v1/contacts/:contactId", async ({ params, request }) => {
+    const body = (await request.json()) as ContactUpdateRequest;
+    return HttpResponse.json(
+      makeContactMutationResponse(
+        makeContactDetail({
+          ...sampleContactDetail,
+          contactId: String(params["contactId"]),
+          role: body.role ?? sampleContactDetail.role,
+          employer: body.employer ?? sampleContactDetail.employer,
+          jobId: body.jobId ?? sampleContactDetail.jobId,
+        }),
+      ),
+    );
+  }),
+  http.delete("*/v1/contacts/:contactId", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      contactId: String(params["contactId"]),
+      deletedAt: "2026-07-01T00:00:00+00:00",
+    }),
+  ),
 ];
 
 export function failingHandler(method: "get" | "post" | "patch" | "delete", path: string, status = 500) {

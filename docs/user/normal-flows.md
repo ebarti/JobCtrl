@@ -238,3 +238,22 @@ Useful web app views:
 
 ![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
 *The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
+
+## 11. Keep Contacts (Optional)
+
+Keep contact records for the people behind an application — a recruiter, hiring
+manager, or referrer — attached to a company or a specific job:
+
+- Open the **Contacts** page (the "Contacts" nav entry) or the **Contacts** panel
+  in a job's detail drawer, and add a contact with a role (recruiter, hiring
+  manager, referrer, warm intro, or other), a link to the employer and/or the
+  application, and facts like name, title, email, phone, or a note.
+- Or import a list from a CSV file. Each imported fact is tagged as coming from
+  that file (its filename is recorded as the source); rows that name neither an
+  employer nor an application are skipped.
+- Every fact you store shows its **provenance** — where it came from — in the list
+  and detail views, so you can always see the source of a name or email.
+
+Contacts are records only. JobHunter never sends anything to them: there is no
+email, message, or outreach sending in this workflow, and contact data never
+affects scoring or apply decisions.

@@ -35,6 +35,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
 - [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
 - [JSON-RPC 2.0 for the TS API ↔ Python Worker](#_2026-05-06-json-rpc-2-0-for-the-ts-api-↔-python-worker) · 2026-05-06
+- [Contact and Outreach Bounded Context With No Auto-Send](#_2026-07-06-contact-and-outreach-bounded-context-with-no-auto-send) · 2026-07-06
 
 **Frontend architecture**
 
@@ -1621,3 +1622,73 @@ Consequences:
 Cites: R10 crawl-politeness train (PRs #297 → #315); plan
 `docs/plans/2026-07-05-crawl-politeness-plan.md`; gate G1 in
 `docs/plans/2026-07-03-oss-release-remediation-spec.md` §5.
+
+## 2026-07-06: Contact and Outreach Bounded Context With No Auto-Send
+
+Status: accepted
+
+Decision: add a ninth bounded context, **Contact & Outreach** (Supporting
+Domain), that owns durable **contact records** (recruiter, hiring manager,
+referrer, warm intro) linked to a company and/or an application, with
+**inspectable provenance on every stored fact**. Phase 1 ships the `Contact`
+aggregate only — create, update, CSV import, soft-delete, provenance, projections,
+read APIs, and the Contacts UI. This adds a context; it does not fork or
+strangle an existing one.
+
+The context is deliberately stricter than every send-capable design in the
+backlog: **it has no send transport of any kind, and the product never sends.**
+Contacts are records; JobHunter drafts nothing and sends nothing in this scope.
+Contact data is advisory — it never feeds apply eligibility, scoring, ranking, or
+thresholds.
+
+Two supporting decisions land with it:
+
+- **CSV-only import.** User-imported contact lists are parsed from local CSV
+  files only; every imported fact is tagged `sourceKind = user_imported_list`,
+  `sourceRef = <filename>`, `captureMethod = manual`. vCard and other formats are
+  deferred (recorded in `docs/backlog.md`).
+- **Generic event-log identity (schema v2).** `job_events` gains generic
+  `entity_kind` / `entity_ref` columns so contact-only events carry honest
+  identity (`entity_kind = 'contact'`, `entity_ref = <contactId>`) instead of
+  overloading the nullable `job_url`; application-linked contact events still key
+  on the job's `job_url`. The SQLite `user_version` is bumped to `2` on both
+  runtimes (`SCHEMA_VERSION` in `database.py`, `SUPPORTED_SCHEMA_VERSION` in
+  `apps/api/src/db.ts`).
+
+Rationale:
+
+- contacts have their own vocabulary (person, role, relationship), lifecycle, and
+  data that none of the existing eight contexts own; bolting them onto Discovery
+  (which owns `Employer` only as a value object) or Apply (which owns `ApplyRun`)
+  would blur those languages
+- **auditability:** every displayed contact fact must have a source of truth, so
+  provenance is a mandatory value object on every attribute (INV-2), persisted at
+  the owning aggregate, projected into `contact_projections`, and rendered in the
+  UI — a displayed fact with no provenance is a defect to compute, not a field to
+  hide
+- **sensitivity:** attribute *values* (names, emails, notes) are treated like raw
+  email bodies in the apply-feedback design — they live only in
+  `contact_attributes.value_json`; events, projections, logs, and telemetry carry
+  only safe references
+- **no-auto-send is the product's stated stance**, not an omission: the repository
+  has zero send paths today and this context adds none
+
+Consequences:
+
+- every canonical doc that stated "eight bounded contexts" is updated to nine
+  (`docs/architecture/index.md`, `docs/architecture/domain-model/`,
+  `docs/architecture/frontend/`, `docs/developer/README.md`); this record
+  supersedes the eight-context counts in the 2026-05-06 DDD and frontend ADRs
+  above, which stay verbatim per this log's append-only rule
+- contact create / update / CSV import / soft-delete are simple state transitions
+  hosted directly in the TypeScript API (`apps/api/src/contacts.ts`) per the
+  domain-model §6.8 hosting rule; the Python worker's `SqliteContactRepository`
+  writes the same canonical tables and event types, guarded by a cross-runtime
+  projection parity fixture
+- later phases (supervised research, outreach drafts, send logging + follow-ups)
+  build on this context; the no-auto-send invariant holds for all of them
+
+Cites: plan `docs/plans/2026-07-05-outreach-planner-plan.md` (§1.1 invariants,
+§3 owning context, §16 resolved decisions 1 / 2b / 4); domain model
+`docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
+`docs/architecture/read-model.md`; `docs/local-ts-api.md`.

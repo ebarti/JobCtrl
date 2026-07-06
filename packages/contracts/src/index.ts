@@ -13,6 +13,8 @@ export type {
   JobDetailProjection,
   ArtifactListProjection,
   ApplyRunProjection,
+  ContactProjection,
+  ContactProvenanceEntry,
 } from "@jobhunter/domain-types";
 export {
   PROJECTION_TABLES,

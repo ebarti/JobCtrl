@@ -136,6 +136,41 @@ export interface ApplyRunProjection {
   readonly events: readonly Record<string, unknown>[];
 }
 
+/**
+ * Read-side row for one contact (Contact & Outreach, ninth context).
+ *
+ * Derived data carrying NO attribute values (names, emails, notes live only in
+ * `contact_attributes.value_json` on the canonical write side). It carries
+ * identifiers, the link, the role, counts, the distinct source-kind set, and
+ * per-attribute provenance metadata (INV-2). The read model joins this with
+ * canonical attribute values at read time.
+ */
+export interface ContactProvenanceEntry {
+  readonly attributeId: string;
+  readonly attributeKind: string;
+  readonly sourceKind: string;
+  readonly sourceRef: string;
+  readonly captureMethod: string;
+  readonly confidence: number;
+  readonly userConfirmed: boolean;
+  readonly recordedAt: string;
+}
+
+export interface ContactProjection {
+  readonly tenantId: TenantId;
+  readonly contactId: string;
+  readonly employer: string | null;
+  readonly jobId: string | null;
+  readonly role: string;
+  readonly attributeCount: number;
+  readonly confirmedCount: number;
+  readonly sourceKinds: readonly string[];
+  readonly provenance: readonly ContactProvenanceEntry[];
+  readonly createdAt: string | null;
+  readonly updatedAt: string | null;
+  readonly lastUpdatedAt: string | null;
+}
+
 export const PROJECTION_TABLES = [
   "job_list_projections",
   "dashboard_projections",
@@ -143,6 +178,7 @@ export const PROJECTION_TABLES = [
   "artifact_list_projections",
   "evidence_usage_projections",
   "apply_run_projections",
+  "contact_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 
