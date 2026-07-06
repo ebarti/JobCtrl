@@ -212,7 +212,6 @@ export function rejectOutreachDraft(
         threadId,
         draftId,
         generation: Number(draft.generation ?? 0),
-        reason,
         rejectedAt: now,
       },
     });

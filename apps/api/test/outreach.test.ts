@@ -133,6 +133,19 @@ function eventTypes(dbPath: string): string[] {
   return rows.map((row) => row.event_type);
 }
 
+function eventPayloads(dbPath: string): Array<Record<string, unknown>> {
+  const db = new Database(dbPath);
+  const rows = db.prepare("SELECT event_type, payload_json FROM job_events").all() as Array<{
+    event_type: string;
+    payload_json: string | null;
+  }>;
+  db.close();
+  return rows.map((row) => ({
+    eventType: row.event_type,
+    ...(JSON.parse(row.payload_json ?? "{}") as Record<string, unknown>),
+  }));
+}
+
 function draftStatus(dbPath: string, draftId: string): string {
   const db = new Database(dbPath);
   const row = db
@@ -257,14 +270,29 @@ describe("outreach API", () => {
     seedDraft(dbPath, { draftId: "draft-j2", threadId: "thread-j", generation: 2, gate: PASSING_GATE });
 
     // Rejecting the candidate leaves the previously approved draft intact.
+    const reason = "off tone, references dana.lee@example.test";
     const rejectCandidate = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-j/drafts/draft-j2/reject",
-      payload: { reason: "off tone" },
+      payload: { reason },
     });
     expect(rejectCandidate.statusCode).toBe(200);
     expect(draftStatus(dbPath, "draft-j2")).toBe("rejected");
     expect(draftStatus(dbPath, "draft-j1")).toBe("approved");
+
+    const db = new Database(dbPath);
+    const stored = db
+      .prepare("SELECT reason FROM outreach_drafts WHERE tenant_id = 'local' AND draft_id = 'draft-j2'")
+      .get() as { reason: string };
+    db.close();
+    expect(stored.reason).toBe(reason);
+    const payloads = eventPayloads(dbPath);
+    expect(JSON.stringify(payloads)).not.toContain(reason);
+    expect(payloads.find((payload) => payload.eventType === "OutreachDraftRejected")).toMatchObject({
+      draftId: "draft-j2",
+      rejectedAt: expect.any(String),
+    });
+    expect(payloads.find((payload) => payload.eventType === "OutreachDraftRejected")).not.toHaveProperty("reason");
 
     // Rejecting the approved draft is refused — only a candidate is rejectable.
     const rejectApproved = await app.inject({

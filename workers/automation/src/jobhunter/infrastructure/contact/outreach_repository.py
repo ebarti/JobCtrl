@@ -283,7 +283,6 @@ class SqliteOutreachThreadRepository:
                         "threadId": thread_id,
                         "draftId": draft.draft_id,
                         "generation": draft.generation,
-                        "reason": draft.reason,
                         "rejectedAt": draft.rejected_at or thread.updated_at,
                     },
                 )
