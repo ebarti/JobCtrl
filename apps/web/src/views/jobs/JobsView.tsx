@@ -6,6 +6,7 @@ import {
   type JobMutationResponse,
   type JobSortField,
   type JobSummary,
+  type SavedTableView,
   STAGE_STATES,
 } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
@@ -23,12 +24,26 @@ import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRet
 import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
+import {
+  JOBS_TABLE_COLUMN_IDS,
+  JOBS_TABLE_ID,
+  DEFAULT_SAVED_TABLE_VIEW_ID,
+  type SavedTablePresentation,
+  type SavedTableViewSnapshot,
+  useSavedTableViewsStore,
+} from "../../shared/stores/saved-table-views.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import {
+  type DataGridColumn,
+  type DataGridColumnWidthsState,
   hasActiveDataGridFilters,
   type DataGridFilterState,
   type DataGridTextFilter,
 } from "../../shared/ui/filterable-data-grid.js";
+import {
+  SavedTableViewsControl,
+  type SavedTableColumnOption,
+} from "../../shared/ui/saved-table-views-control.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 import { JobsTable } from "./JobsTable.js";
 import { bulkJobFilters, jobsListInput } from "./jobStageFilters.js";
@@ -65,6 +80,24 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "apply_status",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
+  columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+  density: null,
+  grouping: null,
+  colorRules: [],
+};
+const DEFAULT_SAVED_URL_FILTERS = {
+  q: "",
+  stage: "all",
+  state: "all",
+  applyStatus: "all",
+  deleted: "active",
+  pageSize: 50,
+  minFitScore: undefined,
+  maxFitScore: undefined,
+  discoveredSince: undefined,
+  scoredSince: undefined,
+} satisfies SavedTableViewSnapshot["urlFilters"];
 
 function filterFor(value: string | undefined): DataGridTextFilter | undefined {
   if (!value) return undefined;
@@ -147,6 +180,54 @@ function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
 }
 
+function savedUrlFiltersFromSearch(
+  search: JobsSearch,
+): SavedTableViewSnapshot["urlFilters"] {
+  return {
+    q: search.q,
+    stage: search.stage,
+    state: search.state,
+    applyStatus: search.applyStatus,
+    deleted: search.deleted,
+    pageSize: search.pageSize,
+    minFitScore: search.minFitScore,
+    maxFitScore: search.maxFitScore,
+    discoveredSince: search.discoveredSince,
+    scoredSince: search.scoredSince,
+  };
+}
+
+function searchPatchFromSavedView(
+  view: SavedTableView,
+): Partial<JobsSearch> {
+  const filters = { ...DEFAULT_SAVED_URL_FILTERS, ...view.urlFilters };
+  return {
+    q: filters.q ?? "",
+    stage: filters.stage ?? "all",
+    state: filters.state ?? "all",
+    applyStatus: filters.applyStatus ?? "all",
+    deleted: filters.deleted ?? "active",
+    pageSize: filters.pageSize ?? 50,
+    minFitScore: filters.minFitScore,
+    maxFitScore: filters.maxFitScore,
+    discoveredSince: filters.discoveredSince,
+    scoredSince: filters.scoredSince,
+    sort: isJobSortField(view.sort.columnId) ? view.sort.columnId : "discovered_at",
+    dir: view.sort.direction,
+    page: 1,
+  };
+}
+
+function columnOptionsFor(
+  columns: Array<DataGridColumn<JobSummary>>,
+): SavedTableColumnOption[] {
+  return columns.map((column) => ({
+    id: column.id,
+    label: column.label,
+    locked: column.id === "select",
+  }));
+}
+
 function sameKeys(
   current: readonly string[],
   next: readonly string[],
@@ -170,6 +251,18 @@ export function JobsView() {
   const retryFailedJobs = useRetryFailedJobsMutation();
   const runPendingPreparation = useRunPendingPreparationMutation();
   const stageTriggerConfigs = useStageTriggerStore((state) => state.configs);
+  const savedTableViews = useSavedTableViewsStore((state) => state.views);
+  const activeSavedViewId = useSavedTableViewsStore(
+    (state) =>
+      state.activeViewIdByTable[JOBS_TABLE_ID] ?? DEFAULT_SAVED_TABLE_VIEW_ID,
+  );
+  const savedPresentation =
+    useSavedTableViewsStore(
+      (state) => state.presentationByTable[JOBS_TABLE_ID],
+    ) ?? DEFAULT_JOBS_PRESENTATION;
+  const setSavedPresentation = useSavedTableViewsStore(
+    (state) => state.setTablePresentation,
+  );
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -178,6 +271,13 @@ export function JobsView() {
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
   const autoPendingPreparationKeys = useRef<Set<string>>(new Set());
+  const activeSavedView = useMemo(
+    () =>
+      savedTableViews.find(
+        (view) => view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
+      ) ?? null,
+    [activeSavedViewId, savedTableViews],
+  );
   const tableFilters = useMemo<DataGridFilterState>(
     () => ({
       ...localTableFilters,
@@ -190,7 +290,38 @@ export function JobsView() {
       search.state,
     ],
   );
+
+  useEffect(() => {
+    setLocalTableFilters(
+      (activeSavedView?.gridFilters ?? {}) as DataGridFilterState,
+    );
+  }, [activeSavedView?.gridFilters]);
+
   const hasLocalFilters = hasActiveDataGridFilters(localTableFilters);
+  const savedViewSnapshot = useMemo<SavedTableViewSnapshot>(
+    () => ({
+      ...savedPresentation,
+      sort: { columnId: search.sort, direction: search.dir },
+      urlFilters: savedUrlFiltersFromSearch(search),
+      gridFilters: localTableFilters,
+    }),
+    [
+      localTableFilters,
+      savedPresentation,
+      search.applyStatus,
+      search.deleted,
+      search.dir,
+      search.discoveredSince,
+      search.maxFitScore,
+      search.minFitScore,
+      search.pageSize,
+      search.q,
+      search.scoredSince,
+      search.sort,
+      search.stage,
+      search.state,
+    ],
+  );
 
   useEffect(() => {
     setRowSelection({});
@@ -218,6 +349,48 @@ export function JobsView() {
       void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
     },
     [navigate],
+  );
+
+  const handleSavedPresentationChange = useCallback(
+    (presentation: SavedTablePresentation) => {
+      setSavedPresentation(JOBS_TABLE_ID, presentation);
+    },
+    [setSavedPresentation],
+  );
+
+  const handleColumnWidthsChange = useCallback(
+    (widths: DataGridColumnWidthsState) => {
+      setSavedPresentation(JOBS_TABLE_ID, {
+        ...savedPresentation,
+        columns: { ...savedPresentation.columns, widths },
+      });
+    },
+    [savedPresentation, setSavedPresentation],
+  );
+
+  const handleSavedViewApply = useCallback(
+    (view: SavedTableView) => {
+      setLocalTableFilters(view.gridFilters as DataGridFilterState);
+      setSearch(searchPatchFromSavedView(view));
+    },
+    [setSearch],
+  );
+
+  const renderSavedTableActions = useCallback(
+    (columns: Array<DataGridColumn<JobSummary>>) => (
+      <SavedTableViewsControl
+        tableId={JOBS_TABLE_ID}
+        columnOptions={columnOptionsFor(columns)}
+        snapshot={savedViewSnapshot}
+        onApplyView={handleSavedViewApply}
+        onPresentationChange={handleSavedPresentationChange}
+      />
+    ),
+    [
+      handleSavedPresentationChange,
+      handleSavedViewApply,
+      savedViewSnapshot,
+    ],
   );
 
   const handleTableFiltersChange = useCallback(
@@ -435,6 +608,8 @@ export function JobsView() {
     search.maxFitScore,
     search.minFitScore,
     search.q,
+    search.discoveredSince,
+    search.scoredSince,
     search.stage,
     search.state,
     stageTriggerConfigs,
@@ -574,6 +749,14 @@ export function JobsView() {
           filters={tableFilters}
           onFiltersChange={handleTableFiltersChange}
           onVisiblePageRowsChange={handleVisiblePageRowsChange}
+          columnOrder={savedPresentation.columns.order}
+          hiddenColumnIds={savedPresentation.columns.hidden}
+          columnWidths={savedPresentation.columns.widths}
+          onColumnWidthsChange={handleColumnWidthsChange}
+          density={savedPresentation.density}
+          grouping={savedPresentation.grouping}
+          colorRules={savedPresentation.colorRules}
+          toolbarActions={renderSavedTableActions}
         />
       </section>
       <Outlet />

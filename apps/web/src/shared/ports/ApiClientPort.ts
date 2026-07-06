@@ -27,13 +27,19 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
+  DailyDigest,
   DeleteJobRequest,
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  ExtensionCapabilityTokenResponse,
+  EvidenceMapResponse,
+  GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -53,6 +59,7 @@ import type {
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -147,6 +154,9 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
+  digest(): Promise<DailyDigest>;
+  acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;
@@ -242,6 +252,7 @@ export interface ApiClientPort {
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;
+  evidenceMap(): Promise<EvidenceMapResponse>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;
@@ -286,6 +297,8 @@ export interface ApiClientPort {
 
   settings(): Promise<SettingsResponse>;
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse>;
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse>;
 
   credentials(): Promise<CredentialsResponse>;
@@ -295,6 +308,7 @@ export interface ApiClientPort {
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
+  generateInterviewPrep(jobKey: string, body?: Partial<GenerateInterviewPrepRequest>): Promise<ActionRunResponse>;
   applyJob(jobKey: string, body?: Partial<ApplyJobRequest>): Promise<ActionRunResponse>;
   cancelJobAction(jobKey: string, body?: CancelJobActionRequest): Promise<ActionRunResponse>;
   markApplied(jobKey: string, body?: MarkJobActionRequest): Promise<ActionRunResponse>;

@@ -56,6 +56,13 @@ class DerivePreparationTargetsInput:
     tenant_id: str = LOCAL_TENANT
     min_score: int = 7
     limit: int = 0
+    # When False, only ``pending_score`` (fresh) jobs are derived and the
+    # ``pending_tailor`` straggler branch is skipped. Per-family streaming
+    # (R9 Phase 1) sets this False after the first fan-out so a fresh job that
+    # advances ``pending_score`` -> ``pending_tailor`` between passes is never
+    # re-derived as a second (TAILOR_RESUME) workflow while its SCORE_JOB
+    # workflow is still tailoring it. See ``_derive_targets``.
+    include_pending_tailor: bool = True
 
 
 @activity.defn(name="derive_preparation_targets")
@@ -65,7 +72,12 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     tenant_id = TenantId(payload.tenant_id)
     min_score = db_module.effective_tailoring_min_score(payload.min_score)
     _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
-    targets = _derive_targets(conn, tenant_id=tenant_id, min_score=min_score)
+    targets = _derive_targets(
+        conn,
+        tenant_id=tenant_id,
+        min_score=min_score,
+        include_pending_tailor=payload.include_pending_tailor,
+    )
     if payload.limit > 0:
         targets = targets[: payload.limit]
     return targets
@@ -83,6 +95,7 @@ def start_discovery_preparation_workflows(
     tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
+    include_pending_tailor: bool = True,
 ) -> dict[str, Any]:
     """Derive targets and start per-job preparation workflows in batches."""
     targets = derive_preparation_targets(
@@ -90,6 +103,7 @@ def start_discovery_preparation_workflows(
             tenant_id=str(tenant_id),
             min_score=min_score,
             limit=limit,
+            include_pending_tailor=include_pending_tailor,
         )
     )
     specs = [
@@ -119,6 +133,50 @@ def start_discovery_preparation_workflows(
         "queued": {"job_preparation": len(specs)},
         "batch_size": PREPARATION_CHILD_BATCH_SIZE,
     }
+
+
+def start_job_preparation_workflow(
+    job_url: str,
+    *,
+    min_score: int = 7,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    workflow_starter: WorkflowStarter | None = None,
+) -> bool:
+    """Start ONE job's ``SCORE_JOB`` preparation workflow (R9 Phase 2 handoff).
+
+    Called as each job crosses ``pending_score`` during enrichment so its
+    preparation begins immediately, before its siblings are even enriched. The
+    workflow id is the same deterministic ``prep-{idempotency_key}`` a
+    ``pending_score`` job would get from the per-family / terminal fan-out
+    (kind=SCORE_JOB, steps score→tailor→cover→pdf, current scoring policy
+    version, latest source event), so `USE_EXISTING` makes the per-job handoff
+    and the reconciling fan-outs converge on exactly one execution per job (I1).
+    """
+    conn = get_connection()
+    target_version = current_scoring_policy_version(conn, tenant_id)
+    spec = build_preparation_workflow_spec(
+        tenant_id=tenant_id,
+        job_url=job_url,
+        steps=["score", "tailor", "cover", "pdf"],
+        kind=PreparationWorkItemKind.SCORE_JOB,
+        target_version=target_version,
+        min_score=min_score,
+        workers=workers,
+        validation_mode=validation_mode,
+        llm_model=llm_model,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+    )
+    starter = workflow_starter or default_workflow_starter
+    _run_start_batch([spec], starter)
+    return True
 
 
 def build_preparation_workflow_spec(
@@ -197,9 +255,9 @@ def _derive_targets(
     *,
     tenant_id: TenantId,
     min_score: int,
+    include_pending_tailor: bool = True,
 ) -> list[PreparationTarget]:
     score_target_version = current_scoring_policy_version(conn, tenant_id)
-    tailoring_target_version = current_tailoring_policy_version(conn, tenant_id)
     targets: dict[str, PreparationTarget] = {}
 
     for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
@@ -213,18 +271,28 @@ def _derive_targets(
             steps=["score", "tailor", "cover", "pdf"],
         )
 
-    for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
-        job_url = str(job["url"])
-        if job_url in targets:
-            continue
-        targets[job_url] = _target(
-            tenant_id=tenant_id,
-            job_url=job_url,
-            kind=PreparationWorkItemKind.TAILOR_RESUME,
-            target_version=tailoring_target_version,
-            source_event_id=_latest_source_event_id(conn, job_url),
-            steps=["tailor", "cover", "pdf"],
-        )
+    # A ``pending_score`` job is carried all the way through tailor/cover/pdf by
+    # its own SCORE_JOB workflow (steps above). The ``pending_tailor`` branch is
+    # only for pre-existing stragglers scored in a prior run. When streaming
+    # fans out repeatedly (R9 Phase 1), deriving ``pending_tailor`` on every
+    # pass would start a second TAILOR_RESUME workflow for a fresh job the
+    # instant it crossed ``pending_score`` -> ``pending_tailor`` mid-tailor,
+    # double-spending on tailoring. Callers therefore sweep stragglers exactly
+    # once (``include_pending_tailor=True``) and derive score-only thereafter.
+    if include_pending_tailor:
+        tailoring_target_version = current_tailoring_policy_version(conn, tenant_id)
+        for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
+            job_url = str(job["url"])
+            if job_url in targets:
+                continue
+            targets[job_url] = _target(
+                tenant_id=tenant_id,
+                job_url=job_url,
+                kind=PreparationWorkItemKind.TAILOR_RESUME,
+                target_version=tailoring_target_version,
+                source_event_id=_latest_source_event_id(conn, job_url),
+                steps=["tailor", "cover", "pdf"],
+            )
 
     return [targets[job_url] for job_url in sorted(targets)]
 
@@ -382,4 +450,5 @@ __all__ = [
     "derive_preparation_targets",
     "latest_source_event_id",
     "start_discovery_preparation_workflows",
+    "start_job_preparation_workflow",
 ]

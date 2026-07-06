@@ -45,6 +45,8 @@ export * from "./discovery/index.js";
 
 export * from "./enrichment/index.js";
 
+export * from "./interview/index.js";
+
 export * from "./apply/index.js";
 
 export {

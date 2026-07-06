@@ -400,6 +400,18 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
       params,
     };
   }
+  if (command.action === "generate_interview_prep") {
+    return {
+      method: "generate_interview_prep",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        jobUrl: command.jobKey,
+        llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
+      },
+    };
+  }
   if (command.action === "generate_materials") return null;
   if (command.action === "apply") {
     return { method: "apply", params: applyRpcParams(command, context) };

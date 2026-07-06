@@ -15,11 +15,13 @@ import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
 import { Route as DiscoveryRouteImport } from "./routes/discovery";
 import { Route as DebugRouteImport } from "./routes/debug";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
 import { Route as ApplyReviewRouteImport } from "./routes/apply-review";
+import { Route as AnalyticsRouteImport } from "./routes/analytics";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
 import { Route as RunsIndexRouteImport } from "./routes/runs.index";
@@ -68,6 +70,11 @@ const JobsRoute = JobsRouteImport.update({
   path: "/jobs",
   getParentRoute: () => rootRouteImport,
 } as any);
+const EvidenceMapRoute = EvidenceMapRouteImport.update({
+  id: "/evidence-map",
+  path: "/evidence-map",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DiscoveryRoute = DiscoveryRouteImport.update({
   id: "/discovery",
   path: "/discovery",
@@ -91,6 +98,11 @@ const ArtifactsRoute = ArtifactsRouteImport.update({
 const ApplyReviewRoute = ApplyReviewRouteImport.update({
   id: "/apply-review",
   path: "/apply-review",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: "/analytics",
+  path: "/analytics",
   getParentRoute: () => rootRouteImport,
 } as any);
 const IndexRoute = IndexRouteImport.update({
@@ -181,11 +193,13 @@ const JobsJobIdRunRunIdRoute = JobsJobIdRunRunIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -211,10 +225,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -237,11 +253,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
+  "/evidence-map": typeof EvidenceMapRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -269,11 +287,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/artifacts"
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -299,10 +319,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/pipelines"
     | "/preferences"
     | "/activity/$eventId"
@@ -324,11 +346,13 @@ export interface FileRouteTypes {
   id:
     | "__root__"
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/artifacts"
     | "/dashboard"
     | "/debug"
     | "/discovery"
+    | "/evidence-map"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -355,11 +379,13 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
+  AnalyticsRoute: typeof AnalyticsRoute;
   ApplyReviewRoute: typeof ApplyReviewRoute;
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
   DebugRoute: typeof DebugRoute;
   DiscoveryRoute: typeof DiscoveryRoute;
+  EvidenceMapRoute: typeof EvidenceMapRoute;
   JobsRoute: typeof JobsRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
@@ -414,6 +440,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof JobsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/evidence-map": {
+      id: "/evidence-map";
+      path: "/evidence-map";
+      fullPath: "/evidence-map";
+      preLoaderRoute: typeof EvidenceMapRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/discovery": {
       id: "/discovery";
       path: "/discovery";
@@ -447,6 +480,13 @@ declare module "@tanstack/react-router" {
       path: "/apply-review";
       fullPath: "/apply-review";
       preLoaderRoute: typeof ApplyReviewRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/analytics": {
+      id: "/analytics";
+      path: "/analytics";
+      fullPath: "/analytics";
+      preLoaderRoute: typeof AnalyticsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/": {
@@ -666,11 +706,13 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
   ApplyReviewRoute: ApplyReviewRoute,
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,
   DebugRoute: DebugRoute,
   DiscoveryRoute: DiscoveryRoute,
+  EvidenceMapRoute: EvidenceMapRoute,
   JobsRoute: JobsRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,
