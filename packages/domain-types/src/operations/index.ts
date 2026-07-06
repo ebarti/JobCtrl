@@ -171,6 +171,56 @@ export interface ContactProjection {
   readonly lastUpdatedAt: string | null;
 }
 
+/**
+ * Read-side row for one supervised research task (Contact & Outreach, ninth
+ * context). Carries NO candidate attribute values (names, emails live only in
+ * `contact_candidates.attributes_json` on the canonical write side): the task
+ * lifecycle, counts, the source-attempt outcomes (provenance of the search),
+ * and per-candidate provenance metadata (INV-2). The read model joins canonical
+ * candidate values at read time.
+ */
+export interface ContactResearchSourceAttemptEntry {
+  readonly sourceKind: string;
+  readonly sourceRef: string;
+  readonly outcome: string;
+  readonly attemptedAt: string;
+  readonly detail: string;
+}
+
+export interface ContactResearchCandidateEntry {
+  readonly candidateId: string;
+  readonly role: string;
+  readonly sourceKind: string;
+  readonly sourceRef: string;
+  readonly captureMethod: string;
+  readonly confidence: number;
+  readonly status: string;
+  readonly proposedAt: string;
+  readonly confirmedContactId: string | null;
+  readonly confirmedAt: string | null;
+  readonly attributeKinds: readonly string[];
+}
+
+export interface ContactResearchTaskProjection {
+  readonly tenantId: TenantId;
+  readonly taskId: string;
+  readonly employer: string | null;
+  readonly jobId: string | null;
+  readonly status: string;
+  readonly candidateCount: number;
+  readonly needsReviewCount: number;
+  readonly confirmedCount: number;
+  readonly sourceAttempts: readonly ContactResearchSourceAttemptEntry[];
+  readonly candidates: readonly ContactResearchCandidateEntry[];
+  readonly startedAt: string | null;
+  readonly updatedAt: string | null;
+  readonly needsReviewAt: string | null;
+  readonly completedAt: string | null;
+  readonly failedAt: string | null;
+  readonly errorClass: string | null;
+  readonly lastUpdatedAt: string | null;
+}
+
 export const PROJECTION_TABLES = [
   "job_list_projections",
   "dashboard_projections",
@@ -179,6 +229,7 @@ export const PROJECTION_TABLES = [
   "evidence_usage_projections",
   "apply_run_projections",
   "contact_projections",
+  "contact_research_task_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 

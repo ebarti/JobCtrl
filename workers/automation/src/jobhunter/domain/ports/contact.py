@@ -5,20 +5,29 @@ per-aggregate repository for the :class:`Contact` root
 (``docs/architecture/domain-model/persistence.md`` §7.1). Local-mode adapter is
 ``jobhunter.infrastructure.contact.sqlite_repository.SqliteContactRepository``.
 
-Only the ``Contact`` aggregate is realised in Phase 1; the
-``ContactResearchTaskRepository`` / ``OutreachThreadRepository`` ports land with
-their aggregates in later phases.
+Phase 2 adds ``ContactResearchTaskRepository`` for the supervised research
+aggregate plus ``ResearchPageFetcherPort`` — the gateway-routed public-page
+fetch seam (every research fetch routes through the merged politeness gateway;
+robots-denial / rate-limit / budget-exhaustion are first-class outcomes, not
+scrape errors). ``OutreachThreadRepository`` lands with its aggregate later.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from jobhunter.domain.contact.aggregate import Contact
+from jobhunter.domain.contact.research import ContactResearchTask
 from jobhunter.domain.identifiers import ContactId
 from jobhunter.domain.tenant import TenantId
 
-__all__ = ["ContactRepository"]
+__all__ = [
+    "ContactRepository",
+    "ContactResearchTaskRepository",
+    "ResearchPageFetch",
+    "ResearchPageFetcherPort",
+]
 
 
 class ContactRepository(Protocol):
@@ -41,3 +50,44 @@ class ContactRepository(Protocol):
 
     def delete(self, tenant_id: TenantId, contact_id: ContactId, *, reason: str) -> bool:
         """Soft-delete the contact. Returns ``True`` when a row was affected."""
+
+
+class ContactResearchTaskRepository(Protocol):
+    """Persistence port for the ``ContactResearchTask`` aggregate."""
+
+    def load(self, tenant_id: TenantId, task_id: str) -> ContactResearchTask | None:
+        """Return the research task, or ``None`` when absent."""
+
+    def save(self, tenant_id: TenantId, task: ContactResearchTask) -> ContactResearchTask:
+        """Persist the aggregate (task + candidates + attempts) and publish events."""
+
+    def list_for_tenant(self, tenant_id: TenantId) -> list[ContactResearchTask]:
+        """Return all research tasks for the tenant, newest first."""
+
+
+@dataclass(frozen=True)
+class ResearchPageFetch:
+    """Outcome of one gateway-guarded public-page fetch.
+
+    ``outcome`` is a :class:`~jobhunter.domain.contact.research.ResearchSourceOutcome`
+    value; ``text`` is populated only when ``outcome == 'allowed'``. A blocked
+    decision (robots/rate-limit/budget) yields the outcome with empty text — it
+    is never surfaced as an exception (outreach planner plan §5.3).
+    """
+
+    outcome: str
+    text: str = ""
+    final_url: str = ""
+    status: int | None = None
+
+
+class ResearchPageFetcherPort(Protocol):
+    """Gateway-routed public-page fetch seam for contact research.
+
+    The single outbound choke point: implementations wrap
+    ``PolitenessGatewayPort.guard(url, policy, budget)`` and only fetch when the
+    decision is allowed. No research fetch path bypasses this port.
+    """
+
+    def fetch(self, url: str) -> ResearchPageFetch:
+        """Fetch a public page through the politeness gateway."""

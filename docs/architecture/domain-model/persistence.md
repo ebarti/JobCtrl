@@ -29,6 +29,7 @@ mid-flight.
 | `ApplyRun` | `ApplyRunRepository` / workflow-run projection | `job_events` + `apply_run_projections` | `job_events` + workflow-run projections keyed by Temporal workflow id |
 | `JobPipelineState` | `PipelineStateRepository` | `job_stage_states` | `job_stage_states` (existing, largely correct) |
 | `Contact` (Contact & Outreach) | `ContactRepository` | `contacts` + `contact_attributes` | `contacts` + `contact_attributes` (hosted: Postgres, tenant-scoped) |
+| `ContactResearchTask` (Contact & Outreach) | `ContactResearchTaskRepository` | `contact_research_tasks` (+ `source_attempts_json`) + `contact_candidates` | same tables (hosted: Postgres, tenant-scoped) |
 | Read-model projections | `ReadModelStore` | Computed at read time from `jobs` + `job_stage_states` | `job_list_view` (materialized/denormalized), `dashboard_stats` (materialized) |
 
 ### 7.2 Decoupling Persistence Schema from Domain Types
@@ -88,6 +89,14 @@ This decoupling means:
   references — ids, kinds, and provenance metadata, never a value. The SQLite
   `user_version` is bumped to `2` (`SCHEMA_VERSION` in `database.py`,
   `SUPPORTED_SCHEMA_VERSION` in `apps/api/src/db.ts`).
+- **`contact_research_tasks` + `contact_candidates`** → `ContactResearchTask`
+  aggregate (Contact & Outreach, Phase 2). The task row carries the lifecycle
+  plus a `source_attempts_json` column (the per-source `ResearchSourceAttempt`
+  outcomes — provenance of the search); each candidate row keeps its proposed
+  attribute *values* only in `contact_candidates.attributes_json`. Research
+  events (`entity_kind = 'contact_research'` / `entity_ref = <taskId>`) and the
+  `contact_research_task_projections` read model carry only ids, kinds,
+  provenance metadata, and outcomes — never a candidate value.
 
 ---
 

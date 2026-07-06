@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,6 +85,9 @@ import {
   ContactImportRequestSchema,
   ContactListQuerySchema,
   ContactDeleteRequestSchema,
+  ConfirmContactCandidateRequestSchema,
+  ContactResearchListQuerySchema,
+  RunContactResearchRequestSchema,
 } from "./contracts.js";
 import {
   ContactInputError,
@@ -95,6 +99,14 @@ import {
   listContacts,
   updateContact,
 } from "./contacts.js";
+import {
+  ContactResearchInputError,
+  ContactResearchNotFoundError,
+  confirmContactCandidate,
+  createQueuedResearchTask,
+  getResearchTaskDetail,
+  listResearchTasks,
+} from "./contact-research.js";
 import {
   decideOutcomeSuggestion,
   listApplicationOutcomes,
@@ -138,10 +150,12 @@ import {
   buildActionResponse,
   defaultActionDispatcher,
   defaultArtifactOpener,
+  defaultContactResearchStarter,
   defaultProfilePreviewRenderer,
   defaultProfileImporter,
   type ActionDispatcher,
   type ArtifactOpener,
+  type ContactResearchStarter,
   type ProfilePreviewRenderer,
   type ProfileImporter,
 } from "./local-actions.js";
@@ -265,6 +279,7 @@ export interface BuildAppOptions {
   dbPath: string;
   settingsPath: string;
   actionDispatcher?: ActionDispatcher;
+  contactResearchStarter?: ContactResearchStarter;
   artifactPdfPageRenderer?: ArtifactPdfPageRenderer;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
@@ -282,6 +297,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
+  const contactResearchStarter = options.contactResearchStarter ?? defaultContactResearchStarter;
   const artifactPdfPageRenderer = options.artifactPdfPageRenderer ?? defaultArtifactPdfPageRenderer;
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
@@ -2242,6 +2258,101 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           if (error instanceof ContactNotFoundError) {
             void reply.code(404);
             return { ok: false, error: "contact_not_found", message: error.message };
+          }
+          throw error;
+        }
+      });
+    },
+  );
+
+  // Supervised contact research (R6 Phase 2). Research + LLM run on the Python
+  // worker via Temporal; fetching routes only through the politeness gateway
+  // against the conservative opt-in allowlist (INV-3). Candidates land
+  // needs_review and require an explicit confirm command (INV-4). No send
+  // transport exists on any of these routes (INV-1).
+  app.get("/v1/contacts/research", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => ({
+      ok: true,
+      items: listResearchTasks(db, ContactResearchListQuerySchema.parse(request.query)),
+    })),
+  );
+
+  app.get<{ Params: { taskId: string } }>(
+    "/v1/contacts/research/:taskId",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) => {
+        const task = getResearchTaskDetail(db, decodeRouteParam(request.params.taskId));
+        if (!task) {
+          void reply.code(404);
+          return { ok: false, error: "research_task_not_found" };
+        }
+        return { ok: true, task };
+      }),
+  );
+
+  app.post("/v1/contacts/research", async (request, reply) => {
+    const body = parseBody(reply, RunContactResearchRequestSchema, request.body ?? {});
+    if (!body) {
+      return { ok: false, error: "invalid_contact_research" };
+    }
+    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+    if (!workerReady) {
+      return undefined;
+    }
+    const taskId = randomUUID();
+    const employer = body.employer ?? null;
+    const jobId = body.jobId ?? null;
+    const sources = body.sources.map((source) => ({
+      category: source.category,
+      url: source.url,
+      label: source.label,
+    }));
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      createQueuedResearchTask(db, { taskId, employer, jobId });
+      const started = await contactResearchStarter(
+        {
+          taskId,
+          employer,
+          jobUrl: jobId,
+          sources,
+          ...(body.llmModel ? { llmModel: body.llmModel } : {}),
+        },
+        actionContext,
+      );
+      void reply.code(202);
+      return {
+        ok: true,
+        taskId,
+        runId: started.runId,
+        workflowId: started.workflowId,
+        status: started.status,
+      };
+    });
+  });
+
+  app.post<{ Params: { taskId: string; candidateId: string } }>(
+    "/v1/contacts/research/:taskId/candidates/:candidateId/confirm",
+    async (request, reply) => {
+      const body = parseBody(reply, ConfirmContactCandidateRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_confirm" };
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return confirmContactCandidate(
+            db,
+            decodeRouteParam(request.params.taskId),
+            decodeRouteParam(request.params.candidateId),
+            body.role,
+          );
+        } catch (error) {
+          if (error instanceof ContactResearchNotFoundError) {
+            void reply.code(404);
+            return { ok: false, error: "research_candidate_not_found", message: error.message };
+          }
+          if (error instanceof ContactResearchInputError) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_confirm", message: error.message };
           }
           throw error;
         }

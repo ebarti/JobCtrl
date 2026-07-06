@@ -362,6 +362,7 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             employer            TEXT,
             job_url             TEXT,
             status              TEXT NOT NULL DEFAULT 'queued',
+            source_attempts_json TEXT NOT NULL DEFAULT '[]',
             started_at          TEXT,
             updated_at          TEXT NOT NULL,
             needs_review_at     TEXT,
@@ -441,6 +442,16 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_contact_attributes_contact
         ON contact_attributes(tenant_id, contact_id)
     """)
+    # Provenance of the search itself (§4.2): which allowed source was tried and
+    # its first-class outcome (robots/rate-limit/budget/rejected/manual-capture).
+    # Forward-migration guard so a Phase-0/1 database gains the column in place.
+    research_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(contact_research_tasks)").fetchall()
+    }
+    if "source_attempts_json" not in research_columns:
+        conn.execute(
+            "ALTER TABLE contact_research_tasks ADD COLUMN source_attempts_json TEXT NOT NULL DEFAULT '[]'"
+        )
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
         ON contact_candidates(tenant_id, task_id, status)

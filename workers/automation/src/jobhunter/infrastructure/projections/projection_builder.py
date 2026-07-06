@@ -51,6 +51,7 @@ from jobhunter.domain.operations.projections import (
     ApplyRunProjection,
     ArtifactListProjection,
     ContactProjection,
+    ContactResearchTaskProjection,
     DashboardFunnelStage,
     DashboardProjection,
     JobDetailProjection,
@@ -137,6 +138,20 @@ CONTACT_EVENT_TYPES: frozenset[str] = frozenset(
         "ContactAttributeRecorded",
         "ContactDeleted",
         "WarmIntroIdentified",
+    }
+)
+
+# ContactResearchTask events (§4.2). Any of these marks the research read model
+# dirty; ``_rebuild_contact_research`` then rematerialises every research-task
+# projection from the canonical ``contact_research_tasks`` / ``contact_candidates``
+# rows (candidate values never enter the projection — sensitivity rule, plan §6).
+CONTACT_RESEARCH_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "ContactResearchTaskStarted",
+        "ContactCandidateProposed",
+        "ContactResearchTaskNeedsReview",
+        "ContactResearchTaskCompleted",
+        "ContactResearchTaskFailed",
     }
 )
 POSTED_COMPENSATION_WARNING_MESSAGES = {
@@ -329,6 +344,33 @@ def _projection_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return number
+
+
+def _decode_json_dicts(raw: object) -> tuple[dict[str, Any], ...]:
+    """Parse a JSON array of dicts, dropping anything malformed (safe refs only)."""
+    if not raw:
+        return ()
+    try:
+        items = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(items, list):
+        return ()
+    return tuple(item for item in items if isinstance(item, dict))
+
+
+def _attribute_kinds(attributes_json: object) -> list[str]:
+    """Return the distinct attribute kinds on a candidate — never the values.
+
+    The projection carries which facts a candidate proposes (name / title /
+    email) without ever copying the sensitive value into derived read data.
+    """
+    kinds: list[str] = []
+    for attribute in _decode_json_dicts(attributes_json):
+        kind = str(attribute.get("kind") or "").strip()
+        if kind and kind not in kinds:
+            kinds.append(kind)
+    return kinds
 
 
 def _material_analytics_from_metadata(metadata_json: str | None) -> dict[str, object]:
@@ -653,6 +695,7 @@ class ProjectionBuilder:
         source_quality_dirty = False
         workflow_runs_dirty = False
         contacts_dirty = False
+        contact_research_dirty = False
         evidence_usage_dirty = bool(rows)
         max_event_id = watermark
         for row in rows:
@@ -669,11 +712,15 @@ class ProjectionBuilder:
                 workflow_runs_dirty = True
             if str(event_type) in CONTACT_EVENT_TYPES:
                 contacts_dirty = True
+            if str(event_type) in CONTACT_RESEARCH_EVENT_TYPES:
+                contact_research_dirty = True
 
         # First-run backfill for contacts: if the contact read model is empty
         # but canonical contact rows exist (e.g. tables recreated), rebuild.
         if not contacts_dirty and self._contacts_backfill_pending():
             contacts_dirty = True
+        if not contact_research_dirty and self._contact_research_backfill_pending():
+            contact_research_dirty = True
 
         # First-run backfill: if projections are empty, mark every
         # existing job as dirty so pre-event-history rows still get
@@ -742,6 +789,7 @@ class ProjectionBuilder:
             and not workflow_runs_backfill_pending
             and not evidence_usage_dirty
             and not contacts_dirty
+            and not contact_research_dirty
         ):
             return 0
 
@@ -764,6 +812,8 @@ class ProjectionBuilder:
                 self._rebuild_workflow_runs()
             if contacts_dirty:
                 self._rebuild_contacts()
+            if contact_research_dirty:
+                self._rebuild_contact_research()
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
@@ -788,6 +838,8 @@ class ProjectionBuilder:
             self._rebuild_source_quality()
         if contacts_dirty:
             self._rebuild_contacts()
+        if contact_research_dirty:
+            self._rebuild_contact_research()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
@@ -894,6 +946,108 @@ class ProjectionBuilder:
             contact_id = str(existing[0])
             if contact_id not in live_ids:
                 self._store.delete_contact(tenant, contact_id)
+
+    def _contact_research_backfill_pending(self) -> bool:
+        if self._store.count_contact_research_tasks(str(self._tenant_id)) > 0:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM contact_research_tasks WHERE tenant_id = ? LIMIT 1",
+                (str(self._tenant_id),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+    def _rebuild_contact_research(self) -> None:
+        """Rematerialise every research-task projection from canonical rows.
+
+        Candidate *values* are never read into the projection — only the task
+        lifecycle, counts, source-attempt outcomes (provenance of the search),
+        and per-candidate provenance metadata + attribute kinds (INV-2). The read
+        model joins canonical candidate values at read time.
+        """
+        tenant = str(self._tenant_id)
+        try:
+            task_rows = self._conn.execute(
+                """
+                SELECT task_id, employer, job_url, status, source_attempts_json,
+                       started_at, updated_at, needs_review_at, completed_at,
+                       failed_at, error_class
+                FROM contact_research_tasks
+                WHERE tenant_id = ?
+                """,
+                (tenant,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+        live_ids: set[str] = set()
+        for row in task_rows:
+            task_id = str(row[0])
+            live_ids.add(task_id)
+            candidate_rows = self._conn.execute(
+                """
+                SELECT candidate_id, role, source_kind, source_ref, capture_method,
+                       confidence, status, proposed_at, confirmed_contact_id,
+                       confirmed_at, attributes_json
+                FROM contact_candidates
+                WHERE tenant_id = ? AND task_id = ?
+                ORDER BY proposed_at ASC, candidate_id ASC
+                """,
+                (tenant, task_id),
+            ).fetchall()
+            candidates: list[dict[str, Any]] = []
+            needs_review = 0
+            confirmed = 0
+            for candidate in candidate_rows:
+                status = str(candidate[6] or "needs_review")
+                if status == "needs_review":
+                    needs_review += 1
+                elif status == "confirmed":
+                    confirmed += 1
+                candidates.append(
+                    {
+                        "candidateId": str(candidate[0]),
+                        "role": str(candidate[1] or "other"),
+                        "sourceKind": str(candidate[2]),
+                        "sourceRef": str(candidate[3]),
+                        "captureMethod": str(candidate[4] or "llm_assisted"),
+                        "confidence": float(candidate[5] or 0.0),
+                        "status": status,
+                        "proposedAt": str(candidate[7] or ""),
+                        "confirmedContactId": candidate[8],
+                        "confirmedAt": candidate[9],
+                        "attributeKinds": _attribute_kinds(candidate[10]),
+                    }
+                )
+            self._store.upsert_contact_research_task(
+                ContactResearchTaskProjection(
+                    tenant_id=self._tenant_id,
+                    task_id=task_id,
+                    employer=row[1],
+                    job_id=row[2],
+                    status=str(row[3] or "queued"),
+                    candidate_count=len(candidate_rows),
+                    needs_review_count=needs_review,
+                    confirmed_count=confirmed,
+                    source_attempts=_decode_json_dicts(row[4]),
+                    candidates=tuple(candidates),
+                    started_at=row[5],
+                    updated_at=row[6],
+                    needs_review_at=row[7],
+                    completed_at=row[8],
+                    failed_at=row[9],
+                    error_class=row[10],
+                    last_updated_at=row[6],
+                )
+            )
+        for existing in self._conn.execute(
+            "SELECT task_id FROM contact_research_task_projections WHERE tenant_id = ?",
+            (tenant,),
+        ).fetchall():
+            task_id = str(existing[0])
+            if task_id not in live_ids:
+                self._store.delete_contact_research_task(tenant, task_id)
 
     def _rebuild_job(self, job_url: str) -> None:
         job_row = self._conn.execute(

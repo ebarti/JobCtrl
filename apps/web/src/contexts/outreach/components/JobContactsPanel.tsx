@@ -8,6 +8,7 @@ import { ContactCreateButton } from "./ContactCreateButton.js";
 import { ContactProvenanceList } from "./ContactProvenanceList.js";
 import { ContactProvenanceSummary } from "./ContactProvenanceSummary.js";
 import { ContactRoleBadge } from "./ContactRoleBadge.js";
+import { ContactResearchPanel } from "./ContactResearchPanel.js";
 
 export interface JobContactsPanelProps {
   jobId: string;
@@ -68,6 +69,7 @@ export function JobContactsPanel({ jobId, employer }: JobContactsPanelProps) {
           ))}
         </ul>
       )}
+      <ContactResearchPanel jobId={jobId} {...(employer ? { employer } : {})} />
     </section>
   );
 }

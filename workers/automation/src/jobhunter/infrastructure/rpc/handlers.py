@@ -38,6 +38,7 @@ from jobhunter.workflow_specs import (
     apply_workflow_id,
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
+    build_contact_research_workflow_spec,
     build_interview_prep_workflow_spec,
     build_pipeline_workflow_spec,
     build_profile_import_workflow_spec,
@@ -335,6 +336,20 @@ def generate_interview_prep(params: dict[str, Any]) -> WorkflowStartSpec:
         raise invalid_params(str(exc)) from exc
 
 
+def run_contact_research(params: dict[str, Any]) -> WorkflowStartSpec:
+    """Build a workflow spec for a supervised contact-research run (Contact & Outreach).
+
+    Research + LLM extraction run on the Python worker via Temporal (plan §4.5);
+    fetching routes only through the merged politeness gateway against the
+    conservative opt-in allowlist (INV-3). Candidates land ``needs_review`` and
+    require an explicit user confirmation before becoming stored facts (INV-4).
+    """
+    try:
+        return build_contact_research_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
 def make_cancel_run(canceler: WorkflowCanceler):
     """Build a ``cancel_run`` handler bound to *canceler*.
 
@@ -377,6 +392,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
+    server.register("run_contact_research", run_contact_research, mode="workflow")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

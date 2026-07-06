@@ -54,6 +54,17 @@ in the event log, read-model projections, logs, or telemetry, and JobHunter neve
 sends anything to a contact: it keeps records only, with no email, message, or
 outreach sending.
 
+**Supervised contact research** is conservative and opt-in. It only ever looks at
+three source kinds: what you type, a list you import, and a public web page you
+explicitly point it at. No public page is fetched automatically — you supply each
+URL, and JobHunter fetches it politely (respecting the site's `robots.txt` and
+rate limits) through its one shared fetch path. Any login-walled, paywalled, or
+bot-protected page is never auto-fetched — it is routed to a manual-capture step
+instead. Research only **proposes** contacts for your review; nothing it finds
+becomes a stored contact until you explicitly confirm it, and every proposed fact
+shows its source. It still never sends anything, and research data never affects
+scoring or apply decisions.
+
 ::: warning Never commit your local data
 Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those
 files. They hold your database, provider keys, and generated resumes and cover

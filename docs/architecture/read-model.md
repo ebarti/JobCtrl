@@ -135,6 +135,7 @@ tables that back every read-model endpoint:
 | `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 | `contact_projections`        | One row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata. No attribute values (sensitivity). |
+| `contact_research_task_projections` | One row per supervised research task (Contact & Outreach): status, candidate/needs-review/confirmed counts, the source-attempt outcomes (provenance of the search), and per-candidate provenance metadata + attribute kinds. No candidate attribute values (sensitivity). |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
@@ -160,6 +161,24 @@ Both the events and the projection carry only safe references — attribute valu
 (names, emails, notes) stay in `contact_attributes.value_json` and never appear
 in `job_events`, `contact_projections`, logs, or telemetry (INV-2 provenance is
 projected; the value is not).
+
+Supervised research adds `contact_research_task_projections` under the same
+dual-runtime pattern. The Python `ProjectionBuilder._rebuild_contact_research`
+and the TypeScript `rebuildContactResearchProjections` both rematerialise it from
+the canonical `contact_research_tasks` / `contact_candidates` rows, gated on the
+research event set (`ContactResearchTaskStarted`, `ContactCandidateProposed`,
+`ContactResearchTaskNeedsReview`, `ContactResearchTaskCompleted`,
+`ContactResearchTaskFailed`), and a cross-runtime parity fixture
+(`test_contact_research_projection_parity.py` /
+`apps/api/test/contact-research-projection-parity.test.ts`) guards drift. The
+projection carries the task lifecycle, counts, the per-source
+`ResearchSourceAttempt` outcomes (allowed / robots_disallowed / rate_limited /
+budget_exhausted / manual_capture_required / rejected — the provenance of the
+search itself), and per-candidate provenance metadata + attribute *kinds*.
+Candidate attribute *values* (proposed names, emails) live only in
+`contact_candidates.attributes_json` and reach the client solely through the
+research-task detail read; they never enter events, the projection, logs, or
+telemetry.
 
 The evidence-usage projection is read-only and derives from existing canonical
 profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does

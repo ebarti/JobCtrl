@@ -333,6 +333,8 @@ commands are dispatched to the Python worker via JSON-RPC.
 | `restoreJob` | `RestoreJobUseCase` (Discovery) | **TypeScript API** | Tombstone removal. |
 | `updateProfile` | `UpdateProfileUseCase` (Profile) | **TypeScript API** | Shared schema validation and normalized SQLite write. |
 | contact create / update / CSV import / soft-delete | `CreateContactUseCase` / `UpdateContactUseCase` / `ImportContactsUseCase` / `DeleteContactUseCase` (Contact & Outreach) | **TypeScript API** | Simple provenance-tagged SQLite writes; no LLM or browser. The Python worker's `SqliteContactRepository` writes the same tables and event types. |
+| confirm research candidate | `ConfirmContactCandidateUseCase` (Contact & Outreach) | **TypeScript API** | Simple state transition — promotes a `needs_review` candidate into a stored `Contact` fact (INV-4), preserving provenance; no LLM or browser. |
+| run contact research | `RunContactResearchUseCase` → `ContactResearchWorkflow` (Contact & Outreach) | **Python worker** (via the `run_contact_research` JSON-RPC method / Temporal) | Requires the gateway-routed fetch + LLM extraction; reuses the shared spend preflight. |
 | pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands that start Temporal workflows | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
 

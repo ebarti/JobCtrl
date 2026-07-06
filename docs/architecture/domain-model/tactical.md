@@ -496,8 +496,9 @@ Aggregate Root: Contact
 Identity: (TenantId, ContactId)
 ```
 
-Phase 1 realises one aggregate — `Contact`. (The context's later phases add
-research-task and outreach-thread aggregates; those are not implemented yet.)
+Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
+`ContactResearchTask` aggregate (below). (The outreach-thread aggregate is a
+later phase and is not implemented yet.)
 
 **Invariants:**
 - Every `ContactAttribute` carries a non-null `ContactFactProvenance` (INV-2); constructing an attribute without provenance is impossible.
@@ -529,5 +530,54 @@ research-task and outreach-thread aggregates; those are not implemented yet.)
 `sourceKind = user_imported_list`, `sourceRef = <filename>`,
 `captureMethod = manual`; a row that links to neither an employer nor an
 application is skipped.
+
+#### Aggregate: ContactResearchTask
+
+```
+Aggregate Root: ContactResearchTask
+Identity: (TenantId, ResearchTaskId)
+```
+
+A supervised research run for a company/application, with its own lifecycle,
+distinct from the durable `Contact` (mirrors how `ApplyRun` is separate from
+`Job`). Research *proposes* candidates; the user *confirms* them.
+
+**Status (discriminated union):** `queued | running | needs_review | completed | failed`.
+
+**Invariants:**
+- A task only fetches sources permitted by the source-access policy (INV-3); an
+  attempt against a disallowed source is rejected before any fetch and recorded
+  as a `ResearchSourceAttempt` outcome, never a scrape error.
+- Proposed candidates land in `needs_review`; no candidate becomes a stored
+  `Contact` fact without an explicit user confirmation command (INV-4). The only
+  transition to `confirmed` is `confirm_candidate`.
+- Every `ContactCandidate` attribute carries provenance (INV-2).
+
+**Value Objects / Entities:**
+- `ContactCandidate { candidateId, role, attributes, provenance, confidence, status, proposedAt, confirmedContactId?, confirmedAt? }` — a proposed contact; each attribute is a provenance-bearing `ContactAttribute`. `status ∈ {needs_review, confirmed, dismissed}`. Attribute values are sensitive.
+- `ResearchSourceAttempt { sourceKind, sourceRef, outcome, attemptedAt, detail }` — provenance of the search itself; `outcome ∈ {allowed, no_candidates, robots_disallowed, rate_limited, budget_exhausted, manual_capture_required, rejected, extraction_failed}`.
+
+**Source-access policy (`ContactResearchSourcePolicy`, INV-3):** exactly three
+allowed source categories — `user_entered`, `public_web_page` (unauthenticated
+GET, robots/rate-limited through the merged politeness gateway),
+`user_imported_list`. It reuses the discovery `SourcePolicy` guardrails
+(`third_party_control_bypass` hard-locked `false`, `authentication = none`) and a
+`LocatorPolicy` with `allow_autonomous_broad_discovery = false`. No public source
+is auto-fetched by default (per-source user opt-in); any login-walled /
+paywalled / bot-protected URL routes to the manual-capture path, never
+auto-fetched.
+
+**Domain Services:** `ContactResearchService` (pure) — authorises each source,
+fetches allowed public pages through the injected gateway-routed fetcher, and
+extracts candidates via a schema-driven `LlmPort.chat_json`.
+
+**Domain Events** (payloads carry only ids, kinds, provenance metadata,
+outcomes, and timestamps — never candidate values):
+- `ContactResearchTaskStarted { tenantId, taskId, employer, jobId, startedAt }`
+- `ContactCandidateProposed { tenantId, taskId, candidateId, role, sourceKind, sourceRef, captureMethod, confidence, proposedAt }`
+- `ContactResearchTaskNeedsReview { tenantId, taskId, candidateCount, needsReviewAt }`
+- `ContactResearchTaskCompleted { tenantId, taskId, confirmedCount, completedAt }`
+- `ContactResearchTaskFailed { tenantId, taskId, errorClass, retryable, failedAt }`
+  — All consumed by: Operations (the `contact_research_task_projections` read model).
 
 ---

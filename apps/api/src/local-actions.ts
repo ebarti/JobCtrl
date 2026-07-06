@@ -171,6 +171,51 @@ export function createActionDispatcher(
 /** The default action dispatcher used by ``server.ts`` in production. */
 export const defaultActionDispatcher: ActionDispatcher = createActionDispatcher();
 
+export interface ContactResearchStartInput {
+  taskId: string;
+  employer: string | null;
+  jobUrl: string | null;
+  sources: { category: string; url: string; label: string }[];
+  llmModel?: string;
+}
+
+export interface ContactResearchStartOutcome {
+  runId: string | null;
+  workflowId: string | null;
+  firstExecutionRunId: string | null;
+  status: string;
+}
+
+export type ContactResearchStarter = (
+  input: ContactResearchStartInput,
+  context: ActionDispatchContext,
+) => Promise<ContactResearchStartOutcome>;
+
+/** Start a supervised research run on the Python worker via JSON-RPC / Temporal. */
+export const defaultContactResearchStarter: ContactResearchStarter = async (input, context) => {
+  const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
+  const response = await rpc.call("run_contact_research", {
+    tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
+    taskId: input.taskId,
+    ...(input.employer ? { employer: input.employer } : {}),
+    ...(input.jobUrl ? { jobUrl: input.jobUrl } : {}),
+    sources: input.sources,
+    llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
+  });
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+  const start = extractWorkflowStart(response.result);
+  return {
+    runId: start.runId,
+    workflowId: start.workflowId,
+    firstExecutionRunId: start.firstExecutionRunId,
+    status: "queued",
+  };
+};
+
 export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
   const opener = openerCommand(artifactPath);
   const child = spawn(opener.command, opener.args, {

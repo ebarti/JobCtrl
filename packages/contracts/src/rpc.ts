@@ -69,6 +69,7 @@ export const RpcMethods = {
   AnalyzeJob: "analyze_job",
   RefreshCompensation: "refresh_compensation",
   GenerateInterviewPrep: "generate_interview_prep",
+  RunContactResearch: "run_contact_research",
   Apply: "apply",
   ProfileImport: "profile_import",
   CancelRun: "cancel_run",
@@ -225,6 +226,40 @@ export const GenerateInterviewPrepParamsSchema = z
   })
   .strict();
 export type GenerateInterviewPrepParams = z.infer<typeof GenerateInterviewPrepParamsSchema>;
+
+/**
+ * Contact & Outreach (R6 Phase 2): start a supervised research run on the Python
+ * worker via Temporal (plan §4.5). The TS API mints ``taskId`` so it can return
+ * it immediately and the UI can poll the task. Fetching routes only through the
+ * merged politeness gateway against the conservative opt-in allowlist (INV-3);
+ * candidates land ``needs_review`` (INV-4).
+ */
+export const ContactResearchSourceInputSchema = z
+  .object({
+    category: z.enum(["user_entered", "public_web_page", "user_imported_list"]),
+    url: z.string().trim().max(2000).default(""),
+    label: z.string().trim().max(200).default(""),
+  })
+  .strict();
+export type ContactResearchSourceInput = z.infer<typeof ContactResearchSourceInputSchema>;
+
+export const RunContactResearchParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    taskId: z.string().trim().min(1).max(200),
+    employer: z.string().trim().min(1).max(200).nullish(),
+    jobUrl: z.string().trim().min(1).max(2000).nullish(),
+    sources: z.array(ContactResearchSourceInputSchema).max(25).default([]),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
+  })
+  .strict()
+  .refine((params) => Boolean(params.employer) || Boolean(params.jobUrl), {
+    message: "provide at least one of employer or jobUrl",
+    path: ["employer"],
+  });
+export type RunContactResearchParams = z.infer<typeof RunContactResearchParamsSchema>;
 
 export const RetailorJobParamsSchema = z
   .object({

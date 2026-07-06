@@ -12,6 +12,8 @@ from typing import Any
 
 from jobhunter.apply.activities import apply_activity
 from jobhunter.apply.workflow import ApplyWorkflow
+from jobhunter.contact.activities import run_contact_research_activity
+from jobhunter.contact.workflow import ContactResearchWorkflow
 from jobhunter.discovery.activities import (
     discovery_enrichment_activity,
     discovery_preparation_fanout_activity,
@@ -54,6 +56,7 @@ WORKFLOWS: list[type] = [
     ProfileImportWorkflow,
     CompensationRefreshWorkflow,
     InterviewPrepWorkflow,
+    ContactResearchWorkflow,
     DurabilityProbeWorkflow,
 ]
 
@@ -75,6 +78,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     profile_import_activity,
     refresh_compensation_activity,
     generate_interview_prep_activity,
+    run_contact_research_activity,
     check_spend_budget,
     record_workflow_started,
     record_workflow_outcome,

@@ -97,6 +97,7 @@ method as either `mode="workflow"` (start a workflow, return its ids) or
 | `tailor_job`, `retailor_job`, `retailor_current_policy` | workflow | `JobPreparationWorkflow` (`tailor`,`cover`,`pdf`) |
 | `refresh_compensation` | workflow | `CompensationRefreshWorkflow` |
 | `profile_import` | workflow | `ProfileImportWorkflow` |
+| `run_contact_research` | workflow | `ContactResearchWorkflow` (per-task, `contact-research-{taskId}`) |
 | `analyze_job` | sync | none (inline read) |
 | `cancel_run` | sync | none (issues a Temporal cancel to a running handle) |
 
@@ -163,6 +164,7 @@ activity call sites.
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
 | `ProfileImportWorkflow` | `profile_import_activity` | 10 min | 2 attempts |
 | `CompensationRefreshWorkflow` | `refresh_compensation_activity` | 20 min | 2 attempts |
+| `ContactResearchWorkflow` | `check_spend_budget` preflight, then `run_contact_research` (one source-family activity: gateway-guarded fetch + LLM candidate extraction, proposing candidates in `needs_review`) | activity 30 min; heartbeat 2 min | 10 s→120 s ×3 |
 
 A few catalog details worth calling out:
 
@@ -227,6 +229,9 @@ Primary implementation files (repo-relative):
 - `workers/automation/src/jobhunter/apply/workflow.py`,
   `.../apply/activities.py`, `.../apply/launcher.py` — apply workflow, activity,
   and browser/agent launcher (safety invariants).
+- `workers/automation/src/jobhunter/contact/workflow.py`,
+  `.../contact/activities.py` — `ContactResearchWorkflow` and its single
+  source-family research activity (Contact & Outreach, supervised research).
 - `workers/automation/src/jobhunter/scoring/` and `.../domain/scoring/` — scoring
   runner, employer-analysis ensemble, BM25 retrieval, `chat_json` scoring.
 - `workers/automation/src/jobhunter/llm.py` — httpx `LLMClient`,

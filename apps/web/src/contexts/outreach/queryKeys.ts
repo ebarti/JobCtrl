@@ -23,8 +23,12 @@ export const outreachKeys = {
   // Research tasks
   researchTasks: (tenantId: TenantId) =>
     [...outreachKeys.all(tenantId), "research"] as const,
+  researchTaskLists: (tenantId: TenantId) =>
+    [...outreachKeys.researchTasks(tenantId), "list"] as const,
+  researchTaskList: (tenantId: TenantId, input: Record<string, unknown>) =>
+    [...outreachKeys.researchTaskLists(tenantId), input] as const,
   researchTask: (tenantId: TenantId, taskId: string) =>
-    [...outreachKeys.researchTasks(tenantId), taskId] as const,
+    [...outreachKeys.researchTasks(tenantId), "detail", taskId] as const,
 
   // Outreach threads
   threads: (tenantId: TenantId) => [...outreachKeys.all(tenantId), "threads"] as const,

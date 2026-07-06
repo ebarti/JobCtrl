@@ -32,6 +32,13 @@ import type {
   ContactListResponse,
   ContactMutationResponse,
   ContactUpdateRequest,
+  ConfirmContactCandidateRequest,
+  ConfirmContactCandidateResponse,
+  ContactResearchDetailResponse,
+  ContactResearchListQuery,
+  ContactResearchListResponse,
+  ContactResearchStartResponse,
+  RunContactResearchRequest,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -321,6 +328,14 @@ export interface ApiClientPort {
   updateContact(contactId: string, body: ContactUpdateRequest): Promise<ContactMutationResponse>;
   deleteContact(contactId: string, body?: ContactDeleteRequest): Promise<ContactDeleteResponse>;
   importContacts(body: ContactImportRequest): Promise<ContactImportResponse>;
+  researchTasks(query?: Partial<ContactResearchListQuery>): Promise<ContactResearchListResponse>;
+  researchTask(taskId: string): Promise<ContactResearchDetailResponse>;
+  runContactResearch(body: RunContactResearchRequest): Promise<ContactResearchStartResponse>;
+  confirmContactCandidate(
+    taskId: string,
+    candidateId: string,
+    body?: ConfirmContactCandidateRequest,
+  ): Promise<ConfirmContactCandidateResponse>;
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;

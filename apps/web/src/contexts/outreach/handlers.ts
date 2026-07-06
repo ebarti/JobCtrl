@@ -64,6 +64,7 @@ export const contactResearchTaskStartedHandler = (
   event: ContactResearchTaskStarted,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
+  invalidate(outreachKeys.researchTaskLists(event.tenantId)),
 ];
 
 export const contactCandidateProposedHandler = (
@@ -76,12 +77,14 @@ export const contactResearchTaskNeedsReviewHandler = (
   event: ContactResearchTaskNeedsReview,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
+  invalidate(outreachKeys.researchTaskLists(event.tenantId)),
 ];
 
 export const contactResearchTaskCompletedHandler = (
   event: ContactResearchTaskCompleted,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
+  invalidate(outreachKeys.researchTaskLists(event.tenantId)),
   invalidate(outreachKeys.contactLists(event.tenantId)),
 ];
 
@@ -89,6 +92,7 @@ export const contactResearchTaskFailedHandler = (
   event: ContactResearchTaskFailed,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
+  invalidate(outreachKeys.researchTaskLists(event.tenantId)),
 ];
 
 // -- OutreachThread aggregate -----------------------------------------------
