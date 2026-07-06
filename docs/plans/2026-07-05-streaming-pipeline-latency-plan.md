@@ -623,26 +623,59 @@ wall-clock number is the owner acceptance signal per phase.
 
 ## Open Owner Decisions
 
+> **Resolution record (2026-07-06):** all five decisions below were resolved
+> during implementation and the R9 stack is merged (plan #260 → #301 Phase 1 →
+> #306 Phase 2 → #311 Phase 3). Original decision text is preserved; the
+> as-implemented resolution is appended to each item.
+
 1. **Progress model under streaming (I7).** Today `progress_total = len(families)
    + 2` with a single enrichment + preparation step. Options: (a) keep families as
    the top-level bar and treat per-family enrichment/fan-out as sub-steps; (b)
    expand the total to `families × (crawl + enrich + fanout)`; (c) report families
    completed as the spine and stream job-score counts separately. Must be
    monotonic and truthful. **Owner to choose before Phase 1 implementation.**
+   **Resolved (2026-07-06, #301):** kept the fixed denominator
+   `len(families) + 2`; each family's enrichment + fan-out folds into that
+   family's step, so families remain the monotonic spine, and score arrival
+   streams independently via `JobScored` events rather than the progress bar.
+   Known limitation: under Phase-3 parallelism (cap > 1) the bar can regress —
+   recorded as a review Medium on #311 and accepted while the default cap is 1;
+   it must be resolved before the cap is raised.
 2. **Phase 1 shape:** per-family enrichment + fan-out with **no** terminal global
    pass (a), or with a final reconciling pass as a safety net (b). Trade-off:
    simplicity/latency vs. a guaranteed sweep for stragglers.
+   **Resolved (2026-07-06, #301/#306):** option (b) — per-family streaming
+   enrichment + fan-out with the terminal reconcile enrichment + fan-out pass
+   KEPT after the family loop as the safety net. The terminal pass always runs
+   and remains authoritative for failure folding and progress finalization
+   (`discovery/workflow.py:219-257`; fixture `test_workflow_discovery.py:394-416`
+   pins it as "plan option (b)"). The pre-loop `pending_tailor` sweep added with
+   Phase 2 is an additional straggler net and closes the double-tailor race
+   found in review. A workflow-level sweep-runs-once fixture remains a recorded
+   follow-up (review Medium on #301).
 3. **Phase 2 mechanism:** event-driven per-job start from inside the enrichment
    activity vs. tight small-batch polling. Trade-off: Temporal history size and
    coupling vs. latency.
+   **Resolved (2026-07-06, #306):** event-driven — the `on_job_enriched` handoff
+   inside the enrichment activity starts the per-job `PreparationWorkflow`
+   (deterministic id + `USE_EXISTING`); polling was rejected.
 4. **Report true dedupe counts?** Today `started`/`queued` are not a dedupe
    signal. Optionally add an explicit "already-open / deduped" count so the Runs
    view can show how many fan-out attempts reused an existing prep workflow.
    Non-blocking; nice-to-have for observability.
+   **Resolved (2026-07-06):** deferred — not built in R9. `USE_EXISTING` dedupe
+   remains silent; the explicit deduped count stays a backlog observability
+   item.
 5. **Phase 3 concurrency bound + browser pool sizing.** The exact
    max-parallel-families and browser-instance cap, and whether the browser pool is
    a new env knob alongside `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES`. Requires the
    worker-capacity analysis. **Blocks Phase 3.**
+   **Resolved (2026-07-06, #311):** the bound is the env knob
+   `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES`, default `1` (byte-equivalent
+   sequential ordering; the knob is read only inside the activity, keeping
+   workflow replay safe). No separate browser-pool knob was added — browser use
+   stays bounded by the existing activity slots. Raising the cap above 1 is
+   owner-gated on a soak run plus resolving the progress-bar Medium in item 1.
 
 ---
 
