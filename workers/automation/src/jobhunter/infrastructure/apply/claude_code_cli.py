@@ -1,12 +1,11 @@
 """ClaudeCodeCliAdapter — local-mode ``AutonomousAgentPort`` adapter.
 
-Spawns the ``claude`` CLI as a subprocess, pipes the rendered prompt
-in via stdin, streams the JSON output, parses ``RESULT:...`` lines,
-and assembles an ``AgentResult``. The logic is lifted out of the
-legacy ``apply/launcher.run_job`` function — same Popen invocation,
-same stdout reader thread pattern, same RESULT parsing — but
-relocated behind the port so the use cases never touch ``subprocess``
-or ``threading`` directly.
+Spawns the resolved Claude apply runtime as a subprocess, pipes the rendered
+prompt in via stdin, streams the JSON output, parses ``RESULT:...`` lines, and
+assembles an ``AgentResult``. The logic is lifted out of the legacy
+``apply/launcher.run_job`` function — same Popen invocation, same stdout reader
+thread pattern, same RESULT parsing — but relocated behind the port so the use
+cases never touch ``subprocess`` or ``threading`` directly.
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ from jobhunter.domain.apply.value_objects import (
     TokenUsage,
 )
 from jobhunter.domain.ports.apply import AgentResult, BrowserSession
+from jobhunter.infrastructure.setup_probes import resolve_claude_apply_binary
 
 log = logging.getLogger(__name__)
 
@@ -94,14 +94,14 @@ def kill_active_claude_processes() -> None:
 
 
 class ClaudeCodeCliAdapter:
-    """``AutonomousAgentPort`` implementation that spawns ``claude`` as a subprocess.
+    """``AutonomousAgentPort`` implementation that spawns a Claude runtime.
 
     The adapter writes the MCP config to a per-worker JSON file, runs
-    ``claude --model X -p --mcp-config ... --output-format stream-json``
-    with the prompt piped in via stdin, and parses the streamed
-    output. Each tool-use / assistant-text / result message is folded
-    into a structured event payload that the saga later appends to
-    the aggregate's timeline.
+    the resolved binary with ``--model X -p --mcp-config ...
+    --output-format stream-json``, pipes the prompt in via stdin, and parses the
+    streamed output. Each tool-use / assistant-text / result message is folded
+    into a structured event payload that the saga later appends to the
+    aggregate's timeline.
     """
 
     def __init__(
@@ -142,7 +142,8 @@ class ClaudeCodeCliAdapter:
         mcp_config_path.write_text(json.dumps(prompt.mcp_config), encoding="utf-8")
 
         model_label = (model or "").strip() or "default"
-        cmd = ["claude"]
+        claude_bin = resolve_claude_apply_binary()
+        cmd = [claude_bin]
         if model_label not in _DEFAULT_MODEL_SENTINELS:
             cmd.extend(["--model", model_label])
         cmd.extend([
@@ -184,7 +185,12 @@ class ClaudeCodeCliAdapter:
                     "occurred_at": _utc_now(),
                     "level": "info",
                     "message": f"claude pid={proc.pid}",
-                    "payload": {"pid": proc.pid, "model": model_label, "cwd": worker_dir},
+                    "payload": {
+                        "pid": proc.pid,
+                        "model": model_label,
+                        "cwd": worker_dir,
+                        "binary": claude_bin,
+                    },
                 }
             )
             assert proc.stdin is not None

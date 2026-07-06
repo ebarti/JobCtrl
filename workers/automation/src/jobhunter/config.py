@@ -1206,8 +1206,8 @@ def get_tier() -> int:
     """Detect the current tier based on available dependencies.
 
     Tier 1 (Discovery):            Python + pip
-    Tier 2 (AI Scoring & Tailoring): + LLM API key
-    Tier 3 (Full Auto-Apply):       + Claude Code CLI + Chrome
+    Tier 2 (AI Scoring & Tailoring): + LLM provider config
+    Tier 3 (Full Auto-Apply):       + Claude apply runtime + Chrome
     """
     load_env()
 
@@ -1215,7 +1215,7 @@ def get_tier() -> int:
     if not has_llm:
         return 1
 
-    has_claude = shutil.which("claude") is not None
+    has_claude = _has_claude_apply_runtime()
     try:
         get_chrome_path()
         has_chrome = True
@@ -1226,6 +1226,22 @@ def get_tier() -> int:
         return 3
 
     return 2
+
+
+def _has_claude_apply_runtime() -> bool:
+    """Return whether apply can spawn a Claude runtime.
+
+    A system ``claude`` is still accepted, but the Agent SDK's pinned bundled
+    binary is also a valid local runtime.
+    """
+
+    try:
+        from jobhunter.infrastructure.setup_probes import resolve_claude_apply_binary
+
+        binary = resolve_claude_apply_binary()
+    except Exception:  # noqa: BLE001 - tier detection should degrade to missing
+        return False
+    return shutil.which(binary) is not None or Path(binary).expanduser().exists()
 
 
 def check_tier(required: int, feature: str) -> None:
@@ -1245,10 +1261,13 @@ def check_tier(required: int, feature: str) -> None:
 
     missing: list[str] = []
     if required >= 2 and not any(os.environ.get(k) for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
-        missing.append("LLM API key — run [bold]jobhunter init[/bold] or set GEMINI_API_KEY")
+        missing.append(
+            "LLM provider — run [bold]jobhunter init[/bold] or set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL; "
+            "run [bold]jobhunter doctor[/bold] for ensemble-leg auth"
+        )
     if required >= 3:
-        if not shutil.which("claude"):
-            missing.append("Claude Code CLI — install from [bold]https://claude.ai/code[/bold]")
+        if not _has_claude_apply_runtime():
+            missing.append("Claude apply runtime — install dependencies or set JOBHUNTER_CLAUDE_BIN")
         try:
             get_chrome_path()
         except FileNotFoundError:
