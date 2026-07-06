@@ -20,9 +20,11 @@ browser fetch metadata is present, unsafe mutations also reject
 `Sec-Fetch-Site: cross-site`; `same-site` is accepted only after the loopback
 `Origin`/`Referer` check has passed, so the default Vite web app on another
 loopback port still works while foreign browser origins do not.
-Full bearer-token authentication and keychain-to-worker
-credential passing remain a deliberate follow-up that needs coordinated
-frontend and dev-launcher changes.
+Authenticated browser-extension routes are additive to that model:
+`/v1/extension/*` routes still require a loopback `Host`, but trusted
+`chrome-extension://` origins get route-scoped CORS and may satisfy the mutation
+origin/fetch-metadata guards with `Authorization: Bearer <local capability
+token>`. Existing loopback web and CLI behavior is unchanged.
 
 ## API at a glance
 
@@ -34,7 +36,7 @@ need:
 | [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
 | [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
 | [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, career evidence map, audit history, list filters, and delete / hide / restore routes. |
-| [Dashboard and operational metrics](#dashboard-and-operational-metrics) | `GET /v1/dashboard/summary` source health and operational attempt counters. |
+| [Dashboard, analytics, and operational metrics](#dashboard-analytics-and-operational-metrics) | `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, source health, and operational attempt counters. |
 | [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
 | [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
@@ -43,7 +45,7 @@ need:
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
-| [Settings and credentials](#settings-and-credentials) | `/v1/settings` and Keychain-backed `/v1/credentials`. |
+| [Settings and credentials](#settings-and-credentials) | `/v1/settings`, extension pairing token routes, and Keychain-backed `/v1/credentials`. |
 | [Server-Sent Events](#server-sent-events-—-get-v1-events-stream) | The `GET /v1/events/stream` realtime contract. |
 
 ## Profile and preferences
@@ -205,11 +207,26 @@ source registry id where the job was found and falls back to the discovery
 strategy/source pair when canonical source identity is absent. `postingSource`
 and `postingSourceUrl` come from canonical identity evidence when a broad-board
 result points at a known ATS or employer-owned posting. The jobs list accepts
-`minFitScore` and
-`maxFitScore` query parameters, plus `applyStatus=applied` for jobs with an
-actual applied outcome (`applied_at` present or apply status `applied`). The
-same score and applied-outcome filters are accepted by all-matching bulk job
-mutations.
+`minFitScore`, `maxFitScore`, `discoveredSince`, and `scoredSince` query
+parameters, plus `applyStatus=applied` for jobs with an actual applied outcome
+(`applied_at` present or apply status `applied`). The timestamp filters accept
+ISO UTC timestamps and are used by digest deep links; when `discoveredSince`
+and `scoredSince` are both present, the jobs list matches rows where either
+timestamp is at or after its threshold. Active filters and sort remain URL state
+in the web app. The same score and applied-outcome filters are accepted by
+all-matching bulk job mutations.
+`GET /v1/digest` returns the local daily digest read model for the dashboard and
+CLI. It composes projection-backed counts for new matches, blocked sources,
+apply-review materials, stale scores, pending approvals, derived follow-ups due,
+and budget status. Passive reads never advance `digest_state.last_acknowledged_at`;
+only the explicit acknowledge flow may move the watermark. The digest uses a
+timestamp watermark and a UTC follow-up cutoff, resolving the plan's local-vs-UTC
+day-boundary inconsistency in favor of UTC.
+`POST /v1/digest/acknowledge` accepts an optional `acknowledgedAt` ISO
+timestamp, advances the watermark monotonically, and returns the updated
+`digest_state`. Acknowledge writes also record `DigestReviewed`, which lets the
+SSE invalidation router refresh the dashboard digest query without any external
+delivery channel.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
@@ -246,7 +263,7 @@ record, so rediscovery can add the same posting again later.
 all-matching bulk mutation body and resets each active failed or exhausted job's
 failed stage to `pending`; non-failed selected jobs are ignored.
 
-## Dashboard and operational metrics
+## Dashboard, analytics, and operational metrics
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
@@ -257,6 +274,20 @@ web dashboard uses for source health. The same response also includes
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
 messages.
+
+`GET /v1/analytics/outcomes` returns the outcome analytics read model sourced
+from `dashboard_projections.outcome_conversion_json`. It exposes integer counts
+and read-time rates for totals plus `bySource`, `byScoreBand`, `byFitBand`, and
+`byApplyMode`, plus Phase 4 fields `byTemplate`, `byPolicy`, `timeToResponse`,
+and `suggestionAccuracy`. Every row carries `n` (`applied`) beside the rate
+fields, and all rates are `null` until `n >= MIN_CONVERSION_SAMPLE` (`5` by
+default in `apps/api/src/read-model.ts`). `byScoreBand` uses the existing
+score-band vocabulary, while `byFitBand` is a separate canonical requirement-fit
+breakdown. Template/policy groups come from accepted material artifact metadata;
+response-time minutes come from `applied_at` and response-kind
+`application_outcomes.occurred_at`; suggestion counts come from decided
+`application_outcome_suggestions` rows. The endpoint is read-only and stays
+outside scoring, ranking, thresholds, and apply eligibility.
 
 ## Discovery controls
 
@@ -878,6 +909,32 @@ event-history cap.
   `PATCH /v1/credentials` stores a value in the macOS Keychain
   (service `JobHunter`) and `DELETE /v1/credentials/:key` removes it; unknown
   keys return `400 invalid_credential_key`.
+- `GET /v1/extension/pairing-token` returns the local browser-extension
+  capability token for the Settings pairing surface; `POST
+  /v1/extension/pairing-token/rotate` replaces it. The token is generated under
+  the app dir (`~/.jobhunter/extension-capability-token` by default) with
+  restrictive file permissions. These pairing routes are for loopback web/CLI
+  callers, not extension-origin CORS.
+- Authenticated extension routes under `/v1/extension/*` require `Authorization:
+  Bearer <token>`. A valid token allows a `chrome-extension://` origin through
+  the route-scoped CORS and unsafe-mutation guards, but only after the loopback
+  `Host` check has passed.
+- `POST /v1/extension/captures` is the Phase 1 browser-extension capture
+  endpoint. It accepts the manual-capture import fields plus `originatingUrl`,
+  an optional stable `captureId` retry id, `captureClient:
+  "browser_extension"`, and `extensionVersion`, seeds a pending
+  `manual_capture_queue` row with reason `browser_extension_capture` and source
+  `manual_capture:extension`, then delegates to the existing manual-capture
+  worker importer. Re-sending the same `captureId` while import is still pending
+  updates the same queue row instead of creating a duplicate; replays of an
+  imported row return the original `ManualCaptureImportResponse`; replays of a
+  dismissed row return a terminal 2xx no-op so the extension can clear local
+  retry state without reopening the dismissed capture.
+- `GET /v1/extension/autofill/profile` returns the deterministic autofill
+  field list for the extension. The response includes `profileVersion` and
+  whitelisted `fields[]` with `path`, `label`, `value`, and profile source
+  metadata. It intentionally excludes profile password, resume content,
+  generated materials, and free-text answer drafts.
 
 ## Related Packages
 
@@ -887,6 +944,7 @@ event-history cap.
   re-exported `@jobhunter/domain-types`.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.
 - `packages/api-client`: typed API client.
+- `apps/extension`: Manifest V3 local capture extension.
 
 The dependency direction is:
 
@@ -908,6 +966,8 @@ pnpm api:test
 pnpm qa:test
 pnpm web:dev
 pnpm web:build
+pnpm extension:check
+pnpm extension:e2e
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to

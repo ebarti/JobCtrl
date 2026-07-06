@@ -94,7 +94,13 @@ _FIRST_PERSON_EXPERIENCE_RE = re.compile(
 class InterviewPrepRepository(Protocol):
     def next_generation(self, tenant_id: TenantId, job_id: JobId) -> int: ...
 
-    def save(self, prep: InterviewPrep, *, tenant_id: TenantId) -> None: ...
+    def find_completed_for_run(
+        self, tenant_id: TenantId, job_id: JobId, origin_run_id: str
+    ) -> InterviewPrep | None: ...
+
+    def save(
+        self, prep: InterviewPrep, *, tenant_id: TenantId, origin_run_id: str = ""
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -129,10 +135,15 @@ class GenerateInterviewPrepUseCase:
         requirements: Sequence[Mapping[str, Any]],
         accepted_materials: Sequence[Mapping[str, Any]] = (),
         model: str | None = None,
+        origin_run_id: str = "",
     ) -> InterviewPrepGenerationOutcome:
         job_id = JobId(str(job.get("url") or job.get("jobKey") or "").strip())
         if not str(job_id):
             raise ValueError("job must include url/jobKey for interview prep")
+        if origin_run_id:
+            existing = self._repository.find_completed_for_run(tenant_id, job_id, origin_run_id)
+            if existing is not None:
+                return _outcome_from_existing(existing)
         generation = self._repository.next_generation(tenant_id, job_id)
         generated_at = _utc_now()
         profile = profile_snapshot.as_dict()
@@ -166,6 +177,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=(f"generation_error: {exc}",),
+                origin_run_id=origin_run_id,
             )
 
         gate = _run_truthfulness_gates(
@@ -183,6 +195,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=(*gate.fabrication_findings, *gate.grounding_findings),
+                origin_run_id=origin_run_id,
             )
 
         judge = self._judge_candidate(
@@ -203,6 +216,7 @@ class GenerateInterviewPrepUseCase:
                 reasons=reasons or ("judge rejected interview prep",),
                 warnings=judge.warnings,
                 judge_verdict=f"{judge.verdict}:{judge.score:.2f}",
+                origin_run_id=origin_run_id,
             )
 
         accepted_gate = InterviewPrepGateAudit(
@@ -221,7 +235,7 @@ class GenerateInterviewPrepUseCase:
             gate_audit=accepted_gate,
             items=items,
         )
-        self._repository.save(prep, tenant_id=tenant_id)
+        self._repository.save(prep, tenant_id=tenant_id, origin_run_id=origin_run_id)
         self._publish_generated(tenant_id, prep)
         return InterviewPrepGenerationOutcome(prep=prep, status="accepted")
 
@@ -313,6 +327,7 @@ class GenerateInterviewPrepUseCase:
         reasons: tuple[str, ...],
         warnings: tuple[str, ...] = (),
         judge_verdict: str | None = None,
+        origin_run_id: str = "",
     ) -> InterviewPrepGenerationOutcome:
         gate = InterviewPrepGateAudit(
             status="failed",
@@ -330,7 +345,7 @@ class GenerateInterviewPrepUseCase:
             gate_audit=gate,
             items=(),
         )
-        self._repository.save(prep, tenant_id=tenant_id)
+        self._repository.save(prep, tenant_id=tenant_id, origin_run_id=origin_run_id)
         self._publish_failed(tenant_id, prep)
         return InterviewPrepGenerationOutcome(
             prep=prep,
@@ -376,6 +391,24 @@ class GenerateInterviewPrepUseCase:
             )
         except Exception:  # noqa: BLE001
             log.exception("Failed to publish InterviewPrepFailed for %s", prep.job_key)
+
+
+def _outcome_from_existing(prep: InterviewPrep) -> InterviewPrepGenerationOutcome:
+    """Rebuild the outcome a prior completed attempt already produced.
+
+    Used when an activity retry finds this workflow run's generation already
+    persisted, so the retry returns the prior result instead of re-spending.
+    """
+    if prep.status == "failed":
+        return InterviewPrepGenerationOutcome(
+            prep=prep,
+            status="failed",
+            errors=(
+                *prep.gate_audit.fabrication_findings,
+                *prep.gate_audit.grounding_findings,
+            ),
+        )
+    return InterviewPrepGenerationOutcome(prep=prep, status="accepted")
 
 
 def _items_from_candidate(

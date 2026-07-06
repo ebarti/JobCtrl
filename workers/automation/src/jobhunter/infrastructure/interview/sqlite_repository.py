@@ -39,7 +39,40 @@ class SqliteInterviewPrepRepository:
         current = row[0] if row is not None else None
         return int(current or 0) + 1
 
-    def save(self, prep: InterviewPrep, *, tenant_id: TenantId) -> None:
+    def find_completed_for_run(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        origin_run_id: str,
+    ) -> InterviewPrep | None:
+        """Return the generation a prior attempt of ``origin_run_id`` completed.
+
+        Only completed generations are persisted, so a matching row means this
+        workflow run already generated (and spent) once. Retries reuse it
+        instead of generating a second time.
+        """
+        if not origin_run_id:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT * FROM job_interview_prep
+            WHERE tenant_id = ? AND job_url = ? AND origin_run_id = ?
+            ORDER BY generation DESC
+            LIMIT 1
+            """,
+            (str(tenant_id), str(job_id), str(origin_run_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_prep(row, tenant_id)
+
+    def save(
+        self,
+        prep: InterviewPrep,
+        *,
+        tenant_id: TenantId,
+        origin_run_id: str = "",
+    ) -> None:
         job_url = str(prep.job_key)
         tenant = str(tenant_id)
         if prep.status == "accepted":
@@ -59,8 +92,8 @@ class SqliteInterviewPrepRepository:
             INSERT INTO job_interview_prep (
                 job_url, generation, tenant_id, status, model, generated_at,
                 gate_status, fabrication_findings_json, grounding_findings_json,
-                judge_verdict, warnings_json, failure_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                judge_verdict, warnings_json, failure_reason, origin_run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_url, generation) DO UPDATE SET
                 tenant_id = excluded.tenant_id,
                 status = excluded.status,
@@ -71,7 +104,8 @@ class SqliteInterviewPrepRepository:
                 grounding_findings_json = excluded.grounding_findings_json,
                 judge_verdict = excluded.judge_verdict,
                 warnings_json = excluded.warnings_json,
-                failure_reason = excluded.failure_reason
+                failure_reason = excluded.failure_reason,
+                origin_run_id = excluded.origin_run_id
             """,
             (
                 job_url,
@@ -86,6 +120,7 @@ class SqliteInterviewPrepRepository:
                 prep.gate_audit.judge_verdict,
                 _dump(prep.gate_audit.warnings),
                 "" if prep.status == "accepted" else _failure_reason(prep.gate_audit),
+                str(origin_run_id or ""),
             ),
         )
         self._conn.execute(

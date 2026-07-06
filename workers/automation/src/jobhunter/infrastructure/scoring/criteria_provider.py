@@ -81,6 +81,18 @@ def read_daily_budget_usd(
     return max(0.0, budget)
 
 
+def read_min_fit_score(
+    path: Path | str | None = None,
+    *,
+    default: int = 7,
+) -> int:
+    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    value = settings.get("min_fit_score")
+    if value is None:
+        value = settings.get("minFitScore")
+    return min(10, max(1, _int(value, default)))
+
+
 def _int(value: Any, default: int) -> int:
     try:
         return int(value)
