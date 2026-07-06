@@ -76,6 +76,29 @@ JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm api:dev
 VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 ```
 
+### Durable-Execution Recovery Demo
+
+`scripts/reliability-demo.sh` is the scripted, re-runnable form of the
+kill-worker → clean-recovery story (launch-asset 9; `docs/requirements.md`
+`TR-008`). It complements the per-workflow "Kill worker mid-activity" column
+above — which is unit/integration-tested — with a full-process demonstration on
+a live, isolated Temporal stack: it starts an isolated dev server on a free
+port and a throwaway `JOBHUNTER_DIR`, launches a burst of hermetic no-op
+`discover` runs, kills the worker **by its captured PID**, then starts a fresh
+worker and shows the same runs resume from Temporal history to a terminal state.
+
+```bash
+scripts/reliability-demo.sh          # default: 3-run burst
+scripts/reliability-demo.sh 5        # larger burst
+```
+
+Safety: isolated stack only (never `~/.jobhunter`, never ports 7233/8233/8766),
+no LLM spend, no crawl (discovery boards are emptied so the workflow is a
+hermetic no-op), no application submission, and it kills only the PIDs it
+captured. Confirm your build has no additional default discovery source families
+active before trusting a fully offline run (see the script header). Requires the
+`temporal` CLI, `uv`, `python3`, and `sqlite3` on `PATH`.
+
 ## High-Risk Regression Areas
 
 | Risk | Automated coverage |
