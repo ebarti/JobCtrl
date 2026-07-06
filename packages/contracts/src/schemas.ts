@@ -4574,6 +4574,12 @@ export interface OutreachThreadSummary {
 
 export interface OutreachThreadDetail extends OutreachThreadSummary {
   drafts: OutreachDraftDto[];
+  /** User-attested send records — the ONLY source of a "sent" state (INV-1). */
+  sendLogs: OutreachSendLogDto[];
+  /** The thread's follow-up schedule, or null when none is scheduled. */
+  followUp: OutreachFollowUp | null;
+  /** Derived: true iff the thread carries at least one user-attested send log. */
+  isSent: boolean;
 }
 
 export const GenerateOutreachDraftRequestSchema = z
@@ -4615,3 +4621,76 @@ export interface OutreachThreadResponse {
   ok: true;
   thread: OutreachThreadDetail | null;
 }
+
+// ---------------------------------------------------------------------------
+// Contact & Outreach (R6 Phase 4 — user-attested send log + follow-ups)
+//
+// INV-1: JobHunter NEVER sends. A thread reaches a "sent" state ONLY via a
+// user-attested `OutreachSendLog` over an APPROVED draft — a recorded fact, not a
+// transmission. `channel` is a free-text label ("email", "linkedin message"),
+// never an address. Follow-ups are surfaced-only: a derived suggested date, fully
+// user-editable, never auto-acted and never sent.
+// ---------------------------------------------------------------------------
+
+/** A user-attested record that the user sent an approved draft (INV-1). */
+export interface OutreachSendLogDto {
+  sendLogId: string;
+  threadId: string;
+  draftId: string;
+  channel: string;
+  sentAt: string;
+  loggedAt: string;
+}
+
+export const FOLLOW_UP_STATES = ["none", "scheduled", "completed", "dismissed"] as const;
+export type FollowUpState = (typeof FOLLOW_UP_STATES)[number];
+
+export const FOLLOW_UP_BASES = [
+  "application_submitted",
+  "no_reply_nudge",
+  "manual",
+] as const;
+export type FollowUpBasis = (typeof FOLLOW_UP_BASES)[number];
+
+/** A thread's follow-up schedule (a plan, never an action). */
+export interface OutreachFollowUp {
+  state: FollowUpState;
+  dueAt: string | null;
+  basis: string;
+}
+
+/** One scheduled outreach follow-up surfaced in the due-follow-ups read model. */
+export interface DueFollowUpSummary {
+  threadId: string;
+  contactId: string;
+  jobId: string | null;
+  dueAt: string | null;
+  basis: string;
+  state: FollowUpState;
+  /** Derived over schedule + clock at read time: has the follow-up date arrived? */
+  isDue: boolean;
+}
+
+export interface DueFollowUpsResponse {
+  ok: true;
+  followUps: DueFollowUpSummary[];
+}
+
+export const LogOutreachSendRequestSchema = z
+  .object({
+    draftId: z.string().trim().min(1).max(200),
+    channel: z.string().trim().min(1).max(120),
+    sentAt: z.string().trim().min(1).max(40),
+  })
+  .strict();
+export type LogOutreachSendRequest = z.infer<typeof LogOutreachSendRequestSchema>;
+
+export const ScheduleFollowUpRequestSchema = z
+  .object({
+    dueAt: z.string().trim().min(1).max(40).optional(),
+    basis: z.enum(FOLLOW_UP_BASES).optional(),
+    submittedAt: z.string().trim().min(1).max(40).optional(),
+    hasLoggedReply: z.boolean().optional(),
+  })
+  .strict();
+export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;

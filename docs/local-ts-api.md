@@ -42,7 +42,7 @@ need:
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
 | [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
 | [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
-| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, the supervised-research run / list / detail / confirm-candidate routes, and the outreach draft read / generate / revise / approve / reject routes. |
+| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, the supervised-research run / list / detail / confirm-candidate routes, the outreach draft read / generate / revise / approve / reject routes, and the Phase 4 send-log / follow-up (schedule / complete / dismiss) / due-follow-ups routes. |
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
@@ -762,14 +762,40 @@ timestamps.
   draft (`RejectOutreachDraftRequest`: optional `reason`); the last approved draft
   is left untouched (INV-5).
 
+Send logging and follow-ups (Phase 4) are simple state transitions hosted directly
+in the TypeScript API. **No route sends anything (INV-1)** — `send-logs` records a
+user-attested fact, and the follow-up routes manage a surfaced-only reminder:
+
+- `POST /v1/outreach/threads/:threadId/send-logs` records that the **user** sent an
+  approved draft (`LogOutreachSendRequest`: `draftId`, `channel`, `sentAt`). It is
+  the ONLY way a thread reaches a "sent" state; it rejects any draft that is not
+  approved with `400 { error: "invalid_outreach_transition" }` (approving and
+  logging a send are distinct actions), and returns the updated
+  `OutreachThreadDetail` (`sendLogs`, `isSent`). The written `OutreachSendLogged`
+  event carries only ids, the channel label, and timestamps.
+- `POST /v1/outreach/threads/:threadId/follow-up/schedule` schedules the next
+  follow-up (`ScheduleFollowUpRequest`: optional `dueAt`, `basis`, `submittedAt`,
+  `hasLoggedReply`). When `dueAt` is omitted the date is DERIVED from the
+  application lifecycle (7 days after `submittedAt` for the first follow-up, 14 for
+  a subsequent no-reply nudge) — a suggestion the user can edit. Emits
+  `FollowUpScheduled`.
+- `POST /v1/outreach/threads/:threadId/follow-up/complete` and
+  `.../follow-up/dismiss` mark a scheduled follow-up done or dismissed (emitting
+  `FollowUpCompleted` / `FollowUpDismissed`); both return `400` when no follow-up
+  is scheduled.
+- `GET /v1/outreach/follow-ups/due` returns `{ ok, followUps: DueFollowUpSummary[] }`
+  — the projected scheduled follow-ups whose `due_at` has arrived (`isDue`
+  computed over the clock at read time). It never sends and never auto-acts.
+
 The `generate_outreach_draft` JSON-RPC method (params `threadId`, `contactId`,
 optional `jobId` / `kind` / `applicationRole` / `llmModel`, plus `editedBodyText`
 to select the revise path) is a synchronous method — like `analyze_job`, it runs
 the LLM + gate stack inline and returns `{ threadId, contactId, jobId, draftId,
 generation, kind, status, gatePassed }`. Outreach DTOs and request/response schemas
 live in `packages/contracts` (`OutreachThreadSummary`, `OutreachThreadDetail`,
-`OutreachDraftDto`, `OutreachDraftGateResults`, `OutreachClaimProvenanceDto`, and
-the generate / revise / reject request shapes).
+`OutreachDraftDto`, `OutreachDraftGateResults`, `OutreachClaimProvenanceDto`,
+`OutreachSendLogDto`, `OutreachFollowUp`, `DueFollowUpSummary`, and the generate /
+revise / reject / log-send / schedule-follow-up request shapes).
 
 ## Pipeline and preparation actions
 

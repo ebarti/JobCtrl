@@ -19,6 +19,9 @@ import type {
   ReviseOutreachDraftRequest,
   RejectOutreachDraftRequest,
   OutreachThreadResponse,
+  LogOutreachSendRequest,
+  ScheduleFollowUpRequest,
+  DueFollowUpsResponse,
   ContactResearchDetailResponse,
   ContactResearchListQuery,
   ContactResearchListResponse,
@@ -564,6 +567,48 @@ export class JobHunterApiClient {
       `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draftId)}/reject`,
       body,
     );
+  }
+
+  // Contact & Outreach (R6 Phase 4). `logOutreachSend` records a USER-attested
+  // send of an approved draft — a fact, never a transmission (INV-1). Follow-ups
+  // are surfaced-only: schedule/complete/dismiss are explicit user actions, and
+  // `dueFollowUps` reads the derived due-follow-ups list. No send transport.
+  logOutreachSend(
+    threadId: string,
+    body: LogOutreachSendRequest,
+  ): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/send-logs`,
+      body,
+    );
+  }
+
+  scheduleOutreachFollowUp(
+    threadId: string,
+    body: ScheduleFollowUpRequest = {},
+  ): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/follow-up/schedule`,
+      body,
+    );
+  }
+
+  completeOutreachFollowUp(threadId: string): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/follow-up/complete`,
+      {},
+    );
+  }
+
+  dismissOutreachFollowUp(threadId: string): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/follow-up/dismiss`,
+      {},
+    );
+  }
+
+  dueOutreachFollowUps(): Promise<DueFollowUpsResponse> {
+    return this.get("/v1/outreach/follow-ups/due");
   }
 
   deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {

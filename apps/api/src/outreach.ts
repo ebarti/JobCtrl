@@ -15,18 +15,30 @@
  * write exists here.
  */
 
+import { randomUUID } from "node:crypto";
+
 import type {
+  DueFollowUpSummary,
+  FollowUpState,
   OutreachClaimProvenanceDto,
   OutreachDraftDto,
   OutreachDraftGateResults,
   OutreachDraftKind,
   OutreachDraftStatus,
+  OutreachFollowUp,
+  OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadSummary,
 } from "./contracts.js";
 import { OUTREACH_DRAFT_KINDS, OUTREACH_DRAFT_STATUSES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshOutreachProjections, refreshProjections } from "./projections.js";
+
+// Conservative follow-up cadence (plan §16 res. 5), mirrored from the Python
+// domain (``FIRST_FOLLOW_UP_DAYS`` / ``SUBSEQUENT_NUDGE_DAYS``). Surfaced-only,
+// user-editable suggestions — never auto-acted, never sent (INV-1).
+const FIRST_FOLLOW_UP_DAYS = 7;
+const SUBSEQUENT_NUDGE_DAYS = 14;
 
 const TENANT_ID = "local";
 
@@ -64,10 +76,22 @@ export function ensureOutreachTables(db: SqliteDatabase): void {
       reason            TEXT,
       PRIMARY KEY (tenant_id, draft_id)
     );
+    CREATE TABLE IF NOT EXISTS outreach_send_logs (
+      tenant_id        TEXT NOT NULL DEFAULT 'local',
+      send_log_id      TEXT NOT NULL,
+      thread_id        TEXT NOT NULL,
+      draft_id         TEXT NOT NULL,
+      channel          TEXT NOT NULL,
+      sent_at          TEXT NOT NULL,
+      logged_at        TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, send_log_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
       ON outreach_threads(tenant_id, contact_id);
     CREATE INDEX IF NOT EXISTS idx_outreach_drafts_thread
       ON outreach_drafts(tenant_id, thread_id, generation DESC);
+    CREATE INDEX IF NOT EXISTS idx_outreach_send_logs_thread
+      ON outreach_send_logs(tenant_id, thread_id);
   `);
 }
 
@@ -225,6 +249,275 @@ export function rejectOutreachDraft(
 }
 
 // ---------------------------------------------------------------------------
+// Send log (user-attested — the ONLY path to "sent", INV-1) + follow-ups
+//
+// JobHunter NEVER sends. `logOutreachSend` records a fact the USER asserts, only
+// over an APPROVED draft; "approve draft" and "log send" are distinct actions. No
+// function here opens any transport. Follow-ups are surfaced-only: scheduling
+// derives a suggested date the user can edit, and the due list is a projected
+// computation over schedule + clock — never an action, never a send.
+// ---------------------------------------------------------------------------
+
+export function logOutreachSend(
+  db: SqliteDatabase,
+  threadId: string,
+  draftId: string,
+  channel: string,
+  sentAt: string,
+): OutreachThreadDetail {
+  ensureOutreachTables(db);
+  const thread = loadThreadRow(db, threadId);
+  if (!thread) {
+    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+  }
+  const draft = loadDraftRow(db, threadId, draftId);
+  if (!draft) {
+    throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
+  }
+  // INV-1: a thread can only be "sent" over a draft the user actually approved.
+  if (String(draft.status) !== "approved") {
+    throw new OutreachInputError(
+      `Outreach draft ${draftId} must be approved before a send can be logged`,
+    );
+  }
+  const trimmedChannel = channel.trim();
+  const trimmedSentAt = sentAt.trim();
+  if (!trimmedChannel || !trimmedSentAt) {
+    throw new OutreachInputError("A send log requires a channel and a sent date");
+  }
+
+  const now = new Date().toISOString();
+  const sendLogId = randomUUID();
+  const jobUrl = thread.job_url ?? null;
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO outreach_send_logs (
+         tenant_id, send_log_id, thread_id, draft_id, channel, sent_at, logged_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(TENANT_ID, sendLogId, threadId, draftId, trimmedChannel, trimmedSentAt, now);
+    db.prepare(
+      `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
+    ).run(now, TENANT_ID, threadId);
+    recordEvent(db, {
+      jobUrl,
+      eventType: "OutreachSendLogged",
+      threadId,
+      payload: {
+        tenantId: TENANT_ID,
+        threadId,
+        draftId,
+        channel: trimmedChannel,
+        sentAt: trimmedSentAt,
+        loggedAt: now,
+      },
+    });
+  });
+  transaction();
+
+  refreshProjections(db, TENANT_ID);
+  refreshOutreachProjections(db, TENANT_ID);
+  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+}
+
+export function scheduleOutreachFollowUp(
+  db: SqliteDatabase,
+  threadId: string,
+  options: {
+    dueAt?: string;
+    basis?: string;
+    submittedAt?: string;
+    hasLoggedReply?: boolean;
+  } = {},
+): OutreachThreadDetail {
+  ensureOutreachTables(db);
+  const thread = loadThreadRow(db, threadId);
+  if (!thread) {
+    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+  }
+  let dueAt = (options.dueAt ?? "").trim();
+  let basis = options.basis ?? "";
+  if (!dueAt) {
+    const suggestion = deriveFollowUpDueAt({
+      submittedAt: options.submittedAt ?? "",
+      lastDueAt: thread.follow_up_due_at ?? "",
+      hasLoggedReply: options.hasLoggedReply ?? false,
+    });
+    if (!suggestion) {
+      throw new OutreachInputError(
+        "Cannot suggest a follow-up date: provide a due date, or a submission date with no logged reply",
+      );
+    }
+    dueAt = suggestion.dueAt;
+    basis = basis || suggestion.basis;
+  }
+  basis = basis || "manual";
+
+  const now = new Date().toISOString();
+  const jobUrl = thread.job_url ?? null;
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `UPDATE outreach_threads
+       SET follow_up_due_at = ?, follow_up_basis = ?, follow_up_state = 'scheduled', updated_at = ?
+       WHERE tenant_id = ? AND thread_id = ?`,
+    ).run(dueAt, basis, now, TENANT_ID, threadId);
+    recordEvent(db, {
+      jobUrl,
+      eventType: "FollowUpScheduled",
+      threadId,
+      payload: {
+        tenantId: TENANT_ID,
+        threadId,
+        jobId: jobUrl,
+        dueAt,
+        basis,
+        scheduledAt: now,
+      },
+    });
+  });
+  transaction();
+
+  refreshProjections(db, TENANT_ID);
+  refreshOutreachProjections(db, TENANT_ID);
+  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+}
+
+export function completeOutreachFollowUp(
+  db: SqliteDatabase,
+  threadId: string,
+): OutreachThreadDetail {
+  return transitionFollowUp(db, threadId, {
+    to: "completed",
+    eventType: "FollowUpCompleted",
+    buildPayload: (now) => ({ tenantId: TENANT_ID, threadId, completedAt: now }),
+  });
+}
+
+export function dismissOutreachFollowUp(
+  db: SqliteDatabase,
+  threadId: string,
+): OutreachThreadDetail {
+  return transitionFollowUp(db, threadId, {
+    to: "dismissed",
+    eventType: "FollowUpDismissed",
+    buildPayload: (now) => ({ tenantId: TENANT_ID, threadId, reason: "", dismissedAt: now }),
+  });
+}
+
+function transitionFollowUp(
+  db: SqliteDatabase,
+  threadId: string,
+  spec: {
+    to: "completed" | "dismissed";
+    eventType: string;
+    buildPayload: (now: string) => Record<string, unknown>;
+  },
+): OutreachThreadDetail {
+  ensureOutreachTables(db);
+  const thread = loadThreadRow(db, threadId);
+  if (!thread) {
+    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+  }
+  if (normalizeFollowUpState(thread.follow_up_state) !== "scheduled") {
+    throw new OutreachInputError(`Outreach thread ${threadId} has no scheduled follow-up`);
+  }
+  const now = new Date().toISOString();
+  const jobUrl = thread.job_url ?? null;
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `UPDATE outreach_threads SET follow_up_state = ?, updated_at = ?
+       WHERE tenant_id = ? AND thread_id = ?`,
+    ).run(spec.to, now, TENANT_ID, threadId);
+    recordEvent(db, {
+      jobUrl,
+      eventType: spec.eventType,
+      threadId,
+      payload: spec.buildPayload(now),
+    });
+  });
+  transaction();
+
+  refreshProjections(db, TENANT_ID);
+  refreshOutreachProjections(db, TENANT_ID);
+  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+}
+
+/**
+ * Due-follow-ups read model (plan §9, §10). Reads the projected scheduled
+ * follow-ups and computes `isDue` over the clock at read time — a derived signal,
+ * never an action. Only follow-ups whose date has arrived are returned.
+ */
+export function getDueFollowUps(db: SqliteDatabase, now: Date = new Date()): DueFollowUpSummary[] {
+  ensureOutreachTables(db);
+  refreshProjections(db, TENANT_ID);
+  refreshOutreachProjections(db, TENANT_ID);
+  if (!tableExists(db, "due_follow_up_projections")) {
+    return [];
+  }
+  const rows = allRows<{
+    thread_id: string;
+    contact_id: string;
+    job_id: string | null;
+    due_at: string | null;
+    basis: string | null;
+    state: string | null;
+  }>(
+    db,
+    `SELECT thread_id, contact_id, job_id, due_at, basis, state
+     FROM due_follow_up_projections
+     WHERE tenant_id = ?
+     ORDER BY due_at ASC, thread_id ASC`,
+    [TENANT_ID],
+  );
+  const nowMs = now.getTime();
+  const due: DueFollowUpSummary[] = [];
+  for (const row of rows) {
+    const dueAt = row.due_at ?? null;
+    const isDue = dueAt != null && new Date(dueAt).getTime() <= nowMs;
+    if (!isDue) {
+      continue;
+    }
+    due.push({
+      threadId: String(row.thread_id),
+      contactId: String(row.contact_id),
+      jobId: row.job_id ?? null,
+      dueAt,
+      basis: row.basis ?? "",
+      state: normalizeFollowUpState(row.state),
+      isDue: true,
+    });
+  }
+  return due;
+}
+
+function deriveFollowUpDueAt(opts: {
+  submittedAt: string;
+  lastDueAt: string;
+  hasLoggedReply: boolean;
+}): { dueAt: string; basis: string } | null {
+  if (opts.hasLoggedReply) {
+    return null;
+  }
+  if (!opts.submittedAt.trim()) {
+    return null;
+  }
+  if (opts.lastDueAt.trim()) {
+    return {
+      dueAt: addCalendarDays(opts.lastDueAt, SUBSEQUENT_NUDGE_DAYS),
+      basis: "no_reply_nudge",
+    };
+  }
+  return {
+    dueAt: addCalendarDays(opts.submittedAt, FIRST_FOLLOW_UP_DAYS),
+    basis: "application_submitted",
+  };
+}
+
+function addCalendarDays(iso: string, days: number): string {
+  const base = new Date(iso);
+  return new Date(base.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
@@ -234,7 +527,23 @@ type ThreadRow = {
   job_url: string | null;
   created_at: string | null;
   updated_at: string | null;
+  follow_up_due_at: string | null;
+  follow_up_basis: string | null;
+  follow_up_state: string | null;
 };
+
+type SendLogRow = {
+  send_log_id: string;
+  thread_id: string;
+  draft_id: string;
+  channel: string | null;
+  sent_at: string | null;
+  logged_at: string | null;
+};
+
+const THREAD_COLUMNS =
+  "thread_id, contact_id, job_url, created_at, updated_at, " +
+  "follow_up_due_at, follow_up_basis, follow_up_state";
 
 type DraftRow = {
   draft_id: string;
@@ -263,7 +572,7 @@ function loadThreadRow(db: SqliteDatabase, threadId: string): ThreadRow | null {
   return (
     getRow<ThreadRow>(
       db,
-      "SELECT thread_id, contact_id, job_url, created_at, updated_at FROM outreach_threads WHERE tenant_id = ? AND thread_id = ?",
+      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND thread_id = ?`,
       [TENANT_ID, threadId],
     ) ?? null
   );
@@ -279,7 +588,7 @@ function loadThreadForContact(
     return (
       getRow<ThreadRow>(
         db,
-        "SELECT thread_id, contact_id, job_url, created_at, updated_at FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url = ?",
+        `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url = ?`,
         [TENANT_ID, contactId, job],
       ) ?? null
     );
@@ -287,7 +596,7 @@ function loadThreadForContact(
   return (
     getRow<ThreadRow>(
       db,
-      "SELECT thread_id, contact_id, job_url, created_at, updated_at FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL",
+      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL`,
       [TENANT_ID, contactId],
     ) ?? null
   );
@@ -304,8 +613,61 @@ function loadDraftRow(db: SqliteDatabase, threadId: string, draftId: string): Dr
 }
 
 function buildThreadDetail(db: SqliteDatabase, thread: ThreadRow): OutreachThreadDetail {
-  const drafts = loadDrafts(db, String(thread.thread_id));
-  return { ...summarize(thread, drafts), drafts };
+  const threadId = String(thread.thread_id);
+  const drafts = loadDrafts(db, threadId);
+  const sendLogs = loadSendLogs(db, threadId);
+  return {
+    ...summarize(thread, drafts),
+    drafts,
+    sendLogs,
+    followUp: buildFollowUp(thread),
+    // INV-1: "sent" is derived from the presence of a user-attested send log.
+    isSent: sendLogs.length > 0,
+  };
+}
+
+function loadSendLogs(db: SqliteDatabase, threadId: string): OutreachSendLogDto[] {
+  const rows = allRows<SendLogRow>(
+    db,
+    `SELECT send_log_id, thread_id, draft_id, channel, sent_at, logged_at
+     FROM outreach_send_logs
+     WHERE tenant_id = ? AND thread_id = ?
+     ORDER BY logged_at ASC, send_log_id ASC`,
+    [TENANT_ID, threadId],
+  );
+  return rows.map((row) => ({
+    sendLogId: String(row.send_log_id),
+    threadId: String(row.thread_id),
+    draftId: String(row.draft_id),
+    channel: row.channel ?? "",
+    sentAt: row.sent_at ?? "",
+    loggedAt: row.logged_at ?? "",
+  }));
+}
+
+function buildFollowUp(thread: ThreadRow): OutreachFollowUp | null {
+  const state = normalizeFollowUpState(thread.follow_up_state);
+  if (state === "none") {
+    return null;
+  }
+  return {
+    state,
+    dueAt: thread.follow_up_due_at ?? null,
+    basis: thread.follow_up_basis ?? "",
+  };
+}
+
+function normalizeFollowUpState(value: string | null | undefined): FollowUpState {
+  switch ((value ?? "none").trim()) {
+    case "scheduled":
+      return "scheduled";
+    case "completed":
+      return "completed";
+    case "dismissed":
+      return "dismissed";
+    default:
+      return "none";
+  }
 }
 
 function summarize(thread: ThreadRow, drafts: OutreachDraftDto[]): OutreachThreadSummary {

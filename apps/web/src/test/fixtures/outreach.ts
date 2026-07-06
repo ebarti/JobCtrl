@@ -1,8 +1,11 @@
 import type {
+  DueFollowUpSummary,
   OutreachClaimProvenanceDto,
   OutreachDraftDto,
   OutreachDraftGateResults,
   OutreachDraftStatus,
+  OutreachFollowUp,
+  OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadResponse,
 } from "@jobhunter/contracts";
@@ -137,6 +140,9 @@ export function makeOutreachThreadDetail(
     }),
   ];
   const approved = drafts.find((draft) => draft.status === "approved");
+  const sendLogs = overrides.sendLogs ?? [];
+  const followUp = overrides.followUp ?? null;
+  const isSent = overrides.isSent ?? sendLogs.length > 0;
   return {
     threadId: "thread-1",
     contactId: "contact-1",
@@ -150,6 +156,47 @@ export function makeOutreachThreadDetail(
     updatedAt: "2026-07-06T00:10:00+00:00",
     ...overrides,
     drafts,
+    sendLogs,
+    followUp,
+    isSent,
+  };
+}
+
+export function makeOutreachSendLog(
+  overrides: Partial<OutreachSendLogDto> = {},
+): OutreachSendLogDto {
+  return {
+    sendLogId: "send-1",
+    threadId: "thread-1",
+    draftId: "draft-2",
+    channel: "email",
+    sentAt: "2026-07-07",
+    loggedAt: "2026-07-07T09:00:00+00:00",
+    ...overrides,
+  };
+}
+
+export function makeOutreachFollowUp(overrides: Partial<OutreachFollowUp> = {}): OutreachFollowUp {
+  return {
+    state: "scheduled",
+    dueAt: "2026-07-13T00:00:00+00:00",
+    basis: "application_submitted",
+    ...overrides,
+  };
+}
+
+export function makeDueFollowUpSummary(
+  overrides: Partial<DueFollowUpSummary> = {},
+): DueFollowUpSummary {
+  return {
+    threadId: "thread-1",
+    contactId: "contact-1",
+    jobId: "https://example.com/job/1",
+    dueAt: "2026-07-06T00:00:00+00:00",
+    basis: "application_submitted",
+    state: "scheduled",
+    isDue: true,
+    ...overrides,
   };
 }
 

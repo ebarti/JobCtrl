@@ -258,6 +258,27 @@ export interface OutreachThreadProjection {
   readonly lastUpdatedAt: string | null;
 }
 
+/**
+ * Read-side row for one thread with a SCHEDULED outreach follow-up (§9, §10).
+ *
+ * One row per scheduled follow-up. Whether it is *due* is computed at read time
+ * from `dueAt` + the clock — a derived signal, never a stored flag and never an
+ * action (INV-1). Carries safe references only (ids, derived due date, basis
+ * label); never a contact name/email.
+ */
+export interface DueFollowUpProjection {
+  readonly tenantId: TenantId;
+  readonly threadId: string;
+  readonly contactId: string;
+  readonly jobId: string | null;
+  readonly dueAt: string | null;
+  readonly basis: string;
+  readonly state: string;
+  readonly createdAt: string | null;
+  readonly updatedAt: string | null;
+  readonly lastUpdatedAt: string | null;
+}
+
 export const PROJECTION_TABLES = [
   "job_list_projections",
   "dashboard_projections",
@@ -268,6 +289,7 @@ export const PROJECTION_TABLES = [
   "contact_projections",
   "contact_research_task_projections",
   "outreach_thread_projections",
+  "due_follow_up_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 

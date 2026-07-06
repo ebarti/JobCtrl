@@ -2,6 +2,8 @@ import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ContactCreateButton } from "../../contexts/outreach/components/ContactCreateButton.js";
 import { ContactImportButton } from "../../contexts/outreach/components/ContactImportButton.js";
+import { DueFollowUpsBadge } from "../../contexts/outreach/components/DueFollowUpsBadge.js";
+import { DueFollowUpsPanel } from "../../contexts/outreach/components/DueFollowUpsPanel.js";
 import {
   useContactsListQuery,
   type ContactsListFilters,
@@ -34,8 +36,17 @@ export function OutreachView() {
 
   return (
     <>
+      <DueFollowUpsPanel />
       <section className="card full">
-        <CardHeader title="Contacts" meta={data ? `${data.items.length} shown` : "loading"} />
+        <CardHeader
+          title="Contacts"
+          meta={
+            <>
+              {data ? `${data.items.length} shown` : "loading"}
+              <DueFollowUpsBadge />
+            </>
+          }
+        />
         {message ? <div className="banner inline">{message}</div> : null}
         <div className="toolbar">
           <label className="field compact">

@@ -43,6 +43,9 @@ import type {
   GenerateOutreachDraftRequest,
   ReviseOutreachDraftRequest,
   RejectOutreachDraftRequest,
+  LogOutreachSendRequest,
+  ScheduleFollowUpRequest,
+  DueFollowUpsResponse,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -355,6 +358,17 @@ export interface ApiClientPort {
     draftId: string,
     body?: RejectOutreachDraftRequest,
   ): Promise<OutreachThreadResponse>;
+  logOutreachSend(
+    threadId: string,
+    body: LogOutreachSendRequest,
+  ): Promise<OutreachThreadResponse>;
+  scheduleOutreachFollowUp(
+    threadId: string,
+    body?: ScheduleFollowUpRequest,
+  ): Promise<OutreachThreadResponse>;
+  completeOutreachFollowUp(threadId: string): Promise<OutreachThreadResponse>;
+  dismissOutreachFollowUp(threadId: string): Promise<OutreachThreadResponse>;
+  dueOutreachFollowUps(): Promise<DueFollowUpsResponse>;
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;

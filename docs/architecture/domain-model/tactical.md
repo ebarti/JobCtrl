@@ -588,17 +588,28 @@ Identity: (TenantId, OutreachThreadId)
 ```
 
 The outreach state for one `(Contact, optional application)` — its
-generation-versioned, reviewable, editable drafts (a distinct lifecycle from the
-durable `Contact`, mirroring how `MaterialsSet` is separate from `Job`). Phase 3
-realises truthful **drafting only**; the thread terminates one step before any
-send.
+generation-versioned, reviewable, editable drafts, its user-attested send logs,
+and its follow-up schedule (a distinct lifecycle from the durable `Contact`,
+mirroring how `MaterialsSet` is separate from `Job`). Phase 3 realises truthful
+drafting; Phase 4 adds the user-attested send **log** (a recorded fact, not a
+transport) and the follow-up schedule.
 
 **Invariants:**
-- **No representable "sent" state (INV-1).** The aggregate has no `sent` field, no
-  send log, and no transition to a sent status anywhere. The terminal state a
-  draft can reach is `approved` (reviewable and copyable). Send logging is a later
-  phase and is a separate user-attested record; it never lands as a draft or
-  thread status here.
+- **"Sent" only via a user-attested send log (INV-1).** The system never sends and
+  exposes no outbound transport. A thread reaches a "sent" state ONLY through an
+  `OutreachSendLog` — a user-attested record that the user sent a specific
+  *approved* draft — and "sent" is a derived property (`is_sent = bool(send_logs)`),
+  never a stored marker that could drift. `log_send` refuses any draft that is not
+  currently approved, and rehydrating a thread whose send log attests a
+  never-approved or missing draft raises — mirroring the `ApplyRun`
+  dry-run/evidence coherence guard (a terminal marker MUST coincide with the
+  evidence that justifies it). "Approve draft" and "log send" are distinct user
+  actions.
+- **Follow-ups are surfaced-only (INV-1, §9).** The `FollowUpSchedule` holds a
+  suggested next date derived from the application lifecycle (7 days after
+  submission; 14 for a subsequent no-reply nudge), fully user-editable, and is
+  never auto-acted or sent. Whether it is *due* is a derived read-model signal over
+  schedule + clock, never a stored flag.
 - An `OutreachDraft` can only be `approved` when its persisted `DraftGateResults`
   passed (INV-5); constructing an `approved` draft over failed gates is
   impossible, so a rehydrated draft can never lie about being
@@ -618,11 +629,13 @@ draft.
 
 **Entities:**
 - `OutreachDraft { draftId, threadId, generation, kind, status, bodyText, gateResults, provenance[], createdAt, approvedAt?, rejectedAt?, reason }` — one generation-versioned draft. `bodyText` is the reviewable message and is **sensitive** (the user's own outreach content); `gateResults` is the persisted truthfulness-gate outcome and the ONLY authority approval is gated on; `provenance[]` binds each claim to the confirmed fact it rests on.
+- `OutreachSendLog { sendLogId, threadId, draftId, channel, sentAt, loggedAt }` (Phase 4) — a **user-attested** record that the user sent `draftId` (an approved draft) on `sentAt` via `channel` (a free-text label, never an address). It is a recorded fact, not a transport; its presence is the only thing that makes a thread "sent" (INV-1).
 
 **Value Objects:**
 - `OutreachDraftKind` — enum: `intro_request | follow_up`. Phase 3 generates intro requests; `follow_up` is a valid drafting target, but follow-up *scheduling* is a later phase.
 - `DraftGateResults { passed, fabrications[], validation, judge, computedAgainst }` — the aggregated outcome of the reused truthfulness gate stack; `passed` is true only when the deterministic detector found no fabrications, the content validator passed, and the judge approved. `computedAgainst` records that the gates ran against the rendered draft text.
 - `OutreachClaimProvenance { claimId, section, generatedText, contactFactIds[], profileGrounded, rationale }` — one claim (paragraph) bound to the confirmed contact attribute ids and the profile evidence it rests on, computed against the rendered draft text.
+- `FollowUpSchedule { state, dueAt?, basis }` (Phase 4) — the thread's follow-up plan. `state ∈ { none | scheduled | completed | dismissed }`; `dueAt` is the suggested/scheduled date (required when `scheduled`); `basis ∈ { application_submitted | no_reply_nudge | manual }` records why it was suggested. A plan, never an action — nothing is ever sent on its behalf (INV-1).
 
 **Truthfulness gates (INV-5):** draft generation and every user edit run the reused Materials gate stack (deterministic never-fabricate detector → content validator → LLM-as-judge → claim → fact provenance) against the actual draft text; the [tailoring contract](../tailoring.md) documents the stack in order and the cover-letter reuse precedent.
 
@@ -631,7 +644,11 @@ draft.
 - `OutreachDraftRevised { tenantId, threadId, draftId, generation, revisedAt }`
 - `OutreachDraftApproved { tenantId, threadId, draftId, generation, approvedAt }`
 - `OutreachDraftRejected { tenantId, threadId, draftId, generation, reason, rejectedAt }`
-  — All consumed by: Operations (the `outreach_thread_projections` read model).
+- `OutreachSendLogged { tenantId, threadId, draftId, channel, sentAt, loggedAt }` (Phase 4) — the user-attested send fact; the channel is a label only.
+- `FollowUpScheduled { tenantId, threadId, jobId, dueAt, basis, scheduledAt }` (Phase 4)
+- `FollowUpCompleted { tenantId, threadId, completedAt }` (Phase 4)
+- `FollowUpDismissed { tenantId, threadId, reason, dismissedAt }` (Phase 4)
+  — All consumed by: Operations (the `outreach_thread_projections` and, for the send/follow-up events, `due_follow_up_projections` read models).
 
 **Sensitivity:** the draft `bodyText`, gate results, and claim provenance live only
 on the canonical write side (`outreach_drafts`) and reach the client through the

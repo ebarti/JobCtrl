@@ -360,6 +360,30 @@ class OutreachThreadProjection:
 
 
 @dataclass(frozen=True)
+class DueFollowUpProjection:
+    """Read-side row for one thread with a scheduled outreach follow-up (§9, §10).
+
+    One row per thread whose ``follow_up_state == 'scheduled'``. ``FollowUpDue`` is
+    NOT stored here: whether a scheduled follow-up has arrived is computed at read
+    time from ``due_at`` + the clock (a derived read-model signal, never an
+    action). Completed/dismissed follow-ups are not projected. Carries safe
+    references only — ids, the derived due date, and the basis label; never a
+    contact name/email (sensitivity, plan §6).
+    """
+
+    tenant_id: TenantId
+    thread_id: str
+    contact_id: str
+    job_id: str | None = None
+    due_at: str | None = None
+    basis: str = ""
+    state: str = "scheduled"
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_updated_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SourceQualityStats:
     """Operations projection for source health and scheduling feedback."""
 

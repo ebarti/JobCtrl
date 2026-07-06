@@ -4,6 +4,7 @@ import { useState, type JSX } from "react";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { ReviseDraftForm } from "../forms/revise-draft-form.js";
+import { SendLogForm } from "../forms/send-log-form.js";
 import { useOutreachThreadQuery } from "../hooks/useOutreachThreadQuery.js";
 import { outreachDraftKindLabel } from "../lib/draft-copy.js";
 import { ApproveDraftButton } from "./ApproveDraftButton.js";
@@ -11,7 +12,9 @@ import { CopyDraftButton } from "./CopyDraftButton.js";
 import { DraftClaimProvenanceList } from "./DraftClaimProvenanceList.js";
 import { DraftGateResultsPanel } from "./DraftGateResultsPanel.js";
 import { DraftStatusBadge } from "./DraftStatusBadge.js";
+import { FollowUpPanel } from "./FollowUpPanel.js";
 import { GenerateDraftButton } from "./GenerateDraftButton.js";
+import { OutreachSendLogList } from "./OutreachSendLogList.js";
 import { RejectDraftButton } from "./RejectDraftButton.js";
 
 export interface OutreachThreadPanelProps {
@@ -63,6 +66,7 @@ function OutreachThreadBody({
   jobId?: string;
 }): JSX.Element {
   const [revising, setRevising] = useState(false);
+  const [loggingSend, setLoggingSend] = useState(false);
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
@@ -85,6 +89,43 @@ function OutreachThreadBody({
           </details>
         </div>
       ) : null}
+
+      <div className="outreach-send-log">
+        <h4>Sends</h4>
+        <p className="muted">
+          JobHunter never sends outreach. After you send an approved message yourself, record it
+          here so the thread reflects it.
+        </p>
+        <OutreachSendLogList thread={thread} />
+        {approved ? (
+          <div className="outreach-send-log-actions">
+            <button
+              type="button"
+              className="tab"
+              aria-expanded={loggingSend}
+              onClick={() => setLoggingSend((value) => !value)}
+            >
+              {loggingSend ? "cancel" : "log a send"}
+            </button>
+            {loggingSend ? (
+              <SendLogForm
+                threadId={thread.threadId}
+                contactId={contactId}
+                draftId={approved.draftId}
+                onLogged={() => setLoggingSend(false)}
+                {...(jobId ? { jobId } : {})}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <FollowUpPanel
+        threadId={thread.threadId}
+        contactId={contactId}
+        followUp={thread.followUp}
+        {...(jobId ? { jobId } : {})}
+      />
 
       {candidate ? (
         <div className="outreach-candidate-draft">

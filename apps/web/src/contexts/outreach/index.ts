@@ -15,6 +15,11 @@ export { useGenerateDraftMutation } from "./hooks/useGenerateDraftMutation.js";
 export { useReviseDraftMutation } from "./hooks/useReviseDraftMutation.js";
 export { useApproveDraftMutation } from "./hooks/useApproveDraftMutation.js";
 export { useRejectDraftMutation } from "./hooks/useRejectDraftMutation.js";
+export { useDueFollowUpsQuery } from "./hooks/useDueFollowUpsQuery.js";
+export { useLogSendMutation } from "./hooks/useLogSendMutation.js";
+export { useScheduleFollowUpMutation } from "./hooks/useScheduleFollowUpMutation.js";
+export { useCompleteFollowUpMutation } from "./hooks/useCompleteFollowUpMutation.js";
+export { useDismissFollowUpMutation } from "./hooks/useDismissFollowUpMutation.js";
 
 export { ContactCreateButton } from "./components/ContactCreateButton.js";
 export { ContactDeleteButton } from "./components/ContactDeleteButton.js";
@@ -38,10 +43,15 @@ export { GenerateDraftButton } from "./components/GenerateDraftButton.js";
 export { ApproveDraftButton } from "./components/ApproveDraftButton.js";
 export { RejectDraftButton } from "./components/RejectDraftButton.js";
 export { CopyDraftButton } from "./components/CopyDraftButton.js";
+export { OutreachSendLogList } from "./components/OutreachSendLogList.js";
+export { FollowUpPanel } from "./components/FollowUpPanel.js";
+export { DueFollowUpsPanel } from "./components/DueFollowUpsPanel.js";
+export { DueFollowUpsBadge } from "./components/DueFollowUpsBadge.js";
 
 export { ContactForm } from "./forms/contact-form.js";
 export { ContactImportWizard } from "./forms/contact-import-wizard.js";
 export { ReviseDraftForm } from "./forms/revise-draft-form.js";
+export { SendLogForm } from "./forms/send-log-form.js";
 
 export { useOutreachImportStore } from "./stores/outreach-import-store.js";
 

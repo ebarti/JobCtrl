@@ -31,8 +31,11 @@ import sqlite3
 
 from jobhunter.database import ensure_contact_tables
 from jobhunter.domain.contact.outreach import (
+    FollowUpSchedule,
+    FollowUpState,
     OutreachDraft,
     OutreachDraftKind,
+    OutreachSendLog,
     OutreachThread,
 )
 from jobhunter.domain.contact.outreach_gates import (
@@ -103,14 +106,45 @@ class SqliteOutreachThreadRepository:
         return [self._row_to_thread(tenant_id, row) for row in rows]
 
     def _row_to_thread(self, tenant_id: TenantId, row: sqlite3.Row) -> OutreachThread:
+        thread_id = str(row["thread_id"])
         return OutreachThread(
             tenant_id=tenant_id,
-            thread_id=str(row["thread_id"]),
+            thread_id=thread_id,
             contact_id=str(row["contact_id"]),
             job_id=row["job_url"],
-            drafts=self._load_drafts(tenant_id, str(row["thread_id"])),
+            drafts=self._load_drafts(tenant_id, thread_id),
             created_at=str(row["created_at"] or ""),
             updated_at=str(row["updated_at"] or ""),
+            send_logs=self._load_send_logs(tenant_id, thread_id),
+            follow_up=FollowUpSchedule(
+                state=_follow_up_state(row["follow_up_state"]),
+                due_at=row["follow_up_due_at"],
+                basis=str(row["follow_up_basis"] or ""),
+            ),
+        )
+
+    def _load_send_logs(
+        self, tenant_id: TenantId, thread_id: str
+    ) -> tuple[OutreachSendLog, ...]:
+        rows = self._conn.execute(
+            """
+            SELECT send_log_id, thread_id, draft_id, channel, sent_at, logged_at
+            FROM outreach_send_logs
+            WHERE tenant_id = ? AND thread_id = ?
+            ORDER BY logged_at ASC, send_log_id ASC
+            """,
+            (str(tenant_id), thread_id),
+        ).fetchall()
+        return tuple(
+            OutreachSendLog(
+                send_log_id=str(row["send_log_id"]),
+                thread_id=str(row["thread_id"]),
+                draft_id=str(row["draft_id"]),
+                channel=str(row["channel"] or ""),
+                sent_at=str(row["sent_at"] or ""),
+                logged_at=str(row["logged_at"] or ""),
+            )
+            for row in rows
         )
 
     def _load_drafts(self, tenant_id: TenantId, thread_id: str) -> tuple[OutreachDraft, ...]:
@@ -165,12 +199,16 @@ class SqliteOutreachThreadRepository:
             self._conn.execute(
                 """
                 INSERT INTO outreach_threads (
-                    tenant_id, thread_id, contact_id, job_url, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+                    follow_up_due_at, follow_up_basis, follow_up_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
-                    contact_id = excluded.contact_id,
-                    job_url    = excluded.job_url,
-                    updated_at = excluded.updated_at
+                    contact_id       = excluded.contact_id,
+                    job_url          = excluded.job_url,
+                    updated_at       = excluded.updated_at,
+                    follow_up_due_at = excluded.follow_up_due_at,
+                    follow_up_basis  = excluded.follow_up_basis,
+                    follow_up_state  = excluded.follow_up_state
                 """,
                 (
                     tenant,
@@ -179,8 +217,33 @@ class SqliteOutreachThreadRepository:
                     thread.job_id,
                     thread.created_at,
                     thread.updated_at,
+                    thread.follow_up.due_at,
+                    thread.follow_up.basis or None,
+                    thread.follow_up.state.value,
                 ),
             )
+            self._conn.execute(
+                "DELETE FROM outreach_send_logs WHERE tenant_id = ? AND thread_id = ?",
+                (tenant, thread_id),
+            )
+            for log in thread.send_logs:
+                self._conn.execute(
+                    """
+                    INSERT INTO outreach_send_logs (
+                        tenant_id, send_log_id, thread_id, draft_id, channel,
+                        sent_at, logged_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant,
+                        log.send_log_id,
+                        thread_id,
+                        log.draft_id,
+                        log.channel,
+                        log.sent_at,
+                        log.logged_at,
+                    ),
+                )
             self._conn.execute(
                 "DELETE FROM outreach_drafts WHERE tenant_id = ? AND thread_id = ?",
                 (tenant, thread_id),
@@ -288,6 +351,98 @@ class SqliteOutreachThreadRepository:
                     },
                 )
 
+        self._emit_send_log_events(tenant, thread, previous, job_url)
+        self._emit_follow_up_events(tenant, thread, previous, job_url)
+
+    def _emit_send_log_events(
+        self,
+        tenant: str,
+        thread: OutreachThread,
+        previous: OutreachThread | None,
+        job_url: str | None,
+    ) -> None:
+        """Emit ``OutreachSendLogged`` for each newly-recorded user-attested send.
+
+        The payload carries ids, the channel LABEL, and timestamps only — never a
+        contact name/email or the draft body (sensitivity; plan §6). This records
+        a fact; nothing is ever sent (INV-1).
+        """
+        prior_ids = {log.send_log_id for log in previous.send_logs} if previous else set()
+        for log in thread.send_logs:
+            if log.send_log_id in prior_ids:
+                continue
+            self._record(
+                job_url,
+                thread.thread_id,
+                "OutreachSendLogged",
+                "Outreach send logged (user-attested).",
+                {
+                    "tenantId": tenant,
+                    "threadId": thread.thread_id,
+                    "draftId": log.draft_id,
+                    "channel": log.channel,
+                    "sentAt": log.sent_at,
+                    "loggedAt": log.logged_at,
+                },
+            )
+
+    def _emit_follow_up_events(
+        self,
+        tenant: str,
+        thread: OutreachThread,
+        previous: OutreachThread | None,
+        job_url: str | None,
+    ) -> None:
+        """Emit FollowUpScheduled/Completed/Dismissed on a follow-up state change.
+
+        Follow-ups are surfaced-only; these events drive the due-follow-ups read
+        model and never trigger any outbound action (INV-1).
+        """
+        current = thread.follow_up
+        prev = previous.follow_up if previous else FollowUpSchedule()
+        if current.state is FollowUpState.SCHEDULED and (
+            prev.state is not FollowUpState.SCHEDULED or prev.due_at != current.due_at
+        ):
+            self._record(
+                job_url,
+                thread.thread_id,
+                "FollowUpScheduled",
+                "Outreach follow-up scheduled.",
+                {
+                    "tenantId": tenant,
+                    "threadId": thread.thread_id,
+                    "jobId": thread.job_id,
+                    "dueAt": current.due_at,
+                    "basis": current.basis,
+                    "scheduledAt": thread.updated_at,
+                },
+            )
+        elif current.state is FollowUpState.COMPLETED and prev.state is not FollowUpState.COMPLETED:
+            self._record(
+                job_url,
+                thread.thread_id,
+                "FollowUpCompleted",
+                "Outreach follow-up completed.",
+                {
+                    "tenantId": tenant,
+                    "threadId": thread.thread_id,
+                    "completedAt": thread.updated_at,
+                },
+            )
+        elif current.state is FollowUpState.DISMISSED and prev.state is not FollowUpState.DISMISSED:
+            self._record(
+                job_url,
+                thread.thread_id,
+                "FollowUpDismissed",
+                "Outreach follow-up dismissed.",
+                {
+                    "tenantId": tenant,
+                    "threadId": thread.thread_id,
+                    "reason": "",
+                    "dismissedAt": thread.updated_at,
+                },
+            )
+
     def _record(
         self,
         job_url: str | None,
@@ -321,6 +476,13 @@ def _status(value: object) -> ArtifactStatus:
         return ArtifactStatus(str(value))
     except ValueError:
         return ArtifactStatus.CANDIDATE
+
+
+def _follow_up_state(value: object) -> FollowUpState:
+    try:
+        return FollowUpState(str(value or "none"))
+    except ValueError:
+        return FollowUpState.NONE
 
 
 def _decode(raw: object) -> dict | None:

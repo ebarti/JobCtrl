@@ -70,13 +70,16 @@ class ContactResearchTaskRepository(Protocol):
 
 
 class OutreachThreadRepository(Protocol):
-    """Persistence port for the ``OutreachThread`` aggregate (drafts).
+    """Persistence port for the ``OutreachThread`` aggregate.
 
     Publisher-injected like the other Contact & Outreach adapters: ``save``
-    persists the canonical ``outreach_threads`` + ``outreach_drafts`` rows and
-    publishes the draft lifecycle events (``OutreachDraftGenerated`` /
-    ``OutreachDraftRevised`` / ``OutreachDraftApproved`` / ``OutreachDraftRejected``).
-    There is no send transport on this port (INV-1).
+    persists the canonical ``outreach_threads`` + ``outreach_drafts`` +
+    ``outreach_send_logs`` rows and publishes the draft lifecycle events
+    (``OutreachDraftGenerated`` / ``OutreachDraftRevised`` /
+    ``OutreachDraftApproved`` / ``OutreachDraftRejected``), the user-attested
+    ``OutreachSendLogged`` record, and the follow-up events (``FollowUpScheduled``
+    / ``FollowUpCompleted`` / ``FollowUpDismissed``). There is no send transport
+    on this port — a send log is a recorded fact, not a transmission (INV-1).
     """
 
     def load(self, tenant_id: TenantId, thread_id: str) -> OutreachThread | None:

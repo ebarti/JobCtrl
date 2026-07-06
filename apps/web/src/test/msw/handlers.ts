@@ -21,7 +21,13 @@ import {
   makeResearchListResponse,
   sampleResearchTaskSummary,
 } from "../fixtures/contact-research.js";
-import { makeOutreachThreadResponse } from "../fixtures/outreach.js";
+import {
+  makeDueFollowUpSummary,
+  makeOutreachFollowUp,
+  makeOutreachSendLog,
+  makeOutreachThreadDetail,
+  makeOutreachThreadResponse,
+} from "../fixtures/outreach.js";
 import {
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
@@ -899,6 +905,40 @@ export const handlers = [
   ),
   http.post("*/v1/outreach/threads/:threadId/drafts", () =>
     HttpResponse.json(makeOutreachThreadResponse()),
+  ),
+  // R6 Phase 4: user-attested send log + follow-ups. `send-logs` RECORDS a fact
+  // (no transport, INV-1); the follow-up routes schedule/complete/dismiss a
+  // surfaced-only reminder; `follow-ups/due` is the derived due list.
+  http.post("*/v1/outreach/threads/:threadId/send-logs", () =>
+    HttpResponse.json(
+      makeOutreachThreadResponse(
+        makeOutreachThreadDetail({ sendLogs: [makeOutreachSendLog()], isSent: true }),
+      ),
+    ),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/follow-up/schedule", () =>
+    HttpResponse.json(
+      makeOutreachThreadResponse(
+        makeOutreachThreadDetail({ followUp: makeOutreachFollowUp({ state: "scheduled" }) }),
+      ),
+    ),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/follow-up/complete", () =>
+    HttpResponse.json(
+      makeOutreachThreadResponse(
+        makeOutreachThreadDetail({ followUp: makeOutreachFollowUp({ state: "completed" }) }),
+      ),
+    ),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/follow-up/dismiss", () =>
+    HttpResponse.json(
+      makeOutreachThreadResponse(
+        makeOutreachThreadDetail({ followUp: makeOutreachFollowUp({ state: "dismissed" }) }),
+      ),
+    ),
+  ),
+  http.get("*/v1/outreach/follow-ups/due", () =>
+    HttpResponse.json({ ok: true, followUps: [makeDueFollowUpSummary()] }),
   ),
   http.get("*/v1/contacts/:contactId", ({ params }) =>
     HttpResponse.json(

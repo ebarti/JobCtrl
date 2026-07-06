@@ -74,6 +74,16 @@ the event log, projections, logs, or telemetry. A draft terminates at
 **copy/export**: there is no send transport of any kind, so you send every message
 yourself through your own channel.
 
+**Logging a send** is a record you enter, not an action JobHunter takes. After you
+have sent an approved draft yourself, you can note the date and the channel you
+used; that is the only way a thread is ever marked "sent". JobHunter never sends
+and has no send capability — the send-log records a fact. The logged event stores
+only ids, the channel label, and timestamps; it never stores a contact's name or
+email. **Follow-ups** are surfaced-only reminders: JobHunter suggests a
+conservative next date you can edit, shows it when it is due, and never acts on it
+or sends it. Any optional recurring follow-up reminder is off by default. Send and
+follow-up data are advisory and never affect scoring or apply decisions.
+
 ::: warning Never commit your local data
 Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those
 files. They hold your database, provider keys, and generated resumes and cover

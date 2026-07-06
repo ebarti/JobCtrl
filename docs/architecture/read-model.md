@@ -137,6 +137,7 @@ tables that back every read-model endpoint:
 | `contact_projections`        | One row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata. No attribute values (sensitivity). |
 | `contact_research_task_projections` | One row per supervised research task (Contact & Outreach): status, candidate/needs-review/confirmed counts, the source-attempt outcomes (provenance of the search), and per-candidate provenance metadata + attribute kinds. No candidate attribute values (sensitivity). |
 | `outreach_thread_projections` | One row per outreach thread (Contact & Outreach): draft count, latest generation and status, whether an approved draft exists, and per-draft metadata (draft id, generation, kind, status, and the persisted `gatePassed` outcome). No draft body, gate internals, or claim provenance — those stay in canonical `outreach_drafts` and are joined at detail-read time (sensitivity). |
+| `due_follow_up_projections` | One row per outreach thread with a **scheduled** follow-up (Contact & Outreach): the thread/contact/job ids, the suggested `due_at`, and the basis label. Completed/dismissed/unscheduled threads are not projected. Whether a follow-up is *due* is computed at read time over `due_at` + the clock (a derived signal, never stored and never an action — INV-1). Carries safe references only; never a contact name/email. |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
@@ -201,6 +202,22 @@ also key on the job's `job_url`) and the projection carry only ids, kinds,
 generation, and timestamps. Contact PII and fetched page bodies never enter
 `job_events` payloads, the projection, logs, or telemetry. There is no send
 transport on any outreach read or write path (INV-1).
+
+Send logging and follow-ups (Phase 4) extend the same dual-runtime pattern. A
+**user-attested** `OutreachSendLog` — the only way a thread reaches a "sent" state
+(INV-1) — is recorded over an approved draft and emits `OutreachSendLogged`;
+scheduling/completing/dismissing a follow-up emits
+`FollowUpScheduled`/`FollowUpCompleted`/`FollowUpDismissed`. All four are added to
+the outreach event set, so the Python `ProjectionBuilder._rebuild_due_follow_ups`
+and the TypeScript `rebuildDueFollowUpProjections` rematerialise
+`due_follow_up_projections` from the canonical `outreach_threads` follow-up columns
+whenever any outreach event fires; a cross-runtime parity fixture
+(`test_due_follow_up_projection_parity.py` /
+`apps/api/test/due-follow-up-projection-parity.test.ts`) guards drift.
+`GET /v1/outreach/follow-ups/due` reads that projection and computes the derived
+`isDue` flag over the clock at read time — it never sends and never auto-acts. The
+send-log and follow-up events carry only ids, a channel *label*, and timestamps;
+no contact name/email ever enters an event, the projection, logs, or telemetry.
 
 The evidence-usage projection is read-only and derives from existing canonical
 profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does

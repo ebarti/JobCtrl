@@ -189,6 +189,23 @@ only when you start a run from the UI. Its posture is conservative by design:
 - **LLM spend reuses the daily budget** (`dailyBudgetUsd`) and the same preflight
   as every other spendful workflow — there is no separate research budget.
 
+## Outreach Follow-Ups
+
+Outreach follow-ups are **surfaced-only reminders** — JobHunter never sends and
+has no send capability. Their posture:
+
+- **Conservative cadence defaults.** When you schedule a follow-up without picking
+  a date, JobHunter suggests one **7 calendar days after the application was
+  submitted** for the first nudge, and **14 calendar days** for a subsequent nudge
+  if you have logged no reply. Every suggested date is **fully editable per
+  thread** — the suggestion is only a starting point.
+- **Default-off automation.** Any optional recurring follow-up reminder is
+  **disabled by default** (`reminders_enabled = false`, mirroring discovery
+  `scheduling_enabled`). Even when enabled it only *surfaces* due items in the
+  **Follow-ups** list and badge — it never sends and never acts on your behalf.
+- **A follow-up is due** purely as a read-time computation over its date and the
+  clock; marking one done or dismissing it is always your explicit action.
+
 ## Materials And Resume Rendering
 
 | Variable | Default | What it does |

@@ -54,6 +54,7 @@ from jobhunter.domain.operations.projections import (
     ContactResearchTaskProjection,
     DashboardFunnelStage,
     DashboardProjection,
+    DueFollowUpProjection,
     JobDetailProjection,
     JobListProjection,
     OutreachThreadProjection,
@@ -156,16 +157,22 @@ CONTACT_RESEARCH_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# OutreachThread events (§4.3). Any of these marks the outreach read model dirty;
-# ``_rebuild_outreach`` then rematerialises every outreach-thread projection from
-# the canonical ``outreach_threads`` / ``outreach_drafts`` rows (draft body, gate
-# internals, and provenance never enter the projection — sensitivity rule, plan §6).
+# OutreachThread events (§4.3, §4.4/§9). Any of these marks the outreach read
+# model dirty; ``_rebuild_outreach`` rematerialises every outreach-thread
+# projection and ``_rebuild_due_follow_ups`` rematerialises the scheduled
+# follow-ups (draft body, gate internals, provenance, and contact PII never enter
+# a projection — sensitivity rule, plan §6). The send-log and follow-up events
+# carry only ids, a channel label, and timestamps.
 OUTREACH_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "OutreachDraftGenerated",
         "OutreachDraftRevised",
         "OutreachDraftApproved",
         "OutreachDraftRejected",
+        "OutreachSendLogged",
+        "FollowUpScheduled",
+        "FollowUpCompleted",
+        "FollowUpDismissed",
     }
 )
 POSTED_COMPENSATION_WARNING_MESSAGES = {
@@ -852,6 +859,7 @@ class ProjectionBuilder:
                 self._rebuild_contact_research()
             if outreach_dirty:
                 self._rebuild_outreach()
+                self._rebuild_due_follow_ups()
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
@@ -880,6 +888,7 @@ class ProjectionBuilder:
             self._rebuild_contact_research()
         if outreach_dirty:
             self._rebuild_outreach()
+            self._rebuild_due_follow_ups()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
@@ -1186,6 +1195,54 @@ class ProjectionBuilder:
             thread_id = str(existing[0])
             if thread_id not in live_ids:
                 self._store.delete_outreach_thread(tenant, thread_id)
+
+    def _rebuild_due_follow_ups(self) -> None:
+        """Rematerialise one row per thread with a SCHEDULED follow-up (§9, §10).
+
+        Whether a scheduled follow-up is *due* is computed at read time from
+        ``due_at`` + the clock — this projection just holds the schedule (a
+        derived read-model signal, never an action; INV-1). Completed/dismissed/
+        unscheduled threads are dropped, so the projection is a faithful mirror of
+        the currently-scheduled follow-ups. Carries safe references only.
+        """
+        tenant = str(self._tenant_id)
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT thread_id, contact_id, job_url, follow_up_due_at,
+                       follow_up_basis, follow_up_state, created_at, updated_at
+                FROM outreach_threads
+                WHERE tenant_id = ? AND follow_up_state = 'scheduled'
+                """,
+                (tenant,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+        live_ids: set[str] = set()
+        for row in rows:
+            thread_id = str(row[0])
+            live_ids.add(thread_id)
+            self._store.upsert_due_follow_up(
+                DueFollowUpProjection(
+                    tenant_id=self._tenant_id,
+                    thread_id=thread_id,
+                    contact_id=str(row[1]),
+                    job_id=row[2],
+                    due_at=row[3],
+                    basis=str(row[4] or ""),
+                    state=str(row[5] or "scheduled"),
+                    created_at=row[6],
+                    updated_at=row[7],
+                    last_updated_at=row[7],
+                )
+            )
+        for existing in self._conn.execute(
+            "SELECT thread_id FROM due_follow_up_projections WHERE tenant_id = ?",
+            (tenant,),
+        ).fetchall():
+            thread_id = str(existing[0])
+            if thread_id not in live_ids:
+                self._store.delete_due_follow_up(tenant, thread_id)
 
     def _rebuild_job(self, job_url: str) -> None:
         job_row = self._conn.execute(
