@@ -41,6 +41,9 @@ function routeForRewrittenPage(docPath: string): string | null {
 // and order may change here.
 const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
+  // Frozen slot for the alternatives-comparison page (launch-readiness plan
+  // §8.2). Label/placement are an owner decision (§11.3); the URL is frozen.
+  { text: "How It Compares", link: "/comparison" },
   {
     text: "User Guide",
     collapsed: false,
