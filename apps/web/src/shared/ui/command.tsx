@@ -23,41 +23,43 @@ function assignForwardedRef<T>(ref: ForwardedRef<T>, value: T | null) {
   }
 }
 
-function normalizeCommandInputRole(input: HTMLInputElement) {
-  if (input.getAttribute("role") !== "searchbox") {
-    input.setAttribute("role", "searchbox");
-  }
-  for (const attribute of ["aria-autocomplete", "aria-controls", "aria-activedescendant", "aria-expanded"]) {
-    if (input.hasAttribute(attribute)) {
-      input.removeAttribute(attribute);
-    }
-  }
-}
-
 function normalizeCommandListRoles(list: HTMLDivElement) {
-  if (list.hasAttribute("aria-activedescendant")) {
-    list.removeAttribute("aria-activedescendant");
-  }
   const items = Array.from(list.querySelectorAll("[cmdk-item]"));
+  const separators = Array.from(list.querySelectorAll("[cmdk-separator]"));
+  const sizer = list.querySelector("[cmdk-list-sizer]");
+  separators.forEach((separator) => {
+    if (separator.getAttribute("role") !== "presentation") {
+      separator.setAttribute("role", "presentation");
+    }
+  });
   if (items.length === 0) {
+    if (sizer?.getAttribute("role") !== "presentation") {
+      sizer?.setAttribute("role", "presentation");
+    }
     if (list.getAttribute("role") !== "presentation") {
       list.setAttribute("role", "presentation");
     }
+    if (list.hasAttribute("aria-owns")) {
+      list.removeAttribute("aria-owns");
+    }
+    if (list.hasAttribute("aria-activedescendant")) {
+      list.removeAttribute("aria-activedescendant");
+    }
     return;
   }
-  if (list.getAttribute("role") !== "menu") {
-    list.setAttribute("role", "menu");
+  if (list.getAttribute("role") !== "listbox") {
+    list.setAttribute("role", "listbox");
   }
-  const sizer = list.querySelector("[cmdk-list-sizer]");
   if (sizer?.getAttribute("role") !== "group") {
     sizer?.setAttribute("role", "group");
   }
+  const ownedItemIds = items.map((item) => item.id).join(" ");
+  if (list.getAttribute("aria-owns") !== ownedItemIds) {
+    list.setAttribute("aria-owns", ownedItemIds);
+  }
   items.forEach((item) => {
-    if (item.getAttribute("role") !== "menuitem") {
-      item.setAttribute("role", "menuitem");
-    }
-    if (item.hasAttribute("aria-selected")) {
-      item.removeAttribute("aria-selected");
+    if (item.getAttribute("role") !== "option") {
+      item.setAttribute("role", "option");
     }
   });
 }
@@ -95,23 +97,11 @@ export const CommandInput = forwardRef<
   ComponentRef<typeof CommandPrimitive.Input>,
   ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => {
-  const inputRef = useRef<ComponentRef<typeof CommandPrimitive.Input> | null>(null);
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    normalizeCommandInputRole(input);
-    const observer = new MutationObserver(() => normalizeCommandInputRole(input));
-    observer.observe(input, { attributes: true });
-    return () => observer.disconnect();
-  }, []);
   return (
     <div className="flex items-center border-b border-input bg-background px-3" cmdk-input-wrapper="">
       <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input
-        ref={(node) => {
-          inputRef.current = node;
-          assignForwardedRef(ref, node);
-        }}
+        ref={ref}
         className={cn(
           "flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
           className,
