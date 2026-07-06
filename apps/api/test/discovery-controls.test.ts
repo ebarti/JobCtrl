@@ -319,6 +319,61 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("surfaces per-source politeness outcomes in the source registry list", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      // Ensure projection tables (including operational_attempt_metrics) exist.
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const now = "2026-05-16T10:00:00+00:00";
+      const db = new Database(dbPath);
+      db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "greenhouse:acme",
+        "ats_api",
+        "Acme",
+        "system",
+        "canonical",
+        "active",
+        "local:greenhouse:acme",
+        "https://boards.greenhouse.io/acme",
+        now,
+        now,
+      );
+      const insertBlocked = db.prepare(
+        `INSERT INTO operational_attempt_metrics (
+           tenant_id, occurred_at, stage, source_id, attempt_kind, outcome,
+           failure_category, is_operational_failure, is_scrape_failure
+         ) VALUES ('local', ?, ?, ?, 'politeness_gate', 'blocked', ?, 0, 0)`,
+      );
+      insertBlocked.run("2026-05-16T09:00:00Z", "discover", "greenhouse:acme", "robots_disallowed");
+      insertBlocked.run("2026-05-16T09:05:00Z", "discover", "greenhouse:acme", "robots_disallowed");
+      insertBlocked.run("2026-05-16T09:10:00Z", "discover", "greenhouse:acme", "budget_exhausted");
+      db.close();
+
+      const list = await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      expect(list.statusCode, list.body).toBe(200);
+      const source = list
+        .json()
+        .sources.find((entry: { sourceId: string }) => entry.sourceId === "greenhouse:acme");
+      expect(source.politeness).toEqual({
+        robotsDisallowedCount: 2,
+        rateLimitedCount: 0,
+        budgetExhaustedCount: 1,
+        lastBlockedReason: "budget_exhausted",
+        lastBlockedAt: "2026-05-16T09:10:00Z",
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("coalesces known Workday host aliases in the source registry list", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));

@@ -24,6 +24,7 @@ from jobhunter.infrastructure.compensation.workflow import (
     CompensationRefreshWorkflow,
     refresh_compensation_activity,
 )
+from jobhunter.infrastructure.temporal.durability_probe import DurabilityProbeWorkflow
 from jobhunter.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
@@ -53,6 +54,7 @@ WORKFLOWS: list[type] = [
     ProfileImportWorkflow,
     CompensationRefreshWorkflow,
     InterviewPrepWorkflow,
+    DurabilityProbeWorkflow,
 ]
 
 ACTIVITIES: list[Callable[..., Any]] = [

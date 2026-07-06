@@ -32,7 +32,7 @@ features:
     linkText: See it on a job
   - icon: 📝
     title: Audited Materials
-    details: Tailored resumes and cover letters where every bullet traces back to its source, gates guard against invented facts, and keyword coverage is measured against the final document.
+    details: Tailored resumes where every bullet traces back to its source, gates guard resumes and cover letters against invented facts, and keyword coverage is measured against the final document.
     link: /user/screenshots#apply-review
     linkText: See the review screen
   - icon: ✅

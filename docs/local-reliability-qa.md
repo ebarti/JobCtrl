@@ -76,6 +76,39 @@ JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm api:dev
 VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 ```
 
+### Durable-Execution Recovery Demo
+
+`scripts/reliability-demo.sh` is the scripted, re-runnable form of the
+kill-worker → clean-recovery story (launch-asset 9; `docs/requirements.md`
+`TR-008`). It complements the per-workflow "Kill worker mid-activity" column
+above — which is unit/integration-tested — with a full-process demonstration on
+a live, isolated Temporal stack. It starts an isolated dev server on a free port
+and a throwaway `JOBHUNTER_DIR`, then drives a burst of `DurabilityProbeWorkflow`
+runs — a diagnostic workflow whose only in-flight state is a durable
+`workflow.sleep` timer, so it fetches no job boards, spends no LLM tokens, and
+opens no browser (the timer is what keeps a run in flight long enough to be
+killed mid-flight, which a no-op that finishes in milliseconds cannot). The
+script **asserts** each run is `Running`, kills the worker **by its captured PID
+tree**, asserts the runs are *still* `Running` with no worker alive, starts a
+fresh worker, and asserts the **same run ids** resume from Temporal history to
+`Completed` exactly once — cross-checked in both Temporal and the read-model
+projection. Any violation (including a run that finished before the kill, which
+prints advice to raise the hold) exits non-zero.
+
+```bash
+scripts/reliability-demo.sh            # default: 3-run burst, 25s hold each
+scripts/reliability-demo.sh 5          # larger burst
+scripts/reliability-demo.sh 3 40       # longer hold — more margin on slow machines
+```
+
+Safety: isolated stack only (never `~/.jobhunter`, never ports 7233/8233/8766/5173),
+genuinely hermetic (no crawl, no LLM spend, no browser; `LANGFUSE_DISABLE=1` stops
+telemetry egress), no application submission, and it kills only the process trees
+it captured. The probe workflow itself is covered by
+`workers/automation/tests/test_workflow_durability_probe.py` (including same-run
+resume across a worker crash on a real dev server). Requires the `temporal` CLI,
+`uv`, `python3`, and `sqlite3` on `PATH`.
+
 ## High-Risk Regression Areas
 
 | Risk | Automated coverage |
@@ -170,6 +203,10 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Discover collapses to a hard failure when only some source families fail, instead of proceeding through detail enrichment and preparation on the surviving sources and failing the workflow only when every source family fails | `workers/automation/tests/test_workflow_discovery.py` |
 | An enrichment site-batch crash aborts the whole enrichment activity instead of being isolated per site — the failing site must be recorded in `site_errors`, healthy sites must still complete, and the run must end `partial` rather than `failed` | `workers/automation/tests/test_discover_reliability.py` |
 | A single job's enrichment crash fails the entire site batch (or the activity) instead of marking only that job failed with `ENRICH_INTERNAL_ERROR` while the rest of the batch continues | `workers/automation/tests/test_discover_reliability.py` |
+| A browser navigation (enrichment detail crawl, WTTJ Algolia bootstrap, the `DetailPageFetcherPort` reference impl, or Smart Extract) bypasses the crawl-politeness gateway — a robots-disallowed page must perform ZERO `page.goto`, fold into the enrich stage as a first-class `blocked` outcome (`ENRICH_ROBOTS_DISALLOWED`, recorded as `robots_disallowed`, never a scrape failure); the per-run request budget must stop further navigations; and the shared host limiter (not the removed fixed `SITE_DELAYS` sleep) must pace each host across sequential and parallel enrichment. The owner's authenticated LinkedIn session is the documented D1/D3 carve-out (robots not enforced on the logged-in account; rate + budget still apply — including the default-on authenticated apply-URL recovery pre-pass, whose fresh `resolve()` navigation is routed through the owner-authenticated gateway so the per-host rate limit + the shared run budget bound it). A robots-blocked job whose robots later allows must Unblock (`Blocked -> Pending`) and re-enrich on a subsequent run rather than strand as `ENRICH_INTERNAL_ERROR` | `workers/automation/tests/test_enrichment_politeness_gate.py`; `workers/automation/tests/test_linkedin_authenticated_enrichment_retry.py`; `workers/automation/tests/test_fetch_surface_enforcement.py`; manual QA: in a disposable workspace, run enrichment against a loopback host whose `robots.txt` disallows the detail path and confirm the job shows enrich `blocked` with no navigation and nothing submitted (loopback only; never a real board) |
+| A hostile/absurd server `Retry-After` freezes a host and a pooled worker for an attacker-chosen duration — the limiter must clamp the stored deadline at the sink (`note_retry_after`) and cap any single nap, and an over-clamp host must record a `rate_limited` outcome and be skipped by `guard` (no slot held, no budget spent) rather than slept | `workers/automation/tests/test_politeness_gateway.py`; `workers/automation/tests/test_gateway_http_client.py` |
+| The honest crawl user-agent stops being honest or configurable — the effective UA must remain `<product>/<version> (+<contact>)` (no `Mozilla`), reflect the `JOBHUNTER_CRAWL_UA_PRODUCT` / `JOBHUNTER_CRAWL_UA_CONTACT` env overrides on every gateway **and every browser fetch surface** (each Playwright context/page UA is resolved from the gateway at call time, never an import-time constant, so an owner override reaches the browser and robots identity == fetch identity), and `jobhunter doctor` must disclose the effective UA, active broad boards, and recently robots/rate-limited sources | `workers/automation/tests/test_crawl_politeness_config.py`; `workers/automation/tests/test_browser_ua_propagation.py`; `workers/automation/tests/test_fetch_surface_enforcement.py` |
+| The jobspy per-run budget is silently mislabeled (counts search invocations, not requests) or Workday parallel routing loses per-host pacing / records blocked outcomes on the wrong thread — the jobspy budget must be documented as a per-search-invocation cap, and Workday `workers>=2` must pace per host while recording outcomes on the owning thread under the correct `source_id` with no `check_same_thread` error | `workers/automation/tests/test_jobspy_gateway_boundary.py`; `workers/automation/tests/test_workday_gateway_routing.py` |
 | A Temporal activity failure is surfaced as the placeholder string `failed: failed` instead of the real error class and message; the propagated `ApplicationError` must carry the actual error type, message, and details (the literal `failed: failed` must never appear) | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_discover_reliability.py` |
 | Discover progress stalls at a stale running percentage (e.g. a frozen `running 67%`) instead of advancing through the "Detail enrichment" and "Preparation" steps on the Temporal path, or fails to show a terminal `failed` status when the workflow fails | `workers/automation/tests/test_workflow_discovery.py`; `workers/automation/tests/test_discover_reliability.py`; `apps/api/test/server.test.ts` |
 | `workflow_run_projections` keeps a stale terminal state (`terminated` / `reconciled_not_found`) for a `workflow_id` after a fresh run of the same workflow starts, so the new run's terminal event never supersedes the stale row — first-terminal-wins must yield to a newer run's terminal event | `workers/automation/tests/test_workflow_runs_projection_from_events.py`; `apps/api/test/server.test.ts` |

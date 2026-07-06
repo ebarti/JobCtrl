@@ -29,6 +29,8 @@ from jobhunter.domain.errors import ConfigurationError, TransientNetworkError
 from jobhunter.enrichment import detail
 from jobhunter.pipeline import runner
 
+from .politeness_helpers import offline_gateway
+
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -265,7 +267,15 @@ def test_run_detail_scraper_isolates_failed_site(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None, on_job_enriched=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             if site == "RemoteOK":
                 raise RuntimeError("BrowserType.launch: Executable doesn't exist at /x")
             return _healthy_stats()
@@ -292,7 +302,15 @@ def test_run_detail_scraper_raises_configuration_error_when_all_sites_fail(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None, on_job_enriched=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise RuntimeError(f"BrowserType.launch: Executable doesn't exist at /{site}")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -317,7 +335,15 @@ def test_run_detail_scraper_transient_network_still_all_sites_fail_stays_retryab
     try:
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None, on_job_enriched=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise RuntimeError("net::ERR_TIMED_OUT")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -338,7 +364,15 @@ def test_run_detail_scraper_propagates_cancellation(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None, on_job_enriched=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise TransientNetworkError("enrichment canceled")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -372,7 +406,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def fake_scrape(_page, url):
+        def fake_scrape(_page, url, session=None):
             if url == bad_url:
                 raise ValueError("boom parsing page")
             return {
@@ -390,7 +424,10 @@ def test_scrape_site_batch_isolates_single_job_failure(
         monkeypatch.setattr(detail, "scrape_detail_page", fake_scrape)
 
         stats = detail.scrape_site_batch(
-            conn, "RemoteOK", [(bad_url, "Bad"), (good_url, "Good")], delay=0
+            conn,
+            "RemoteOK",
+            [(bad_url, "Bad"), (good_url, "Good")],
+            gateway=offline_gateway(),
         )
 
         assert stats["error"] == 1
@@ -460,7 +497,7 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def fake_scrape(_page, url):
+        def fake_scrape(_page, url, session=None):
             events.append(("scrape", url))
             if url == bad:
                 return {
@@ -494,7 +531,7 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
             conn,
             "RemoteOK",
             [(first, "First"), (bad, "Bad"), (second, "Second")],
-            delay=0,
+            gateway=offline_gateway(),
             on_job_enriched=on_job_enriched,
         )
 
@@ -525,7 +562,7 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url: {
+            lambda _page, _url, session=None: {
                 "status": "ok",
                 "tier_used": 1,
                 "full_description": _long_description(),
@@ -542,7 +579,11 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
             raise RuntimeError("temporal unreachable")
 
         stats = detail.scrape_site_batch(
-            conn, "RemoteOK", [(url, "Job")], delay=0, on_job_enriched=exploding_handoff
+            conn,
+            "RemoteOK",
+            [(url, "Job")],
+            gateway=offline_gateway(),
+            on_job_enriched=exploding_handoff,
         )
 
         assert stats["ok"] == 1

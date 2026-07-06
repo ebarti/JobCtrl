@@ -23,6 +23,7 @@ from jobhunter.infrastructure.network.politeness import (
     PolitenessSourceContext,
     RunBudgetCounter,
     record_politeness_outcome,
+    resolve_honest_user_agent,
 )
 from jobhunter.infrastructure.network.proxy import (
     ProxyConfig,
@@ -42,6 +43,7 @@ __all__ = [
     "PolitenessSourceContext",
     "RunBudgetCounter",
     "record_politeness_outcome",
+    "resolve_honest_user_agent",
     "POLITENESS_ATTEMPT_KIND",
     "POLITENESS_BLOCKED_OUTCOME",
     "HostRateLimiter",

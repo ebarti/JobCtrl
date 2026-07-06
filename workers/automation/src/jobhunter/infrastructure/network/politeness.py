@@ -23,6 +23,7 @@ Design notes:
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -51,6 +52,31 @@ POLITENESS_ATTEMPT_KIND = "politeness_gate"
 
 POLITENESS_BLOCKED_OUTCOME = "blocked"
 """Non-terminal ``outcome`` so ``classify_failure`` never reads it as an error."""
+
+UA_PRODUCT_ENV = "JOBHUNTER_CRAWL_UA_PRODUCT"
+"""Env override for the honest-UA product token (default ``JobHunter``)."""
+
+UA_CONTACT_ENV = "JOBHUNTER_CRAWL_UA_CONTACT"
+"""Env override for the honest-UA contact. Set empty to drop the contact suffix."""
+
+
+def resolve_honest_user_agent() -> HonestUserAgent:
+    """The effective honest outbound identity, with owner env overrides applied.
+
+    Starts from :func:`default_honest_user_agent` (``JobHunter/<version>
+    (+<repo url>)``, decision D1) and lets the owner override the product token
+    (:data:`UA_PRODUCT_ENV`) and the contact (:data:`UA_CONTACT_ENV`) via env —
+    keeping the override wiring generic without baking in any owner identity. Set
+    the contact env to an empty string to drop the ``(+contact)`` suffix. This
+    is the single point every gateway resolves its default UA from, so the
+    owner-chosen identity applies to every fetch surface at once. It never
+    impersonates a browser; owners should review the effective value before real
+    crawls (see ``docs/user/configuration.md``)."""
+    base = default_honest_user_agent()
+    product = (os.environ.get(UA_PRODUCT_ENV) or "").strip() or base.product
+    contact_override = os.environ.get(UA_CONTACT_ENV)
+    contact = base.contact_url if contact_override is None else (contact_override.strip() or None)
+    return HonestUserAgent(product=product, version=base.version, contact_url=contact)
 
 
 class RunBudgetCounter(RunBudget):
@@ -93,7 +119,7 @@ class PolitenessGateway(PolitenessGatewayPort):
         robots: RobotsPort | None = None,
         rate_limiter: RateLimiterPort | None = None,
     ) -> None:
-        self._user_agent = user_agent or default_honest_user_agent()
+        self._user_agent = user_agent or resolve_honest_user_agent()
         self._ua_header = self._user_agent.header_value()
         self._robots = robots or RobotsCache()
         self._rate_limiter = rate_limiter or get_shared_rate_limiter()
@@ -126,10 +152,17 @@ class PolitenessGateway(PolitenessGatewayPort):
             # A blocked fetch consumes no content budget and holds no slot.
             yield robots_block
             return
+        host = urlsplit(url).netloc or url
+        cooldown = self._rate_limiter.hard_rate_limit_remaining(host)
+        if cooldown > 0.0:
+            # The server asked to wait longer than the limiter's cap: record a
+            # rate-limited outcome and skip rather than park a worker thread for
+            # the (clamped) cooldown. Consumes no budget and holds no slot.
+            yield self._rate_limited(cooldown)
+            return
         if not budget.try_consume(1):
             yield self._budget_exhausted()
             return
-        host = urlsplit(url).netloc or url
         with self._rate_limiter.slot(
             host,
             min_interval_seconds=policy.min_request_interval_seconds,
@@ -137,10 +170,13 @@ class PolitenessGateway(PolitenessGatewayPort):
         ):
             yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
 
-    def note_retry_after(self, url: str, retry_after_seconds: float) -> None:
-        """Forward a server ``Retry-After`` for ``url``'s host to the limiter."""
+    def note_retry_after(self, url: str, retry_after_seconds: float) -> float:
+        """Forward a server ``Retry-After`` for ``url``'s host to the limiter.
+
+        Returns the effective (clamped) seconds the limiter honored.
+        """
         host = urlsplit(url).netloc or url
-        self._rate_limiter.note_retry_after(host, retry_after_seconds)
+        return self._rate_limiter.note_retry_after(host, retry_after_seconds)
 
     def _robots_block(self, url: str, policy: SourcePolicy) -> PolitenessDecision | None:
         if policy.robots_policy is not RobotsPolicy.HONOR:
@@ -171,6 +207,15 @@ class PolitenessGateway(PolitenessGatewayPort):
             reason="per-run request budget exhausted",
         )
 
+    def _rate_limited(self, retry_after_seconds: float) -> PolitenessDecision:
+        return PolitenessDecision(
+            False,
+            PolitenessOutcome.RATE_LIMITED,
+            self._ua_header,
+            retry_after_seconds=retry_after_seconds,
+            reason="server Retry-After exceeded the limiter cap; deferring this host",
+        )
+
 
 @dataclass(frozen=True)
 class PolitenessSourceContext:
@@ -199,6 +244,10 @@ def record_politeness_outcome(
     land in ``operational_attempt_metrics`` with ``is_operational_failure`` and
     ``is_scrape_failure`` both false, so a source that yields nothing shows *why*
     without being counted as a scrape failure (RCA discipline).
+
+    Does NOT commit: the caller owns the transaction so the outcome persists
+    atomically with the surrounding write path. A caller that records an outcome
+    and then short-circuits (e.g. breaks out of a crawl loop) must commit itself.
     """
     if decision.allowed:
         return
@@ -254,7 +303,7 @@ class PolitenessSession:
 
     @property
     def user_agent(self) -> str:
-        return self._gateway.user_agent  # type: ignore[attr-defined]
+        return self._gateway.user_agent
 
     @property
     def budget(self) -> RunBudget:
@@ -263,6 +312,17 @@ class PolitenessSession:
     def check(self, url: str) -> PolitenessDecision:
         return self._gateway.check(url, self._policy, self._budget)
 
+    def record(self, decision: PolitenessDecision, url: str) -> None:
+        """Record a blocked decision observed via :meth:`check` (peek).
+
+        A caller that peeks with :meth:`check` to branch its control flow (e.g.
+        the enrichment lifecycle must fold a robots block into ``Pending ->
+        Blocked`` *before* entering ``running``) commits the outcome with this
+        method. No-op for an allowed decision or when no ``recorder_conn`` is
+        bound. :meth:`guard` records automatically, so never pair it with this.
+        """
+        self._record(decision, url)
+
     @contextmanager
     def guard(self, url: str) -> Iterator[PolitenessDecision]:
         with self._gateway.guard(url, self._policy, self._budget) as decision:
@@ -270,9 +330,7 @@ class PolitenessSession:
             yield decision
 
     def note_retry_after(self, url: str, retry_after_seconds: float) -> None:
-        note = getattr(self._gateway, "note_retry_after", None)
-        if callable(note):
-            note(url, retry_after_seconds)
+        self._gateway.note_retry_after(url, retry_after_seconds)
 
     def record_server_rate_limit(self, url: str, retry_after_seconds: float | None = None) -> None:
         """Record a server-issued 429/503 as a first-class rate-limit outcome."""

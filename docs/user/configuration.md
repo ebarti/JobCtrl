@@ -138,6 +138,42 @@ defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker
 startup reconciles the local Temporal schedule — creating it (with `SKIP`
 overlap semantics) when enabled and deleting it when disabled.
 
+## Crawl Politeness
+
+Every discovery/enrichment fetch routes through one politeness gateway
+(`robots.txt` + per-host rate limit + per-run budget + honest user-agent). The
+defaults are conservative and fail-closed and need no configuration; the one
+knob you should review before real crawls is the **outbound user-agent**.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JOBHUNTER_CRAWL_UA_PRODUCT` | `JobHunter` | Product token in the outbound `User-Agent`. |
+| `JOBHUNTER_CRAWL_UA_CONTACT` | project repo URL | Contact appended as `(+<contact>)`. Set it **empty** to drop the suffix. |
+
+The effective identity is `<product>/<version> (+<contact>)` — for example
+`JobHunter/0.3 (+https://github.com/ebarti/JobHunter)`. It **never impersonates
+a browser**. The built-in default points at the public project repository, not
+any personal identity; **owners should review it (and set a contact they own)
+before crawling real sites** — `jobhunter doctor` prints the effective value.
+
+The remaining defaults are not env-tunable and live where the rest of discovery
+policy lives, so per-source overrides ride the existing registry rather than a
+parallel config surface:
+
+- **Per-host rate/concurrency + per-run request budget** are fields on each
+  source's `SourcePolicy` (`domain/discovery/source_registry.py`), with
+  conservative fail-closed values (robots honored for page rendering, a non-zero
+  min-interval, a concurrency of one, a finite run budget). Per-source overrides
+  ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
+  planned addition, not yet in the UI.
+- **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
+  fetched by `python-jobspy`, which owns its own transport — JobHunter cannot
+  robots-gate or count its per-board requests, so it applies budget + pacing at
+  the invocation boundary only, and `jobhunter doctor` warns when they are on.
+- A malformed `proxy` value (the SQLite discovery setting, `host:port[:user:pass]`)
+  now **fails loud** rather than silently degrading to a direct connection, so a
+  crawl never quietly runs without the proxy you intended.
+
 ## Materials And Resume Rendering
 
 | Variable | Default | What it does |
