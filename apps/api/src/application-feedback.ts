@@ -396,9 +396,12 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   );
 
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
+  const missingProfileData = missingApplicationAttestationFields(db);
   return {
     ok: true,
-    items: rows.map((row) => reviewQueueItemFromRow(db, row, profileSourceFields)),
+    items: rows.map((row) =>
+      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData),
+    ),
   };
 }
 
@@ -800,6 +803,7 @@ function reviewQueueItemFromRow(
   db: SqliteDatabase,
   row: ReviewQueueRow,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  missingProfileData: readonly string[],
 ): ApplyReviewQueueItem {
   const currentState = stageState(row.current_state);
   const currentSubstage = stage(row.current_substage ?? row.current_stage);
@@ -870,6 +874,7 @@ function reviewQueueItemFromRow(
     currentErrorMessage: row.current_error_message,
     latestApplyRun,
     scoreBreakdown,
+    missingProfileData,
     reviewEvidenceAvailable: Boolean(
       scoreBreakdown ||
         materialsPreview.resumeText ||
@@ -1600,6 +1605,32 @@ function profileSourceFieldsForApplyReview(db: SqliteDatabase): ApplyReviewProfi
   appendProfileEducationSourceFields(db, fields);
   appendProfileSkillSourceFields(db, fields);
   return uniqueProfileSourceFields(fields).slice(0, PROFILE_SOURCE_FIELD_LIMIT);
+}
+
+const APPLICATION_ATTESTATION_PROFILE_COLUMNS = [
+  ["age_18_plus", "application_attestation_age_18_plus"],
+  ["background_check_consent", "application_attestation_background_check_consent"],
+  ["felony_conviction", "application_attestation_felony_conviction"],
+  ["previously_worked_at_employer", "application_attestation_previously_worked_at_employer"],
+] as const;
+
+function missingApplicationAttestationFields(db: SqliteDatabase): string[] {
+  if (!tableExists(db, "candidate_profiles")) return [];
+  const columns = tableColumnSet(db, "candidate_profiles");
+  if (!APPLICATION_ATTESTATION_PROFILE_COLUMNS.every(([, column]) => columns.has(column))) {
+    return [];
+  }
+  const row = getRow<Record<string, unknown>>(
+    db,
+    `SELECT ${APPLICATION_ATTESTATION_PROFILE_COLUMNS.map(([, column]) => column).join(", ")}
+       FROM candidate_profiles
+      WHERE tenant_id = ? AND profile_id = ?`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  if (!row) return [];
+  return APPLICATION_ATTESTATION_PROFILE_COLUMNS
+    .filter(([, column]) => row[column] === undefined || row[column] === null || row[column] === "")
+    .map(([field]) => field);
 }
 
 function appendProfileRootSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {

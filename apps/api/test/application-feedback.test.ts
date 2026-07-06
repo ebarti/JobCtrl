@@ -278,6 +278,89 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("surfaces missing profile data apply failures as review blockers", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'failed',
+             error_code = 'FAILED',
+             error_message = 'missing_profile_data:age_18_plus',
+             retryable = 0
+       WHERE job_url = ?
+         AND stage = 'apply'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "apply",
+      currentState: "failed",
+      blockers: ["missing_profile_data:age_18_plus"],
+      applyAudit: {
+        state: "repair",
+        label: "apply failed",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("surfaces incomplete application attestations before approval", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        application_attestation_age_18_plus INTEGER DEFAULT NULL,
+        application_attestation_background_check_consent INTEGER DEFAULT NULL,
+        application_attestation_felony_conviction INTEGER DEFAULT NULL,
+        application_attestation_previously_worked_at_employer INTEGER DEFAULT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO candidate_profiles (
+         tenant_id, profile_id, application_attestation_age_18_plus,
+         application_attestation_background_check_consent,
+         application_attestation_felony_conviction,
+         application_attestation_previously_worked_at_employer,
+         version, updated_at
+       ) VALUES ('local', 'default', 1, NULL, 0, NULL, 3, ?)`,
+    ).run(NOW);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)?.applyAudit).toMatchObject({
+      state: "preparing",
+      missingPrerequisites: [
+        expect.objectContaining({
+          code: "missing_profile_attestations",
+          label: "Profile attestations incomplete",
+          detail:
+            "Application attestations missing: background_check_consent, previously_worked_at_employer.",
+        }),
+      ],
+      sources: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "profile_attestations",
+          status: "missing",
+        }),
+      ]),
+    });
+
+    await app.close();
+  });
+
   it("labels apply-review repair status from the failed apply substage", async () => {
     const db = new Database(options.dbPath);
     db.prepare(

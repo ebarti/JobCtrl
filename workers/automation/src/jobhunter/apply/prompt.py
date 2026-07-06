@@ -213,9 +213,9 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Work authorization: {work_auth.get('legally_authorized_to_work', 'see profile')}
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
-  - Age, felony/criminal-history, background-check consent, and prior-employer attestations: answer only when the APPLICANT PROFILE has an explicit Application Attestations value. If required and missing, output RESULT:FAILED:missing_attestation.
+  - Age, felony/criminal-history, background-check consent, and prior-employer attestations: answer only when the APPLICANT PROFILE has an explicit Application Attestations value. If required and missing, output RESULT:FAILED:missing_profile_data:<field>.
 
-Skills and tools -> be confident. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?" and it's in the same domain (DevOps, backend, ML, cloud, automation), answer YES. Software engineers learn tools fast. Don't sell short.
+Skills and tools -> answer from evidence. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?", answer YES only when that tool or its immediate family appears in the APPLICANT PROFILE or RESUME TEXT. Otherwise answer honestly with adjacent experience. Never fabricate tool experience.
 
 Open-ended questions ("Why do you want this role?", "Tell us about yourself", "What interests you?") -> Write 2-3 sentences. Be specific to THIS job. Reference something from the job description. Connect it to a real achievement from the resume. No generic fluff. No "I am passionate about..." -- sound like a real person.
 
@@ -248,7 +248,7 @@ def _build_hard_rules(profile: dict) -> str:
 1. Never lie about: citizenship, work authorization, criminal history, education credentials, security clearance, licenses.
 2. {work_auth_rule}
 3. {name_rule}
-4. Never invent legal attestations. If a required legal/screening question is not answered by the profile, stop with RESULT:FAILED:missing_attestation."""
+4. Never invent legal attestations. If a required legal/screening question is not answered by the profile, stop with RESULT:FAILED:missing_profile_data:<field>."""
 
 
 def _build_captcha_section() -> str:

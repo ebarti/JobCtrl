@@ -2631,6 +2631,95 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
   });
 
+  it("renders missing profile data apply failures as actionable blockers", async () => {
+    const repairQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              currentState: "failed" as const,
+              latestApplyRun: {
+                runId: "missing-profile-data",
+                status: "failed",
+                result: "missing_profile_data:age_18_plus",
+                dryRun: false,
+                startedAt: "2026-05-30T06:33:32Z",
+                finishedAt: "2026-05-30T06:40:29Z",
+              },
+              applyAudit: makeApplyAudit({
+                state: "repair",
+                label: "apply failed",
+                summary: "Last apply failed: missing_profile_data:age_18_plus.",
+                hardBlockers: [
+                  {
+                    code: "apply_run_failed",
+                    label: "apply failed",
+                    detail: "missing_profile_data:age_18_plus",
+                    severity: "blocking",
+                    source: "apply_run",
+                  },
+                ],
+              }),
+              blockers: ["missing_profile_data:age_18_plus"],
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => repairQueue),
+        },
+      }),
+    });
+
+    expect(await screen.findByText(/apply failed: missing_profile_data:age_18_plus/i)).toBeInTheDocument();
+  });
+
+  it("renders incomplete application attestations as review warnings", async () => {
+    const warningQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "preparing",
+                label: "materials preparing",
+                summary:
+                  "Application attestations missing: background_check_consent. Review evidence is still available where recorded.",
+                missingPrerequisites: [
+                  {
+                    code: "missing_profile_attestations",
+                    label: "Profile attestations incomplete",
+                    detail: "Application attestations missing: background_check_consent.",
+                    severity: "warning",
+                    source: "profile_attestations",
+                  },
+                ],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => warningQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByText(
+        /Profile attestations incomplete: Application attestations missing: background_check_consent\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("renders canonical audit facts for missing apply-review source data", async () => {
     const missingSourceQueue = {
       ...sampleApplyReviewQueue,

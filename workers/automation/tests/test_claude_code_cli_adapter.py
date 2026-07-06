@@ -313,6 +313,23 @@ def test_dry_run_applied_result_is_reported_as_violation(tmp_path) -> None:
     assert "dry_run_violation" in result.error
 
 
+def test_missing_profile_data_failure_is_non_retryable(tmp_path) -> None:
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    result = adapter._parse_result(
+        "RESULT:FAILED:missing_profile_data:age_18_plus",
+        dry_run=False,
+    )
+
+    assert result.kind == "failed"
+    assert result.retryable is False
+    assert result.error == "missing_profile_data:age_18_plus"
+
+
 def test_claude_subprocess_starts_in_isolated_unix_session(
     monkeypatch, tmp_path
 ) -> None:
