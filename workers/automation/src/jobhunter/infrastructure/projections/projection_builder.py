@@ -76,7 +76,7 @@ from jobhunter.infrastructure.projections.source_quality import (
 
 @dataclass(frozen=True)
 class _ProvenanceProjection:
-    """The latest generation's provenance + coverage + voice read shapes per artifact.
+    """Provenance + coverage + voice read shapes per artifact.
 
     Each maps ``artifact_id -> serialised JSON`` so the artifact projection can
     attach the canonical Phase-2 (provenance) and Phase-3 (coverage + voice) read
@@ -265,6 +265,8 @@ _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 # ``domain/scoring/use_cases.py`` SCORE_PROMPT (9-10 perfect ... 1-2 poor) so the
 # outcome-conversion funnel reads by the same bands the score view shows.
 SCORE_BAND_ORDER: tuple[str, ...] = ("perfect", "strong", "moderate", "weak", "poor", "unscored")
+FIT_BAND_ORDER: tuple[str, ...] = ("excellent", "strong", "plausible", "stretch", "poor", "unreported")
+APPLY_MODE_ORDER: tuple[str, ...] = ("automated_live", "manual_marked", "external_confirmed")
 
 # Outcome kinds that mark an applied job as having reached each funnel stage.
 # Later stages imply earlier ones (an offer implies an interview and a reply), so
@@ -291,6 +293,125 @@ def _score_band(fit_score: int | None) -> str:
     return "poor"
 
 
+def _fit_band(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in FIT_BAND_ORDER else "unreported"
+
+
+def _apply_mode(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in APPLY_MODE_ORDER else "manual_marked"
+
+
+def _projection_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _projection_int(value: object) -> int | None:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _material_analytics_from_metadata(metadata_json: str | None) -> dict[str, object]:
+    metadata = _json_loads(metadata_json, {})
+    if not isinstance(metadata, dict):
+        return {}
+    template = metadata.get("resume_template")
+    if not isinstance(template, dict):
+        template = {}
+    return {
+        "resume_template_id": _projection_text(
+            template.get("templateId") or template.get("template_id")
+        ),
+        "resume_template_name": _projection_text(
+            template.get("templateName")
+            or template.get("template_name")
+            or template.get("displayName")
+        ),
+        "tailoring_policy_version": _projection_int(
+            metadata.get("tailoring_policy_version")
+            or metadata.get("tailoringPolicyVersion")
+        ),
+    }
+
+
+def _merge_material_analytics(metadata_jsons: list[str | None]) -> dict[str, object]:
+    merged: dict[str, object] = {
+        "resume_template_id": None,
+        "resume_template_name": None,
+        "tailoring_policy_version": None,
+    }
+    for metadata_json in metadata_jsons:
+        next_value = _material_analytics_from_metadata(metadata_json)
+        if merged["resume_template_id"] is None:
+            merged["resume_template_id"] = next_value.get("resume_template_id")
+        if merged["resume_template_name"] is None:
+            merged["resume_template_name"] = next_value.get("resume_template_name")
+        if merged["tailoring_policy_version"] is None:
+            merged["tailoring_policy_version"] = next_value.get(
+                "tailoring_policy_version"
+            )
+    return merged
+
+
+def _material_analytics_complete(value: dict[str, object]) -> bool:
+    return (
+        value.get("resume_template_id") is not None
+        and value.get("resume_template_name") is not None
+        and value.get("tailoring_policy_version") is not None
+    )
+
+
+def _material_metadata_references(
+    metadata_jsons: list[str | None],
+) -> tuple[int | None, list[str]]:
+    base_generation: int | None = None
+    base_artifact_ids: set[str] = set()
+    for metadata_json in metadata_jsons:
+        metadata = _json_loads(metadata_json, {})
+        if not isinstance(metadata, dict):
+            continue
+        if base_generation is None:
+            base_generation = _projection_int(
+                metadata.get("base_generation") or metadata.get("baseGeneration")
+            )
+        for key in (
+            "base_resume_text_artifact_id",
+            "baseResumeTextArtifactId",
+            "base_resume_pdf_artifact_id",
+            "baseResumePdfArtifactId",
+        ):
+            artifact_id = _projection_text(metadata.get(key))
+            if artifact_id:
+                base_artifact_ids.add(artifact_id)
+    return base_generation, sorted(base_artifact_ids)
+
+
+def _template_key(value: str | None) -> str:
+    return _projection_text(value) or "unreported"
+
+
+def _policy_key(value: int | None) -> str:
+    return "unreported" if value is None else str(int(value))
+
+
+def _policy_version_from_key(value: str) -> int | None:
+    if value == "unreported":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _policy_label(version: int | None) -> str:
+    return "Unreported" if version is None else f"Policy v{version}"
+
+
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -304,6 +425,30 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _has_any_kind(outcomes: tuple[dict[str, str | None], ...], target: frozenset[str]) -> bool:
+    return any(str(outcome.get("kind") or "") in target for outcome in outcomes)
+
+
+def _first_response_minutes(
+    applied_at: str | None,
+    outcomes: tuple[dict[str, str | None], ...],
+) -> int | None:
+    applied = _parse_iso_timestamp(applied_at)
+    if applied is None:
+        return None
+    earliest: datetime | None = None
+    for outcome in outcomes:
+        if str(outcome.get("kind") or "") not in _REPLY_OUTCOME_KINDS:
+            continue
+        occurred = _parse_iso_timestamp(outcome.get("occurredAt"))
+        if occurred is None or occurred < applied:
+            continue
+        earliest = occurred if earliest is None else min(earliest, occurred)
+    if earliest is None:
+        return None
+    return int((earliest - applied).total_seconds() // 60)
 
 
 def _starts_new_execution(
@@ -629,8 +774,10 @@ class ProjectionBuilder:
         stages = self._load_stage_projections(job_url)
         score = self._load_latest_score(job_url)
         materials = self._load_latest_materials(job_url)
+        material_analytics = self._load_material_analytics(job_url)
         employer_analysis_json = self._load_employer_analysis(job_url)
         requirement_fit_report_json = self._load_requirement_fit_report(job_url)
+        requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
@@ -709,6 +856,12 @@ class ProjectionBuilder:
             applied_at = ar_finished
         else:
             applied_at = _row_nullable_str(job_row, "applied_at")
+        apply_mode = self._derive_apply_mode(
+            job_url,
+            apply_run,
+            _row_nullable_str(job_row, "apply_status"),
+            _row_nullable_str(job_row, "applied_at"),
+        )
 
         # description fallbacks
         description = _row_str(job_row, "description")
@@ -738,6 +891,7 @@ class ProjectionBuilder:
             description=description,
             full_description=full_description,
             fit_score=fit_score,
+            fit_band=requirement_fit_band,
             compensation_summary_json=compensation_summary,
             score_breakdown_json=score_breakdown_json,
             score_keywords_json=score_keywords_json,
@@ -758,6 +912,10 @@ class ProjectionBuilder:
             has_pdf=has_pdf,
             apply_status=apply_status,
             applied_at=applied_at,
+            apply_mode=apply_mode,
+            resume_template_id=material_analytics.get("resume_template_id"),  # type: ignore[arg-type]
+            resume_template_name=material_analytics.get("resume_template_name"),  # type: ignore[arg-type]
+            tailoring_policy_version=material_analytics.get("tailoring_policy_version"),  # type: ignore[arg-type]
             artifact_count=len(artifacts),
             deleted_at=deleted_at,
             last_updated_at=last_updated_at,
@@ -1086,7 +1244,30 @@ class ProjectionBuilder:
                 (job_url,),
             ).fetchone()
         except sqlite3.OperationalError:
-            return {}
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT artifact_id, generation, metadata_json,
+                           NULL AS material_metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND status = 'approved'
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             created_at DESC,
+                             rowid DESC
+                    LIMIT 1
+                    """,
+                    (job_url,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return {}
         if generation_row is None:
             return {}
         max_generation = generation_row[0]
@@ -1120,6 +1301,135 @@ class ProjectionBuilder:
             elif atype == "cover_letter_pdf":
                 result["cover_pdf_path"] = path
         return result
+
+    def _load_material_analytics(self, job_url: str) -> dict[str, object]:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT a.artifact_id, a.generation, a.metadata_json,
+                       m.metadata_json AS material_metadata_json
+                FROM job_materials_artifacts a
+                LEFT JOIN job_materials m
+                  ON m.job_url = a.job_url
+                 AND m.generation = a.generation
+                WHERE a.job_url = ?
+                  AND a.status = 'approved'
+                  AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                ORDER BY COALESCE(a.generation, -1) DESC,
+                         CASE a.artifact_type
+                           WHEN 'tailored_resume' THEN 0
+                           WHEN 'tailored_resume_txt' THEN 1
+                           WHEN 'resume_pdf' THEN 2
+                           ELSE 3
+                         END,
+                         a.created_at DESC,
+                         a.rowid DESC
+                LIMIT 1
+                """,
+                (job_url,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT artifact_id, generation, metadata_json,
+                           NULL AS material_metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND status = 'approved'
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             created_at DESC,
+                             rowid DESC
+                    LIMIT 1
+                    """,
+                    (job_url,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return {}
+        metadata_jsons = [
+            _row_nullable_str(row, "metadata_json"),
+            _row_nullable_str(row, "material_metadata_json"),
+        ]
+        current = _merge_material_analytics(metadata_jsons)
+        if _material_analytics_complete(current):
+            return current
+        return _merge_material_analytics(
+            metadata_jsons + self._load_base_material_metadata(job_url, metadata_jsons)
+        )
+
+    def _load_base_material_metadata(
+        self,
+        job_url: str,
+        metadata_jsons: list[str | None],
+    ) -> list[str | None]:
+        base_generation, base_artifact_ids = _material_metadata_references(metadata_jsons)
+        metadata: list[str | None] = []
+        if base_generation is not None:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT metadata_json
+                    FROM job_materials
+                    WHERE job_url = ? AND generation = ?
+                    LIMIT 1
+                    """,
+                    (job_url, base_generation),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            metadata.append(_row_nullable_str(row, "metadata_json"))
+            try:
+                rows = self._conn.execute(
+                    """
+                    SELECT metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND generation = ?
+                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+                    ORDER BY CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             rowid DESC
+                    """,
+                    (job_url, base_generation),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
+        if base_artifact_ids:
+            placeholders = ", ".join("?" for _ in base_artifact_ids)
+            try:
+                rows = self._conn.execute(
+                    f"""
+                    SELECT metadata_json
+                    FROM job_materials_artifacts
+                    WHERE job_url = ?
+                      AND artifact_id IN ({placeholders})
+                    ORDER BY COALESCE(generation, -1) DESC,
+                             CASE artifact_type
+                               WHEN 'tailored_resume' THEN 0
+                               WHEN 'tailored_resume_txt' THEN 1
+                               WHEN 'resume_pdf' THEN 2
+                               ELSE 3
+                             END,
+                             rowid DESC
+                    """,
+                    (job_url, *base_artifact_ids),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
+        return metadata
 
     def _load_employer_analysis(self, job_url: str) -> str | None:
         """Project the latest canonical employer analysis read shape (Phase 1).
@@ -1164,16 +1474,17 @@ class ProjectionBuilder:
         return json.dumps(record.to_read_model(), ensure_ascii=False)
 
     def _load_bullet_provenance_by_artifact(self, job_url: str) -> "_ProvenanceProjection":
-        """Project the latest provenance + coverage + voice read shapes, keyed by artifact.
+        """Project provenance + coverage + voice read shapes, keyed by artifact.
 
         The single owner of the provenance/coverage/voice read shapes (Phase 2 +
-        Phase 3): it loads the latest ``BulletProvenanceSet`` generation from
-        canonical rows and serialises ``to_read_model()`` (per-bullet provenance),
-        ``coverage_to_read_model()`` (generation-time keyword coverage, GROUND-06),
-        and ``voice_to_read_model()`` (the voice-pass audit, VOICE-02) to JSON, each
-        mapped to the ``artifact_id`` it explains so the artifact projection carries
-        them directly. Returns empty mappings when no provenance exists (the common
-        case before tailoring, or for PDF artifacts).
+        Phase 3): it loads each ``BulletProvenanceSet`` generation from canonical
+        rows and serialises ``to_read_model()`` (per-bullet provenance),
+        ``coverage_to_read_model()`` (generation-time keyword coverage,
+        GROUND-06), and ``voice_to_read_model()`` (the voice-pass audit, VOICE-02)
+        to JSON, each mapped to the ``artifact_id`` it explains so historical
+        artifact detail reads keep their generation's rows. Returns empty mappings
+        when no provenance exists (the common case before tailoring, or for PDF
+        artifacts).
         """
         from jobhunter.infrastructure.materials.bullet_provenance_repository import (
             SqliteBulletProvenanceRepository,
@@ -1181,27 +1492,51 @@ class ProjectionBuilder:
 
         empty = _ProvenanceProjection(provenance={}, coverage={}, voice={})
         try:
-            record = SqliteBulletProvenanceRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
-            )
+            generation_rows = self._conn.execute(
+                """
+                SELECT DISTINCT generation
+                FROM job_bullet_provenance
+                WHERE job_url = ? AND tenant_id = ?
+                ORDER BY generation
+                """,
+                (job_url, str(self._tenant_id)),
+            ).fetchall()
         except sqlite3.OperationalError:
             return empty
-        if record is None or record.is_empty:
+        if not generation_rows:
             return empty
-        coverage = record.coverage_to_read_model()
-        voice = record.voice_to_read_model()
+        repository = SqliteBulletProvenanceRepository(self._conn)
+        provenance: dict[str, str] = {}
+        coverage_by_artifact: dict[str, str] = {}
+        voice_by_artifact: dict[str, str] = {}
+        for row in generation_rows:
+            record = repository.load(
+                self._tenant_id,
+                JobId(job_url),
+                generation=int(row["generation"]),
+            )
+            if record is None or record.is_empty:
+                continue
+            provenance[record.artifact_id] = json.dumps(
+                record.to_read_model(),
+                ensure_ascii=False,
+            )
+            coverage = record.coverage_to_read_model()
+            if coverage is not None:
+                coverage_by_artifact[record.artifact_id] = json.dumps(
+                    coverage,
+                    ensure_ascii=False,
+                )
+            voice = record.voice_to_read_model()
+            if voice is not None:
+                voice_by_artifact[record.artifact_id] = json.dumps(
+                    voice,
+                    ensure_ascii=False,
+                )
         return _ProvenanceProjection(
-            provenance={record.artifact_id: json.dumps(record.to_read_model(), ensure_ascii=False)},
-            coverage=(
-                {record.artifact_id: json.dumps(coverage, ensure_ascii=False)}
-                if coverage is not None
-                else {}
-            ),
-            voice=(
-                {record.artifact_id: json.dumps(voice, ensure_ascii=False)}
-                if voice is not None
-                else {}
-            ),
+            provenance=provenance,
+            coverage=coverage_by_artifact,
+            voice=voice_by_artifact,
         )
 
     def _load_enrichment(self, job_url: str) -> dict:
@@ -1260,6 +1595,48 @@ class ProjectionBuilder:
             "dry_run": bool(_row_nullable_int(row, "dry_run") or 0),
             "duration_ms": _row_nullable_int(row, "duration_ms"),
         }
+
+    def _derive_apply_mode(
+        self,
+        job_url: str,
+        apply_run: dict,
+        legacy_status: str | None,
+        legacy_applied_at: str | None,
+    ) -> str | None:
+        if apply_run.get("status") == "succeeded" and not apply_run.get("dry_run"):
+            return "automated_live"
+        is_applied = bool(legacy_applied_at) or legacy_status == "applied"
+        if not is_applied:
+            return None
+        if self._has_job_event(job_url, "ApplicationManuallyMarked"):
+            return "manual_marked"
+        if self._has_application_outcome_kind(job_url, "applied_confirmation"):
+            return "external_confirmed"
+        return "manual_marked"
+
+    def _has_job_event(self, job_url: str, event_type: str) -> bool:
+        try:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM job_events WHERE job_url = ? AND event_type = ?",
+                (job_url, event_type),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(_row_nullable_int(row, "c") or 0) > 0
+
+    def _has_application_outcome_kind(self, job_url: str, kind: str) -> bool:
+        try:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM application_outcomes
+                WHERE tenant_id = ? AND job_key = ? AND kind = ?
+                """,
+                (str(self._tenant_id), job_url, kind),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(_row_nullable_int(row, "c") or 0) > 0
 
     def _load_deleted_at(self, job_url: str) -> str | None:
         try:
@@ -1651,7 +2028,7 @@ class ProjectionBuilder:
         self._store.upsert_dashboard(dashboard)
 
     def _build_outcome_conversion(self, active_rows: list) -> dict[str, Any]:
-        """Roll Gmail/manual application outcomes into a funnel by source + band.
+        """Roll Gmail/manual application outcomes into a funnel by source + bands + mode.
 
         The denominator is the applied jobs (same predicate as the ``applied``
         counter); each applied job's ``application_outcomes`` decide which funnel
@@ -1671,7 +2048,8 @@ class ProjectionBuilder:
             if _row_nullable_str(row, "applied_at")
             or _row_nullable_str(row, "apply_status") == "applied"
         ]
-        outcomes_by_job = self._load_outcome_kinds_by_job()
+        outcomes_by_job = self._load_outcomes_by_job()
+        suggestion_accuracy = self._load_suggestion_accuracy()
 
         def blank() -> dict[str, int]:
             return {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0}
@@ -1679,23 +2057,54 @@ class ProjectionBuilder:
         totals = blank()
         by_source: dict[str, dict[str, int]] = {}
         by_band: dict[str, dict[str, int]] = {}
+        by_fit_band: dict[str, dict[str, int]] = {}
+        by_apply_mode: dict[str, dict[str, int]] = {}
+        by_template: dict[str, dict[str, object]] = {}
+        by_policy: dict[str, dict[str, int]] = {}
+        time_to_response_minutes: list[int] = []
         for row in applied_rows:
             source = _row_str(row, "source") or "unknown"
             band = _score_band(_row_nullable_int(row, "fit_score"))
-            kinds = outcomes_by_job.get(_row_str(row, "job_id"), frozenset())
+            fit_band = _fit_band(_row_nullable_str(row, "fit_band"))
+            apply_mode = _apply_mode(_row_nullable_str(row, "apply_mode"))
+            template_id = _template_key(_row_nullable_str(row, "resume_template_id"))
+            template_name = (
+                None
+                if template_id == "unreported"
+                else _projection_text(_row_nullable_str(row, "resume_template_name"))
+            )
+            policy = _policy_key(_row_nullable_int(row, "tailoring_policy_version"))
+            outcomes = outcomes_by_job.get(_row_str(row, "job_id"), ())
+            response_minutes = _first_response_minutes(
+                _row_nullable_str(row, "applied_at"),
+                outcomes,
+            )
+            if response_minutes is not None:
+                time_to_response_minutes.append(response_minutes)
+            template_bucket = by_template.setdefault(
+                template_id,
+                {"templateName": template_name, "counts": blank()},
+            )
+            if not template_bucket.get("templateName") and template_name:
+                template_bucket["templateName"] = template_name
             for bucket in (
                 totals,
                 by_source.setdefault(source, blank()),
                 by_band.setdefault(band, blank()),
+                by_fit_band.setdefault(fit_band, blank()),
+                by_apply_mode.setdefault(apply_mode, blank()),
+                template_bucket["counts"],
+                by_policy.setdefault(policy, blank()),
             ):
+                assert isinstance(bucket, dict)
                 bucket["applied"] += 1
-                if kinds & _REPLY_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _REPLY_OUTCOME_KINDS):
                     bucket["reply"] += 1
-                if kinds & _INTERVIEW_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _INTERVIEW_OUTCOME_KINDS):
                     bucket["interview"] += 1
-                if kinds & _OFFER_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _OFFER_OUTCOME_KINDS):
                     bucket["offer"] += 1
-                if kinds & _REJECTION_OUTCOME_KINDS:
+                if _has_any_kind(outcomes, _REJECTION_OUTCOME_KINDS):
                     bucket["rejection"] += 1
 
         by_source_list = [
@@ -1707,29 +2116,100 @@ class ProjectionBuilder:
         by_band_list = [
             {"band": band, **by_band[band]} for band in SCORE_BAND_ORDER if band in by_band
         ]
+        by_fit_band_list = [
+            {"fitBand": band, **by_fit_band[band]}
+            for band in FIT_BAND_ORDER
+            if band in by_fit_band
+        ]
+        by_apply_mode_list = [
+            {"applyMode": mode, **by_apply_mode[mode]}
+            for mode in APPLY_MODE_ORDER
+            if mode in by_apply_mode
+        ]
+        by_template_list = [
+            {
+                "templateId": template_id,
+                "templateName": bucket.get("templateName"),
+                **bucket["counts"],  # type: ignore[arg-type]
+            }
+            for template_id, bucket in sorted(
+                by_template.items(),
+                key=lambda item: (
+                    -int(item[1]["counts"]["applied"]),  # type: ignore[index]
+                    str(item[1].get("templateName") or item[0]),
+                ),
+            )
+        ]
+        by_policy_list = []
+        for key, counts in sorted(
+            by_policy.items(),
+            key=lambda item: (
+                -item[1]["applied"],
+                _policy_version_from_key(item[0])
+                if _policy_version_from_key(item[0]) is not None
+                else 9007199254740991,
+            ),
+        ):
+            version = _policy_version_from_key(key)
+            by_policy_list.append(
+                {
+                    "tailoringPolicyVersion": version,
+                    "policyLabel": _policy_label(version),
+                    **counts,
+                }
+            )
         return {
-            "version": 1,
+            "version": 2,
             "totals": totals,
             "bySource": by_source_list,
             "byBand": by_band_list,
+            "byFitBand": by_fit_band_list,
+            "byApplyMode": by_apply_mode_list,
+            "byTemplate": by_template_list,
+            "byPolicy": by_policy_list,
+            "timeToResponseMinutes": sorted(time_to_response_minutes),
+            "suggestionAccuracy": suggestion_accuracy,
         }
 
-    def _load_outcome_kinds_by_job(self) -> dict[str, frozenset[str]]:
+    def _load_outcomes_by_job(self) -> dict[str, tuple[dict[str, str | None], ...]]:
         try:
             rows = self._conn.execute(
-                "SELECT job_key, kind FROM application_outcomes WHERE tenant_id = ?",
+                "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
-        grouped: dict[str, set[str]] = {}
+        grouped: dict[str, list[dict[str, str | None]]] = {}
         for row in rows:
             job_key = _row_str(row, "job_key")
             kind = _row_str(row, "kind")
             if not job_key or not kind:
                 continue
-            grouped.setdefault(job_key, set()).add(kind)
-        return {job_key: frozenset(kinds) for job_key, kinds in grouped.items()}
+            grouped.setdefault(job_key, []).append(
+                {"kind": kind, "occurredAt": _row_nullable_str(row, "occurred_at")}
+            )
+        return {job_key: tuple(outcomes) for job_key, outcomes in grouped.items()}
+
+    def _load_suggestion_accuracy(self) -> dict[str, int]:
+        counts = {"decided": 0, "accepted": 0, "corrected": 0, "ignored": 0}
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT status
+                FROM application_outcome_suggestions
+                WHERE tenant_id = ?
+                  AND status IN ('accepted', 'corrected', 'ignored')
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return counts
+        for row in rows:
+            status = _row_str(row, "status").strip().lower()
+            if status in {"accepted", "corrected", "ignored"}:
+                counts["decided"] += 1
+                counts[status] += 1
+        return counts
 
     def _rebuild_source_quality(self) -> None:
         placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)
@@ -2873,6 +3353,13 @@ def _json_loads(value: str | None, default):
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _fit_band_from_report_json(value: str | None) -> str | None:
+    data = _json_loads(value, {})
+    if not isinstance(data, dict):
+        return None
+    return _fit_band(data.get("fitBand") or data.get("fit_band"))
 
 
 def _preview_text(value: str, limit: int) -> str:

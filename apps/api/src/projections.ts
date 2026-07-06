@@ -433,6 +433,11 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       last_event_id       INTEGER NOT NULL DEFAULT 0,
       updated_at          TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS digest_state (
+      tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
+      last_acknowledged_at   TEXT,
+      updated_at             TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS job_list_projections (
       tenant_id              TEXT NOT NULL DEFAULT 'local',
       job_id                 TEXT NOT NULL,
@@ -447,6 +452,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       description            TEXT NOT NULL DEFAULT '',
       full_description       TEXT NOT NULL DEFAULT '',
       fit_score              INTEGER,
+      fit_band               TEXT,
       compensation_summary_json TEXT,
       score_breakdown_json   TEXT,
       score_keywords_json    TEXT NOT NULL DEFAULT '[]',
@@ -467,6 +473,10 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       has_pdf                INTEGER NOT NULL DEFAULT 0,
       apply_status           TEXT,
       applied_at             TEXT,
+      apply_mode             TEXT,
+      resume_template_id     TEXT,
+      resume_template_name   TEXT,
+      tailoring_policy_version INTEGER,
       artifact_count         INTEGER NOT NULL DEFAULT 0,
       deleted_at             TEXT,
       last_updated_at        TEXT,
@@ -628,6 +638,11 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'") ||
     schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "fit_band", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "apply_mode", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "resume_template_id", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "resume_template_name", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "tailoring_policy_version", "INTEGER") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "compensation_summary_json", "TEXT") || schemaChanged;
@@ -893,6 +908,191 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   return latest;
 }
 
+interface MaterialAnalytics {
+  resumeTemplateId: string | null;
+  resumeTemplateName: string | null;
+  tailoringPolicyVersion: number | null;
+}
+
+const EMPTY_MATERIAL_ANALYTICS: MaterialAnalytics = {
+  resumeTemplateId: null,
+  resumeTemplateName: null,
+  tailoringPolicyVersion: null,
+};
+
+function loadMaterialAnalytics(db: SqliteDatabase, jobUrl: string): MaterialAnalytics {
+  if (!tableExists(db, "job_materials_artifacts") || !hasColumn(db, "job_materials_artifacts", "metadata_json")) {
+    return { ...EMPTY_MATERIAL_ANALYTICS };
+  }
+  const hasMaterialMetadata = tableExists(db, "job_materials") && hasColumn(db, "job_materials", "metadata_json");
+  const materialMetadataSelect = hasMaterialMetadata ? "m.metadata_json AS material_metadata_json" : "NULL AS material_metadata_json";
+  const materialMetadataJoin = hasMaterialMetadata
+    ? `LEFT JOIN job_materials m
+             ON m.job_url = a.job_url
+            AND m.generation = a.generation`
+    : "";
+  const row = getRow<{
+    artifact_id: string | null;
+    generation: number | null;
+    metadata_json: string | null;
+    material_metadata_json: string | null;
+  }>(
+    db,
+    `SELECT a.artifact_id, a.generation, a.metadata_json, ${materialMetadataSelect}
+       FROM job_materials_artifacts a
+       ${materialMetadataJoin}
+      WHERE a.job_url = ?
+        AND a.status = 'approved'
+        AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+      ORDER BY COALESCE(a.generation, -1) DESC,
+               CASE a.artifact_type
+                 WHEN 'tailored_resume' THEN 0
+                 WHEN 'tailored_resume_txt' THEN 1
+                 WHEN 'resume_pdf' THEN 2
+                 ELSE 3
+               END,
+               a.created_at DESC,
+               a.rowid DESC
+      LIMIT 1`,
+    [jobUrl],
+  );
+  const metadataJsons = [row?.metadata_json ?? null, row?.material_metadata_json ?? null];
+  const current = mergeMaterialAnalytics(metadataJsons);
+  if (materialAnalyticsComplete(current)) return current;
+  return mergeMaterialAnalytics([...metadataJsons, ...loadBaseMaterialMetadata(db, jobUrl, metadataJsons)]);
+}
+
+function materialAnalyticsFromMetadata(metadataJson: string | null): MaterialAnalytics {
+  const metadata = parseProjectionJsonRecord(metadataJson);
+  if (!metadata) return { ...EMPTY_MATERIAL_ANALYTICS };
+  const template = isRecord(metadata.resume_template) ? metadata.resume_template : {};
+  return {
+    resumeTemplateId: projectionText(template.templateId ?? template.template_id),
+    resumeTemplateName: projectionText(template.templateName ?? template.template_name ?? template.displayName),
+    tailoringPolicyVersion: projectionInteger(metadata.tailoring_policy_version ?? metadata.tailoringPolicyVersion),
+  };
+}
+
+function mergeMaterialAnalytics(metadataJsons: Array<string | null>): MaterialAnalytics {
+  const merged = { ...EMPTY_MATERIAL_ANALYTICS };
+  for (const metadataJson of metadataJsons) {
+    const next = materialAnalyticsFromMetadata(metadataJson);
+    merged.resumeTemplateId ??= next.resumeTemplateId;
+    merged.resumeTemplateName ??= next.resumeTemplateName;
+    merged.tailoringPolicyVersion ??= next.tailoringPolicyVersion;
+  }
+  return merged;
+}
+
+function materialAnalyticsComplete(value: MaterialAnalytics): boolean {
+  return value.resumeTemplateId !== null && value.resumeTemplateName !== null && value.tailoringPolicyVersion !== null;
+}
+
+function loadBaseMaterialMetadata(db: SqliteDatabase, jobUrl: string, metadataJsons: Array<string | null>): Array<string | null> {
+  const references = materialMetadataReferences(metadataJsons);
+  const metadata: Array<string | null> = [];
+  if (
+    references.baseGeneration !== null &&
+    tableExists(db, "job_materials") &&
+    hasColumn(db, "job_materials", "metadata_json")
+  ) {
+    const row = getRow<{ metadata_json: string | null }>(
+      db,
+      "SELECT metadata_json FROM job_materials WHERE job_url = ? AND generation = ? LIMIT 1",
+      [jobUrl, references.baseGeneration],
+    );
+    metadata.push(row?.metadata_json ?? null);
+  }
+  if (references.baseGeneration !== null) {
+    metadata.push(
+      ...allRows<{ metadata_json: string | null }>(
+        db,
+        `SELECT metadata_json
+           FROM job_materials_artifacts
+          WHERE job_url = ?
+            AND generation = ?
+            AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
+          ORDER BY CASE artifact_type
+                     WHEN 'tailored_resume' THEN 0
+                     WHEN 'tailored_resume_txt' THEN 1
+                     WHEN 'resume_pdf' THEN 2
+                     ELSE 3
+                   END,
+                   rowid DESC`,
+        [jobUrl, references.baseGeneration],
+      ).map((row) => row.metadata_json),
+    );
+  }
+  if (references.baseArtifactIds.length > 0) {
+    const placeholders = references.baseArtifactIds.map(() => "?").join(", ");
+    metadata.push(
+      ...allRows<{ metadata_json: string | null }>(
+        db,
+        `SELECT metadata_json
+           FROM job_materials_artifacts
+          WHERE job_url = ?
+            AND artifact_id IN (${placeholders})
+          ORDER BY COALESCE(generation, -1) DESC,
+                   CASE artifact_type
+                     WHEN 'tailored_resume' THEN 0
+                     WHEN 'tailored_resume_txt' THEN 1
+                     WHEN 'resume_pdf' THEN 2
+                     ELSE 3
+                   END,
+                   rowid DESC`,
+        [jobUrl, ...references.baseArtifactIds],
+      ).map((row) => row.metadata_json),
+    );
+  }
+  return metadata;
+}
+
+function materialMetadataReferences(metadataJsons: Array<string | null>): {
+  baseGeneration: number | null;
+  baseArtifactIds: string[];
+} {
+  let baseGeneration: number | null = null;
+  const baseArtifactIds = new Set<string>();
+  for (const metadataJson of metadataJsons) {
+    const metadata = parseProjectionJsonRecord(metadataJson);
+    if (!metadata) continue;
+    baseGeneration ??= projectionInteger(metadata.base_generation ?? metadata.baseGeneration);
+    for (const key of [
+      "base_resume_text_artifact_id",
+      "baseResumeTextArtifactId",
+      "base_resume_pdf_artifact_id",
+      "baseResumePdfArtifactId",
+    ]) {
+      const id = projectionText(metadata[key]);
+      if (id) baseArtifactIds.add(id);
+    }
+  }
+  return { baseGeneration, baseArtifactIds: [...baseArtifactIds] };
+}
+
+function parseProjectionJsonRecord(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectionText(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return text ? text : null;
+}
+
+function projectionInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.trunc(number);
+}
+
 interface EmployerAnalysisRow extends Record<string, unknown> {
   generation: number;
   snapshot_hash: string;
@@ -922,6 +1122,9 @@ interface RequirementFitReportRow extends Record<string, unknown> {
   confidence: string;
   summary_json: string;
 }
+
+const FIT_BAND_ORDER = ["excellent", "strong", "plausible", "stretch", "poor", "unreported"] as const;
+const APPLY_MODE_ORDER = ["automated_live", "manual_marked", "external_confirmed"] as const;
 
 interface RequirementFitItemRow extends Record<string, unknown> {
   requirement_id: string;
@@ -1058,6 +1261,24 @@ function loadRequirementFitReportJson(
   return JSON.stringify(readModel);
 }
 
+function loadLatestRequirementFitBand(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): string | null {
+  if (!tableExists(db, "job_requirement_fit_reports")) return null;
+  const row = getRow<{ fit_band: string | null }>(
+    db,
+    `SELECT fit_band
+       FROM job_requirement_fit_reports
+      WHERE tenant_id = ? AND job_url = ?
+      ORDER BY score_version DESC
+      LIMIT 1`,
+    [tenantId, jobUrl],
+  );
+  return nullableString(row?.fit_band);
+}
+
 function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {
   return {
     requirementId: row.requirement_id,
@@ -1139,11 +1360,13 @@ function requirementFitSummaryToReadModel(value: Record<string, unknown>): Recor
 }
 
 /**
- * Phase 2 — load the latest per-bullet provenance read shape keyed by artifact.
+ * Phase 2 — load per-bullet provenance read shapes keyed by artifact.
  *
  * Mirrors the Python ``BulletProvenanceSet.to_read_model()`` projection so the
  * TS API and Python builder materialise the SAME read shape — the cross-runtime
  * parity test asserts both agree. Returns an empty map when no provenance exists.
+ * Artifact detail pages can inspect historical generations, so project every
+ * artifact_id row set instead of only the latest job generation.
  */
 function loadBulletProvenanceByArtifact(
   db: SqliteDatabase,
@@ -1152,28 +1375,14 @@ function loadBulletProvenanceByArtifact(
 ): Map<string, string> {
   const result = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return result;
-  // Tenant-scope BOTH the MAX(generation) probe and the row fetch so this matches
-  // the Python repo (``bullet_provenance_repository.py`` filters job_url AND
-  // tenant_id AND generation). Benign today under LOCAL_TENANT, but keeps the
-  // cross-runtime read path symmetric before any multi-tenant work.
-  const genRow = getRow<{ generation: number | null }>(
-    db,
-    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ?`,
-    [jobUrl, tenantId],
-  );
-  const generation = genRow?.generation;
-  if (generation === null || generation === undefined) return result;
   const rows = allRows<BulletProvenanceRow>(
     db,
     `SELECT * FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ? AND generation = ?
-      ORDER BY position, bullet_id`,
-    [jobUrl, tenantId, Number(generation)],
+      WHERE job_url = ? AND tenant_id = ?
+      ORDER BY generation, position, bullet_id`,
+    [jobUrl, tenantId],
   );
   if (rows.length === 0) return result;
-  // All rows of one generation share the artifact they explain (the writer binds
-  // the whole set to one artifact_id). Group defensively by artifact_id anyway.
   const byArtifact = new Map<string, Record<string, unknown>[]>();
   for (const row of rows) {
     const entry = {
@@ -1199,15 +1408,15 @@ function loadBulletProvenanceByArtifact(
 }
 
 /**
- * Phase 3 — load the latest generation's set-level coverage + voice read shapes,
+ * Phase 3 — load set-level coverage + voice read shapes,
  * keyed by artifact.
  *
  * Coverage (GROUND-06) and the voice-pass audit (VOICE-02) are set-level facts
  * denormalised onto every ``job_bullet_provenance`` row (the Python repo writes
- * the same value on every row of a generation), so we read them off ANY row of the
- * latest generation. Returns ``{ coverage, voice }`` maps mirroring the Python
- * projection builder so the cross-runtime parity test asserts both agree. Empty
- * maps when no provenance exists or the columns predate Phase 3.
+ * the same value on every row of a generation), so we read the first non-empty
+ * row for each artifact_id. Returns ``{ coverage, voice }`` maps mirroring the
+ * Python projection builder so the cross-runtime parity test asserts both agree.
+ * Empty maps when no provenance exists or the columns predate Phase 3.
  */
 function loadProvenanceAuxByArtifact(
   db: SqliteDatabase,
@@ -1217,31 +1426,27 @@ function loadProvenanceAuxByArtifact(
   const coverage = new Map<string, string>();
   const voice = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return { coverage, voice };
-  const genRow = getRow<{ generation: number | null }>(
-    db,
-    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ?`,
-    [jobUrl, tenantId],
-  );
-  const generation = genRow?.generation;
-  if (generation === null || generation === undefined) return { coverage, voice };
-  let row: { artifact_id: string; coverage_json: string | null; voice_json: string | null } | undefined;
+  let rows: Array<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }> = [];
   try {
-    row = getRow<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
+    rows = allRows<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
       db,
       `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
-        WHERE job_url = ? AND tenant_id = ? AND generation = ?
-        ORDER BY position, bullet_id
-        LIMIT 1`,
-      [jobUrl, tenantId, Number(generation)],
+        WHERE job_url = ? AND tenant_id = ?
+        ORDER BY generation, position, bullet_id`,
+      [jobUrl, tenantId],
     );
   } catch {
     // Columns predate Phase 3 (a DB written before this migration ran) — no aux data.
     return { coverage, voice };
   }
-  if (!row) return { coverage, voice };
-  if (row.coverage_json && row.coverage_json.trim()) coverage.set(row.artifact_id, row.coverage_json);
-  if (row.voice_json && row.voice_json.trim()) voice.set(row.artifact_id, row.voice_json);
+  for (const row of rows) {
+    if (!coverage.has(row.artifact_id) && row.coverage_json && row.coverage_json.trim()) {
+      coverage.set(row.artifact_id, row.coverage_json);
+    }
+    if (!voice.has(row.artifact_id) && row.voice_json && row.voice_json.trim()) {
+      voice.set(row.artifact_id, row.voice_json);
+    }
+  }
   return { coverage, voice };
 }
 
@@ -1719,8 +1924,10 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const score = loadLatestScore(db, jobUrl);
   const materials = loadLatestMaterials(db, jobUrl);
+  const materialAnalytics = loadMaterialAnalytics(db, jobUrl);
   const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
   const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
+  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobUrl));
   const enrichment = loadEnrichment(db, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
@@ -1749,6 +1956,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const applyStatus = deriveApplyStatus(apply.status, nullableString(job.apply_status));
   const appliedAt = apply.status === "succeeded" ? apply.finishedAt : nullableString(job.applied_at);
+  const applyMode = deriveApplyMode(db, tenantId, jobUrl, apply, nullableString(job.apply_status), nullableString(job.applied_at));
 
   const description = stringField(job.description);
   const fullDescription = enrichment.fullDescription ?? stringField(job.full_description);
@@ -1768,14 +1976,15 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO job_list_projections (
      tenant_id, job_id, title, employer, source, strategy, location,
      salary, application_url, discovered_at, description, full_description,
-       fit_score, compensation_summary_json,
-       score_breakdown_json, score_keywords_json, score_reasoning,
-       score_version, scored_at, score_criteria_json, score_trace_json,
-       score_correction_json, current_stage, current_substage, current_state,
-       current_error_code, current_error_message, current_next_action,
-       has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
-       artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     fit_score, fit_band, compensation_summary_json,
+     score_breakdown_json, score_keywords_json, score_reasoning,
+     score_version, scored_at, score_criteria_json, score_trace_json,
+     score_correction_json, current_stage, current_substage, current_state,
+     current_error_code, current_error_message, current_next_action,
+     has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
+     apply_mode, resume_template_id, resume_template_name,
+     tailoring_policy_version, artifact_count, deleted_at, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -1788,6 +1997,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        description           = excluded.description,
        full_description      = excluded.full_description,
        fit_score             = excluded.fit_score,
+       fit_band              = excluded.fit_band,
        compensation_summary_json = excluded.compensation_summary_json,
        score_breakdown_json  = excluded.score_breakdown_json,
        score_keywords_json   = excluded.score_keywords_json,
@@ -1808,6 +2018,10 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        has_pdf               = excluded.has_pdf,
        apply_status          = excluded.apply_status,
        applied_at            = excluded.applied_at,
+       apply_mode            = excluded.apply_mode,
+       resume_template_id    = excluded.resume_template_id,
+       resume_template_name  = excluded.resume_template_name,
+       tailoring_policy_version = excluded.tailoring_policy_version,
        artifact_count        = excluded.artifact_count,
        deleted_at            = excluded.deleted_at,
        last_updated_at       = excluded.last_updated_at`,
@@ -1825,6 +2039,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     description,
     fullDescription,
     fitScore,
+    requirementFitBand,
     compensationProjection.summaryJson,
     scoreBreakdownJson,
     scoreKeywordsJson,
@@ -1845,6 +2060,10 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     hasPdf ? 1 : 0,
     applyStatus,
     appliedAt,
+    applyMode,
+    materialAnalytics.resumeTemplateId,
+    materialAnalytics.resumeTemplateName,
+    materialAnalytics.tailoringPolicyVersion,
     activeArtifacts.length,
     deletedAt,
     lastUpdatedAt,
@@ -2412,6 +2631,24 @@ interface OutcomeConversion {
   totals: ConversionCounts;
   bySource: Array<{ source: string } & ConversionCounts>;
   byBand: Array<{ band: string } & ConversionCounts>;
+  byFitBand: Array<{ fitBand: string } & ConversionCounts>;
+  byApplyMode: Array<{ applyMode: string } & ConversionCounts>;
+  byTemplate: Array<{ templateId: string; templateName: string | null } & ConversionCounts>;
+  byPolicy: Array<{ tailoringPolicyVersion: number | null; policyLabel: string } & ConversionCounts>;
+  timeToResponseMinutes: number[];
+  suggestionAccuracy: SuggestionAccuracyCounts;
+}
+
+interface OutcomeFact {
+  kind: string;
+  occurredAt: string | null;
+}
+
+interface SuggestionAccuracyCounts {
+  decided: number;
+  accepted: number;
+  corrected: number;
+  ignored: number;
 }
 
 function scoreBand(fitScore: number | null | undefined): string {
@@ -2423,26 +2660,99 @@ function scoreBand(fitScore: number | null | undefined): string {
   return "poor";
 }
 
-function hasAnyKind(kinds: Set<string>, target: Set<string>): boolean {
-  for (const kind of kinds) if (target.has(kind)) return true;
+function fitBand(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return FIT_BAND_ORDER.includes(normalized as (typeof FIT_BAND_ORDER)[number]) ? normalized : "unreported";
+}
+
+function applyMode(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return APPLY_MODE_ORDER.includes(normalized as (typeof APPLY_MODE_ORDER)[number]) ? normalized : "manual_marked";
+}
+
+function hasAnyKind(outcomes: readonly OutcomeFact[], target: Set<string>): boolean {
+  for (const outcome of outcomes) if (target.has(outcome.kind)) return true;
   return false;
 }
 
-function loadOutcomeKindsByJob(db: SqliteDatabase, tenantId: string): Map<string, Set<string>> {
-  const result = new Map<string, Set<string>>();
+function loadOutcomesByJob(db: SqliteDatabase, tenantId: string): Map<string, OutcomeFact[]> {
+  const result = new Map<string, OutcomeFact[]>();
   if (!tableExists(db, "application_outcomes")) return result;
-  const rows = allRows<{ job_key: string; kind: string }>(
+  const rows = allRows<{ job_key: string; kind: string; occurred_at: string | null }>(
     db,
-    "SELECT job_key, kind FROM application_outcomes WHERE tenant_id = ?",
+    "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
     [tenantId],
   );
   for (const row of rows) {
     if (!row.job_key || !row.kind) continue;
-    const set = result.get(row.job_key) ?? new Set<string>();
-    set.add(row.kind);
-    result.set(row.job_key, set);
+    const list = result.get(row.job_key) ?? [];
+    list.push({ kind: row.kind, occurredAt: nullableString(row.occurred_at) });
+    result.set(row.job_key, list);
   }
   return result;
+}
+
+function loadSuggestionAccuracy(db: SqliteDatabase, tenantId: string): SuggestionAccuracyCounts {
+  const counts: SuggestionAccuracyCounts = { decided: 0, accepted: 0, corrected: 0, ignored: 0 };
+  if (!tableExists(db, "application_outcome_suggestions")) return counts;
+  const rows = allRows<{ status: string }>(
+    db,
+    `SELECT status
+       FROM application_outcome_suggestions
+      WHERE tenant_id = ?
+        AND status IN ('accepted', 'corrected', 'ignored')`,
+    [tenantId],
+  );
+  for (const row of rows) {
+    const status = String(row.status ?? "").trim().toLowerCase();
+    switch (status) {
+      case "accepted":
+        counts.decided += 1;
+        counts.accepted += 1;
+        break;
+      case "corrected":
+        counts.decided += 1;
+        counts.corrected += 1;
+        break;
+      case "ignored":
+        counts.decided += 1;
+        counts.ignored += 1;
+        break;
+    }
+  }
+  return counts;
+}
+
+function firstResponseMinutes(appliedAt: string | null, outcomes: readonly OutcomeFact[]): number | null {
+  const appliedTime = Date.parse(appliedAt ?? "");
+  if (!Number.isFinite(appliedTime)) return null;
+  let earliest: number | null = null;
+  for (const outcome of outcomes) {
+    if (!REPLY_OUTCOME_KINDS.has(outcome.kind)) continue;
+    const occurredTime = Date.parse(outcome.occurredAt ?? "");
+    if (!Number.isFinite(occurredTime) || occurredTime < appliedTime) continue;
+    earliest = earliest === null ? occurredTime : Math.min(earliest, occurredTime);
+  }
+  if (earliest === null) return null;
+  return Math.floor((earliest - appliedTime) / 60_000);
+}
+
+function templateKey(value: string | null | undefined): string {
+  return projectionText(value) ?? "unreported";
+}
+
+function policyKey(value: number | null | undefined): string {
+  return value === null || value === undefined ? "unreported" : String(Math.trunc(Number(value)));
+}
+
+function policyVersionFromKey(value: string): number | null {
+  if (value === "unreported") return null;
+  const version = Number(value);
+  return Number.isFinite(version) ? Math.trunc(version) : null;
+}
+
+function policyLabel(version: number | null): string {
+  return version === null ? "Unreported" : `Policy v${version}`;
 }
 
 function buildOutcomeConversion(
@@ -2453,19 +2763,37 @@ function buildOutcomeConversion(
     apply_status: string | null;
     applied_at: string | null;
     fit_score: number | null;
+    fit_band: string | null;
+    apply_mode: string | null;
+    resume_template_id: string | null;
+    resume_template_name: string | null;
+    tailoring_policy_version: number | null;
     source: string;
   }>,
 ): OutcomeConversion {
   const appliedRows = active.filter((row) => row.applied_at || row.apply_status === "applied");
-  const outcomesByJob = loadOutcomeKindsByJob(db, tenantId);
+  const outcomesByJob = loadOutcomesByJob(db, tenantId);
+  const suggestionAccuracy = loadSuggestionAccuracy(db, tenantId);
   const blank = (): ConversionCounts => ({ applied: 0, reply: 0, interview: 0, offer: 0, rejection: 0 });
   const totals = blank();
   const bySource = new Map<string, ConversionCounts>();
   const byBand = new Map<string, ConversionCounts>();
+  const byFitBand = new Map<string, ConversionCounts>();
+  const byApplyMode = new Map<string, ConversionCounts>();
+  const byTemplate = new Map<string, { templateName: string | null; counts: ConversionCounts }>();
+  const byPolicy = new Map<string, ConversionCounts>();
+  const timeToResponseMinutes: number[] = [];
   for (const row of appliedRows) {
     const source = row.source || "unknown";
     const band = scoreBand(row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score));
-    const kinds = outcomesByJob.get(row.job_id) ?? new Set<string>();
+    const canonicalFitBand = fitBand(row.fit_band);
+    const mode = applyMode(row.apply_mode);
+    const templateId = templateKey(row.resume_template_id);
+    const templateName = templateId === "unreported" ? null : projectionText(row.resume_template_name);
+    const policy = policyKey(row.tailoring_policy_version);
+    const outcomes = outcomesByJob.get(row.job_id) ?? [];
+    const responseMinutes = firstResponseMinutes(row.applied_at, outcomes);
+    if (responseMinutes !== null) timeToResponseMinutes.push(responseMinutes);
     let sourceBucket = bySource.get(source);
     if (!sourceBucket) {
       sourceBucket = blank();
@@ -2476,12 +2804,34 @@ function buildOutcomeConversion(
       bandBucket = blank();
       byBand.set(band, bandBucket);
     }
-    for (const bucket of [totals, sourceBucket, bandBucket]) {
+    let fitBandBucket = byFitBand.get(canonicalFitBand);
+    if (!fitBandBucket) {
+      fitBandBucket = blank();
+      byFitBand.set(canonicalFitBand, fitBandBucket);
+    }
+    let applyModeBucket = byApplyMode.get(mode);
+    if (!applyModeBucket) {
+      applyModeBucket = blank();
+      byApplyMode.set(mode, applyModeBucket);
+    }
+    let templateBucket = byTemplate.get(templateId);
+    if (!templateBucket) {
+      templateBucket = { templateName, counts: blank() };
+      byTemplate.set(templateId, templateBucket);
+    } else if (!templateBucket.templateName && templateName) {
+      templateBucket.templateName = templateName;
+    }
+    let policyBucket = byPolicy.get(policy);
+    if (!policyBucket) {
+      policyBucket = blank();
+      byPolicy.set(policy, policyBucket);
+    }
+    for (const bucket of [totals, sourceBucket, bandBucket, fitBandBucket, applyModeBucket, templateBucket.counts, policyBucket]) {
       bucket.applied += 1;
-      if (hasAnyKind(kinds, REPLY_OUTCOME_KINDS)) bucket.reply += 1;
-      if (hasAnyKind(kinds, INTERVIEW_OUTCOME_KINDS)) bucket.interview += 1;
-      if (hasAnyKind(kinds, OFFER_OUTCOME_KINDS)) bucket.offer += 1;
-      if (hasAnyKind(kinds, REJECTION_OUTCOME_KINDS)) bucket.rejection += 1;
+      if (hasAnyKind(outcomes, REPLY_OUTCOME_KINDS)) bucket.reply += 1;
+      if (hasAnyKind(outcomes, INTERVIEW_OUTCOME_KINDS)) bucket.interview += 1;
+      if (hasAnyKind(outcomes, OFFER_OUTCOME_KINDS)) bucket.offer += 1;
+      if (hasAnyKind(outcomes, REJECTION_OUTCOME_KINDS)) bucket.rejection += 1;
     }
   }
   const bySourceList = [...bySource.entries()]
@@ -2491,7 +2841,36 @@ function buildOutcomeConversion(
     band,
     ...byBand.get(band)!,
   }));
-  return { version: 1, totals, bySource: bySourceList, byBand: byBandList };
+  const byFitBandList = FIT_BAND_ORDER.filter((band) => byFitBand.has(band)).map((band) => ({
+    fitBand: band,
+    ...byFitBand.get(band)!,
+  }));
+  const byApplyModeList = APPLY_MODE_ORDER.filter((mode) => byApplyMode.has(mode)).map((mode) => ({
+    applyMode: mode,
+    ...byApplyMode.get(mode)!,
+  }));
+  const byTemplateList = [...byTemplate.entries()]
+    .map(([templateId, bucket]) => ({ templateId, templateName: bucket.templateName, ...bucket.counts }))
+    .sort((a, b) => b.applied - a.applied || (a.templateName ?? a.templateId).localeCompare(b.templateName ?? b.templateId));
+  const byPolicyList = [...byPolicy.entries()]
+    .map((entry) => {
+      const [key, counts] = entry;
+      const version = policyVersionFromKey(key);
+      return { tailoringPolicyVersion: version, policyLabel: policyLabel(version), ...counts };
+    })
+    .sort((a, b) => b.applied - a.applied || (a.tailoringPolicyVersion ?? Number.MAX_SAFE_INTEGER) - (b.tailoringPolicyVersion ?? Number.MAX_SAFE_INTEGER));
+  return {
+    version: 2,
+    totals,
+    bySource: bySourceList,
+    byBand: byBandList,
+    byFitBand: byFitBandList,
+    byApplyMode: byApplyModeList,
+    byTemplate: byTemplateList,
+    byPolicy: byPolicyList,
+    timeToResponseMinutes: timeToResponseMinutes.sort((a, b) => a - b),
+    suggestionAccuracy,
+  };
 }
 
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
@@ -2518,11 +2897,18 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     deleted_at: string | null;
     has_resume: number;
     fit_score: number | null;
+    fit_band: string | null;
+    apply_mode: string | null;
+    resume_template_id: string | null;
+    resume_template_name: string | null;
+    tailoring_policy_version: number | null;
     source: string;
   }>(
     db,
     `SELECT job_id, current_stage, current_state, apply_status, applied_at,
-            deleted_at, has_resume, fit_score, source
+            deleted_at, has_resume, fit_score, fit_band, apply_mode,
+            resume_template_id, resume_template_name, tailoring_policy_version,
+            source
      FROM job_list_projections jlp
      WHERE jlp.tenant_id = ?
        ${hiddenWhere}
@@ -3208,6 +3594,47 @@ function deriveApplyStatus(arStatus: string | null, legacyStatus: string | null)
     return arStatus;
   }
   return legacyStatus;
+}
+
+function deriveApplyMode(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+  apply: ApplyLatest,
+  legacyStatus: string | null,
+  legacyAppliedAt: string | null,
+): string | null {
+  if (apply.status === "succeeded" && !apply.dryRun) return "automated_live";
+  const isApplied = Boolean(legacyAppliedAt) || legacyStatus === "applied";
+  if (!isApplied) return null;
+  if (hasJobEvent(db, jobUrl, "ApplicationManuallyMarked")) return "manual_marked";
+  if (hasApplicationOutcomeKind(db, tenantId, jobUrl, "applied_confirmation")) return "external_confirmed";
+  return "manual_marked";
+}
+
+function hasJobEvent(db: SqliteDatabase, jobUrl: string, eventType: string): boolean {
+  if (!tableExists(db, "job_events")) return false;
+  const row = getRow<{ c: number }>(
+    db,
+    "SELECT COUNT(*) AS c FROM job_events WHERE job_url = ? AND event_type = ?",
+    [jobUrl, eventType],
+  );
+  return Number(row?.c ?? 0) > 0;
+}
+
+function hasApplicationOutcomeKind(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+  kind: string,
+): boolean {
+  if (!tableExists(db, "application_outcomes")) return false;
+  const row = getRow<{ c: number }>(
+    db,
+    "SELECT COUNT(*) AS c FROM application_outcomes WHERE tenant_id = ? AND job_key = ? AND kind = ?",
+    [tenantId, jobUrl, kind],
+  );
+  return Number(row?.c ?? 0) > 0;
 }
 
 function companyName(site: string, postingUrl: string): string {

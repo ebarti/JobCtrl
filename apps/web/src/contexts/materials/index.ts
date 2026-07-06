@@ -16,6 +16,10 @@ export {
   type ArtifactStatusBadgeProps,
 } from "./components/ArtifactStatusBadge.js";
 export {
+  ArtifactComparison,
+  type ArtifactComparisonProps,
+} from "./components/ArtifactComparison.js";
+export {
   ArtifactTailoringInspector,
   type ArtifactTailoringInspectorProps,
 } from "./components/ArtifactTailoringInspector.js";

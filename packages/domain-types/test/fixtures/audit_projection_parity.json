@@ -179,7 +179,8 @@
         "status": "approved",
         "path": "/tmp/parity-resume.txt",
         "render_format": "text",
-        "size_bytes": 10
+        "size_bytes": 10,
+        "metadata_json": "{\"tailoring_policy_version\": 3, \"resume_template\": {\"templateId\": \"template-modern\", \"templateName\": \"Modern compact\"}}"
       },
       {
         "artifact_id": "resume-pdf-1",
@@ -187,7 +188,8 @@
         "status": "approved",
         "path": "/tmp/parity-resume.pdf",
         "render_format": "pdf",
-        "size_bytes": 20
+        "size_bytes": 20,
+        "metadata_json": "{}"
       }
     ],
     "bulletProvenance": [
@@ -261,6 +263,23 @@
         "outcomeId": "parity-outcome-rejection",
         "jobKey": "https://example.com/jobs/parity-conversion-rejection",
         "kind": "rejection"
+      }
+    ],
+    "applicationOutcomeSuggestions": [
+      {
+        "suggestionId": "parity-suggestion-accepted",
+        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "status": "accepted"
+      },
+      {
+        "suggestionId": "parity-suggestion-corrected",
+        "jobKey": "https://example.com/jobs/parity-conversion-offer",
+        "status": "corrected"
+      },
+      {
+        "suggestionId": "parity-suggestion-ignored",
+        "jobKey": "https://example.com/jobs/parity-conversion-rejection",
+        "status": "ignored"
       }
     ]
   },
@@ -404,6 +423,8 @@
       "has_resume": 1,
       "job_id": "https://example.com/jobs/parity-developer-platform",
       "location": "Berlin, Germany (Remote)",
+      "resume_template_id": "template-modern",
+      "resume_template_name": "Modern compact",
       "salary": "EUR 90000-120000/year",
       "score_breakdown_json": {
         "confidence": "high",
@@ -462,8 +483,11 @@
       "scored_at": "2026-06-08T12:05:00+00:00",
       "source": "linkedin",
       "strategy": "jobspy",
+      "tailoring_policy_version": 3,
       "tenant_id": "local",
-      "title": "Senior Platform Engineer"
+      "title": "Senior Platform Engineer",
+      "fit_band": "unreported",
+      "apply_mode": "manual_marked"
     },
     "jobDetail": {
       "compensation_audit_json": {
@@ -805,7 +829,7 @@
         }
       ],
       "outcome_conversion_json": {
-        "version": 1,
+        "version": 2,
         "totals": {
           "applied": 3,
           "reply": 3,
@@ -848,7 +872,78 @@
             "offer": 1,
             "rejection": 0
           }
-        ]
+        ],
+        "byFitBand": [
+          {
+            "fitBand": "unreported",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
+          }
+        ],
+        "byApplyMode": [
+          {
+            "applyMode": "manual_marked",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1
+          }
+        ],
+        "byTemplate": [
+          {
+            "templateId": "unreported",
+            "templateName": null,
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 1
+          },
+          {
+            "templateId": "template-modern",
+            "templateName": "Modern compact",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "byPolicy": [
+          {
+            "tailoringPolicyVersion": null,
+            "policyLabel": "Unreported",
+            "applied": 2,
+            "reply": 2,
+            "interview": 1,
+            "offer": 1,
+            "rejection": 1
+          },
+          {
+            "tailoringPolicyVersion": 3,
+            "policyLabel": "Policy v3",
+            "applied": 1,
+            "reply": 1,
+            "interview": 1,
+            "offer": 0,
+            "rejection": 0
+          }
+        ],
+        "timeToResponseMinutes": [
+          1200,
+          2640,
+          4080
+        ],
+        "suggestionAccuracy": {
+          "decided": 3,
+          "accepted": 1,
+          "corrected": 1,
+          "ignored": 1
+        }
       },
       "ready": 0,
       "score_distribution_json": [

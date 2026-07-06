@@ -123,8 +123,8 @@ tables that back every read-model endpoint:
 
 | Table                        | What it stores                                                    |
 |------------------------------|-------------------------------------------------------------------|
-| `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, materials presence, apply status. |
-| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source and score band, from `application_outcomes`). |
+| `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, canonical fit band when recorded, materials presence, apply status, apply mode, accepted resume template, and tailoring policy version. |
+| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source, score band, fit band, apply mode, accepted resume template, and tailoring policy, plus response-minute samples and suggestion decision counts from canonical rows). |
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
@@ -145,8 +145,22 @@ builders must agree — the cross-runtime parity fixture asserts the
 `outcome_conversion_json` column). The dashboard read model derives the
 conversion rates (reply/interview/offer/rejection over applied) from those
 counts so there is no cross-runtime float drift; `costPerInterview` stays `null`
-until per-run apply cost is projected. This surface is read-only — it never
-feeds scoring, ranking, thresholds, or apply eligibility.
+until per-run apply cost is projected. `GET /v1/analytics/outcomes` reads the
+same integer-count projection and exposes an analytics-specific contract with
+`n`, `minSample`, `bySource`, `byScoreBand`, `byFitBand`, `byApplyMode`,
+`byTemplate`, `byPolicy`, `timeToResponse`, and `suggestionAccuracy`.
+`byScoreBand` keeps the existing parity-guarded score vocabulary
+(`perfect/strong/moderate/weak/poor/unscored`); `byFitBand` is a separate
+canonical requirement-fit vocabulary
+(`excellent/strong/plausible/stretch/poor/unreported`). Template and policy
+groups come from the accepted material artifact metadata projected onto
+`job_list_projections`. `timeToResponse.medianMinutes` is read-time derived from
+`applied_at` to the earliest response-kind `application_outcomes.occurred_at`;
+`suggestionAccuracy` counts decided `application_outcome_suggestions` rows. The
+read model uses the single `MIN_CONVERSION_SAMPLE` threshold for every rate and
+median, so sub-threshold buckets keep counts but return `null` rates or medians.
+This surface is read-only — it stays outside scoring, ranking, thresholds, and
+apply eligibility.
 
 Job detail audit history is assembled at read time from allow-listed lifecycle
 events and append-only apply review/outcome records. It is a user-facing audit
