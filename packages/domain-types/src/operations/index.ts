@@ -139,6 +139,7 @@ export const PROJECTION_TABLES = [
   "dashboard_projections",
   "job_detail_projections",
   "artifact_list_projections",
+  "evidence_usage_projections",
   "apply_run_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];

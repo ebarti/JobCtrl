@@ -150,6 +150,7 @@ import {
   getJobDetail,
   listActivity,
   listArtifacts,
+  listEvidenceMap,
   listJobs,
   matchingJobKeys,
   listWorkflowRuns,
@@ -700,6 +701,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/jobs", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
+  );
+
+  app.get("/v1/evidence-map", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listEvidenceMap(db)),
   );
 
   app.get<{ Params: { jobKey: string } }>(

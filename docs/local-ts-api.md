@@ -35,7 +35,7 @@ need:
 | --- | --- |
 | [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
 | [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
-| [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, audit history, list filters, and delete / hide / restore routes. |
+| [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, career evidence map, audit history, list filters, and delete / hide / restore routes. |
 | [Dashboard, analytics, and operational metrics](#dashboard-analytics-and-operational-metrics) | `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, source health, and operational attempt counters. |
 | [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
 | [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
@@ -188,6 +188,14 @@ canonical requirement-level assessments. The report is projected from
 shows the requirement weights, match status, score contribution, and tailoring
 directive that explain the resolved fit score. It is `null` for jobs that have
 not yet been scored with requirement-level evidence.
+`GET /v1/evidence-map` returns the career evidence map projected from the same
+canonical sources already used by scoring and materials audit: profile
+achievement evidence and skills, latest bullet provenance, requirement-fit
+items, and generation-time artifact coverage audits. The response contains
+`entries[]` for achievement/skill evidence, attached resume-bullet,
+requirement-fit, and coverage usages, plus `gaps[]` for missing skills and
+missing/blocked/transferable requirements. It never recomputes claims from job
+descriptions at read time and never introduces a separate preparation pipeline.
 `/v1/jobs/:key` also returns `auditHistory[]`, a user-facing timeline assembled
 from allow-listed `job_events` entries plus append-only apply review and
 outcome feedback records. The timeline summarizes discovery, enrichment,

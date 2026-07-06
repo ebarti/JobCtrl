@@ -637,6 +637,7 @@ class ProjectionBuilder:
         dirty_jobs: set[str] = set()
         source_quality_dirty = False
         workflow_runs_dirty = False
+        evidence_usage_dirty = bool(rows)
         max_event_id = watermark
         for row in rows:
             event_id = int(row["event_id"]) if not isinstance(row, tuple) else int(row[0])
@@ -678,6 +679,15 @@ class ProjectionBuilder:
         if audit_backfill_pending:
             dirty_jobs.update(self._jobs_missing_score_audit_projection())
         workflow_runs_backfill_pending = self._workflow_runs_backfill_pending()
+        evidence_usage_exists = (
+            self._conn.execute(
+                "SELECT 1 FROM evidence_usage_projections WHERE tenant_id = ? LIMIT 1",
+                (str(self._tenant_id),),
+            ).fetchone()
+            is not None
+        )
+        if not evidence_usage_exists:
+            evidence_usage_dirty = True
 
         # L5 (round-1 review): if there's nothing dirty AND we've already
         # synced past the latest event, skip the O(jobs × stages)
@@ -707,6 +717,7 @@ class ProjectionBuilder:
             and max_event_id == watermark
             and not audit_backfill_pending
             and not workflow_runs_backfill_pending
+            and not evidence_usage_dirty
         ):
             return 0
 
@@ -727,6 +738,8 @@ class ProjectionBuilder:
                 self._rebuild_source_quality()
             if workflow_runs_dirty or workflow_runs_backfill_pending:
                 self._rebuild_workflow_runs()
+            if evidence_usage_dirty:
+                self._rebuild_evidence_usage()
             if max_event_id > watermark:
                 self._watermarks.set(
                     PROJECTION_NAME, max_event_id, commit=not defer_commit
@@ -750,6 +763,7 @@ class ProjectionBuilder:
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
+        self._rebuild_evidence_usage()
         if max_event_id > watermark:
             self._watermarks.set(
                 PROJECTION_NAME, max_event_id, commit=not defer_commit
@@ -971,6 +985,405 @@ class ProjectionBuilder:
         self._store.replace_artifacts_for_job(
             str(self._tenant_id), job_url, artifact_projs
         )
+
+    def _rebuild_evidence_usage(self) -> None:
+        tenant_id = str(self._tenant_id)
+        now = _utc_now()
+        entries: dict[str, dict[str, Any]] = {}
+        gaps: dict[str, dict[str, Any]] = {}
+        self._load_profile_evidence_entries(entries)
+        skill_entries_by_name = self._load_profile_skill_entries(entries)
+        self._attach_resume_usages(entries)
+        self._attach_requirement_usages_and_gaps(entries, gaps)
+        self._attach_skill_coverage_usages_and_gaps(skill_entries_by_name, gaps)
+
+        rows: list[dict[str, object]] = []
+        for entry in sorted(entries.values(), key=lambda item: str(item["title"]).lower()):
+            rows.append(
+                {
+                    "projection_kind": "entry",
+                    "projection_id": entry["entryId"],
+                    "evidence_id": entry["evidenceId"],
+                    "skill_id": entry["skillId"],
+                    "requirement_id": None,
+                    "title": entry["title"],
+                    "payload_json": json.dumps(entry),
+                    "last_updated_at": now,
+                }
+            )
+        for gap in sorted(gaps.values(), key=lambda item: str(item["requirementText"]).lower()):
+            rows.append(
+                {
+                    "projection_kind": "gap",
+                    "projection_id": gap["gapId"],
+                    "evidence_id": None,
+                    "skill_id": None,
+                    "requirement_id": gap["requirementId"],
+                    "title": gap["requirementText"],
+                    "payload_json": json.dumps(gap),
+                    "last_updated_at": now,
+                }
+            )
+        self._store.replace_evidence_usage_rows(tenant_id, rows)
+
+    def _load_profile_evidence_entries(self, entries: dict[str, dict[str, Any]]) -> None:
+        if not _table_exists(self._conn, "candidate_profile_achievement_evidence"):
+            return
+        evidence_strength_expr = _column_or_literal(
+            self._conn,
+            "candidate_profile_achievement_evidence",
+            "evidence_strength",
+            "'supported'",
+            "evidence",
+        )
+        claim_confidence_expr = _column_or_literal(
+            self._conn,
+            "candidate_profile_achievement_evidence",
+            "claim_confidence",
+            "0",
+            "evidence",
+        )
+        user_confirmed_expr = _column_or_literal(
+            self._conn,
+            "candidate_profile_achievement_evidence",
+            "user_confirmed",
+            "0",
+            "evidence",
+        )
+        tags_json_expr = _column_or_literal(
+            self._conn,
+            "candidate_profile_achievement_evidence",
+            "tags_json",
+            "'[]'",
+            "evidence",
+        )
+        has_experience = _table_exists(
+            self._conn,
+            "candidate_profile_experience_entries",
+        ) and _has_column(self._conn, "candidate_profile_experience_entries", "date_range")
+        query = (
+            f"""
+            SELECT evidence.entry_id, evidence.evidence_id, evidence.source_text,
+                   evidence.scope, evidence.action, evidence.tools_json,
+                   evidence.metrics_json, evidence.outcome,
+                   {evidence_strength_expr} AS evidence_strength,
+                   {claim_confidence_expr} AS claim_confidence,
+                   {user_confirmed_expr} AS user_confirmed,
+                   {tags_json_expr} AS tags_json,
+                   experience.date_range
+              FROM candidate_profile_achievement_evidence AS evidence
+              LEFT JOIN candidate_profile_experience_entries AS experience
+                ON experience.tenant_id = evidence.tenant_id
+               AND experience.profile_id = evidence.profile_id
+               AND experience.entry_id = evidence.entry_id
+             WHERE evidence.tenant_id = ? AND evidence.profile_id = 'default'
+               AND TRIM(evidence.evidence_id) != ''
+             ORDER BY evidence.entry_id, evidence.evidence_index
+            """
+            if has_experience
+            else f"""
+            SELECT evidence.entry_id, evidence.evidence_id, evidence.source_text,
+                   evidence.scope, evidence.action, evidence.tools_json,
+                   evidence.metrics_json, evidence.outcome,
+                   {evidence_strength_expr} AS evidence_strength,
+                   {claim_confidence_expr} AS claim_confidence,
+                   {user_confirmed_expr} AS user_confirmed,
+                   {tags_json_expr} AS tags_json,
+                   NULL AS date_range
+              FROM candidate_profile_achievement_evidence AS evidence
+             WHERE evidence.tenant_id = ? AND evidence.profile_id = 'default'
+               AND TRIM(evidence.evidence_id) != ''
+             ORDER BY evidence.entry_id, evidence.evidence_index
+            """
+        )
+        for row in self._conn.execute(query, (str(self._tenant_id),)).fetchall():
+            evidence_id = _row_str(row, "evidence_id").strip()
+            if not evidence_id:
+                continue
+            title = _preview_text(
+                _row_str(row, "action")
+                or _row_str(row, "scope")
+                or _row_str(row, "outcome")
+                or _row_str(row, "source_text")
+                or evidence_id,
+                140,
+            )
+            entries[evidence_id] = {
+                "entryId": evidence_id,
+                "kind": "achievement_evidence",
+                "evidenceId": evidence_id,
+                "skillId": None,
+                "title": title,
+                "story": {
+                    "scope": _row_str(row, "scope"),
+                    "action": _row_str(row, "action"),
+                    "outcome": _row_str(row, "outcome"),
+                    "metrics": _json_strings(_row_str(row, "metrics_json")),
+                },
+                "skills": _json_strings(_row_str(row, "tools_json")),
+                "tags": _json_strings(_row_str(row, "tags_json")),
+                "freshness": {
+                    "evidenceDateRange": _row_nullable_str(row, "date_range"),
+                    "evidenceStrength": _row_nullable_str(row, "evidence_strength"),
+                    "userConfirmed": bool(_row_int(row, "user_confirmed")),
+                    "claimConfidence": _row_float(row, "claim_confidence")
+                    if _row_get(row, "claim_confidence") is not None
+                    else None,
+                    "lastUsedAt": None,
+                },
+                "resumeUsages": [],
+                "requirementUsages": [],
+                "coverageUsages": [],
+                "gaps": [],
+            }
+
+    def _load_profile_skill_entries(
+        self, entries: dict[str, dict[str, Any]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        if not _table_exists(self._conn, "candidate_profile_skill_items"):
+            return by_name
+        has_categories = _table_exists(self._conn, "candidate_profile_skill_categories")
+        query = (
+            """
+            SELECT skills.category_id, skills.item_index, skills.item_text,
+                   COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label
+              FROM candidate_profile_skill_items AS skills
+              LEFT JOIN candidate_profile_skill_categories AS categories
+                ON categories.tenant_id = skills.tenant_id
+               AND categories.profile_id = skills.profile_id
+               AND categories.category_id = skills.category_id
+             WHERE skills.tenant_id = ? AND skills.profile_id = 'default'
+               AND TRIM(skills.item_text) != ''
+             ORDER BY categories.position_index, skills.item_index
+            """
+            if has_categories
+            else """
+            SELECT category_id, item_index, item_text, category_id AS label
+              FROM candidate_profile_skill_items
+             WHERE tenant_id = ? AND profile_id = 'default'
+               AND TRIM(item_text) != ''
+             ORDER BY category_id, item_index
+            """
+        )
+        for row in self._conn.execute(query, (str(self._tenant_id),)).fetchall():
+            skill_text = _row_str(row, "item_text").strip()
+            if not skill_text:
+                continue
+            skill_id = f"skill:{_row_str(row, 'category_id')}:{_row_int(row, 'item_index')}"
+            entry = {
+                "entryId": skill_id,
+                "kind": "skill",
+                "evidenceId": None,
+                "skillId": skill_id,
+                "title": skill_text,
+                "story": None,
+                "skills": [skill_text],
+                "tags": [_row_str(row, "label")] if _row_str(row, "label") else [],
+                "freshness": {
+                    "evidenceDateRange": None,
+                    "evidenceStrength": "declared",
+                    "userConfirmed": True,
+                    "claimConfidence": None,
+                    "lastUsedAt": None,
+                },
+                "resumeUsages": [],
+                "requirementUsages": [],
+                "coverageUsages": [],
+                "gaps": [],
+            }
+            entries[skill_id] = entry
+            by_name.setdefault(skill_text.lower(), []).append(entry)
+        return by_name
+
+    def _attach_resume_usages(self, entries: dict[str, dict[str, Any]]) -> None:
+        if not _table_exists(self._conn, "job_bullet_provenance"):
+            return
+        job_metadata = _job_metadata_join_sql(self._conn, "provenance.job_url")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.job_url")
+        rows = self._conn.execute(
+            f"""
+            SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
+                   provenance.bullet_id, provenance.generated_text, provenance.created_at,
+                   provenance.evidence_ids_json,
+                   {job_metadata['select_sql']}
+              FROM job_bullet_provenance AS provenance
+              {job_metadata['join_sql']}{lifecycle['join_sql']}
+             WHERE provenance.tenant_id = ?{lifecycle['where_sql']}
+               AND provenance.generation = (
+                 SELECT MAX(latest.generation)
+                   FROM job_bullet_provenance AS latest
+                  WHERE latest.tenant_id = provenance.tenant_id
+                    AND latest.job_url = provenance.job_url
+               )
+             ORDER BY provenance.job_url, provenance.position, provenance.bullet_id
+            """,
+            (str(self._tenant_id),),
+        ).fetchall()
+        for row in rows:
+            usage = {
+                "kind": "resume_bullet",
+                "jobKey": _row_str(row, "job_url"),
+                "jobTitle": _row_nullable_str(row, "job_title"),
+                "employer": _row_nullable_str(row, "employer"),
+                "artifactId": _row_nullable_str(row, "artifact_id"),
+                "bulletId": _row_nullable_str(row, "bullet_id"),
+                "generation": _row_int(row, "generation"),
+                "generatedTextPreview": _preview_text(_row_str(row, "generated_text"), 240),
+                "scoreVersion": None,
+                "requirementId": None,
+                "requirementText": None,
+                "requirementFitKind": None,
+                "artifactCoverageState": None,
+                "keyword": None,
+                "coverageState": None,
+                "occurredAt": _row_nullable_str(row, "created_at"),
+            }
+            for evidence_id in _json_strings(_row_str(row, "evidence_ids_json")):
+                entry = entries.get(evidence_id)
+                if entry is None:
+                    continue
+                entry["resumeUsages"].append(usage)
+                freshness = entry["freshness"]
+                occurred = usage["occurredAt"]
+                if occurred and (
+                    not freshness["lastUsedAt"] or str(occurred) > str(freshness["lastUsedAt"])
+                ):
+                    freshness["lastUsedAt"] = occurred
+
+    def _attach_requirement_usages_and_gaps(
+        self,
+        entries: dict[str, dict[str, Any]],
+        gaps: dict[str, dict[str, Any]],
+    ) -> None:
+        if not _table_exists(self._conn, "job_requirement_fit_reports") or not _table_exists(
+            self._conn, "job_requirement_fit_items"
+        ):
+            return
+        job_metadata = _job_metadata_join_sql(self._conn, "items.job_url")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "items.job_url")
+        rows = self._conn.execute(
+            f"""
+            SELECT items.job_url, items.score_version, items.requirement_id,
+                   items.requirement_text, items.tier, items.weight,
+                   items.fit_json, items.artifact_coverage_json,
+                   {job_metadata['select_sql']}
+              FROM job_requirement_fit_items AS items
+              {job_metadata['join_sql']}{lifecycle['join_sql']}
+             WHERE items.tenant_id = ?{lifecycle['where_sql']}
+               AND items.score_version = (
+                 SELECT MAX(report.score_version)
+                   FROM job_requirement_fit_reports AS report
+                  WHERE report.tenant_id = items.tenant_id
+                    AND report.job_url = items.job_url
+               )
+             ORDER BY items.job_url, items.position, items.requirement_id
+            """,
+            (str(self._tenant_id),),
+        ).fetchall()
+        for row in rows:
+            fit = _requirement_fit_status_to_read_model(_json_loads(_row_str(row, "fit_json"), {}))
+            fit_kind = str(fit.get("kind") or "not_assessed")
+            coverage = (
+                _requirement_artifact_coverage_to_read_model(
+                    _json_loads(_row_nullable_str(row, "artifact_coverage_json"), {})
+                )
+                if _row_nullable_str(row, "artifact_coverage_json")
+                else None
+            )
+            usage = {
+                "kind": "requirement_fit",
+                "jobKey": _row_str(row, "job_url"),
+                "jobTitle": _row_nullable_str(row, "job_title"),
+                "employer": _row_nullable_str(row, "employer"),
+                "artifactId": None,
+                "bulletId": None,
+                "generation": None,
+                "generatedTextPreview": None,
+                "scoreVersion": _row_int(row, "score_version"),
+                "requirementId": _row_str(row, "requirement_id"),
+                "requirementText": _row_str(row, "requirement_text"),
+                "requirementFitKind": fit_kind,
+                "artifactCoverageState": coverage.get("state") if coverage else None,
+                "keyword": None,
+                "coverageState": None,
+                "occurredAt": None,
+            }
+            for evidence_id in fit.get("evidenceIds", []):
+                entry = entries.get(str(evidence_id))
+                if entry is not None:
+                    entry["requirementUsages"].append(usage)
+            if fit_kind in {"missing", "blocked", "transferable"}:
+                kind = {
+                    "missing": "missing_requirement",
+                    "blocked": "blocked_requirement",
+                    "transferable": "transferable_requirement",
+                }[fit_kind]
+                gap = {
+                    "gapId": f"{_row_str(row, 'job_url')}#{_row_str(row, 'requirement_id')}",
+                    "kind": kind,
+                    "requirementId": _row_str(row, "requirement_id"),
+                    "requirementText": _row_str(row, "requirement_text"),
+                    "demandedSkill": None,
+                    "tier": _row_nullable_str(row, "tier"),
+                    "weight": _row_float(row, "weight"),
+                    "fitKind": fit_kind,
+                    "reason": str(
+                        fit.get("reason")
+                        or fit.get("blocker")
+                        or fit.get("gap")
+                        or "Recorded requirement gap."
+                    ),
+                    "jobRefs": [usage],
+                }
+                gaps[str(gap["gapId"])] = gap
+
+    def _attach_skill_coverage_usages_and_gaps(
+        self,
+        skill_entries_by_name: dict[str, list[dict[str, Any]]],
+        gaps: dict[str, dict[str, Any]],
+    ) -> None:
+        if not _table_exists(self._conn, "artifact_list_projections"):
+            return
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.job_id")
+        rows = self._conn.execute(
+            f"""
+            SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
+                   alp.coverage_audit_json, alp.created_at
+              FROM artifact_list_projections alp{lifecycle['join_sql']}
+             WHERE alp.tenant_id = ?{lifecycle['where_sql']}
+               AND alp.coverage_audit_json IS NOT NULL
+               AND TRIM(alp.coverage_audit_json) != ''
+            """,
+            (str(self._tenant_id),),
+        ).fetchall()
+        for row in rows:
+            coverage = _json_loads(_row_nullable_str(row, "coverage_audit_json"), {})
+            for state in ("covered", "declared"):
+                for keyword in _strings_from_unknown(coverage.get(state)):
+                    for entry in skill_entries_by_name.get(keyword.lower(), []):
+                        entry["coverageUsages"].append(
+                            _skill_coverage_usage(row, keyword, state)
+                        )
+            for keyword in _strings_from_unknown(coverage.get("missing")):
+                gap = {
+                    "gapId": f"{_row_str(row, 'job_id')}#skill#{keyword.lower()}",
+                    "kind": "missing_skill",
+                    "requirementId": None,
+                    "requirementText": keyword,
+                    "demandedSkill": keyword,
+                    "tier": None,
+                    "weight": None,
+                    "fitKind": None,
+                    "reason": (
+                        "The generated coverage audit recorded this demanded skill "
+                        "as missing from shipped materials."
+                    ),
+                    "jobRefs": [_skill_coverage_usage(row, keyword, "missing")],
+                }
+                gaps[str(gap["gapId"])] = gap
+                for entry in skill_entries_by_name.get(keyword.lower(), []):
+                    entry["gaps"].append(gap)
 
     def _build_compensation_projection(
         self,
@@ -2672,6 +3085,82 @@ class ProjectionBuilder:
 # ============================================================== helpers
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    return any(
+        (row["name"] if isinstance(row, sqlite3.Row) else row[1]) == column_name
+        for row in conn.execute(f"PRAGMA table_info({table_name})")
+    )
+
+
+def _column_or_literal(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    fallback_sql: str,
+    alias: str,
+) -> str:
+    return f"{alias}.{column_name}" if _has_column(conn, table_name, column_name) else fallback_sql
+
+
+def _job_metadata_join_sql(conn: sqlite3.Connection, job_url_expression: str) -> dict[str, str]:
+    if not _table_exists(conn, "jobs"):
+        return {"select_sql": "NULL AS job_title, NULL AS employer", "join_sql": ""}
+    title_sql = _column_or_literal(conn, "jobs", "title", "NULL", "jobs")
+    employer_parts = []
+    if _has_column(conn, "jobs", "company"):
+        employer_parts.append("NULLIF(jobs.company, '')")
+    if _has_column(conn, "jobs", "site"):
+        employer_parts.append("jobs.site")
+    employer_sql = (
+        f"COALESCE({', '.join(employer_parts)})"
+        if len(employer_parts) > 1
+        else (employer_parts[0] if employer_parts else "NULL")
+    )
+    return {
+        "select_sql": f"{title_sql} AS job_title, {employer_sql} AS employer",
+        "join_sql": f"LEFT JOIN jobs ON jobs.url = {job_url_expression}",
+    }
+
+
+def _job_lifecycle_exclusion_sql(
+    conn: sqlite3.Connection, job_url_expression: str
+) -> dict[str, str]:
+    """Anti-join fragments excluding soft-deleted and hidden jobs from a
+    tenant-wide read, mirroring the TS ``jobLifecycleExclusionSql``. Guarded by
+    ``_table_exists`` so it excludes nothing on a DB where the TS write-model has
+    not created the lifecycle tables yet.
+    """
+    joins: list[str] = []
+    wheres: list[str] = []
+    if _table_exists(conn, "jobhunter_deleted_jobs"):
+        joins.append(
+            "LEFT JOIN jobhunter_deleted_jobs d "
+            f"ON d.job_url = {job_url_expression} "
+            "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+        )
+        wheres.append("d.job_url IS NULL")
+    if _table_exists(conn, "jobhunter_hidden_jobs"):
+        joins.append(
+            "LEFT JOIN jobhunter_hidden_jobs h "
+            f"ON h.job_url = {job_url_expression} AND h.unhidden_at IS NULL"
+        )
+        wheres.append("h.job_url IS NULL")
+    return {
+        "join_sql": (" " + " ".join(joins)) if joins else "",
+        "where_sql": (" AND " + " AND ".join(wheres)) if wheres else "",
+    }
+
+
 def _row_str(row: object, key: str) -> str:
     value = _row_get(row, key)
     return "" if value is None else str(value)
@@ -3180,6 +3669,21 @@ def _json_strings(value: str) -> list[str]:
     return [item for item in parsed if isinstance(item, str)]
 
 
+def _strings_from_unknown(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
 def _json_records(value: str) -> list[dict[str, Any]]:
     try:
         parsed = json.loads(value or "[]")
@@ -3366,6 +3870,58 @@ def _preview_text(value: str, limit: int) -> str:
     if not value:
         return ""
     return value if len(value) <= limit else f"{value[:limit]}..."
+
+
+def _requirement_fit_status_to_read_model(value: dict[str, Any]) -> dict[str, Any]:
+    kind = str(value.get("kind") or "not_assessed")
+    if kind == "matched":
+        return {
+            "kind": kind,
+            "evidenceIds": _strings_from_unknown(value.get("evidence_ids") or value.get("evidenceIds")),
+            "strength": str(value.get("strength") or "direct"),
+        }
+    if kind == "transferable":
+        return {
+            "kind": kind,
+            "evidenceIds": _strings_from_unknown(value.get("evidence_ids") or value.get("evidenceIds")),
+            "gap": str(value.get("gap") or ""),
+            "bridge": str(value.get("bridge") or ""),
+        }
+    if kind == "missing":
+        return {"kind": kind, "reason": str(value.get("reason") or "")}
+    if kind == "blocked":
+        return {"kind": kind, "blocker": str(value.get("blocker") or "")}
+    return {"kind": "not_assessed", "reason": str(value.get("reason") or "")}
+
+
+def _requirement_artifact_coverage_to_read_model(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "state": str(value.get("state") or "not_recorded"),
+        "source": str(value.get("source") or "tailored_resume_bullet_provenance"),
+        "bulletCount": int(value.get("bullet_count") or value.get("bulletCount") or 0),
+        "examples": _strings_from_unknown(value.get("examples")),
+    }
+
+
+def _skill_coverage_usage(row: object, keyword: str, state: str) -> dict[str, Any]:
+    return {
+        "kind": "skill_coverage",
+        "jobKey": _row_str(row, "job_id"),
+        "jobTitle": _row_nullable_str(row, "job_title"),
+        "employer": _row_nullable_str(row, "job_employer"),
+        "artifactId": _row_nullable_str(row, "artifact_id"),
+        "bulletId": None,
+        "generation": _row_nullable_int(row, "generation"),
+        "generatedTextPreview": None,
+        "scoreVersion": None,
+        "requirementId": None,
+        "requirementText": None,
+        "requirementFitKind": None,
+        "artifactCoverageState": None,
+        "keyword": keyword,
+        "coverageState": state,
+        "occurredAt": _row_nullable_str(row, "created_at"),
+    }
 
 
 def _camel_score_breakdown(value) -> dict:
