@@ -71,6 +71,36 @@ const QA_PROFILE = {
         company: "QA Systems",
         date_range: "2024 -- Present",
         bullets: ["Led platform reliability and security validation programs."],
+        achievement_evidence: [
+          {
+            id: "ev-platform",
+            source_text: "Led platform reliability and security validation programs.",
+            scope: "Platform reliability program",
+            action: "Owned platform reliability improvements for incident response.",
+            tools: ["Kubernetes", "Security"],
+            metrics: ["critical services"],
+            outcome: "Improved incident-response readiness across platform teams.",
+            seniority_signal: "director",
+            evidence_strength: "verified",
+            claim_confidence: 0.95,
+            user_confirmed: true,
+            tags: ["reliability", "incident response"],
+          },
+          {
+            id: "ev-incident",
+            source_text: "Led incident response and platform operations programs.",
+            scope: "Incident response",
+            action: "Coordinated platform operations improvements across teams.",
+            tools: ["Incident response", "Developer Experience"],
+            metrics: ["cross-team"],
+            outcome: "Reduced operational friction for engineering teams.",
+            seniority_signal: "director",
+            evidence_strength: "supported",
+            claim_confidence: 0.82,
+            user_confirmed: true,
+            tags: ["operations"],
+          },
+        ],
       },
     ],
     skill_categories: [
@@ -283,7 +313,9 @@ export function seedQaDatabase(dbPath: string): void {
       db_path TEXT NOT NULL,
       task_queue TEXT NOT NULL,
       started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      last_seen_at TEXT NOT NULL,
+      max_concurrent_activities INTEGER,
+      activity_executor_max_workers INTEGER
     );
     CREATE TABLE job_scores (
       job_url TEXT,
@@ -1065,8 +1097,9 @@ function insertScore(db: Database.Database, jobUrl: string, fitScore: number): v
 function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
   db.prepare(
     `INSERT INTO worker_runtime_heartbeats
-      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
+       max_concurrent_activities, activity_executor_max_workers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "qa-worker-1",
     "temporal-worker",
@@ -1077,6 +1110,8 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
     "jobhunter-default",
     new Date().toISOString(),
     new Date().toISOString(),
+    4,
+    6,
   );
 }
 

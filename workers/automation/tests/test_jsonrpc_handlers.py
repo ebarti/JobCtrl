@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from temporalio.common import WorkflowIDConflictPolicy
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobhunter.domain.compensation import ReportedCompensationObservation
+from jobhunter.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
 from jobhunter.infrastructure.compensation import refresh as compensation_refresh_mod
 from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobhunter.infrastructure.compensation.refresh import refresh_compensation_facts
@@ -28,6 +30,7 @@ from jobhunter.domain.rpc.messages import (
 from jobhunter.infrastructure.rpc import handlers as handlers_mod
 from jobhunter.infrastructure.rpc.handlers import register_default_handlers
 from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobhunter.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
 from jobhunter.materials import activities as materials_activities_mod
 from jobhunter.materials.activities import CoverActivityInput, TailorActivityInput, cover_activity, tailor_activity
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -103,6 +106,7 @@ def test_default_handlers_are_registered() -> None:
         "retailor_job",
         "retailor_current_policy",
         "refresh_compensation",
+        "generate_interview_prep",
         "apply",
         "profile_import",
     }
@@ -113,6 +117,83 @@ def test_default_handlers_are_registered() -> None:
         assert response is not None
         body = response.to_dict()
         assert "error" not in body or body["error"]["code"] != METHOD_NOT_FOUND
+
+
+def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("interview-prep-wf", "interview-prep-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="generate_interview_prep",
+            params={
+                "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "jobUrl": "https://example.com/job/interview",
+                "llmModel": "gpt-test",
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert response.to_dict()["result"] == {
+        "runId": "interview-prep-wf",
+        "workflowId": "interview-prep-wf",
+        "firstExecutionRunId": "interview-prep-run",
+    }
+    assert len(seen) == 1
+    assert seen[0].workflow is InterviewPrepWorkflow
+    assert seen[0].workflow_id == "interview-prep-local-https://example.com/job/interview"
+    (payload,) = seen[0].args
+    assert payload == InterviewPrepWorkflowInput(
+        tenant_id="local",
+        expected_app_dir="/tmp/jobhunter",
+        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        job_url="https://example.com/job/interview",
+        llm_model="gpt-test",
+    )
+
+
+def test_interview_prep_has_no_live_assistance_surface() -> None:
+    server = _server()
+    handlers = getattr(server, "_handlers")
+
+    assert handlers["generate_interview_prep"].mode == "workflow"
+    prep_methods = sorted(method for method in handlers if "interview" in method)
+    assert prep_methods == ["generate_interview_prep"]
+
+    public_surface = [
+        *handlers,
+        *(field.name for field in fields(InterviewPrepWorkflowInput)),
+        *INTERVIEW_PREP_STATUSES,
+        *INTERVIEW_PREP_ITEM_KINDS,
+    ]
+    forbidden_tokens = (
+        "live",
+        "in_session",
+        "session",
+        "stream",
+        "transcript",
+        "microphone",
+        "websocket",
+        "real_time",
+        "realtime",
+    )
+    offenders = [
+        value
+        for value in public_surface
+        for token in forbidden_tokens
+        if token in value.lower()
+    ]
+    assert offenders == []
 
 
 def test_unknown_method_returns_method_not_found() -> None:
@@ -450,7 +531,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     )
     conn.commit()
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
         assert max_pages == 10
         return (
             ReportedCompensationObservation(
@@ -553,7 +634,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     monkeypatch.setenv("JOBHUNTER_GLASSDOOR_ACCESS_MODE", "written_permission")
     monkeypatch.setenv("JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
         return (
             ReportedCompensationObservation(
                 source_id="euro_top_tech",

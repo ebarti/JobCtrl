@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import jobhunter.infrastructure.compensation.sqlite_market_repository as sqlite_market_repository
 from jobhunter.database import ensure_market_compensation_tables, init_db
 from jobhunter.domain.compensation import (
     ReportedCompensationObservation,
@@ -503,14 +502,11 @@ def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatc
         },
     ]
 
-    def fake_fetch_json(url: str, *, timeout_seconds: float) -> dict:
-        assert timeout_seconds > 0
+    def fake_fetch_json(url: str) -> dict:
         assert "api/data-entries" in url
         return payloads.pop(0)
 
-    monkeypatch.setattr(sqlite_market_repository, "_fetch_json", fake_fetch_json)
-
-    observations = load_euro_top_tech_observations(max_pages=2)
+    observations = load_euro_top_tech_observations(max_pages=2, http=fake_fetch_json)
 
     assert [observation.source_id for observation in observations] == ["euro_top_tech", "euro_top_tech"]
     assert observations[0].company_name == "Airbnb"
@@ -544,16 +540,14 @@ def test_euro_top_tech_importer_keeps_loaded_rows_when_later_page_is_throttled(
     }
     calls = 0
 
-    def fake_fetch_json(url: str, *, timeout_seconds: float) -> dict:
+    def fake_fetch_json(url: str) -> dict:
         nonlocal calls
         calls += 1
         if calls == 1:
             return payload
         raise RuntimeError("too many requests")
 
-    monkeypatch.setattr(sqlite_market_repository, "_fetch_json", fake_fetch_json)
-
-    observations = load_euro_top_tech_observations(max_pages=2)
+    observations = load_euro_top_tech_observations(max_pages=2, http=fake_fetch_json)
 
     assert calls == 2
     assert len(observations) == 1

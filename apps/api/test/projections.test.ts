@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
+import { ensureProjectionTables } from "../src/projections.js";
 import { buildApp } from "../src/server.js";
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
@@ -487,6 +489,244 @@ function insertCompensationRows(dbPath: string): void {
   );
   db.close();
 }
+
+// Source tables the career evidence map reads, plus the soft-delete/hidden
+// lifecycle tables owned by the TS write-model. Mirrors the inline schema of
+// the evidence-map projection test so the deleted/hidden regression fixture can
+// seed canonical rows.
+function createEvidenceMapSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE candidate_profile_experience_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      date_range TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      company TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, entry_id)
+    );
+    CREATE TABLE candidate_profile_achievement_evidence (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      evidence_index INTEGER NOT NULL,
+      evidence_id TEXT NOT NULL DEFAULT '',
+      source_text TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      tools_json TEXT NOT NULL DEFAULT '[]',
+      metrics_json TEXT NOT NULL DEFAULT '[]',
+      outcome TEXT NOT NULL DEFAULT '',
+      seniority_signal TEXT NOT NULL DEFAULT '',
+      evidence_strength TEXT NOT NULL DEFAULT 'supported',
+      claim_confidence REAL NOT NULL DEFAULT 0,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
+    );
+    CREATE TABLE candidate_profile_skill_categories (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, category_id)
+    );
+    CREATE TABLE candidate_profile_skill_items (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      item_index INTEGER NOT NULL,
+      item_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+    );
+    CREATE TABLE job_materials (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE job_materials_artifacts (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_type TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      path TEXT NOT NULL,
+      render_format TEXT NOT NULL,
+      size_bytes INTEGER,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      superseded_at TEXT,
+      PRIMARY KEY (job_url, generation, artifact_type)
+    );
+    CREATE TABLE job_bullet_provenance (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      bullet_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      source_id TEXT,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL,
+      control TEXT NOT NULL,
+      rationale TEXT NOT NULL DEFAULT '',
+      generated_text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      coverage_json TEXT,
+      voice_json TEXT,
+      PRIMARY KEY (job_url, generation, bullet_id)
+    );
+    CREATE TABLE job_requirement_fit_reports (
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      employer_analysis_generation INTEGER NOT NULL,
+      profile_snapshot_version INTEGER NOT NULL,
+      scoring_policy_version INTEGER NOT NULL,
+      formula_version TEXT NOT NULL,
+      resolved_fit_score INTEGER,
+      fit_band TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, score_version, tenant_id)
+    );
+    CREATE TABLE job_requirement_fit_items (
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      requirement_id TEXT NOT NULL,
+      requirement_text TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      weight REAL NOT NULL,
+      job_evidence_span TEXT NOT NULL,
+      fit_json TEXT NOT NULL,
+      contribution_json TEXT NOT NULL,
+      tailoring_json TEXT NOT NULL,
+      artifact_coverage_json TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+    );
+    CREATE TABLE jobhunter_deleted_jobs (
+      job_url TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      reason TEXT,
+      restored_at TEXT
+    );
+    CREATE TABLE jobhunter_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT
+    );
+  `);
+}
+
+describe("projection schema upgrades", () => {
+  it("adds workflow-run projection columns to existing legacy tables", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      const db = new Database(dbPath);
+      try {
+        db.exec(`
+          CREATE TABLE workflow_run_projections (
+            workflow_id            TEXT PRIMARY KEY,
+            run_id                 TEXT NOT NULL DEFAULT '',
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            workflow_type          TEXT NOT NULL DEFAULT 'pipeline',
+            job_id                 TEXT NOT NULL DEFAULT '',
+            title                  TEXT NOT NULL DEFAULT '',
+            company                TEXT NOT NULL DEFAULT '',
+            status                 TEXT NOT NULL DEFAULT 'starting',
+            result                 TEXT,
+            dry_run                INTEGER NOT NULL DEFAULT 0,
+            model                  TEXT,
+            started_at             TEXT,
+            finished_at            TEXT,
+            duration_ms            INTEGER,
+            stages_json            TEXT NOT NULL DEFAULT '[]',
+            events_json            TEXT NOT NULL DEFAULT '[]'
+          );
+        `);
+
+        expect(ensureProjectionTables(db)).toBe(true);
+
+        const columns = new Set(
+          (db.prepare("PRAGMA table_info(workflow_run_projections)").all() as Array<{ name: string }>).map(
+            (row) => row.name,
+          ),
+        );
+        expect([...columns]).toEqual(
+          expect.arrayContaining([
+            "input_summary_json",
+            "error_code",
+            "error_message",
+            "retryable",
+            "temporal_run_id",
+          ]),
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("tolerates a concurrent process adding a column between check and ALTER", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      const db = new Database(dbPath);
+      try {
+        ensureProjectionTables(db);
+
+        // Simulate the Python worker winning the check-then-ALTER race on the
+        // shared SQLite file: the pre-ALTER check sees the column as missing,
+        // but the ALTER hits a table that already has it.
+        const realPrepare = db.prepare.bind(db);
+        const realExec = db.exec.bind(db);
+        let staleCheckArmed = true;
+        let duplicateAlterAttempted = false;
+        Reflect.set(db, "prepare", (sql: string) => {
+          const statement = realPrepare(sql);
+          if (staleCheckArmed && sql.includes("table_info(workflow_run_projections)")) {
+            return {
+              all: () =>
+                (statement.all() as Array<{ name: string }>).filter(
+                  (row) => row.name !== "input_summary_json",
+                ),
+            };
+          }
+          return statement;
+        });
+        Reflect.set(db, "exec", (sql: string) => {
+          if (sql.includes("ADD COLUMN input_summary_json")) {
+            staleCheckArmed = false;
+            duplicateAlterAttempted = true;
+          }
+          return realExec(sql);
+        });
+
+        expect(() => ensureProjectionTables(db)).not.toThrow();
+        expect(duplicateAlterAttempted).toBe(true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
 
 describe("apply_run_projections without legacy apply_runs table", () => {
   it("dashboard summary surfaces the projection row when apply_runs is absent", async () => {
@@ -2219,6 +2459,479 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects the career evidence map from profile evidence, provenance, and requirement fit", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE candidate_profile_experience_entries (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          position_index INTEGER NOT NULL,
+          date_range TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '',
+          company TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (tenant_id, profile_id, entry_id)
+        );
+        CREATE TABLE candidate_profile_achievement_evidence (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          evidence_index INTEGER NOT NULL,
+          evidence_id TEXT NOT NULL DEFAULT '',
+          source_text TEXT NOT NULL DEFAULT '',
+          scope TEXT NOT NULL DEFAULT '',
+          action TEXT NOT NULL DEFAULT '',
+          tools_json TEXT NOT NULL DEFAULT '[]',
+          metrics_json TEXT NOT NULL DEFAULT '[]',
+          outcome TEXT NOT NULL DEFAULT '',
+          seniority_signal TEXT NOT NULL DEFAULT '',
+          evidence_strength TEXT NOT NULL DEFAULT 'supported',
+          claim_confidence REAL NOT NULL DEFAULT 0,
+          user_confirmed INTEGER NOT NULL DEFAULT 0,
+          tags_json TEXT NOT NULL DEFAULT '[]',
+          PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
+        );
+        CREATE TABLE candidate_profile_skill_categories (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          category_id TEXT NOT NULL,
+          position_index INTEGER NOT NULL,
+          label TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (tenant_id, profile_id, category_id)
+        );
+        CREATE TABLE candidate_profile_skill_items (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          category_id TEXT NOT NULL,
+          item_index INTEGER NOT NULL,
+          item_text TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+        );
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        CREATE TABLE job_bullet_provenance (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          bullet_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          artifact_id TEXT NOT NULL,
+          section TEXT NOT NULL,
+          source_id TEXT,
+          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+          requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+          matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+          transform_type TEXT NOT NULL,
+          control TEXT NOT NULL,
+          rationale TEXT NOT NULL DEFAULT '',
+          generated_text TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          coverage_json TEXT,
+          voice_json TEXT,
+          PRIMARY KEY (job_url, generation, bullet_id)
+        );
+        CREATE TABLE job_requirement_fit_reports (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          employer_analysis_generation INTEGER NOT NULL,
+          profile_snapshot_version INTEGER NOT NULL,
+          scoring_policy_version INTEGER NOT NULL,
+          formula_version TEXT NOT NULL,
+          resolved_fit_score INTEGER,
+          fit_band TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          summary_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, score_version, tenant_id)
+        );
+        CREATE TABLE job_requirement_fit_items (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          requirement_id TEXT NOT NULL,
+          requirement_text TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          weight REAL NOT NULL,
+          job_evidence_span TEXT NOT NULL,
+          fit_json TEXT NOT NULL,
+          contribution_json TEXT NOT NULL,
+          tailoring_json TEXT NOT NULL,
+          artifact_coverage_json TEXT,
+          position INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+        );
+      `);
+      db.prepare(
+        `INSERT INTO candidate_profile_experience_entries
+         (tenant_id, profile_id, entry_id, position_index, date_range, title, company, location)
+         VALUES ('local', 'default', 'exp-platform', 0, '2024-2025', 'Senior Engineer', 'Acme', 'Remote')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_achievement_evidence (
+          tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
+          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          evidence_strength, claim_confidence, user_confirmed, tags_json
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+      ).run(
+        "Led a platform migration that reduced latency by 40%.",
+        "Platform migration",
+        "Led migration",
+        JSON.stringify(["Python", "Postgres"]),
+        JSON.stringify(["40% latency reduction"]),
+        "Reduced latency",
+        JSON.stringify(["migration"]),
+      );
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_categories
+         (tenant_id, profile_id, category_id, position_index, label)
+         VALUES ('local', 'default', 'backend', 0, 'Backend')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_items
+         (tenant_id, profile_id, category_id, item_index, item_text)
+         VALUES ('local', 'default', 'backend', 0, 'Python')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO job_materials
+         (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+      ).run(jobUrl);
+      db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved', '/tmp/resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+      ).run(jobUrl, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }));
+      db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+          control, rationale, generated_text, position, created_at, coverage_json
+        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1', 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', 'Led migration and reduced latency 40%.', 0, '2026-07-05T12:10:00Z', ?)`,
+      ).run(
+        jobUrl,
+        JSON.stringify(["ev_platform"]),
+        JSON.stringify(["req-platform"]),
+        JSON.stringify(["latency"]),
+        JSON.stringify({ covered: ["Python"], declared: [], missing: ["Kubernetes"] }),
+      );
+      db.prepare(
+        `INSERT INTO job_requirement_fit_reports (
+          job_url, score_version, tenant_id, employer_analysis_generation,
+          profile_snapshot_version, scoring_policy_version, formula_version,
+          resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+      ).run(jobUrl, JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }));
+      const insertFitItem = db.prepare(
+        `INSERT INTO job_requirement_fit_items (
+          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tier, weight, job_evidence_span, fit_json, contribution_json,
+          tailoring_json, artifact_coverage_json, position
+        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+      );
+      insertFitItem.run(
+        jobUrl,
+        "req-platform",
+        "Own platform migrations",
+        0.8,
+        "platform migrations",
+        JSON.stringify({ kind: "matched", evidence_ids: ["ev_platform"], strength: "direct" }),
+        JSON.stringify({ state: "covered", source: "tailored_resume_bullet_provenance", bullet_count: 1, examples: ["Led migration"] }),
+        0,
+      );
+      insertFitItem.run(
+        jobUrl,
+        "req-kubernetes",
+        "Run Kubernetes clusters",
+        0.7,
+        "Kubernetes clusters",
+        JSON.stringify({ kind: "missing", reason: "No Kubernetes profile evidence." }),
+        JSON.stringify({ state: "missing_from_profile", source: "tailored_resume_bullet_provenance", bullet_count: 0, examples: [] }),
+        1,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(response.statusCode, response.body).toBe(200);
+        const body = response.json();
+        const evidenceEntry = body.entries.find((entry: { evidenceId: string }) => entry.evidenceId === "ev_platform");
+        expect(evidenceEntry).toBeTruthy();
+        expect(evidenceEntry.resumeUsages).toMatchObject([
+          { jobKey: jobUrl, artifactId: "artifact-resume-1", bulletId: "experience:exp-platform#0" },
+        ]);
+        expect(evidenceEntry.requirementUsages).toMatchObject([
+          { jobKey: jobUrl, scoreVersion: 2, requirementId: "req-platform", requirementFitKind: "matched" },
+        ]);
+        expect(evidenceEntry.freshness).toMatchObject({
+          evidenceDateRange: "2024-2025",
+          evidenceStrength: "verified",
+          userConfirmed: true,
+          lastUsedAt: "2026-07-05T12:10:00Z",
+        });
+        expect(body.gaps).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "missing_requirement",
+              requirementId: "req-kubernetes",
+              jobRefs: [expect.objectContaining({ jobKey: jobUrl, scoreVersion: 2 })],
+            }),
+            expect.objectContaining({
+              kind: "missing_skill",
+              demandedSkill: "Kubernetes",
+              jobRefs: [expect.objectContaining({ jobKey: jobUrl, artifactId: "artifact-resume-1" })],
+            }),
+          ]),
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("excludes soft-deleted and hidden jobs from the career evidence map", async () => {
+    // Regression for the R5 evidence-usage index: soft delete only writes a
+    // jobhunter_deleted_jobs tombstone (and hide only writes jobhunter_hidden_jobs),
+    // leaving the job_bullet_provenance / job_requirement_fit_items /
+    // artifact_list_projections rows in place. Those rows must not re-surface a
+    // removed job's title, employer, generated-text preview, usages, or gaps.
+    const { dbPath, cleanup } = withTempDb();
+    const activeUrl = "https://example.com/jobs/active-role";
+    const deletedUrl = "https://example.com/jobs/deleted-role";
+    const hiddenUrl = "https://example.com/jobs/hidden-role";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      createEvidenceMapSchema(db);
+      // Shared profile evidence + skill that every job's tailoring references.
+      db.prepare(
+        `INSERT INTO candidate_profile_experience_entries
+         (tenant_id, profile_id, entry_id, position_index, date_range, title, company, location)
+         VALUES ('local', 'default', 'exp-platform', 0, '2024-2025', 'Senior Engineer', 'Acme', 'Remote')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_achievement_evidence (
+          tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
+          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          evidence_strength, claim_confidence, user_confirmed, tags_json
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+      ).run(
+        "Led a platform migration that reduced latency by 40%.",
+        "Platform migration",
+        "Led migration",
+        JSON.stringify(["Python", "Postgres"]),
+        JSON.stringify(["40% latency reduction"]),
+        "Reduced latency",
+        JSON.stringify(["migration"]),
+      );
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_categories
+         (tenant_id, profile_id, category_id, position_index, label)
+         VALUES ('local', 'default', 'backend', 0, 'Backend')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO candidate_profile_skill_items
+         (tenant_id, profile_id, category_id, item_index, item_text)
+         VALUES ('local', 'default', 'backend', 0, 'Python')`,
+      ).run();
+
+      const insertJob = db.prepare("INSERT INTO jobs (url, title, company, site) VALUES (?, ?, ?, ?)");
+      const insertMaterials = db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+      );
+      const insertArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+      );
+      const insertProvenance = db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+          control, rationale, generated_text, position, created_at, coverage_json
+        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', ?, 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', ?, 0, ?, ?)`,
+      );
+      const insertReport = db.prepare(
+        `INSERT INTO job_requirement_fit_reports (
+          job_url, score_version, tenant_id, employer_analysis_generation,
+          profile_snapshot_version, scoring_policy_version, formula_version,
+          resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+      );
+      const insertFitItem = db.prepare(
+        `INSERT INTO job_requirement_fit_items (
+          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tier, weight, job_evidence_span, fit_json, contribution_json,
+          tailoring_json, artifact_coverage_json, position
+        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+      );
+
+      const seedJobEvidence = (
+        jobUrl: string,
+        opts: { title: string; company: string; artifactId: string; generatedText: string; createdAt: string },
+      ): void => {
+        insertJob.run(jobUrl, opts.title, opts.company, "example.com");
+        insertMaterials.run(jobUrl);
+        insertArtifact.run(
+          jobUrl,
+          opts.artifactId,
+          `/tmp/${opts.artifactId}.txt`,
+          JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }),
+        );
+        insertProvenance.run(
+          jobUrl,
+          opts.artifactId,
+          JSON.stringify(["ev_platform"]),
+          JSON.stringify(["req-platform"]),
+          JSON.stringify(["latency"]),
+          opts.generatedText,
+          opts.createdAt,
+          JSON.stringify({ covered: ["Python"], declared: [], missing: ["Kubernetes"] }),
+        );
+        insertReport.run(
+          jobUrl,
+          JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }),
+        );
+        insertFitItem.run(
+          jobUrl,
+          "req-platform",
+          "Own platform migrations",
+          0.8,
+          "platform migrations",
+          JSON.stringify({ kind: "matched", evidence_ids: ["ev_platform"], strength: "direct" }),
+          JSON.stringify({ state: "covered", source: "tailored_resume_bullet_provenance", bullet_count: 1, examples: ["Led migration"] }),
+          0,
+        );
+        insertFitItem.run(
+          jobUrl,
+          "req-kubernetes",
+          "Run Kubernetes clusters",
+          0.7,
+          "Kubernetes clusters",
+          JSON.stringify({ kind: "missing", reason: "No Kubernetes profile evidence." }),
+          JSON.stringify({ state: "missing_from_profile", source: "tailored_resume_bullet_provenance", bullet_count: 0, examples: [] }),
+          1,
+        );
+      };
+
+      seedJobEvidence(activeUrl, {
+        title: "Active Platform Role",
+        company: "ActiveCorp",
+        artifactId: "artifact-active",
+        generatedText: "ACTIVE-bullet reduced latency 40%.",
+        createdAt: "2026-07-05T12:10:00Z",
+      });
+      seedJobEvidence(deletedUrl, {
+        title: "Deleted Platform Role",
+        company: "DeletedCorp",
+        artifactId: "artifact-deleted",
+        generatedText: "DELETED-bullet should never surface.",
+        createdAt: "2026-07-04T12:10:00Z",
+      });
+      seedJobEvidence(hiddenUrl, {
+        title: "Hidden Platform Role",
+        company: "HiddenCorp",
+        artifactId: "artifact-hidden",
+        generatedText: "HIDDEN-bullet should never surface.",
+        createdAt: "2026-07-03T12:10:00Z",
+      });
+
+      db.prepare(
+        `INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+         VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)`,
+      ).run(deletedUrl);
+      db.prepare(
+        `INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+         VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
+      ).run(hiddenUrl);
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(response.statusCode, response.body).toBe(200);
+        const body = response.json();
+
+        const referencedJobKeys = new Set<string>();
+        for (const entry of body.entries as Array<{
+          resumeUsages: Array<{ jobKey: string }>;
+          requirementUsages: Array<{ jobKey: string }>;
+          coverageUsages: Array<{ jobKey: string }>;
+        }>) {
+          for (const usage of [...entry.resumeUsages, ...entry.requirementUsages, ...entry.coverageUsages]) {
+            referencedJobKeys.add(usage.jobKey);
+          }
+        }
+        for (const gap of body.gaps as Array<{ jobRefs: Array<{ jobKey: string }> }>) {
+          for (const ref of gap.jobRefs) referencedJobKeys.add(ref.jobKey);
+        }
+
+        // The live job still populates the map (positive control) ...
+        expect(referencedJobKeys.has(activeUrl)).toBe(true);
+        // ... while the soft-deleted and hidden jobs are fully excluded.
+        expect(referencedJobKeys.has(deletedUrl)).toBe(false);
+        expect(referencedJobKeys.has(hiddenUrl)).toBe(false);
+
+        // No removed job's title, employer, or generated-text preview may leak
+        // through any evidence field.
+        const serialized = JSON.stringify(body);
+        for (const leaked of [
+          "Deleted Platform Role",
+          "DeletedCorp",
+          "DELETED-bullet",
+          "Hidden Platform Role",
+          "HiddenCorp",
+          "HIDDEN-bullet",
+        ]) {
+          expect(serialized).not.toContain(leaked);
+        }
+        expect(serialized).toContain("ACTIVE-bullet");
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("serves canonical per-bullet provenance from projection rows (TS↔Python parity)", async () => {
     // AUDIT-02-style cross-runtime parity for Phase 2: seed the canonical
     // ``job_bullet_provenance`` rows exactly as the Python repository writes
@@ -2464,18 +3177,53 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
          VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
       ).run(jobUrl);
+      db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 2, 'local', 'complete', '2026-06-09T12:00:00+00:00', '2026-06-09T12:10:00+00:00')`,
+      ).run(jobUrl);
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
           job_url, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
       );
-      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
-      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "tailored_resume",
+        "resume-1",
+        "/tmp/resume.txt",
+        "text",
+        10,
+        completeMetadata,
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "resume_pdf",
+        "resume-pdf-1",
+        "/tmp/resume.pdf",
+        "pdf",
+        20,
+        "{}",
+        "2026-06-08T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        2,
+        "tailored_resume",
+        "resume-2",
+        "/tmp/resume-v2.txt",
+        "text",
+        12,
+        completeMetadata,
+        "2026-06-09T12:05:00+00:00",
+      );
 
       // The set-level coverage + voice, denormalised onto every row (the Python
       // repo writes the SAME value on each row of the generation).
-      const coverageJson = JSON.stringify({
+      const coverageJsonGen1 = JSON.stringify({
         computed_against: "rendered_text",
         planned: ["latency", "terraform", "python"],
         covered: ["latency"],
@@ -2484,6 +3232,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         covered_by: { latency: "experience:acme_swe#0" },
         declared_by: { terraform: "skills:cloud#0" },
         counts: { planned: 3, covered: 1, declared: 1, missing: 1 },
+      });
+      const coverageJsonGen2 = JSON.stringify({
+        computed_against: "rendered_text",
+        planned: ["latency", "incident response", "python"],
+        covered: ["latency", "incident response"],
+        declared: [],
+        missing: ["python"],
+        covered_by: {
+          latency: "experience:acme_swe#0",
+          "incident response": "experience:incident#0",
+        },
+        declared_by: {},
+        counts: { planned: 3, covered: 2, declared: 0, missing: 1 },
       });
       const voiceJson = JSON.stringify({
         ran: true,
@@ -2499,13 +3260,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           evidence_ids_json, requirement_ids_json, matched_keywords_json,
           transform_type, control, rationale, generated_text, position, created_at,
           coverage_json, voice_json
-        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00', ?, ?)`,
+        ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertProvenance.run(
-        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        jobUrl, 1, "experience:acme_swe#0", "resume-1", "experience", "acme_swe",
         JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
         "voice", "rephrase_allowed", "Voiced bullet.",
-        "Owned the API and cut latency 40%.", 0, coverageJson, voiceJson,
+        "Owned the API and cut latency 40%.", 0, "2026-06-08T12:10:00+00:00", coverageJsonGen1, voiceJson,
+      );
+      insertProvenance.run(
+        jobUrl, 2, "experience:incident#0", "resume-2", "experience", "incident_response",
+        JSON.stringify(["ev_incident"]), JSON.stringify(["req_incident"]), JSON.stringify(["incident response"]),
+        "voice", "rephrase_allowed", "Voiced bullet.",
+        "Owned incident response drills.", 0, "2026-06-09T12:10:00+00:00", coverageJsonGen2, voiceJson,
       );
       db.close();
 
@@ -2535,11 +3302,22 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         // The voiced bullet is served with transformType "voice".
         expect(explanation.bulletProvenance[0].transformType).toBe("voice");
 
-        // The PDF artifact resolves coverage + voice from the sibling text row.
+        // Historical and current text artifacts each keep their own generation's
+        // canonical coverage row.
+        const resume2Res = await app.inject({ method: "GET", url: "/v1/artifacts/resume-2" });
+        expect(resume2Res.statusCode, resume2Res.body).toBe(200);
+        const resume2Explanation = resume2Res.json().tailoringExplanation;
+        expect(resume2Explanation.coverageAudit?.covered).toEqual(["latency", "incident response"]);
+        expect(resume2Explanation.coverageAudit?.declared).toEqual([]);
+        expect(resume2Explanation.coverageAudit?.missing).toEqual(["python"]);
+
+        // The PDF artifact resolves coverage + voice from its same-generation
+        // sibling text row, not the newer generation.
         const pdfRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-pdf-1" });
         expect(pdfRes.statusCode, pdfRes.body).toBe(200);
         const pdfExplanation = pdfRes.json().tailoringExplanation;
         expect(pdfExplanation.coverageAudit?.covered).toEqual(["latency"]);
+        expect(pdfExplanation.coverageAudit?.declared).toEqual(["terraform"]);
         expect(pdfExplanation.voicePass?.accepted).toBe(true);
       } finally {
         await app.close();
@@ -2853,6 +3631,68 @@ describe("dashboard outcome-conversion projection", () => {
         occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
         PRIMARY KEY (tenant_id, outcome_id)
       );
+      CREATE TABLE application_outcome_suggestions (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        suggestion_id TEXT NOT NULL,
+        job_key TEXT NOT NULL,
+        evidence_id TEXT,
+        suggested_kind TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0,
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decision TEXT,
+        decision_reason TEXT,
+        decided_outcome_id TEXT,
+        PRIMARY KEY (tenant_id, suggestion_id)
+      );
+      CREATE TABLE job_materials (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_validation_json TEXT,
+        last_verdict_json TEXT,
+        metadata_json TEXT,
+        PRIMARY KEY (job_url, generation)
+      );
+      CREATE TABLE job_materials_artifacts (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        artifact_type TEXT NOT NULL,
+        artifact_id TEXT,
+        status TEXT NOT NULL,
+        path TEXT NOT NULL,
+        render_format TEXT NOT NULL DEFAULT 'text',
+        size_bytes INTEGER,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE job_requirement_fit_reports (
+        job_url TEXT NOT NULL, score_version INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        employer_analysis_generation INTEGER NOT NULL DEFAULT 1,
+        profile_snapshot_version INTEGER NOT NULL DEFAULT 1,
+        scoring_policy_version INTEGER NOT NULL DEFAULT 1,
+        formula_version TEXT NOT NULL DEFAULT 'test',
+        resolved_fit_score INTEGER,
+        fit_band TEXT NOT NULL,
+        confidence TEXT NOT NULL DEFAULT 'medium',
+        summary_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, score_version, tenant_id)
+      );
+      CREATE TABLE apply_run_projections (
+        run_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL, job_title TEXT NOT NULL DEFAULT '',
+        job_employer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+        result TEXT, dry_run INTEGER NOT NULL DEFAULT 0,
+        worker_id INTEGER, model TEXT, started_at TEXT, finished_at TEXT,
+        duration_ms INTEGER, events_json TEXT NOT NULL DEFAULT '[]'
+      );
     `);
     db.close();
   }
@@ -2861,8 +3701,13 @@ describe("dashboard outcome-conversion projection", () => {
     url: string;
     site: string;
     fitScore: number | null;
+    fitBand?: "excellent" | "strong" | "plausible" | "stretch" | "poor";
     applied: boolean;
+    applyRun?: { status: string; dryRun?: boolean };
+    manualMarked?: boolean;
     outcomes?: string[];
+    template?: { id: string; name: string };
+    policyVersion?: number;
   }
 
   function seedJobs(dbPath: string, jobs: SeedJob[]): void {
@@ -2875,6 +3720,35 @@ describe("dashboard outcome-conversion projection", () => {
       `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
        VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
     );
+    const insertFitReport = db.prepare(
+      `INSERT INTO job_requirement_fit_reports (
+         job_url, score_version, tenant_id, employer_analysis_generation, profile_snapshot_version,
+         scoring_policy_version, formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at
+       ) VALUES (@job_url, 1, 'local', 1, 1, 1, 'test', @resolved_fit_score, @fit_band, 'medium', '{}', @at)`,
+    );
+    const insertApplyRun = db.prepare(
+      `INSERT INTO apply_run_projections (
+         run_id, tenant_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at, events_json
+       ) VALUES (@run_id, 'local', @job_id, 'Engineer', 'Example', @status, @result, @dry_run, @started_at, @finished_at, '[]')`,
+    );
+    const insertEvent = db.prepare(
+      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES (@job_url, 'apply', @event_type, 'info', @message, @at, '{}')`,
+    );
+    const insertMaterial = db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+       ) VALUES (@job_url, @generation, 'local', 'resume_approved', @created_at, @created_at, @metadata_json)`,
+    );
+    const insertMaterialArtifact = db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (
+         @job_url, 1, 'tailored_resume', @artifact_id, 'approved', @path,
+         'text', 12, @metadata_json, @created_at
+       )`,
+    );
     for (const job of jobs) {
       insertJob.run({
         url: job.url,
@@ -2885,6 +3759,61 @@ describe("dashboard outcome-conversion projection", () => {
         applied_at: job.applied ? "2026-06-01T12:00:00+00:00" : null,
         discovered_at: "2026-05-20T12:00:00+00:00",
       });
+      if (job.fitBand) {
+        insertFitReport.run({
+          job_url: job.url,
+          resolved_fit_score: job.fitScore,
+          fit_band: job.fitBand,
+          at: "2026-05-25T12:00:00+00:00",
+        });
+      }
+      if (job.applyRun) {
+        insertApplyRun.run({
+          run_id: `${job.url}-run`,
+          job_id: job.url,
+          status: job.applyRun.status,
+          result: job.applyRun.status === "succeeded" ? "applied" : job.applyRun.status,
+          dry_run: job.applyRun.dryRun ? 1 : 0,
+          started_at: "2026-06-01T11:55:00+00:00",
+          finished_at: job.applyRun.status === "starting" ? null : "2026-06-01T12:00:00+00:00",
+        });
+      }
+      if (job.manualMarked) {
+        insertEvent.run({
+          job_url: job.url,
+          event_type: "ApplicationManuallyMarked",
+          message: "Job marked applied from test.",
+          at: "2026-06-01T12:00:00+00:00",
+        });
+      }
+      if (job.template || job.policyVersion !== undefined) {
+        const metadata = JSON.stringify({
+          tailoring_policy_version: job.policyVersion ?? null,
+          resume_template: job.template
+            ? {
+                templateId: job.template.id,
+                templateVersionId: `${job.template.id}:v1`,
+                templateVersionNumber: 1,
+                templateName: job.template.name,
+                templateHash: `hash:${job.template.id}`,
+                assignmentSource: "job_override",
+              }
+            : undefined,
+        });
+        insertMaterial.run({
+          job_url: job.url,
+          generation: 1,
+          metadata_json: metadata,
+          created_at: "2026-06-01T12:00:00+00:00",
+        });
+        insertMaterialArtifact.run({
+          job_url: job.url,
+          artifact_id: `${job.url}-resume`,
+          path: `/tmp/${encodeURIComponent(job.url)}.txt`,
+          metadata_json: metadata,
+          created_at: "2026-06-01T12:00:00+00:00",
+        });
+      }
       for (const kind of job.outcomes ?? []) {
         insertOutcome.run({
           outcome_id: `${job.url}-${kind}`,
@@ -2897,14 +3826,79 @@ describe("dashboard outcome-conversion projection", () => {
     db.close();
   }
 
+  function seedAcceptedReplacementResume(dbPath: string, jobUrl: string): void {
+    const db = new Database(dbPath);
+    db.prepare(
+      `INSERT INTO job_materials (
+         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+       ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)`,
+    ).run(
+      jobUrl,
+      "2026-06-02T12:00:00+00:00",
+      "2026-06-02T12:00:00+00:00",
+      JSON.stringify({
+        source: "resume_review_draft",
+        base_generation: 1,
+      }),
+    );
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 14, ?, ?)`,
+    ).run(
+      jobUrl,
+      `${jobUrl}-replacement-resume`,
+      `/tmp/${encodeURIComponent(jobUrl)}-replacement.txt`,
+      JSON.stringify({
+        source: "resume_review_draft",
+        base_generation: 1,
+        base_resume_text_artifact_id: `${jobUrl}-resume`,
+      }),
+      "2026-06-02T12:00:00+00:00",
+    );
+    db.close();
+  }
+
+  function seedSuggestions(dbPath: string, statuses: string[]): void {
+    const db = new Database(dbPath);
+    const insertSuggestion = db.prepare(
+      `INSERT INTO application_outcome_suggestions (
+         tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+         status, created_at, decided_at, decision
+       ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+         @status, @created_at, @decided_at, @decision)`,
+    );
+    statuses.forEach((status, index) => {
+      insertSuggestion.run({
+        suggestion_id: `suggestion-${index}`,
+        job_key: `https://example.com/suggestion-${index}`,
+        status,
+        created_at: "2026-06-02T12:00:00+00:00",
+        decided_at: "2026-06-02T12:05:00+00:00",
+        decision: status,
+      });
+    });
+    db.close();
+  }
+
   it("materialises the funnel conversion by source and score band", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
       seedConversionDb(dbPath);
+      // Each asserted bucket clears MIN_CONVERSION_SAMPLE (5) so the read model
+      // actually computes rates instead of suppressing them.
       seedJobs(dbPath, [
-        { url: "https://example.com/li-a", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
-        { url: "https://example.com/li-b", site: "linkedin", fitScore: 8, applied: true },
-        { url: "https://example.com/gh-a", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["offer"] },
+        { url: "https://example.com/li-1", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/li-2", site: "linkedin", fitScore: 8, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/li-3", site: "linkedin", fitScore: 8, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/li-4", site: "linkedin", fitScore: 8, applied: true },
+        { url: "https://example.com/li-5", site: "linkedin", fitScore: 8, applied: true },
+        { url: "https://example.com/gh-1", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["offer"] },
+        { url: "https://example.com/gh-2", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["interview"] },
+        { url: "https://example.com/gh-3", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["rejection"] },
+        { url: "https://example.com/gh-4", site: "greenhouse", fitScore: 6, applied: true },
+        { url: "https://example.com/gh-5", site: "greenhouse", fitScore: 6, applied: true },
       ]);
       const app = buildApp({
         dbPath,
@@ -2916,25 +3910,240 @@ describe("dashboard outcome-conversion projection", () => {
         const conversion = res.json().conversion;
 
         expect(conversion.totals).toEqual({
-          applied: 3, reply: 2, interview: 2, offer: 1, rejection: 0,
-          replyRate: 0.6667, interviewRate: 0.6667, offerRate: 0.3333, rejectionRate: 0,
+          applied: 10, reply: 6, interview: 4, offer: 1, rejection: 1,
+          replyRate: 0.6, interviewRate: 0.4, offerRate: 0.1, rejectionRate: 0.1,
           costPerInterview: null,
         });
         const bySource = Object.fromEntries(
           conversion.bySource.map((g: { source: string }) => [g.source, g]),
         );
         expect(bySource.linkedin).toMatchObject({
-          applied: 2, reply: 1, interview: 1, offer: 0, rejection: 0,
-          replyRate: 0.5, interviewRate: 0.5,
+          applied: 5, reply: 3, interview: 2, offer: 0, rejection: 0,
+          replyRate: 0.6, interviewRate: 0.4,
         });
         expect(bySource.greenhouse).toMatchObject({
-          applied: 1, reply: 1, interview: 1, offer: 1, offerRate: 1, costPerInterview: null,
+          applied: 5, reply: 3, interview: 2, offer: 1, rejection: 1,
+          replyRate: 0.6, interviewRate: 0.4, offerRate: 0.2, rejectionRate: 0.2,
         });
         const byBand = Object.fromEntries(
           conversion.byBand.map((g: { band: string }) => [g.band, g]),
         );
-        expect(byBand.strong).toMatchObject({ applied: 2, reply: 1, interview: 1 });
-        expect(byBand.moderate).toMatchObject({ applied: 1, offer: 1 });
+        expect(byBand.strong).toMatchObject({ applied: 5, reply: 3, interview: 2, replyRate: 0.6 });
+        expect(byBand.moderate).toMatchObject({ applied: 5, offer: 1, offerRate: 0.2 });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("suppresses rates below the minimum sample size while keeping raw counts", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      // Three sources / bands at applied sample sizes 1, 4 (MIN - 1) and 5 (MIN).
+      seedJobs(dbPath, [
+        // n = 1: the exact defect scenario — one application, one reply.
+        { url: "https://example.com/solo", site: "linkedin", fitScore: 8, applied: true, outcomes: ["recruiter_reply"] },
+        // n = 4: MIN_CONVERSION_SAMPLE - 1, still suppressed.
+        { url: "https://example.com/four-1", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/four-2", site: "greenhouse", fitScore: 6, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/four-3", site: "greenhouse", fitScore: 6, applied: true },
+        { url: "https://example.com/four-4", site: "greenhouse", fitScore: 6, applied: true },
+        // n = 5: MIN_CONVERSION_SAMPLE, rates become visible.
+        { url: "https://example.com/five-1", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-2", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-3", site: "lever", fitScore: 4, applied: true, outcomes: ["recruiter_reply"] },
+        { url: "https://example.com/five-4", site: "lever", fitScore: 4, applied: true },
+        { url: "https://example.com/five-5", site: "lever", fitScore: 4, applied: true },
+      ]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const conversion = res.json().conversion;
+
+        const bySource = Object.fromEntries(
+          conversion.bySource.map((g: { source: string }) => [g.source, g]),
+        );
+        // INVARIANT: n = 1 keeps its raw counts but reports NO rate (never 100%).
+        expect(bySource.linkedin).toEqual({
+          source: "linkedin",
+          applied: 1,
+          reply: 1,
+          interview: 0,
+          offer: 0,
+          rejection: 0,
+          replyRate: null,
+          interviewRate: null,
+          offerRate: null,
+          rejectionRate: null,
+          costPerInterview: null,
+        });
+        // Boundary: MIN - 1 stays suppressed, counts still visible.
+        expect(bySource.greenhouse).toMatchObject({ applied: 4, reply: 2, replyRate: null });
+        // Boundary: exactly MIN applications -> rate is computed.
+        expect(bySource.lever).toMatchObject({ applied: 5, reply: 3, replyRate: 0.6 });
+
+        const byBand = Object.fromEntries(
+          conversion.byBand.map((g: { band: string }) => [g.band, g]),
+        );
+        expect(byBand.strong).toMatchObject({ applied: 1, reply: 1, replyRate: null });
+        expect(byBand.weak).toMatchObject({ applied: 5, reply: 3, replyRate: 0.6 });
+
+        // Totals clear the threshold (10 applied) so their rates are still shown.
+        expect(conversion.totals).toMatchObject({ applied: 10, reply: 6, replyRate: 0.6 });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("returns outcome analytics by score band, fit band, and apply mode with gated rates", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      const modernTemplate = { id: "template-modern", name: "Modern compact" };
+      const plainTemplate = { id: "template-plain", name: "Plain ATS" };
+      seedJobs(dbPath, [
+        { url: "https://example.com/manual-1", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-2", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["recruiter_reply"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-3", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, outcomes: ["interview"], template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-4", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/manual-5", site: "linkedin", fitScore: 8, fitBand: "strong", applied: true, manualMarked: true, template: plainTemplate, policyVersion: 4 },
+        { url: "https://example.com/live-1", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-2", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-3", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-4", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/live-5", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: false, applyRun: { status: "succeeded" }, template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/external", site: "lever", fitScore: 4, fitBand: "stretch", applied: true, outcomes: ["applied_confirmation", "recruiter_reply"] },
+        { url: "https://example.com/dry-run", site: "lever", fitScore: 2, fitBand: "poor", applied: false, applyRun: { status: "dry_run_complete", dryRun: true }, outcomes: ["recruiter_reply"] },
+      ]);
+      seedSuggestions(dbPath, ["accepted", "accepted", "accepted", "corrected", "ignored"]);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        const analytics = res.json();
+
+        expect(analytics.minSample).toBe(5);
+        expect(analytics.totals).toMatchObject({ n: 11, applied: 11, reply: 6 });
+        const byScoreBand = Object.fromEntries(
+          analytics.byScoreBand.map((g: { scoreBand: string }) => [g.scoreBand, g]),
+        );
+        expect(byScoreBand.perfect).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byScoreBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byScoreBand.weak).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byFitBand = Object.fromEntries(
+          analytics.byFitBand.map((g: { fitBand: string }) => [g.fitBand, g]),
+        );
+        expect(byFitBand.excellent).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byFitBand.strong).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byFitBand.stretch).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+        expect(byFitBand.poor).toBeUndefined();
+
+        const byApplyMode = Object.fromEntries(
+          analytics.byApplyMode.map((g: { applyMode: string }) => [g.applyMode, g]),
+        );
+        expect(byApplyMode.automated_live).toMatchObject({ n: 5, applied: 5, reply: 2, replyRate: 0.4 });
+        expect(byApplyMode.manual_marked).toMatchObject({ n: 5, applied: 5, reply: 3, replyRate: 0.6 });
+        expect(byApplyMode.external_confirmed).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byTemplate = Object.fromEntries(
+          analytics.byTemplate.map((g: { templateId: string }) => [g.templateId, g]),
+        );
+        expect(byTemplate["template-modern"]).toMatchObject({
+          templateName: "Modern compact",
+          n: 5,
+          applied: 5,
+          reply: 2,
+          replyRate: 0.4,
+        });
+        expect(byTemplate["template-plain"]).toMatchObject({
+          templateName: "Plain ATS",
+          n: 5,
+          applied: 5,
+          reply: 3,
+          replyRate: 0.6,
+        });
+        expect(byTemplate.unreported).toMatchObject({ n: 1, applied: 1, reply: 1, replyRate: null });
+
+        const byPolicy = Object.fromEntries(
+          analytics.byPolicy.map((g: { policyLabel: string }) => [g.policyLabel, g]),
+        );
+        expect(byPolicy["Policy v3"]).toMatchObject({ tailoringPolicyVersion: 3, n: 5, replyRate: 0.4 });
+        expect(byPolicy["Policy v4"]).toMatchObject({ tailoringPolicyVersion: 4, n: 5, replyRate: 0.6 });
+        expect(byPolicy.Unreported).toMatchObject({ tailoringPolicyVersion: null, n: 1, replyRate: null });
+        expect(analytics.timeToResponse).toEqual({ n: 6, medianMinutes: 5760 });
+        expect(analytics.suggestionAccuracy).toEqual({
+          n: 5,
+          decided: 5,
+          accepted: 3,
+          corrected: 1,
+          ignored: 1,
+          acceptanceRate: 0.6,
+        });
+        expect(res.body).not.toContain("note");
+        expect(res.body).not.toContain("body_text");
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps accepted replacement resumes in their base template and policy buckets", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      const modernTemplate = { id: "template-modern", name: "Modern compact" };
+      seedJobs(dbPath, [
+        { url: "https://example.com/replacement-1", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-2", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-3", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-4", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+        { url: "https://example.com/replacement-5", site: "greenhouse", fitScore: 9, fitBand: "excellent", applied: true, outcomes: ["interview"], template: modernTemplate, policyVersion: 3 },
+      ]);
+      for (let index = 1; index <= 5; index += 1) {
+        seedAcceptedReplacementResume(dbPath, `https://example.com/replacement-${index}`);
+      }
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        const analytics = res.json();
+        expect(analytics.byTemplate).toEqual([
+          expect.objectContaining({
+            templateId: "template-modern",
+            templateName: "Modern compact",
+            n: 5,
+            reply: 5,
+            replyRate: 1,
+          }),
+        ]);
+        expect(analytics.byPolicy).toEqual([
+          expect.objectContaining({
+            tailoringPolicyVersion: 3,
+            policyLabel: "Policy v3",
+            n: 5,
+            reply: 5,
+            replyRate: 1,
+          }),
+        ]);
       } finally {
         await app.close();
       }
@@ -2970,6 +4179,26 @@ describe("dashboard outcome-conversion projection", () => {
       }
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("outcome analytics read-only guard", () => {
+  it("does not import the analytics read model into decision-code modules", () => {
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const decisionFiles = [
+      "apps/api/src/write-model.ts",
+      "apps/api/src/application-feedback.ts",
+      "workers/automation/src/jobhunter/domain/scoring/use_cases.py",
+      "workers/automation/src/jobhunter/domain/apply/services.py",
+      "workers/automation/src/jobhunter/apply/launcher.py",
+      "workers/automation/src/jobhunter/pipeline/runner.py",
+    ];
+    for (const file of decisionFiles) {
+      const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      expect(text, file).not.toContain("buildOutcomeAnalyticsSummary");
+      expect(text, file).not.toContain("/v1/analytics/outcomes");
+      expect(text, file).not.toContain("OutcomeAnalyticsSummary");
     }
   });
 });

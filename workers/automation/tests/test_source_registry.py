@@ -9,9 +9,13 @@ import pytest
 
 from jobhunter import config
 from jobhunter.domain.discovery.source_registry import (
+    ATS_API_POLICY,
+    WORKDAY_API_POLICY,
     LocatorPolicy,
     ManualActionReason,
     ManualActionRequired,
+    ManualInterventionPolicy,
+    RobotsPolicy,
     SourceDiscoveryEvidence,
     SourceKind,
     SourceLocationCandidate,
@@ -31,6 +35,57 @@ def test_source_policy_rejects_third_party_control_bypass() -> None:
             allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
             third_party_control_bypass=True,
         )
+
+
+def test_source_policy_defaults_are_conservative_and_fail_closed() -> None:
+    policy = SourcePolicy(
+        policy_id="defaults",
+        allowed_methods=(SourcePolicyMethod.RENDERED_LISTING,),
+    )
+    # Page-rendering sources honor robots by default (fail-closed).
+    assert policy.robots_policy is RobotsPolicy.HONOR
+    assert policy.min_request_interval_seconds > 0
+    assert policy.max_concurrent_requests_per_host >= 1
+    assert policy.max_requests_per_run > 0
+    # max_pages_per_run keeps its result-volume meaning, distinct from the
+    # new outbound-request budget.
+    assert policy.max_pages_per_run == 100
+    assert policy.max_requests_per_run != policy.max_pages_per_run
+
+
+def test_documented_api_policies_are_robots_exempt() -> None:
+    # Documented public JSON APIs rely on the documented-API contract (D2).
+    assert WORKDAY_API_POLICY.robots_policy is RobotsPolicy.EXEMPT_DOCUMENTED_API
+    assert ATS_API_POLICY.robots_policy is RobotsPolicy.EXEMPT_DOCUMENTED_API
+    # Their request budget must not throttle documented pagination.
+    assert WORKDAY_API_POLICY.max_requests_per_run >= WORKDAY_API_POLICY.max_pages_per_run
+    assert ATS_API_POLICY.max_requests_per_run >= ATS_API_POLICY.max_pages_per_run
+
+
+def test_source_policy_rejects_non_positive_politeness_bounds() -> None:
+    with pytest.raises(ValueError, match="min_request_interval_seconds"):
+        SourcePolicy(
+            policy_id="bad-interval",
+            allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
+            min_request_interval_seconds=-1.0,
+        )
+    with pytest.raises(ValueError, match="max_concurrent_requests_per_host"):
+        SourcePolicy(
+            policy_id="bad-concurrency",
+            allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
+            max_concurrent_requests_per_host=0,
+        )
+    with pytest.raises(ValueError, match="max_requests_per_run"):
+        SourcePolicy(
+            policy_id="bad-budget",
+            allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
+            max_requests_per_run=0,
+        )
+
+
+def test_robots_disallowed_is_a_reason_and_default_trigger() -> None:
+    assert ManualActionReason.ROBOTS_DISALLOWED.value == "robots_disallowed"
+    assert ManualActionReason.ROBOTS_DISALLOWED in ManualInterventionPolicy().triggers
 
 
 def test_locator_candidate_decision_thresholds_and_manual_boundary() -> None:

@@ -27,18 +27,24 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
+  DailyDigest,
   DeleteJobRequest,
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  EvidenceMapResponse,
+  GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
   GmailOutcomeScanRequest,
   GmailOutcomeScanResponse,
   EnsureCurrentResumeMaterialsRequest,
   EnsureCurrentResumeMaterialsResponse,
+  ExtensionCapabilityTokenResponse,
   JobResumeTemplateAssignmentRequest,
   JobResumeTemplateAssignmentResponse,
   JobDetail,
@@ -56,6 +62,7 @@ import type {
   MarketCompensationEstimateResponse,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   PostedCompensationFactResponse,
   ProfileConfigResponse,
@@ -157,6 +164,8 @@ export interface HealthResponse {
       taskQueue: string;
       startedAt: string;
       lastSeenAt: string;
+      maxConcurrentActivities: number | null;
+      activityExecutorMaxWorkers: number | null;
     } | null;
   };
 }
@@ -178,6 +187,18 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {
+    return this.get("/v1/analytics/outcomes");
+  }
+
+  digest(): Promise<DailyDigest> {
+    return this.get("/v1/digest");
+  }
+
+  acknowledgeDigest(body: DigestAcknowledgeRequest = {}): Promise<DigestAcknowledgeResponse> {
+    return this.post("/v1/digest/acknowledge", body);
   }
 
   activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {
@@ -430,6 +451,10 @@ export class JobHunterApiClient {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}`);
   }
 
+  evidenceMap(): Promise<EvidenceMapResponse> {
+    return this.get("/v1/evidence-map");
+  }
+
   deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
     return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}`, body);
   }
@@ -592,6 +617,14 @@ export class JobHunterApiClient {
     return this.patch("/v1/settings", body);
   }
 
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.get("/v1/extension/pairing-token");
+  }
+
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
+    return this.post("/v1/extension/pairing-token/rotate", {});
+  }
+
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> {
     return this.post("/v1/pipeline/actions/run-stage", body);
   }
@@ -618,6 +651,13 @@ export class JobHunterApiClient {
 
   generateMaterials(jobKey: string, body: Partial<GenerateMaterialsRequest> = {}): Promise<ActionRunResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-materials`, body);
+  }
+
+  generateInterviewPrep(
+    jobKey: string,
+    body: Partial<GenerateInterviewPrepRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-interview-prep`, body);
   }
 
   applyJob(jobKey: string, body: Partial<ApplyJobRequest> = {}): Promise<ActionRunResponse> {

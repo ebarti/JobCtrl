@@ -3,10 +3,14 @@ import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
-import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import {
+  InterviewReflectionPanel,
+  JobOutcomePanel,
+} from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
+import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
@@ -120,6 +124,14 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 >
                   Open Apply Review
                 </Link>
+                <Link
+                  aria-label={`Open evidence map for ${detail.job.title}`}
+                  className="tab"
+                  search={{ q: "", entry: "", job: detail.job.jobKey }}
+                  to="/evidence-map"
+                >
+                  Evidence map
+                </Link>
               </div>
               <JobAuditTriage detail={detail} />
               <CompensationAuditSection
@@ -163,6 +175,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   analysis={detail.employerAnalysis}
                   className="section job-detail-role-analysis"
                   requirementFitReport={detail.requirementFitReport}
+                />
+                <InterviewPrepPanel
+                  jobId={detail.job.jobKey}
+                  prep={detail.interviewPrep}
+                  reflectionContent={
+                    detail.interviewPrep ? (
+                      <InterviewReflectionPanel
+                        jobId={detail.job.jobKey}
+                        prepGeneration={detail.interviewPrep.generation}
+                      />
+                    ) : null
+                  }
                 />
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />

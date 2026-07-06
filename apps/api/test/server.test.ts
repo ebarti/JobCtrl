@@ -16,6 +16,7 @@ let options: BuildAppOptions;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
+const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -237,6 +238,61 @@ describe("local TypeScript API", () => {
           appDir: tempDir,
           dbPath: options.dbPath,
           taskQueue: "jobhunter-default",
+          maxConcurrentActivities: 8,
+          activityExecutorMaxWorkers: 10,
+        },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports legacy worker heartbeat rows without Temporal concurrency metadata", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS worker_runtime_heartbeats (
+        worker_id TEXT PRIMARY KEY,
+        component TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        hostname TEXT NOT NULL,
+        app_dir TEXT NOT NULL,
+        db_path TEXT NOT NULL,
+        task_queue TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO worker_runtime_heartbeats
+        (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "worker-legacy",
+      "temporal-worker",
+      1234,
+      "localhost",
+      tempDir,
+      options.dbPath,
+      "jobhunter-default",
+      "2026-05-20T10:00:00.000Z",
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      worker: {
+        status: "healthy",
+        heartbeat: {
+          workerId: "worker-legacy",
+          maxConcurrentActivities: null,
+          activityExecutorMaxWorkers: null,
         },
       },
     });
@@ -440,6 +496,231 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("issues and rotates a local extension capability token from loopback settings callers", async () => {
+    const app = buildApp(options);
+    try {
+      const first = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      expect(first.headers["cache-control"]).toBe("no-store");
+      const firstBody = first.json() as { token: string; tokenPath: string; created: boolean };
+      expect(firstBody.token).toHaveLength(43);
+      expect(firstBody.tokenPath).toBe(path.join(tempDir, "extension-capability-token"));
+      expect(fs.readFileSync(firstBody.tokenPath, "utf8").trim()).toBe(firstBody.token);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(firstBody.tokenPath).mode & 0o777).toBe(0o600);
+      }
+
+      const extensionRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(extensionRead.statusCode, extensionRead.body).toBe(403);
+      expect(extensionRead.headers["access-control-allow-origin"]).toBeUndefined();
+
+      const rotated = await app.inject({
+        method: "POST",
+        url: "/v1/extension/pairing-token/rotate",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(rotated.statusCode, rotated.body).toBe(200);
+      const rotatedBody = rotated.json() as { token: string; tokenPath: string };
+      expect(rotatedBody.tokenPath).toBe(firstBody.tokenPath);
+      expect(rotatedBody.token).not.toBe(firstBody.token);
+      expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows CORS preflight only for authenticated extension API routes", async () => {
+    const app = buildApp(options);
+    try {
+      const extensionPreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(extensionPreflight.statusCode, extensionPreflight.body).toBe(204);
+      expect(extensionPreflight.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("authorization");
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("content-type");
+
+      const profilePreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "PATCH",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(profilePreflight.statusCode, profilePreflight.body).toBe(204);
+      expect(profilePreflight.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("trusts valid extension bearer tokens only on extension API routes without weakening CSRF", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+
+      const missingTokenRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/auth/status",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(missingTokenRead.statusCode, missingTokenRead.body).toBe(401);
+      expect(missingTokenRead.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(missingTokenRead.json()).toMatchObject({ ok: false, error: "invalid_extension_capability_token" });
+
+      const extensionStatus = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(extensionStatus.statusCode, extensionStatus.body).toBe(200);
+      expect(extensionStatus.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(extensionStatus.json()).toMatchObject({
+        ok: true,
+        authenticated: true,
+        capabilities: ["capture", "autofill_read"],
+      });
+
+      const invalidToken = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: "Bearer not-the-local-token",
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(invalidToken.statusCode, invalidToken.body).toBe(403);
+      expect(invalidToken.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const foreignOrigin = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: "https://example.com",
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(foreignOrigin.statusCode, foreignOrigin.body).toBe(403);
+      expect(foreignOrigin.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+      const nonExtensionRoute = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: { reason: "must stay blocked" },
+      });
+      expect(nonExtensionRoute.statusCode, nonExtensionRoute.body).toBe(403);
+      expect(nonExtensionRoute.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const db = new Database(options.dbPath);
+      const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
+        apply_status: string | null;
+        applied_at: string | null;
+      };
+      db.close();
+      expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves a token-gated autofill profile without sensitive profile fields", async () => {
+    const app = buildApp(options);
+    try {
+      const profile = {
+        ...validProfileFixture("Jordan Candidate"),
+        personal: {
+          full_name: "Jordan Candidate",
+          email: "jordan@example.com",
+          phone: "+1 555 0100",
+          linkedin_url: "https://linkedin.com/in/jordan",
+          password: "must-not-leave-profile",
+        },
+        work_authorization: {
+          legally_authorized_to_work: "Yes",
+          require_sponsorship: "No",
+          work_permit_type: "Citizen",
+        },
+        availability: {
+          earliest_start_date: "2026-08-01",
+          available_for_full_time: "Yes",
+          available_for_contract: "No",
+        },
+        compensation: {
+          salary_expectation: "150000",
+          salary_currency: "USD",
+        },
+      };
+      const save = await app.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        headers: {
+          origin: "http://127.0.0.1:5173",
+          "sec-fetch-site": "same-site",
+        },
+        payload: { profile },
+      });
+      expect(save.statusCode, save.body).toBe(200);
+
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/extension/autofill/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      const body = response.json() as { profileVersion: number; fields: Array<{ path: string; value: string }> };
+      expect(body.profileVersion).toBeGreaterThan(0);
+      expect(body.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "personal.email", value: "jordan@example.com" }),
+          expect.objectContaining({ path: "personal.phone", value: "+1 555 0100" }),
+          expect.objectContaining({ path: "work_authorization.legally_authorized_to_work", value: "Yes" }),
+          expect.objectContaining({ path: "compensation.salary_expectation", value: "150000" }),
+        ]),
+      );
+      expect(JSON.stringify(body)).not.toContain("must-not-leave-profile");
+      expect(body.fields.some((field) => field.path === "personal.password")).toBe(false);
+      expect(body.fields.some((field) => field.path.startsWith("resume."))).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
     const dispatch = vi.fn(
       async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({ status: "queued" }),
@@ -521,6 +802,88 @@ describe("local TypeScript API", () => {
     expect(row).toMatchObject({ apply_status: null, applied_at: null });
 
     await app.close();
+  });
+
+  it.each([
+    {
+      name: "cross-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "cross-site metadata" },
+      headers: { "sec-fetch-site": "cross-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "same-site browser metadata without loopback origin",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-site metadata" },
+      headers: { "sec-fetch-site": "same-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "loopback same-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "loopback same-site metadata" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-site" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "same-origin browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-origin browser" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "browser navigation metadata",
+      jobUrl: "https://example.com/jobs/blocked-tailor",
+      action: "mark-skipped",
+      payload: { reason: "browser navigation" },
+      headers: { "sec-fetch-site": "none" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+    {
+      name: "headerless curl-style mutation",
+      jobUrl: "https://example.com/jobs/failed-score",
+      action: "mark-skipped",
+      payload: { reason: "CLI" },
+      headers: {},
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+  ])("enforces the unsafe mutation CSRF matrix for $name", async (testCase) => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(testCase.jobUrl)}/actions/${testCase.action}`,
+        headers: testCase.headers,
+        payload: testCase.payload,
+      });
+
+      expect(response.statusCode, response.body).toBe(testCase.expectedStatus);
+      expect(response.json()).toMatchObject(testCase.expectedBody);
+
+      if (testCase.expectedStatus === 403) {
+        const db = new Database(options.dbPath);
+        const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get(testCase.jobUrl) as {
+          apply_status: string | null;
+          applied_at: string | null;
+        };
+        db.close();
+        expect(row).toMatchObject({ apply_status: null, applied_at: null });
+      }
+    } finally {
+      await app.close();
+    }
   });
 
   it("allows loopback browser and no-origin mutation callers", async () => {
@@ -610,6 +973,28 @@ describe("local TypeScript API", () => {
         .get("https://example.com/jobs/ready") as { apply_status: string | null; applied_at: string | null };
       db.close();
       expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps the Host gate mandatory for valid extension bearer tokens", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          host: "evil.example.com",
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "forbidden_host" });
     } finally {
       await app.close();
     }
@@ -752,6 +1137,179 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("marks pipeline progress as not running when the linked workflow terminalized", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Discover workflow started",
+        "2026-07-04T07:57:11.846Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 0,
+            total: 1,
+            percent: 0,
+            currentStep: null,
+            status: "running",
+            message: "Discover workflow started",
+          },
+        }),
+      );
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_run_projections (
+          workflow_id            TEXT PRIMARY KEY,
+          tenant_id              TEXT NOT NULL DEFAULT 'local',
+          workflow_type          TEXT NOT NULL DEFAULT '',
+          status                 TEXT NOT NULL DEFAULT 'in_progress',
+          input_summary_json     TEXT NOT NULL DEFAULT '{}',
+          error_code             TEXT,
+          error_message          TEXT,
+          retryable              INTEGER NOT NULL DEFAULT 0,
+          started_at             TEXT,
+          finished_at            TEXT,
+          duration_ms            INTEGER,
+          temporal_run_id        TEXT,
+          events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+      `);
+      db.prepare(
+        `INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          error_code, error_message, retryable, started_at, finished_at,
+          temporal_run_id, events_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "discover-local",
+        "local",
+        "DiscoverWorkflow",
+        "terminated",
+        JSON.stringify({ limit: 1000 }),
+        "reconciled_not_found",
+        "The reconciler closed this run: its Temporal execution no longer exists on the server.",
+        0,
+        "2026-07-04T07:57:11.751742+00:00",
+        "2026-07-04T11:16:55.314850+00:00",
+        "temporal-run-1",
+        "[]",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress[0]).toMatchObject({
+      stage: "discover",
+      status: "failed",
+      runId: "discover-local",
+      workflowId: "discover-local",
+      percent: 0,
+      completed: 0,
+      total: 1,
+      message: "Workflow terminated: The reconciler closed this run: its Temporal execution no longer exists on the server.",
+      updatedAt: "2026-07-04T11:16:55.314850+00:00",
+    });
+
+    await app.close();
+  });
+
+  it("keeps a live re-run of a reused workflow id running despite a stale terminal projection", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Discover workflow started",
+        "2026-07-04T12:00:00.000Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 0,
+            total: 1,
+            percent: 0,
+            currentStep: null,
+            status: "running",
+            message: "Discover workflow started",
+          },
+        }),
+      );
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_run_projections (
+          workflow_id            TEXT PRIMARY KEY,
+          tenant_id              TEXT NOT NULL DEFAULT 'local',
+          workflow_type          TEXT NOT NULL DEFAULT '',
+          status                 TEXT NOT NULL DEFAULT 'in_progress',
+          input_summary_json     TEXT NOT NULL DEFAULT '{}',
+          error_code             TEXT,
+          error_message          TEXT,
+          retryable              INTEGER NOT NULL DEFAULT 0,
+          started_at             TEXT,
+          finished_at            TEXT,
+          duration_ms            INTEGER,
+          temporal_run_id        TEXT,
+          events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+      `);
+      db.prepare(
+        `INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          error_code, error_message, retryable, started_at, finished_at,
+          temporal_run_id, events_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "discover-local",
+        "local",
+        "DiscoverWorkflow",
+        "terminated",
+        JSON.stringify({ limit: 1000 }),
+        "reconciled_not_found",
+        "The reconciler closed this run: its Temporal execution no longer exists on the server.",
+        0,
+        "2026-07-04T07:57:11.751742+00:00",
+        "2026-07-04T11:16:55.314850+00:00",
+        "temporal-run-1",
+        "[]",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress[0]).toMatchObject({
+      stage: "discover",
+      status: "running",
+      runId: "discover-local",
+      workflowId: "discover-local",
+      message: "Discover workflow started",
+      updatedAt: "2026-07-04T12:00:00.000Z",
+    });
+
+    await app.close();
+  });
+
   it("normalizes source progress to a visible nonzero percentage", async () => {
     const db = new Database(options.dbPath);
     try {
@@ -815,6 +1373,69 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("finalizes an unlinked discover progress card from the tenant's discover workflow", async () => {
+    // The incident's frozen card: the Temporal-path smartextract completion
+    // event carries only the per-source discovery run id — no workflowId — so
+    // the workflow-status linkage must fall back to the deterministic
+    // discover-<tenant> id instead of leaving "running 67%" on a failed run.
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "info",
+        "Discovery source smartextract ok",
+        "2026-07-04T13:35:06.648Z",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          source: "smartextract",
+          runId: "discovery:smartextract:57cfde27c40b43fb97dfa21b3cb7fbbc",
+          progress: {
+            completed: 4,
+            total: 6,
+            percent: 67,
+            currentStep: "Smart extract",
+            status: "running",
+            message: "Smart extract complete",
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "source_unavailable",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(summary.statusCode, summary.body).toBe(200);
+      const discover = summary
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "failed",
+        percent: 67,
+        completed: 4,
+        currentStep: "Smart extract",
+      });
+      expect(discover.message).toContain("Workflow failed");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("preserves partial terminal pipeline progress from durable event payloads", async () => {
     const db = new Database(options.dbPath);
     try {
@@ -856,6 +1477,87 @@ describe("local TypeScript API", () => {
     ]);
 
     await app.close();
+  });
+
+  it("preserves partial discover warnings after the workflow succeeds", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "warn",
+        "Detail enrichment partially complete",
+        "2026-07-04T14:06:43.000+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          workflowId: "discover-local",
+          progress: {
+            completed: 5,
+            total: 6,
+            percent: 83,
+            currentStep: "Detail enrichment",
+            status: "partial",
+            message: "Detail enrichment partially complete",
+          },
+          siteErrors: {
+            indeed: {
+              error_class: "RuntimeError",
+              error_message: "BrowserType.launch: Executable doesn't exist",
+            },
+          },
+        }),
+      );
+      insertDiscoverWorkflowRunRow(db, {
+        status: "succeeded",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: DISCOVER_NEW_START,
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        startedAt: DISCOVER_NEW_START,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowCompleted",
+        occurredAt: "2026-07-04T14:09:00.000+00:00",
+        workflowId: "discover-local",
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        status: "succeeded",
+        finishedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      const discover = response
+        .json()
+        .progress.find((entry: { stage: string }) => entry.stage === "discover");
+      expect(discover).toMatchObject({
+        stage: "discover",
+        status: "partial",
+        workflowId: "discover-local",
+        percent: 100,
+        completed: 6,
+        total: 6,
+        currentStep: "Detail enrichment",
+        message: "Detail enrichment partially complete",
+        updatedAt: "2026-07-04T14:09:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
   });
 
   it("returns local-day dashboard deltas for active jobs and applications", async () => {
@@ -4224,6 +4926,303 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("supersedes a stale terminal workflow-run projection when a reused workflow id restarts and fails", async () => {
+    // Discover-reliability incident: the reconciler terminated `discover-local`
+    // (reconciled_not_found), then a NEW Temporal execution reused the same
+    // workflow id, emitted a duplicate start marker, and ultimately failed. The
+    // Python fold froze the row on the OLD terminal outcome (chimera). The read
+    // model must re-fold the canonical lifecycle to the current run's verdict.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+        temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
+        eventsJson: JSON.stringify([
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, status: "terminated", message: RECONCILED_MESSAGE },
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, status: "in_progress", message: "Discover workflow started" },
+          { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, status: "failed", message: "Activity task failed" },
+        ]),
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: DISCOVER_TERMINATE_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START_DUP });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const list = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
+      expect(list.statusCode, list.body).toBe(200);
+      const run = list.json().items.find((r: { workflowId: string }) => r.workflowId === "discover-local");
+      expect(run).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      const body = detail.json();
+      expect(body).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        retryable: true,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      // The superseded terminal outcome is gone from the served verdict.
+      expect(body.status).not.toBe("terminated");
+      expect(body.errorCode).not.toBe("reconciled_not_found");
+      // The timeline preserves the full history of both executions.
+      expect(body.events).toHaveLength(5);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("clears the prior terminal error while a reused workflow id is back in progress (duplicate start idempotent)", async () => {
+    // Same reuse, observed between the new run's start and its terminal event:
+    // the frozen row still says terminated, but the canonical lifecycle shows an
+    // open run. A duplicate `WorkflowStarted` must not advance the start time.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: DISCOVER_TERMINATE_AT, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: DISCOVER_TERMINATE_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START_DUP, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START_DUP });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        finishedAt: null,
+        startedAt: DISCOVER_NEW_START,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("ignores a late duplicate start for an already-terminalized execution", async () => {
+    // A finalize-activity retry can append a second `WorkflowStarted` AFTER the
+    // run's terminal event, with a later occurredAt. Same temporal run id means
+    // it is NOT a new execution, so the failed verdict must survive — run-id
+    // equality outranks wall-clock ordering in the reopen guard.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: "2026-07-04T14:09:10.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: "2026-07-04T14:09:10.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("ignores a late terminal from a superseded execution while a newer run is live", async () => {
+    // Terminal-direction twin of the reopen guard: run A dies without a
+    // terminal, run B starts, THEN the reconciler's WorkflowTerminated for run
+    // A lands with a later occurredAt. The stale terminal belongs to the
+    // superseded execution and must not flip the live run B; B's own terminal
+    // must still apply afterwards.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_OLD_START, workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, startedAt: DISCOVER_OLD_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowTerminated", occurredAt: "2026-07-04T12:13:39.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_OLD_TEMPORAL_RUN, errorCode: "reconciled_not_found", errorMessage: RECONCILED_MESSAGE, finishedAt: "2026-07-04T12:13:39.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: null,
+        startedAt: DISCOVER_NEW_START,
+      });
+
+      const followUp = new Database(options.dbPath);
+      try {
+        insertPipelineWorkflowEvent(followUp, { eventType: "WorkflowCompleted", occurredAt: "2026-07-04T12:45:00.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, finishedAt: "2026-07-04T12:45:00.000+00:00" });
+      } finally {
+        followUp.close();
+      }
+      const after = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(after.statusCode, after.body).toBe(200);
+      expect(after.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "succeeded",
+        finishedAt: "2026-07-04T12:45:00.000+00:00",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps the first terminal verdict within a single execution (reconciler describe race)", async () => {
+    // Regression guard for the M-1 backstop: a reconciler `describe` that
+    // observes the closed run and emits COMPLETED after the real WorkflowFailed
+    // must not flip the verdict back to succeeded.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "failed",
+        errorCode: "activity_task_failed",
+        errorMessage: "Activity task failed",
+        retryable: true,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowCompleted", occurredAt: "2026-07-04T14:09:00.000+00:00", workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, status: "succeeded", finishedAt: "2026-07-04T14:09:00.000+00:00" });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        status: "failed",
+        errorCode: "activity_task_failed",
+        finishedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("finalizes discover progress from the re-folded workflow verdict, not the stale terminal row", async () => {
+    // Fix B: even with a frozen `terminated` row and a discover progress event
+    // stuck at 67% "running", the dashboard progress must report the current
+    // run's re-folded `failed` verdict without hiding the last known step.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: DISCOVER_NEW_START,
+        finishedAt: DISCOVER_TERMINATE_AT,
+      });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
+      insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Smart extract complete",
+        "2026-07-04T13:00:00.000+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discover-local",
+          workflowId: "discover-local",
+          progress: {
+            completed: 2,
+            total: 3,
+            percent: 67,
+            currentStep: "Smart extract complete",
+            status: "running",
+            message: "Smart extract complete",
+          },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      const progress = response
+        .json()
+        .progress.find((p: { stage: string }) => p.stage === "discover");
+      expect(progress).toMatchObject({
+        stage: "discover",
+        status: "failed",
+        workflowId: "discover-local",
+        percent: 67,
+        completed: 2,
+        total: 3,
+        currentStep: "Smart extract complete",
+        message: "Workflow failed: Activity task failed",
+        updatedAt: DISCOVER_FAILED_AT,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("opens only a known existing artifact through the injected opener", async () => {
     const opened: string[] = [];
     const app = buildApp({
@@ -5393,6 +6392,61 @@ describe("local TypeScript API", () => {
       }),
       expect.anything(),
     );
+
+    await app.close();
+  });
+
+  it("dispatches explicit interview prep generation without running pipeline stages", async () => {
+    const dispatch = vi.fn(async (_command: unknown, _context: unknown) => ({
+      status: "queued",
+      actionId: "act-prep",
+      runId: "run-prep",
+      workflowId: "workflow-prep",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: { llmModel: "gpt-test" },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "generate_interview_prep",
+      status: "queued",
+      jobKey: "https://example.com/jobs/ready",
+      workflowId: "workflow-prep",
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "generate_interview_prep",
+        jobKey: "https://example.com/jobs/ready",
+        llmModel: "gpt-test",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch.mock.calls[0]?.[0]).not.toMatchObject({ action: "run_stage" });
+
+    await app.close();
+  });
+
+  it("rejects interview prep generation for missing jobs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/missing");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "job_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
 
     await app.close();
   });
@@ -7158,6 +8212,84 @@ function seedDatabase(dbPath: string): void {
   db.close();
 }
 
+const DISCOVER_OLD_START = "2026-07-04T07:57:11.751+00:00";
+const DISCOVER_TERMINATE_AT = "2026-07-04T11:16:55.314+00:00";
+const DISCOVER_NEW_START = "2026-07-04T12:13:38.757+00:00";
+const DISCOVER_NEW_START_DUP = "2026-07-04T12:13:38.776+00:00";
+const DISCOVER_FAILED_AT = "2026-07-04T14:08:43.547+00:00";
+const DISCOVER_OLD_TEMPORAL_RUN = "temporal-run-old-0001";
+const DISCOVER_NEW_TEMPORAL_RUN = "019f2d0c-7441-7641-ae61-b7f6f5b1127d";
+const RECONCILED_MESSAGE =
+  "The reconciler closed this run: its Temporal execution no longer exists on the server (dev-server history loss).";
+
+function insertPipelineWorkflowEvent(
+  db: Database.Database,
+  event: {
+    eventType: string;
+    occurredAt: string;
+    workflowId: string;
+    temporalRunId?: string;
+    status?: string;
+    message?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    retryable?: boolean;
+    startedAt?: string;
+    finishedAt?: string;
+    durationMs?: number;
+    inputSummary?: Record<string, unknown>;
+  },
+): void {
+  const payload: Record<string, unknown> = {
+    workflowId: event.workflowId,
+    workflowType: "DiscoverWorkflow",
+  };
+  for (const [key, value] of Object.entries(event)) {
+    if (key === "eventType" || key === "occurredAt" || key === "workflowId" || key === "message") continue;
+    if (value !== undefined) payload[key] = value;
+  }
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(null, "workflow", event.eventType, "info", event.message ?? null, event.occurredAt, JSON.stringify(payload));
+}
+
+function insertDiscoverWorkflowRunRow(
+  db: Database.Database,
+  row: {
+    status: string;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    retryable?: boolean;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    durationMs?: number | null;
+    temporalRunId?: string | null;
+    eventsJson?: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO workflow_run_projections (
+       workflow_id, tenant_id, workflow_type, status, input_summary_json,
+       error_code, error_message, retryable, started_at, finished_at,
+       duration_ms, temporal_run_id, events_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "discover-local",
+    "local",
+    "DiscoverWorkflow",
+    row.status,
+    JSON.stringify({ limit: 1000 }),
+    row.errorCode ?? null,
+    row.errorMessage ?? null,
+    row.retryable ? 1 : 0,
+    row.startedAt ?? null,
+    row.finishedAt ?? null,
+    row.durationMs ?? null,
+    row.temporalRunId ?? DISCOVER_NEW_TEMPORAL_RUN,
+    row.eventsJson ?? "[]",
+  );
+}
+
 function insertWorkerHeartbeat(
   dbPath: string,
   heartbeat: {
@@ -7165,6 +8297,8 @@ function insertWorkerHeartbeat(
     appDir: string;
     dbPath: string;
     lastSeenAt: string;
+    maxConcurrentActivities?: number | null;
+    activityExecutorMaxWorkers?: number | null;
   },
 ): void {
   const db = new Database(dbPath);
@@ -7178,13 +8312,16 @@ function insertWorkerHeartbeat(
       db_path TEXT NOT NULL,
       task_queue TEXT NOT NULL,
       started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      last_seen_at TEXT NOT NULL,
+      max_concurrent_activities INTEGER,
+      activity_executor_max_workers INTEGER
     );
   `);
   db.prepare(
     `INSERT INTO worker_runtime_heartbeats
-      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
+       max_concurrent_activities, activity_executor_max_workers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     heartbeat.workerId,
     "temporal-worker",
@@ -7195,6 +8332,8 @@ function insertWorkerHeartbeat(
     "jobhunter-default",
     "2026-05-20T10:00:00.000Z",
     heartbeat.lastSeenAt,
+    heartbeat.maxConcurrentActivities ?? 8,
+    heartbeat.activityExecutorMaxWorkers ?? 10,
   );
   db.close();
 }

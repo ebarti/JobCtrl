@@ -7,6 +7,7 @@ import logging
 import inspect
 import threading
 import time
+import traceback
 import uuid
 from typing import Any, Callable
 
@@ -1329,10 +1330,15 @@ def plan_discovery_source_families(
         families.append("workday")
     if not source_filter_active or smart_extract_sources:
         families.append("smartextract")
+    from jobhunter.infrastructure.temporal.concurrency import (
+        max_parallel_discovery_families_from_env,
+    )
+
     return {
         "families": families,
         "progress_total": len(families) + 2,
         "start_count": _pipeline_job_count() if limit > 0 else 0,
+        "max_parallel_families": max_parallel_discovery_families_from_env(),
     }
 
 
@@ -1574,7 +1580,25 @@ def run_discovery_enrichment_stage(
     workers: int = 1,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
+    progress_completed: int = 0,
+    progress_total: int = 0,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
+    emit_progress = progress_total > 0
+    if emit_progress:
+        _record_pipeline_event(
+            "discover",
+            "StageStarted",
+            "info",
+            "Discovery detail enrichment finishing",
+            _discovery_progress_payload(
+                completed=progress_completed,
+                total=progress_total,
+                current_step="Detail enrichment",
+                message="Detail enrichment finishing",
+            ),
+        )
+
     result: dict[str, Any] = {}
     discovery_done = threading.Event()
     discovery_done.set()
@@ -1584,8 +1608,67 @@ def run_discovery_enrichment_stage(
         workers=max(1, workers),
         limit=limit,
         cancel_event=cancel_event,
+        on_job_enriched=on_job_enriched,
     )
-    return result or {"status": "ok", "passes": 0, "pending": 0}
+    final = result or {"status": "ok", "passes": 0, "pending": 0}
+
+    if emit_progress:
+        status = str(final.get("status") or "ok")
+        if status in ("ok", "partial") or status.startswith("skipped"):
+            site_errors = dict(final.get("site_errors") or {})
+            progress_status = "partial" if status == "partial" else "running"
+            message = (
+                "Detail enrichment partially complete"
+                if status == "partial"
+                else "Detail enrichment complete"
+            )
+            payload = _discovery_progress_payload(
+                completed=progress_completed + 1,
+                total=progress_total,
+                current_step="Detail enrichment",
+                status=progress_status,
+                message=message,
+            )
+            if site_errors:
+                payload["siteErrors"] = site_errors
+                payload["errorMessage"] = (
+                    final.get("error_message") or "One or more enrichment sites failed."
+                )
+            _record_pipeline_event(
+                "discover",
+                "StageCompleted",
+                "warn" if status == "partial" else "info",
+                message,
+                payload,
+            )
+        else:
+            error_class = final.get("error_class")
+            error_message = final.get("error_message")
+            if error_class and error_message:
+                detail = f"{error_class}: {error_message}"
+            elif error_message:
+                detail = str(error_message)
+            else:
+                detail = status
+            _record_pipeline_event(
+                "discover",
+                "StageFailed",
+                "error",
+                f"Discovery detail enrichment failed: {detail}",
+                {
+                    "errorCode": final.get("error_code") or "enrichment_failed",
+                    "errorMessage": detail,
+                    **_discovery_progress_payload(
+                        completed=progress_completed + 1,
+                        total=progress_total,
+                        current_step="Detail enrichment",
+                        status="failed",
+                        message="Detail enrichment failed",
+                    ),
+                },
+            )
+
+    return final
 
 
 def _sources_for_discovery_family(
@@ -2126,18 +2209,36 @@ def _run_enrich(
     workers: int = 1,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
+    reset_linkedin_candidates: bool = True,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled before start")
     from jobhunter.enrichment.detail import run_enrichment
     if cancel_event is None:
-        run_enrichment(limit=limit, workers=workers)
+        stats = run_enrichment(
+            limit=limit,
+            workers=workers,
+            reset_linkedin_candidates=reset_linkedin_candidates,
+            on_job_enriched=on_job_enriched,
+        )
     else:
-        run_enrichment(limit=limit, workers=workers, cancel_event=cancel_event)
+        stats = run_enrichment(
+            limit=limit,
+            workers=workers,
+            cancel_event=cancel_event,
+            reset_linkedin_candidates=reset_linkedin_candidates,
+            on_job_enriched=on_job_enriched,
+        )
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled")
-    return {"status": "ok"}
+    site_errors = stats.get("site_errors") or {}
+    return {
+        "status": "partial" if site_errors else "ok",
+        "counts": {k: stats.get(k) for k in ("processed", "ok", "partial", "error")},
+        "site_errors": site_errors,
+    }
 
 
 def _run_score(
@@ -2451,6 +2552,17 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
     return conn.execute(sql).fetchone()[0]
 
 
+def _default_retryable(exc: Exception) -> bool:
+    """Classify an uncaught enrichment-worker exception when it carries no code.
+
+    Deterministic programming errors are never worth retrying; anything else is
+    assumed transient (network/browser hiccups) unless the exception itself
+    declares otherwise.
+    """
+    deterministic = (ValueError, TypeError, KeyError, AttributeError, IndexError)
+    return not isinstance(exc, deterministic)
+
+
 def _run_discovery_enrichment_until_idle(
     discovery_done: threading.Event,
     result: dict[str, Any],
@@ -2458,10 +2570,18 @@ def _run_discovery_enrichment_until_idle(
     workers: int,
     limit: int,
     cancel_event: threading.Event | None = None,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> None:
-    """Drain the detail-enrichment queue while discovery is still producing jobs."""
+    """Drain the detail-enrichment queue while discovery is still producing jobs.
+
+    A "partial" pass (some sites failed but the queue still drained) does not
+    abort the drain — the healthy sites keep making progress and the accumulated
+    ``site_errors`` are surfaced in the final result so the stage is reported as
+    partial rather than failed.
+    """
     passes = 0
     no_progress_passes = 0
+    site_errors: dict[str, Any] = {}
 
     try:
         while True:
@@ -2470,34 +2590,66 @@ def _run_discovery_enrichment_until_idle(
             pending = _count_pending("enrich")
             if pending <= 0:
                 if discovery_done.is_set():
-                    result.update({"status": "ok", "passes": passes, "pending": 0})
+                    drained: dict[str, Any] = {
+                        "status": "partial" if site_errors else "ok",
+                        "passes": passes,
+                        "pending": 0,
+                    }
+                    if site_errors:
+                        drained["site_errors"] = dict(site_errors)
+                    result.update(drained)
                     return
                 discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
                 continue
 
-            if cancel_event is None:
-                enrichment_result = _run_enrich(workers=workers, limit=limit)
-            else:
-                enrichment_result = _run_enrich(workers=workers, limit=limit, cancel_event=cancel_event)
+            enrichment_result = _run_enrich(
+                workers=workers,
+                limit=limit,
+                cancel_event=cancel_event,
+                reset_linkedin_candidates=(passes == 0),
+                on_job_enriched=on_job_enriched,
+            )
             passes += 1
+            pass_site_errors = enrichment_result.get("site_errors") or {}
+            if pass_site_errors:
+                site_errors.update(pass_site_errors)
             after = _count_pending("enrich")
             status = str(enrichment_result.get("status", "ok"))
 
-            if status != "ok":
-                result.update({"status": status, "passes": passes, "pending": after})
+            # "partial" means healthy sites still progressed; only a hard failure
+            # status ends the drain early.
+            if status not in ("ok", "partial"):
+                update: dict[str, Any] = {"status": status, "passes": passes, "pending": after}
+                if site_errors:
+                    update["site_errors"] = dict(site_errors)
+                result.update(update)
                 if discovery_done.is_set():
                     return
 
             if after >= pending:
                 no_progress_passes += 1
                 if discovery_done.is_set() and no_progress_passes >= _DISCOVERY_ENRICH_NO_PROGRESS_LIMIT:
-                    result.update(
-                        {
-                "status": f"stuck: {after} pending detail jobs after {passes} passes",
-                            "passes": passes,
-                            "pending": after,
-                        }
-                    )
+                    if site_errors:
+                        result.update(
+                            {
+                                "status": "partial",
+                                "passes": passes,
+                                "pending": after,
+                                "site_errors": dict(site_errors),
+                                "error_message": (
+                                    f"{after} pending detail jobs after {passes} passes "
+                                    "with site errors"
+                                ),
+                            }
+                        )
+                    else:
+                        result.update(
+                            {
+                                "status": f"stuck: {after} pending detail jobs after {passes} passes",
+                                "passes": passes,
+                                "pending": after,
+                            }
+                        )
                     return
             else:
                 no_progress_passes = 0
@@ -2508,6 +2660,9 @@ def _run_discovery_enrichment_until_idle(
                 "status": "failed",
                 "error_class": type(exc).__name__,
                 "error_message": str(exc),
+                "error_code": getattr(exc, "code", None),
+                "retryable": getattr(exc, "retryable", _default_retryable(exc)),
+                "error_traceback": traceback.format_exc()[-4000:],
                 "passes": passes,
             }
         )

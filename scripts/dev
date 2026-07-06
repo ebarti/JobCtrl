@@ -4,7 +4,9 @@
 # Runs or daemonizes temporal / api / web / worker, tracks each by PID file
 # under .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a
 # clean owned process tree so stale local stack processes do not survive
-# between launches.
+# between launches. Each (re)start rotates the previous run's log to
+# <name>.log.1 instead of truncating it, so a crash traceback survives the
+# next launch.
 #
 # Usage:
 #   scripts/dev run [name...]      Run named processes in the foreground
@@ -12,7 +14,7 @@
 #   scripts/dev stop  [name...]    Stop named (or all)
 #   scripts/dev restart [name...]  Stop then start
 #   scripts/dev status             Show pid, alive state, and worker health
-#   scripts/dev logs <name>        tail -f the log file for one process
+#   scripts/dev logs <name>        tail -f the current log (prior run: <name>.log.1)
 #   scripts/dev setup              Install/sync Node and Python dependencies
 #   scripts/dev list               Print the process registry
 #   scripts/dev help               Show this message
@@ -43,6 +45,18 @@ is_known() { process_command "$1" >/dev/null 2>&1; }
 
 pid_file()  { echo "$PID_DIR/$1.pid"; }
 log_file()  { echo "$LOG_DIR/$1.log"; }
+
+# Rotate a process log before a (re)start so the previous run's output —
+# including a crash traceback — survives as <log>.1 instead of being truncated
+# away. Keeps a single generation of history (overwriting any older <log>.1).
+# A fresh log is created by the appending start path; an empty log is left as-is
+# so we don't churn a blank .1.
+rotate_log() {
+  local log="$1"
+  if [[ -s "$log" ]]; then
+    mv -f "$log" "$log.1"
+  fi
+}
 
 read_pid() {
   local f
@@ -226,7 +240,7 @@ start_one() {
   local cmd log
   cmd=$(process_command "$name")
   log=$(log_file "$name")
-  : > "$log"
+  rotate_log "$log"
   local pid
   pid=$(start_detached_command "$cmd" "$log")
   echo "$pid" > "$(pid_file "$name")"
@@ -325,7 +339,7 @@ start_run_one() {
   local cmd log
   cmd=$(process_command "$name")
   log=$(log_file "$name")
-  : > "$log"
+  rotate_log "$log"
   (
     set -o pipefail
     cd "$ROOT"
@@ -489,7 +503,7 @@ cmd_list() {
 }
 
 cmd_help() {
-  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {

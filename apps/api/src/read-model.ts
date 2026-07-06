@@ -24,20 +24,29 @@ import type {
   ArtifactListQuery,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  ApplyReviewQueueResponse,
   BulletCoverageAudit,
   BulletProvenanceEntry,
   BulkJobMutationFilter,
   DashboardConversionFunnel,
   DashboardSettings,
   DashboardSummary,
+  DigestAcknowledgeResponse,
+  DailyDigest,
+  DigestState,
+  EvidenceGap,
+  EvidenceMapEntry,
+  EvidenceMapResponse,
   EmployerAnalysis,
   JobCompensationAudit,
   JobCompensationSummary,
   JobDeletedFilter,
   JobAuditEntry,
   JobDetail,
+  InterviewPrep,
   JobListQuery,
   JobSummary,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   PreparationSummary,
   ProfileShape,
@@ -54,7 +63,14 @@ import type {
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "./contracts.js";
-import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
+import {
+  DIGEST_DAY_BOUNDARY,
+  DIGEST_FOLLOW_UP_THRESHOLD_DAYS,
+  PIPELINE_RUN_STAGES,
+  ProfileSchema,
+  STAGES,
+  WORKFLOW_RUN_STATUSES,
+} from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
@@ -175,6 +191,7 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   stages_json: string;
   employer_analysis_json: string | null;
   requirement_fit_report_json: string | null;
+  interview_prep_json: string | null;
   last_updated_at: string | null;
 }
 
@@ -277,6 +294,13 @@ interface SourceQualityProjectionRow extends Record<string, unknown> {
   last_run_id: string | null;
   last_error_class: string | null;
   updated_at: string | null;
+}
+
+interface EvidenceUsageProjectionRow extends Record<string, unknown> {
+  projection_kind: "entry" | "gap";
+  projection_id: string;
+  payload_json: string;
+  last_updated_at: string;
 }
 
 interface OperationalMetricRow extends Record<string, unknown> {
@@ -382,6 +406,338 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   };
 }
 
+export function buildOutcomeAnalyticsSummary(db: SqliteDatabase): OutcomeAnalyticsSummary {
+  refreshProjections(db, DEFAULT_TENANT);
+  const dashboardRow = getRow<DashboardProjectionRow>(
+    db,
+    "SELECT * FROM dashboard_projections WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  const dashboard = dashboardRow ?? defaultDashboardRow();
+  return buildOutcomeAnalyticsFromConversion(
+    dashboard.outcome_conversion_json,
+    dashboard.generated_at || new Date().toISOString(),
+  );
+}
+
+export interface DigestBudgetSnapshot {
+  status: "ok" | "over_budget";
+  estimatedUsd: number;
+  dailyBudgetUsd: number;
+  remainingUsd: number | null;
+  unlimited: boolean;
+}
+
+export interface BuildDigestOptions {
+  budget?: DigestBudgetSnapshot;
+  applyReviewQueue?: ApplyReviewQueueResponse;
+  minFitScore?: number;
+  now?: Date;
+}
+
+export interface AcknowledgeDigestOptions {
+  acknowledgedAt?: string;
+  now?: Date;
+}
+
+export function ensureDigestStateTable(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS digest_state (
+      tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
+      last_acknowledged_at   TEXT,
+      updated_at             TEXT NOT NULL
+    );
+  `);
+}
+
+export function readDigestState(db: SqliteDatabase): DigestState {
+  ensureDigestStateTable(db);
+  const row = getRow<{ last_acknowledged_at: string | null; updated_at: string | null }>(
+    db,
+    "SELECT last_acknowledged_at, updated_at FROM digest_state WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  return {
+    lastAcknowledgedAt: nullableString(row?.last_acknowledged_at),
+    updatedAt: nullableString(row?.updated_at),
+  };
+}
+
+export function acknowledgeDigest(
+  db: SqliteDatabase,
+  options: AcknowledgeDigestOptions = {},
+): DigestAcknowledgeResponse {
+  ensureDigestStateTable(db);
+  const previous = readDigestState(db).lastAcknowledgedAt;
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
+  const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
+  const nextAcknowledgedAt =
+    previous && Date.parse(previous) > Date.parse(acknowledgedAt) ? previous : acknowledgedAt;
+
+  db.prepare(
+    `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(tenant_id) DO UPDATE SET
+       last_acknowledged_at = excluded.last_acknowledged_at,
+       updated_at = excluded.updated_at`,
+  ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
+
+  recordDigestReviewedEvent(db, {
+    acknowledgedAt: nextAcknowledgedAt,
+    previousAcknowledgedAt: previous,
+    reviewedAt: nowIso,
+  });
+
+  return {
+    ok: true,
+    state: readDigestState(db),
+  };
+}
+
+export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}): DailyDigest {
+  refreshProjections(db, DEFAULT_TENANT);
+  const now = options.now ?? new Date();
+  const generatedAt = now.toISOString();
+  const since = readDigestState(db).lastAcknowledgedAt;
+  const highFitThreshold = normalizeDigestThreshold(options.minFitScore);
+  const queueItems = options.applyReviewQueue?.items ?? [];
+  const preparation = buildPreparationSummary(db, DEFAULT_TENANT);
+  return {
+    ok: true,
+    generatedAt,
+    since,
+    highFitThreshold,
+    newMatches: countDigestNewMatches(db, since, highFitThreshold),
+    blockedSources: digestBlockedSources(db),
+    reviewNeededMaterials: {
+      count: queueItems.filter(isReviewNeededMaterial).length,
+    },
+    staleScores: {
+      count: preparation.outdatedScoreCount,
+    },
+    pendingApprovals: {
+      count: queueItems.filter((item) => item.review.state === "pending").length,
+    },
+    followUpsDue: {
+      count: countFollowUpsDue(db, now),
+      derived: true,
+      thresholdDays: DIGEST_FOLLOW_UP_THRESHOLD_DAYS,
+      dayBoundary: DIGEST_DAY_BOUNDARY,
+    },
+    budget: digestBudget(options.budget),
+    deepLinks: digestDeepLinks(since),
+  };
+}
+
+function boundedAcknowledgeTimestamp(candidate: string, nowIso: string): string {
+  const candidateTime = Date.parse(candidate);
+  const nowTime = Date.parse(nowIso);
+  if (!Number.isFinite(candidateTime)) return nowIso;
+  if (candidateTime > nowTime) return nowIso;
+  return candidate;
+}
+
+function recordDigestReviewedEvent(
+  db: SqliteDatabase,
+  payload: {
+    acknowledgedAt: string;
+    previousAcknowledgedAt: string | null;
+    reviewedAt: string;
+  },
+): void {
+  if (!tableExists(db, "job_events")) return;
+  const columns = columnNames(db, "job_events");
+  const values: Record<string, SqliteValue> = {
+    job_url: null,
+    stage: null,
+    event_type: "DigestReviewed",
+    level: "info",
+    message: "Digest reviewed.",
+    occurred_at: payload.reviewedAt,
+    payload_json: JSON.stringify({
+      tenantId: DEFAULT_TENANT,
+      ...payload,
+    }),
+  };
+  const entries = Object.entries(values).filter(([name]) => columns.has(name));
+  if (!entries.length) return;
+  db.prepare(
+    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
+  ).run(...entries.map(([, value]) => value));
+}
+
+function normalizeDigestThreshold(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_SETTINGS.minFitScore;
+  return Math.min(10, Math.max(1, Math.trunc(Number(value))));
+}
+
+function digestBudget(budget: DigestBudgetSnapshot | undefined): DailyDigest["budget"] {
+  if (!budget) {
+    return {
+      status: "ok",
+      estimatedUsd: 0,
+      dailyBudgetUsd: 0,
+      remainingUsd: null,
+      unlimited: true,
+    };
+  }
+  return {
+    status: budget.status,
+    estimatedUsd: Number(budget.estimatedUsd),
+    dailyBudgetUsd: Number(budget.dailyBudgetUsd),
+    remainingUsd: budget.remainingUsd === null ? null : Number(budget.remainingUsd),
+    unlimited: Boolean(budget.unlimited),
+  };
+}
+
+function digestDeepLinks(since: string | null): DailyDigest["deepLinks"] {
+  const newMatches = new URLSearchParams({
+    deleted: "active",
+    sort: "discovered_at",
+    dir: "desc",
+  });
+  if (since) {
+    newMatches.set("discoveredSince", since);
+    newMatches.set("scoredSince", since);
+  }
+  const staleScores = new URLSearchParams({
+    deleted: "active",
+    state: "stale",
+    sort: "fit_score",
+    dir: "desc",
+  });
+  return {
+    newMatches: `/jobs?${newMatches.toString()}`,
+    blockedSources: "/discovery",
+    reviewNeededMaterials: "/apply-review",
+    staleScores: `/jobs?${staleScores.toString()}`,
+    pendingApprovals: "/apply-review",
+    followUpsDue: "/jobs?applyStatus=applied",
+    budget: "/settings",
+  };
+}
+
+function isReviewNeededMaterial(item: ApplyReviewQueueResponse["items"][number]): boolean {
+  const hasMaterial = item.materials.hasResume || item.materials.hasCoverLetter || item.materials.hasPdf;
+  return hasMaterial && !item.materials.ready;
+}
+
+function digestBlockedSources(db: SqliteDatabase): DailyDigest["blockedSources"] {
+  const sources = listSourceHealth(db)
+    .filter(
+      (source) =>
+        source.recommendedState === "quarantined" ||
+        source.recommendedState === "disabled" ||
+        source.consecutiveFailures >= 3,
+    )
+    .map((source) => ({
+      sourceId: source.sourceId,
+      recommendedState: source.recommendedState,
+      consecutiveFailures: source.consecutiveFailures,
+    }));
+  return { count: sources.length, sources };
+}
+
+function countDigestNewMatches(
+  db: SqliteDatabase,
+  since: string | null,
+  highFitThreshold: number,
+): DailyDigest["newMatches"] {
+  const activeFilter = jobSqlFilter(db, digestBaseJobQuery());
+  const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
+  const sinceParams: SqliteValue[] = since ? [since, since] : [];
+  const where = `${activeFilter.where}${sinceClause}`;
+  const params = [...activeFilter.params, ...sinceParams];
+  return {
+    count: countRows(db, `SELECT COUNT(*) AS count FROM job_list_projections${where}`, params),
+    highFitCount: countRows(
+      db,
+      `SELECT COUNT(*) AS count FROM job_list_projections${where} AND COALESCE(fit_score, -1) >= ?`,
+      [...params, highFitThreshold],
+    ),
+  };
+}
+
+function digestBaseJobQuery(): JobListQuery {
+  return {
+    page: 1,
+    pageSize: 1,
+    sort: "discovered_at",
+    dir: "desc",
+    q: "",
+    deleted: "active",
+    applyStatus: "all",
+    source: "",
+    company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
+  };
+}
+
+const FOLLOW_UP_STOP_OUTCOMES = new Set([
+  "recruiter_reply",
+  "interview",
+  "assessment",
+  "offer",
+  "rejection",
+  "withdrawn",
+  "bounced",
+]);
+
+function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
+  if (!tableExists(db, "application_outcomes")) return 0;
+  const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const rows = allRows<{
+    job_key: string;
+    kind: string;
+    occurred_at: string;
+    recorded_at: string | null;
+  }>(
+    db,
+    `SELECT job_key, kind, occurred_at, recorded_at
+       FROM application_outcomes
+      WHERE tenant_id = ?
+      ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC`,
+    [DEFAULT_TENANT],
+  );
+  const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
+  for (const row of rows) {
+    const jobKey = row.job_key;
+    const current = byJob.get(jobKey) ?? {
+      appliedAt: null,
+      lastActivityAt: null,
+      stopped: false,
+    };
+    const occurredAt = row.occurred_at || row.recorded_at || "";
+    if (!occurredAt) continue;
+    if (!current.lastActivityAt || occurredAt > current.lastActivityAt) {
+      current.lastActivityAt = occurredAt;
+    }
+    if (row.kind === "applied_confirmation") {
+      if (!current.appliedAt || occurredAt > current.appliedAt) {
+        current.appliedAt = occurredAt;
+        current.stopped = false;
+      }
+    } else if (
+      current.appliedAt &&
+      occurredAt > current.appliedAt &&
+      FOLLOW_UP_STOP_OUTCOMES.has(row.kind)
+    ) {
+      current.stopped = true;
+    }
+    byJob.set(jobKey, current);
+  }
+  let count = 0;
+  for (const item of byJob.values()) {
+    if (item.appliedAt && !item.stopped && item.lastActivityAt && item.lastActivityAt <= cutoff) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function localDateKey(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -404,6 +760,8 @@ function dashboardTodayMetrics(
     applyStatus: "all",
     source: "",
     company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
   });
   const rows = allRows<{ discovered_at: string | null; applied_at: string | null }>(
     db,
@@ -582,6 +940,8 @@ function activeJobUrlSet(db: SqliteDatabase): Set<string> {
     applyStatus: "all",
     source: "",
     company: "",
+    discoveredSince: undefined,
+    scoredSince: undefined,
   });
   const rows = allRows<{ job_id: string }>(
     db,
@@ -654,6 +1014,39 @@ export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutat
     .map((job) => job.jobKey);
 }
 
+export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
+  refreshProjections(db, DEFAULT_TENANT);
+  if (!tableExists(db, "evidence_usage_projections")) {
+    return { ok: true, entries: [], gaps: [], generatedAt: new Date(0).toISOString() };
+  }
+  const rows = allRows<EvidenceUsageProjectionRow>(
+    db,
+    `SELECT projection_kind, projection_id, payload_json, last_updated_at
+       FROM evidence_usage_projections
+      WHERE tenant_id = ?
+      ORDER BY projection_kind, LOWER(projection_id)`,
+    [DEFAULT_TENANT],
+  );
+  const entries: EvidenceMapEntry[] = [];
+  const gaps: EvidenceGap[] = [];
+  let generatedAt = new Date(0).toISOString();
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    if (!payload) {
+      continue;
+    }
+    if (row.last_updated_at && row.last_updated_at > generatedAt) {
+      generatedAt = row.last_updated_at;
+    }
+    if (row.projection_kind === "entry") {
+      entries.push(payload as unknown as EvidenceMapEntry);
+    } else if (row.projection_kind === "gap") {
+      gaps.push(payload as unknown as EvidenceGap);
+    }
+  }
+  return { ok: true, entries, gaps, generatedAt };
+}
+
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
   const listRow = findJobListRow(db, jobKey);
@@ -698,6 +1091,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
     requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
 }
@@ -749,6 +1143,15 @@ function parseRequirementFitReport(value: string | null): RequirementFitReport |
   if (!value) return null;
   try {
     return JSON.parse(value) as RequirementFitReport;
+  } catch {
+    return null;
+  }
+}
+
+function parseInterviewPrep(value: string | null): InterviewPrep | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as InterviewPrep;
   } catch {
     return null;
   }
@@ -3475,10 +3878,26 @@ function defaultFunnel(): DashboardSummary["funnel"] {
 }
 
 /**
+ * Minimum applied-count (sample size) a bucket needs before its conversion rates
+ * are statistically meaningful. Below this, every rate is suppressed to ``null``
+ * while the raw counts stay visible, so a single reply on a single application no
+ * longer renders as a "100%" response rate.
+ *
+ * Owner-tunable. The default of 5 mirrors the sample-gating precedent elsewhere in
+ * the read model — ``recommendedState`` in ``projections.ts`` (and its Python twin
+ * in ``source_quality.py``) only acts on a source once ``sample >= 10``. Conversion
+ * uses a lower floor because applied volume accrues far more slowly than the
+ * discovery volume that gates source quality.
+ */
+export const MIN_CONVERSION_SAMPLE = 5;
+
+/**
  * Derive the dashboard conversion section from the materialised
  * ``outcome_conversion_json`` counts. Rates are computed here (not stored) so the
  * cross-runtime projection stays integer-only; ``costPerInterview`` stays null
- * until per-run apply cost is projected into the read model (follow-up).
+ * until per-run apply cost is projected into the read model (follow-up). Buckets
+ * below ``MIN_CONVERSION_SAMPLE`` applied keep their raw counts but report ``null``
+ * rates (see ``conversionRate``).
  */
 function buildConversionSummary(json: string): DashboardSummary["conversion"] {
   let parsed: unknown = {};
@@ -3503,6 +3922,139 @@ function buildConversionSummary(json: string): DashboardSummary["conversion"] {
   };
 }
 
+function buildOutcomeAnalyticsFromConversion(
+  json: string,
+  generatedAt: string,
+): OutcomeAnalyticsSummary {
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(json || "{}");
+  } catch {
+    parsed = {};
+  }
+  const record = isRecord(parsed) ? parsed : {};
+  const bySource = Array.isArray(record.bySource) ? record.bySource : [];
+  const byBand = Array.isArray(record.byBand) ? record.byBand : [];
+  const byFitBand = Array.isArray(record.byFitBand) ? record.byFitBand : [];
+  const byApplyMode = Array.isArray(record.byApplyMode) ? record.byApplyMode : [];
+  const byTemplate = Array.isArray(record.byTemplate) ? record.byTemplate : [];
+  const byPolicy = Array.isArray(record.byPolicy) ? record.byPolicy : [];
+  return {
+    ok: true,
+    generatedAt,
+    minSample: MIN_CONVERSION_SAMPLE,
+    totals: outcomeAnalyticsMetrics(record.totals),
+    bySource: bySource.filter(isRecord).map((group) => ({
+      source: String(group.source ?? "unknown"),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byScoreBand: byBand.filter(isRecord).map((group) => ({
+      scoreBand: outcomeAnalyticsScoreBand(group.band),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byFitBand: byFitBand.filter(isRecord).map((group) => ({
+      fitBand: outcomeAnalyticsFitBand(group.fitBand),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byApplyMode: byApplyMode.filter(isRecord).map((group) => ({
+      applyMode: outcomeAnalyticsApplyMode(group.applyMode),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byTemplate: byTemplate.filter(isRecord).map((group) => ({
+      templateId: String(group.templateId ?? "unreported"),
+      templateName: nullableString(group.templateName),
+      ...outcomeAnalyticsMetrics(group),
+    })),
+    byPolicy: byPolicy.filter(isRecord).map((group) => {
+      const tailoringPolicyVersion = nullableNumber(group.tailoringPolicyVersion);
+      return {
+        tailoringPolicyVersion,
+        policyLabel: String(group.policyLabel ?? policyLabel(tailoringPolicyVersion)),
+        ...outcomeAnalyticsMetrics(group),
+      };
+    }),
+    timeToResponse: outcomeAnalyticsTimeToResponse(record.timeToResponseMinutes),
+    suggestionAccuracy: outcomeAnalyticsSuggestionAccuracy(record.suggestionAccuracy),
+  };
+}
+
+function outcomeAnalyticsMetrics(value: unknown): OutcomeAnalyticsSummary["totals"] {
+  const metrics = conversionFunnelMetrics(value);
+  return {
+    n: metrics.applied,
+    applied: metrics.applied,
+    reply: metrics.reply,
+    interview: metrics.interview,
+    offer: metrics.offer,
+    rejection: metrics.rejection,
+    replyRate: metrics.replyRate,
+    interviewRate: metrics.interviewRate,
+    offerRate: metrics.offerRate,
+    rejectionRate: metrics.rejectionRate,
+  };
+}
+
+function outcomeAnalyticsScoreBand(value: unknown): OutcomeAnalyticsSummary["byScoreBand"][number]["scoreBand"] {
+  const band = String(value ?? "unscored");
+  if (["perfect", "strong", "moderate", "weak", "poor", "unscored"].includes(band)) {
+    return band as OutcomeAnalyticsSummary["byScoreBand"][number]["scoreBand"];
+  }
+  return "unscored";
+}
+
+function outcomeAnalyticsFitBand(value: unknown): OutcomeAnalyticsSummary["byFitBand"][number]["fitBand"] {
+  const band = String(value ?? "unreported");
+  if (["excellent", "strong", "plausible", "stretch", "poor", "unreported"].includes(band)) {
+    return band as OutcomeAnalyticsSummary["byFitBand"][number]["fitBand"];
+  }
+  return "unreported";
+}
+
+function outcomeAnalyticsApplyMode(value: unknown): OutcomeAnalyticsSummary["byApplyMode"][number]["applyMode"] {
+  const mode = String(value ?? "manual_marked");
+  if (["automated_live", "manual_marked", "external_confirmed"].includes(mode)) {
+    return mode as OutcomeAnalyticsSummary["byApplyMode"][number]["applyMode"];
+  }
+  return "manual_marked";
+}
+
+function outcomeAnalyticsTimeToResponse(value: unknown): OutcomeAnalyticsSummary["timeToResponse"] {
+  const samples = Array.isArray(value)
+    ? value.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item >= 0)
+    : [];
+  return {
+    n: samples.length,
+    medianMinutes: samples.length >= MIN_CONVERSION_SAMPLE ? median(samples) : null,
+  };
+}
+
+function outcomeAnalyticsSuggestionAccuracy(value: unknown): OutcomeAnalyticsSummary["suggestionAccuracy"] {
+  const counts = isRecord(value) ? value : {};
+  const decided = Number(counts.decided ?? 0);
+  const accepted = Number(counts.accepted ?? 0);
+  const corrected = Number(counts.corrected ?? 0);
+  const ignored = Number(counts.ignored ?? 0);
+  return {
+    n: decided,
+    decided,
+    accepted,
+    corrected,
+    ignored,
+    acceptanceRate: conversionRate(accepted, decided),
+  };
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle] ?? 0;
+  return ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+}
+
+function policyLabel(version: number | null): string {
+  return version === null ? "Unreported" : `Policy v${version}`;
+}
+
 function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {
   const counts = isRecord(value) ? value : {};
   const applied = Number(counts.applied ?? 0);
@@ -3525,7 +4077,7 @@ function conversionFunnelMetrics(value: unknown): DashboardConversionFunnel {
 }
 
 function conversionRate(numerator: number, applied: number): number | null {
-  if (applied <= 0) return null;
+  if (applied < MIN_CONVERSION_SAMPLE) return null;
   return Math.round((numerator / applied) * 10000) / 10000;
 }
 
@@ -3885,6 +4437,8 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
+    discoveredSince: undefined,
+    scoredSince: undefined,
   };
 }
 
@@ -3976,6 +4530,18 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
   if (query.maxFitScore !== undefined) {
     clauses.push("COALESCE(fit_score, 999) <= ?");
     params.push(query.maxFitScore);
+  }
+  if (query.discoveredSince && query.scoredSince) {
+    clauses.push(
+      "((discovered_at IS NOT NULL AND discovered_at >= ?) OR (scored_at IS NOT NULL AND scored_at >= ?))",
+    );
+    params.push(query.discoveredSince, query.scoredSince);
+  } else if (query.discoveredSince) {
+    clauses.push("discovered_at IS NOT NULL AND discovered_at >= ?");
+    params.push(query.discoveredSince);
+  } else if (query.scoredSince) {
+    clauses.push("scored_at IS NOT NULL AND scored_at >= ?");
+    params.push(query.scoredSince);
   }
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
@@ -4131,6 +4697,8 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     applyStatus: query.applyStatus,
     minFitScore: query.minFitScore ?? null,
     maxFitScore: query.maxFitScore ?? null,
+    discoveredSince: query.discoveredSince ?? null,
+    scoredSince: query.scoredSince ?? null,
     deleted: query.deleted,
   };
 }
@@ -4169,6 +4737,14 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
   if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
   if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
   if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
+  if (query.discoveredSince && query.scoredSince) {
+    const discoveredMatches = timestampAtOrAfter(job.discoveredAt, query.discoveredSince);
+    const scoredMatches = timestampAtOrAfter(job.scoredAt, query.scoredSince);
+    if (!discoveredMatches && !scoredMatches) return false;
+  } else {
+    if (query.discoveredSince && !timestampAtOrAfter(job.discoveredAt, query.discoveredSince)) return false;
+    if (query.scoredSince && !timestampAtOrAfter(job.scoredAt, query.scoredSince)) return false;
+  }
   if (!normalizedQuery) return true;
   return [
     job.title,
@@ -4184,6 +4760,13 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
     job.currentSubstage,
     job.currentState,
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function timestampAtOrAfter(value: string | null | undefined, since: string): boolean {
+  if (!value) return false;
+  const valueTime = Date.parse(value);
+  const sinceTime = Date.parse(since);
+  return Number.isFinite(valueTime) && Number.isFinite(sinceTime) && valueTime >= sinceTime;
 }
 
 function displayPostingSource(
@@ -4433,6 +5016,7 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
   if (!tableExists(db, "job_events")) {
     return [];
   }
+  const workflowRunStatus = loadPipelineWorkflowRunStatus(db);
   const rows = allRows<{
     stage: string | null;
     event_type: string | null;
@@ -4479,10 +5063,120 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
     }
     const progress = parseProgressPayload(payload, { ...row, stage });
     if (progress) {
-      byStage.set(stage, progress);
+      byStage.set(stage, progressWithWorkflowStatus(progress, workflowRunStatus));
     }
   }
   return [...byStage.values()];
+}
+
+interface PipelineWorkflowRunStatus {
+  status: string;
+  errorMessage: string | null;
+  finishedAt: string | null;
+}
+
+function loadPipelineWorkflowRunStatus(db: SqliteDatabase): Map<string, PipelineWorkflowRunStatus> {
+  if (!tableExists(db, "workflow_run_projections")) {
+    return new Map();
+  }
+  const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
+  const rows = allRows<{
+    workflow_id: string;
+    status: string;
+    error_message: string | null;
+    finished_at: string | null;
+  }>(
+    db,
+    `SELECT workflow_id, status, error_message, finished_at
+       FROM workflow_run_projections
+      WHERE tenant_id = ?`,
+    [DEFAULT_TENANT],
+  );
+  return new Map(
+    rows.map((row) => {
+      const fold = lifecycleFolds.get(row.workflow_id);
+      return [
+        row.workflow_id,
+        {
+          status: normalizeWorkflowRunStatus(fold ? fold.status : row.status),
+          errorMessage: fold ? fold.errorMessage : nullableString(row.error_message),
+          finishedAt: fold ? fold.finishedAt : nullableString(row.finished_at),
+        },
+      ];
+    }),
+  );
+}
+
+function progressWithWorkflowStatus(
+  progress: DashboardSummary["progress"][number],
+  workflowRunStatus: Map<string, PipelineWorkflowRunStatus>,
+): DashboardSummary["progress"][number] {
+  const workflowId = progress.workflowId || progress.runId;
+  let workflow = workflowId ? workflowRunStatus.get(workflowId) : undefined;
+  if (!workflow && progress.stage === "discover") {
+    // Discover progress events emitted on the Temporal path may carry only a
+    // per-source discovery run id (`discovery:<family>:<hex>`), never the
+    // owning workflow id — which is deterministic per tenant. Without this
+    // fallback the discover card can keep reporting a stale mid-crawl
+    // percentage (the incident's frozen "running 67%") after the workflow
+    // itself terminalized.
+    workflow = workflowRunStatus.get(`discover-${DEFAULT_TENANT}`);
+  }
+  if (!workflow) {
+    return progress;
+  }
+  const status = pipelineProgressStatusForWorkflow(workflow.status);
+  if (!status) {
+    return progress;
+  }
+  if (progressIsNewerThanTerminal(progress.updatedAt, workflow.finishedAt)) {
+    return progress;
+  }
+  const message = workflow.errorMessage
+    ? `Workflow ${workflow.status}: ${workflow.errorMessage}`
+    : `Workflow ${workflow.status}`;
+  const workflowSucceeded = status === "succeeded";
+  const preservePartialWarning = workflowSucceeded && progress.status === "partial";
+  return {
+    ...progress,
+    status: preservePartialWarning ? "partial" : status,
+    percent: workflowSucceeded ? 100 : progress.percent,
+    completed: workflowSucceeded ? progress.total : progress.completed,
+    message: preservePartialWarning ? progress.message || message : message,
+    updatedAt: workflow.finishedAt ?? progress.updatedAt,
+  };
+}
+
+// Workflow ids are reused across executions (discover-{tenant}, apply-{jobKey})
+// and workflow_run_projections keeps the prior execution's terminal state until
+// the new run's WorkflowStarted folds in. Stage activity recorded after
+// finished_at can only belong to a newer live execution, so a stale terminal
+// must not override it.
+function progressIsNewerThanTerminal(
+  progressUpdatedAt: string | null | undefined,
+  workflowFinishedAt: string | null,
+): boolean {
+  if (!progressUpdatedAt || !workflowFinishedAt) {
+    return false;
+  }
+  const progressMs = Date.parse(progressUpdatedAt);
+  const finishedMs = Date.parse(workflowFinishedAt);
+  if (Number.isNaN(progressMs) || Number.isNaN(finishedMs)) {
+    return false;
+  }
+  return progressMs > finishedMs;
+}
+
+function pipelineProgressStatusForWorkflow(
+  status: string,
+): DashboardSummary["progress"][number]["status"] | null {
+  if (status === "starting" || status === "in_progress") {
+    return null;
+  }
+  if (status === "succeeded" || status === "dry_run_complete") {
+    return "succeeded";
+  }
+  return "failed";
 }
 
 const COMPLETE_STAGE_MESSAGES = new Set(["stage ok", "stage partial", "stage skipped"]);
@@ -4835,11 +5529,225 @@ function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
 }
 
 /**
+ * Read-side re-fold of the `Workflow*` lifecycle stream (truthfulness backstop).
+ *
+ * `workflow_run_projections` is materialised by the Python `ProjectionBuilder`,
+ * whose fold is *globally* first-terminal-wins: once a run is terminal it drops
+ * later `Workflow*` events, and a `WorkflowStarted` only regresses `status` to
+ * `in_progress` when the run is not already terminal — yet it always advances
+ * `started_at`. When a NEW Temporal execution reuses a `workflowId` whose prior
+ * execution already terminalized (e.g. the reconciler closed `discover-local`
+ * with `reconciled_not_found`, then the pipeline restarts under the same id),
+ * that guard freezes the stored row on the OLD run's terminal outcome while
+ * `started_at` jumps to the new run — a chimera the API would otherwise serve.
+ *
+ * The read model re-derives the current execution's real verdict from the
+ * canonical `job_events` here with *run-scoped* precedence:
+ *   - a `WorkflowStarted` for a run that is not already open begins a fresh
+ *     execution and clears the prior run's terminal error/finish;
+ *   - duplicate start markers for an open run are idempotent (keep `startedAt`);
+ *   - first-terminal-wins holds only *within* an open run, so a reconciler
+ *     `describe` COMPLETED racing a finalize `WorkflowFailed` cannot flip the
+ *     verdict (preserves the M-1 backstop).
+ * Runs with no `Workflow*` events (legacy seeds) fall back to the stored row.
+ */
+const WORKFLOW_LIFECYCLE_EVENT_TYPES = [
+  "WorkflowStarted",
+  "WorkflowCompleted",
+  "WorkflowFailed",
+  "WorkflowCanceled",
+  "WorkflowTimedOut",
+  "WorkflowTerminated",
+] as const;
+
+const WORKFLOW_TERMINAL_STATUS_BY_EVENT: Record<string, WorkflowRunStatus> = {
+  WorkflowCompleted: "succeeded",
+  WorkflowFailed: "failed",
+  WorkflowCanceled: "canceled",
+  WorkflowTimedOut: "timed_out",
+  WorkflowTerminated: "terminated",
+};
+
+interface WorkflowLifecycleFold {
+  status: WorkflowRunStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+interface WorkflowLifecycleEvent {
+  eventType: string;
+  occurredAt: string | null;
+  payload: Record<string, unknown>;
+}
+
+function loadWorkflowRunLifecycleFolds(db: SqliteDatabase): Map<string, WorkflowLifecycleFold> {
+  const folds = new Map<string, WorkflowLifecycleFold>();
+  if (!tableExists(db, "job_events")) {
+    return folds;
+  }
+  const placeholders = WORKFLOW_LIFECYCLE_EVENT_TYPES.map(() => "?").join(", ");
+  const rows = allRows<{ event_type: string; occurred_at: string | null; payload_json: string | null }>(
+    db,
+    `SELECT event_type, occurred_at, payload_json
+       FROM job_events
+      WHERE event_type IN (${placeholders})
+      ORDER BY event_id ASC`,
+    [...WORKFLOW_LIFECYCLE_EVENT_TYPES],
+  );
+  const byWorkflow = new Map<string, WorkflowLifecycleEvent[]>();
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    if (!payload) {
+      continue;
+    }
+    const workflowId = stringField(payload.workflowId ?? payload.workflow_id);
+    if (!workflowId) {
+      continue;
+    }
+    const events = byWorkflow.get(workflowId) ?? [];
+    events.push({ eventType: row.event_type, occurredAt: nullableString(row.occurred_at), payload });
+    byWorkflow.set(workflowId, events);
+  }
+  for (const [workflowId, events] of byWorkflow) {
+    folds.set(workflowId, foldWorkflowRunEvents(events));
+  }
+  return folds;
+}
+
+function workflowLifecycleRunId(payload: Record<string, unknown>): string | null {
+  return nullableString(payload.temporalRunId ?? payload.temporal_run_id);
+}
+
+/**
+ * Mirror of the Python writer's `_starts_new_execution` guard: a
+ * `WorkflowStarted` reopens a terminalized fold only when it belongs to a NEW
+ * Temporal execution. When both sides carry a run id, a differing id is
+ * authoritative (so a late-replayed duplicate start for the SAME run can never
+ * un-terminalize it); with run ids absent, fall back to wall-clock ordering.
+ */
+function startsNewWorkflowExecution(args: {
+  foldedRunId: string | null;
+  foldedFinishedAt: string | null;
+  eventRunId: string | null;
+  eventOccurredAt: string | null;
+}): boolean {
+  if (args.eventRunId && args.foldedRunId) {
+    return args.eventRunId !== args.foldedRunId;
+  }
+  const started = args.eventOccurredAt ? Date.parse(args.eventOccurredAt) : Number.NaN;
+  const finished = args.foldedFinishedAt ? Date.parse(args.foldedFinishedAt) : Number.NaN;
+  if (Number.isNaN(started) || Number.isNaN(finished)) {
+    return false;
+  }
+  return started > finished;
+}
+
+function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): WorkflowLifecycleFold {
+  let phase: "none" | "in_progress" | "terminal" = "none";
+  let status: WorkflowRunStatus = "in_progress";
+  let errorCode: string | null = null;
+  let errorMessage: string | null = null;
+  let retryable = false;
+  let startedAt: string | null = null;
+  let finishedAt: string | null = null;
+  let durationMs: number | null = null;
+  let runId: string | null = null;
+
+  for (const event of events) {
+    const payload = event.payload;
+    if (event.eventType === "WorkflowStarted") {
+      const eventRunId = workflowLifecycleRunId(payload);
+      const eventStartedAt = nullableString(payload.startedAt) ?? event.occurredAt;
+      // A start carrying a NEW run id while the fold is still open means the
+      // previous execution died without a recorded terminal (Temporal id reuse
+      // only admits a new run once the old one closed server-side); the fold
+      // must adopt the live execution — Python fold parity.
+      const adoptsNewExecution =
+        phase === "in_progress" && eventRunId !== null && runId !== null && eventRunId !== runId;
+      const reopens =
+        phase === "none" ||
+        adoptsNewExecution ||
+        (phase === "terminal" &&
+          startsNewWorkflowExecution({
+            foldedRunId: runId,
+            foldedFinishedAt: finishedAt,
+            eventRunId,
+            // Parity with Python _starts_new_execution: the wall-clock
+            // fallback compares the event's occurredAt (record time), never
+            // payload.startedAt.
+            eventOccurredAt: event.occurredAt,
+          }));
+      if (reopens) {
+        status = "in_progress";
+        errorCode = null;
+        errorMessage = null;
+        retryable = false;
+        finishedAt = null;
+        durationMs = null;
+        startedAt = eventStartedAt ?? startedAt;
+        runId = eventRunId;
+        phase = "in_progress";
+      } else if (phase === "in_progress" && !runId && eventRunId) {
+        // A duplicate start for the open run may carry the id the first lacked.
+        runId = eventRunId;
+      }
+      continue;
+    }
+    const terminalStatus = WORKFLOW_TERMINAL_STATUS_BY_EVENT[event.eventType];
+    if (!terminalStatus || phase === "terminal") {
+      continue;
+    }
+    const terminalRunId = workflowLifecycleRunId(payload);
+    // Run-scoped in the terminal direction too: a late terminal from a
+    // superseded execution (the reconciler closing a dead run after a newer
+    // WorkflowStarted already folded) must not clobber the live run.
+    if (terminalRunId && runId && terminalRunId !== runId) {
+      continue;
+    }
+    status = terminalStatus;
+    phase = "terminal";
+    finishedAt = nullableString(payload.finishedAt) ?? event.occurredAt ?? finishedAt;
+    durationMs = nullableNumber(payload.durationMs) ?? durationMs;
+    errorCode = nullableString(payload.errorCode) ?? errorCode;
+    errorMessage = nullableString(payload.errorMessage ?? payload.message) ?? errorMessage;
+    retryable = "retryable" in payload ? Boolean(payload.retryable) : retryable;
+    runId = terminalRunId ?? runId;
+  }
+  return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
+}
+
+function applyWorkflowLifecycleFold(
+  row: WorkflowRunProjectionRow,
+  fold: WorkflowLifecycleFold | undefined,
+): WorkflowRunProjectionRow {
+  if (!fold) {
+    return row;
+  }
+  return {
+    ...row,
+    status: fold.status,
+    error_code: fold.errorCode,
+    error_message: fold.errorMessage,
+    retryable: fold.retryable ? 1 : 0,
+    started_at: fold.startedAt,
+    finished_at: fold.finishedAt,
+    duration_ms: fold.durationMs,
+  };
+}
+
+/**
  * Workflow Runs view source (Temporal loop closure — P0).
  *
- * Reads the unified `workflow_run_projections` table (Python-sole-writer,
- * folded from the `Workflow*` lifecycle events) so every workflow type —
- * pipeline orchestrator, apply, and future workflows — appears in one list.
+ * Reads the unified `workflow_run_projections` table (materialised by the
+ * Python `ProjectionBuilder` from the `Workflow*` lifecycle events) so every
+ * workflow type — pipeline orchestrator, apply, and future workflows — appears
+ * in one list, then re-folds each row's lifecycle from `job_events` (see
+ * `loadWorkflowRunLifecycleFolds`) so a stale terminal outcome from a superseded
+ * execution never leaks onto a run the current execution has restarted.
  * Apply rows are enriched with job context via a LEFT JOIN to
  * `apply_run_projections` (the apply-specific detail projection); non-apply
  * rows show their workflow type instead of a job title. The `runId` equals
@@ -4890,8 +5798,9 @@ export function listWorkflowRuns(
      ORDER BY wrp.started_at DESC, wrp.workflow_id DESC`,
     params,
   );
+  const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
   const all = rows
-    .map(rowToWorkflowRunSummary)
+    .map((row) => rowToWorkflowRunSummary(applyWorkflowLifecycleFold(row, lifecycleFolds.get(stringField(row.workflow_id)))))
     .filter((run) => query.status === "all" || run.status === query.status);
   all.sort((left, right) => compareWorkflowRuns(left, right, query.sort, query.dir));
   return paginate(all, query.page, query.pageSize, query.sort, query.dir, {
@@ -4923,15 +5832,19 @@ export function getWorkflowRunDetail(
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`
     : "";
-  const row = getRow<WorkflowRunProjectionRow>(
+  const rawRow = getRow<WorkflowRunProjectionRow>(
     db,
     `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}
      WHERE wrp.tenant_id = ? AND wrp.workflow_id = ?`,
     [DEFAULT_TENANT, runId],
   );
-  if (!row) {
+  if (!rawRow) {
     return null;
   }
+  // Correct the run-scoped verdict from the canonical lifecycle stream while
+  // leaving `events_json` untouched so the timeline keeps the full history
+  // (including the superseded execution's terminal events).
+  const row = applyWorkflowLifecycleFold(rawRow, loadWorkflowRunLifecycleFolds(db).get(runId));
   const summary = rowToWorkflowRunSummary(row);
   return {
     workflowId: summary.workflowId,
