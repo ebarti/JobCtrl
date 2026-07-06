@@ -2631,6 +2631,95 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
   });
 
+  it("renders missing profile data apply failures as actionable blockers", async () => {
+    const repairQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              currentState: "failed" as const,
+              latestApplyRun: {
+                runId: "missing-profile-data",
+                status: "failed",
+                result: "missing_profile_data:age_18_plus",
+                dryRun: false,
+                startedAt: "2026-05-30T06:33:32Z",
+                finishedAt: "2026-05-30T06:40:29Z",
+              },
+              applyAudit: makeApplyAudit({
+                state: "repair",
+                label: "apply failed",
+                summary: "Last apply failed: missing_profile_data:age_18_plus.",
+                hardBlockers: [
+                  {
+                    code: "apply_run_failed",
+                    label: "apply failed",
+                    detail: "missing_profile_data:age_18_plus",
+                    severity: "blocking",
+                    source: "apply_run",
+                  },
+                ],
+              }),
+              blockers: ["missing_profile_data:age_18_plus"],
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => repairQueue),
+        },
+      }),
+    });
+
+    expect(await screen.findByText(/apply failed: missing_profile_data:age_18_plus/i)).toBeInTheDocument();
+  });
+
+  it("renders incomplete application attestations as review warnings", async () => {
+    const warningQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "preparing",
+                label: "materials preparing",
+                summary:
+                  "Application attestations missing: background_check_consent. Review evidence is still available where recorded.",
+                missingPrerequisites: [
+                  {
+                    code: "missing_profile_attestations",
+                    label: "Profile attestations incomplete",
+                    detail: "Application attestations missing: background_check_consent.",
+                    severity: "warning",
+                    source: "profile_attestations",
+                  },
+                ],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => warningQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByText(
+        /Profile attestations incomplete: Application attestations missing: background_check_consent\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("renders canonical audit facts for missing apply-review source data", async () => {
     const missingSourceQueue = {
       ...sampleApplyReviewQueue,
@@ -2725,6 +2814,65 @@ describe("<ApplyReviewView>", () => {
 	      }),
 	    );
     expect(applyJob).not.toHaveBeenCalled();
+  });
+
+  it("previews email applications and binds recipient approval", async () => {
+    const user = userEvent.setup();
+    const decideApplyReview = vi.fn(async () => ({
+      ok: true as const,
+      decision: {
+        decisionId: "decision-email",
+        jobKey: "job-2",
+        decision: "approve_submit" as const,
+        reason: "approved",
+        decidedBy: "user",
+        decidedAt: "2026-05-06T08:30:00Z",
+      },
+    }));
+    const emailQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              emailApplication: {
+                recipient: "apply@example.com",
+                subject: "Application for Principal Platform Engineer",
+                body: "Hello,\n\nPlease find attached my resume.",
+                attachmentArtifactId: "resume-pdf-2",
+                attachmentName: "Jordan_Resume.pdf",
+                candidateRunId: "dry-run-email",
+                recordedAt: "2026-05-06T06:35:00Z",
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => emailQueue),
+          decideApplyReview,
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Email application")).toBeInTheDocument();
+    expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
+    expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /approve submit for principal platform engineer/i }));
+
+    await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
+    expect(decideApplyReview).toHaveBeenCalledWith(
+      "job-2",
+      expect.objectContaining({
+        decision: "approve_submit",
+        emailRecipient: "apply@example.com",
+        emailAttachmentArtifactId: "resume-pdf-2",
+      }),
+    );
   });
 
   it("offers submit approval with a partial dry-run override only when partial evidence exists", async () => {

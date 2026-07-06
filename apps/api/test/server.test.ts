@@ -7267,6 +7267,68 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("persists typed application attestations through relational profile storage", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Attestation Candidate");
+    profile.application_attestations = {
+      age_18_plus: true,
+      background_check_consent: null,
+      felony_conviction: false,
+      previously_worked_at_employer: null,
+      additional: { can_travel: "occasionally", requires_clearance: null },
+    };
+    profile.application_preferences = { how_heard: "Referral" };
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare(
+          `SELECT application_attestation_age_18_plus,
+                  application_attestation_background_check_consent,
+                  application_attestation_felony_conviction,
+                  application_attestation_previously_worked_at_employer,
+                  application_attestation_additional_json,
+                  application_preference_how_heard
+             FROM candidate_profiles`,
+        ).get(),
+      ).toMatchObject({
+        application_attestation_age_18_plus: 1,
+        application_attestation_background_check_consent: null,
+        application_attestation_felony_conviction: 0,
+        application_attestation_previously_worked_at_employer: null,
+        application_attestation_additional_json: JSON.stringify({
+          can_travel: "occasionally",
+          requires_clearance: null,
+        }),
+        application_preference_how_heard: "Referral",
+      });
+    } finally {
+      db.close();
+    }
+
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.statusCode, stored.body).toBe(200);
+    expect(stored.json().profile).toMatchObject({
+      application_attestations: {
+        age_18_plus: true,
+        background_check_consent: null,
+        felony_conviction: false,
+        previously_worked_at_employer: null,
+        additional: { can_travel: "occasionally", requires_clearance: null },
+      },
+      application_preferences: { how_heard: "Referral" },
+    });
+
+    await app.close();
+  });
+
   it("preserves profile achievement evidence and tailoring quality controls", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Evidence Candidate");

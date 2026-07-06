@@ -356,6 +356,8 @@ export const ApplyReviewDecisionRequestSchema = z
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
+    emailRecipient: z.string().trim().email().optional(),
+    emailAttachmentArtifactId: z.string().trim().min(1).max(160).optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -371,6 +373,8 @@ export interface ApplyReviewDecision {
   profileVersion?: number | null;
   applicationUrl?: string | null;
   partialOverrideRunId?: string | null;
+  emailRecipient?: string | null;
+  emailAttachmentArtifactId?: string | null;
 }
 
 export interface ApplyReviewDecisionResponse {
@@ -787,6 +791,7 @@ export type ApplyReviewApprovalGateReason =
   | "approval_stale_materials"
   | "approval_stale_profile"
   | "approval_stale_url"
+  | "approval_stale_email_candidate"
   | "override_evidence_invalid";
 
 export interface ApplyReviewDryRunEvidence {
@@ -803,6 +808,16 @@ export interface ApplyReviewApprovalGate {
   dryRunEvidence: ApplyReviewDryRunEvidence | null;
   partialDryRunEvidence: ApplyReviewDryRunEvidence | null;
   reasons: ApplyReviewApprovalGateReason[];
+}
+
+export interface ApplyReviewEmailApplicationPreview {
+  recipient: string;
+  subject: string;
+  body: string;
+  attachmentArtifactId: string;
+  attachmentName: string;
+  candidateRunId: string;
+  recordedAt: string | null;
 }
 
 export interface ApplyReviewQueueItem {
@@ -839,6 +854,7 @@ export interface ApplyReviewQueueItem {
     startedAt: string | null;
     finishedAt: string | null;
   } | null;
+  emailApplication: ApplyReviewEmailApplicationPreview | null;
   review: {
     state: "pending" | "approved_submit" | "approved_dry_run" | "deferred" | "declined";
     decision: ApplyReviewDecisionValue | null;
@@ -847,6 +863,8 @@ export interface ApplyReviewQueueItem {
     profileVersion?: number | null;
     applicationUrl?: string | null;
     partialOverrideRunId?: string | null;
+    emailRecipient?: string | null;
+    emailAttachmentArtifactId?: string | null;
   };
   approvalGate: ApplyReviewApprovalGate;
   blockers: string[];
@@ -1661,6 +1679,34 @@ const ProfileResumeConstraintsSchema = z
   })
   .partial();
 
+const NullableAttestationSchema = z.boolean().nullable().default(null);
+
+const DEFAULT_APPLICATION_ATTESTATIONS = {
+  age_18_plus: null,
+  background_check_consent: null,
+  felony_conviction: null,
+  previously_worked_at_employer: null,
+  additional: {},
+} as const;
+
+const ProfileApplicationAttestationsSchema = z
+  .object({
+    age_18_plus: NullableAttestationSchema,
+    background_check_consent: NullableAttestationSchema,
+    felony_conviction: NullableAttestationSchema,
+    previously_worked_at_employer: NullableAttestationSchema,
+    additional: z
+      .record(z.string(), z.union([z.boolean(), z.string(), z.null()]))
+      .default({}),
+  })
+  .default(DEFAULT_APPLICATION_ATTESTATIONS);
+
+const ProfileApplicationPreferencesSchema = z
+  .object({
+    how_heard: z.string().default(""),
+  })
+  .default({ how_heard: "" });
+
 /** Canonical profile shape. ``passthrough()`` preserves forward-compatible
  * keys we don't yet model so a round-trip never silently drops data. */
 export const ProfileSchema = z
@@ -1673,6 +1719,8 @@ export const ProfileSchema = z
     eeo_voluntary: ProfileEeoSchema.default({}),
     resume: ProfileResumeMasterSchema,
     resume_constraints: ProfileResumeConstraintsSchema.default({}),
+    application_attestations: ProfileApplicationAttestationsSchema,
+    application_preferences: ProfileApplicationPreferencesSchema,
   })
   .passthrough();
 

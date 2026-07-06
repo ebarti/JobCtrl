@@ -1,16 +1,22 @@
 """Phase 8 (S-28/S-29): ApplyPromptBuilder produces an ApplyPrompt with
 the rendered text + MCP config bound to the requested CDP port."""
 
+import json
 import pytest
 import sys
 
 from jobhunter.apply import prompt as prompt_mod
 from jobhunter.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
 from jobhunter.domain.apply.value_objects import ApplyPrompt
+from jobhunter.infrastructure.apply import claude_code_cli
 
 
 class _FakeSnapshot:
     """Minimal stand-in for ProfileSnapshot used by the prompt builder."""
+
+    @property
+    def personal(self):
+        return self.as_dict()["personal"]
 
     def as_dict(self):
         return {
@@ -135,13 +141,22 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
 
     expected_upload = worker_dir / "Test_Applicant_Resume.pdf"
     assert expected_upload.exists()
-    assert f"Resume PDF (upload this): {expected_upload}" in rendered
+    assert str(expected_upload) not in rendered
+    assert 'upload_artifact(kind="resume")' in rendered
+    assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
-    assert "RESULT:CAPTCHA and stop" in rendered
+    assert "call solve_captcha(kind, sitekey, page_url) exactly once" in rendered
+    assert "solve_captcha failure -> output RESULT:CAPTCHA and stop" in rendered
+    assert "missing_profile_data:<field>" in rendered
+    assert "missing_attestation" not in rendered
+    assert "answer YES only when" in rendered
+    assert "Don't sell short" not in rendered
     assert "== EMAIL VERIFICATION ==" in rendered
-    assert "search_emails" in rendered
-    assert "read_email" in rendered
+    assert "get_verification_code" in rendered
+    assert "search_emails" not in rendered
+    assert "read_email" not in rendered
     assert "Do not open Gmail in the browser" in rendered
+    assert 'type_credential(kind="job_site_password")' in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
 
 
@@ -181,17 +196,97 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "DistinctivePasswordShouldNeverRender" not in rendered
     assert "capsolver-secret-never-render" not in rendered
     assert "API key:" not in rendered
+    assert "CAPSOLVER_API_KEY" not in rendered
     assert "browser_evaluate" not in rendered
+    assert "browser_file_upload" not in rendered
     assert "send_email" not in rendered
-    assert "email_application_required" in rendered
+    assert "RESULT:EMAIL_ONLY:<address>" in rendered
     assert "Age 18+: Yes" not in rendered
     assert "Felony: No" not in rendered
     assert "Background check consent: Yes" in rendered
 
 
-def test_default_mcp_config_includes_gmail_read_connector() -> None:
-    config = _default_mcp_config(9222)
+def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
+    base_profile = {"application_preferences": {"how_heard": "Referral"}}
+    full = {
+        **base_profile,
+        "application_attestations": {
+            "age_18_plus": True,
+            "background_check_consent": True,
+            "felony_conviction": False,
+            "previously_worked_at_employer": False,
+            "additional": {"can_travel": True},
+        },
+    }
+    partial = {
+        **base_profile,
+        "application_attestations": {
+            "age_18_plus": None,
+            "background_check_consent": True,
+            "felony_conviction": None,
+            "previously_worked_at_employer": None,
+        },
+    }
+    empty = {"application_attestations": {}, "application_preferences": {}}
 
+    assert prompt_mod._build_profile_attestation_lines(full) == [
+        "Age 18+: Yes",
+        "Background check consent: Yes",
+        "Felony conviction: No",
+        "Previously worked at employer: No",
+        "Can travel: Yes",
+        "How heard: Referral",
+    ]
+    assert prompt_mod._build_profile_attestation_lines(partial) == [
+        "Background check consent: Yes",
+        "How heard: Referral",
+    ]
+    assert prompt_mod._build_profile_attestation_lines(empty) == []
+
+
+def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> None:
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+    config = _default_mcp_config(
+        9222,
+        job={
+            "url": "https://jobs.example.com/role",
+            "application_url": "https://apply.example.com/job",
+        },
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    playwright = config["mcpServers"]["playwright"]
+    assert playwright["args"][0] == "@playwright/mcp@0.0.77"
     gmail = config["mcpServers"]["gmail"]
     assert gmail["command"] == sys.executable
     assert gmail["args"] == ["-m", "jobhunter.infrastructure.gmail.mcp_server"]
+    assert gmail["env"]["JOBHUNTER_GMAIL_ALLOWED_DOMAINS"] == "example.com"
+    assert gmail["env"]["JOBHUNTER_GMAIL_TO_EMAIL"] == "test@example.com"
+    apply_tools = config["mcpServers"]["apply_tools"]
+    assert apply_tools["command"] == sys.executable
+    assert apply_tools["args"] == ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"]
+    assert apply_tools["env"]["JOBHUNTER_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
+    assert apply_tools["env"]["JOBHUNTER_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
+    assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
+    assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
+    assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
+
+
+def test_default_mcp_config_scopes_capsolver_key_to_apply_tools(monkeypatch) -> None:
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-private-key")
+
+    config = _default_mcp_config(
+        9222,
+        job={"application_url": "https://apply.example.com/job"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    apply_tools = config["mcpServers"]["apply_tools"]
+    assert apply_tools["env"]["CAPSOLVER_API_KEY"] == "capsolver-private-key"
+    assert "mcp__apply_tools__solve_captcha" in claude_code_cli._allowed_tools_for_mcp_config(config)
+    captcha_section = prompt_mod._build_captcha_section()
+    assert "capsolver-private-key" not in captcha_section
+    assert "CAPSOLVER_API_KEY" not in captcha_section

@@ -12,6 +12,8 @@
 import type { TenantId } from "../tenant.js";
 import type {
   ApplicationDefaults,
+  ApplicationAttestations,
+  ApplicationPreferences,
   Compensation,
   EducationEntry,
   ExperienceEntry,
@@ -48,6 +50,8 @@ export interface ProfileSnapshot {
   readonly compensation: Compensation;
   readonly experienceMetadata: ExperienceMetadata;
   readonly applicationDefaults: ApplicationDefaults;
+  readonly applicationAttestations: ApplicationAttestations;
+  readonly applicationPreferences: ApplicationPreferences;
   readonly resumeBaseline: ResumeBaseline;
   readonly experienceEntries: readonly ExperienceEntry[];
   readonly educationEntries: readonly EducationEntry[];

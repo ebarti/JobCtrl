@@ -411,7 +411,11 @@ def scan_prompt_tripwires(root: Path, *, strict_prompt: bool) -> ScanResult:
         return result
 
     messages = []
-    if "API key: {capsolver_key" in text:
+    if (
+        "API key: {capsolver_key" in text
+        or "CAPSOLVER_API_KEY" in text
+        or "capsolver_key" in text
+    ):
         messages.append(f"{PROMPT_PATH}: CapSolver key is interpolated into prompt text")
     if "Age 18+: Yes" in text and "Felony: No" in text:
         messages.append(f"{PROMPT_PATH}: hardcoded attestation defaults remain")

@@ -15,6 +15,8 @@ from typing import Any, Mapping
 from jobhunter.domain.tenant import TenantId
 from jobhunter.domain.profile.value_objects import (
     ApplicationDefaults,
+    ApplicationAttestations,
+    ApplicationPreferences,
     Compensation,
     EducationEntry,
     ExperienceEntry,
@@ -65,6 +67,8 @@ class Profile:
     compensation: Compensation
     experience_metadata: ExperienceMetadata
     application_defaults: ApplicationDefaults
+    application_attestations: ApplicationAttestations
+    application_preferences: ApplicationPreferences
     resume_baseline: ResumeBaseline
     experience_entries: tuple[ExperienceEntry, ...]
     education_entries: tuple[EducationEntry, ...]
@@ -173,6 +177,8 @@ class Profile:
             "eeo_voluntary",
             "resume",
             "resume_constraints",
+            "application_attestations",
+            "application_preferences",
             # Augmented legacy fields are computed from the canonical schema
             # at snapshot time — never persisted.
             "skills_boundary",
@@ -194,6 +200,12 @@ class Profile:
                     "availability": data.get("availability"),
                     "eeo_voluntary": data.get("eeo_voluntary"),
                 }
+            ),
+            application_attestations=ApplicationAttestations.from_dict(
+                data.get("application_attestations")
+            ),
+            application_preferences=ApplicationPreferences.from_dict(
+                data.get("application_preferences") or data.get("preferences")
             ),
             resume_baseline=ResumeBaseline.from_dict(resume.get("executive_profile")),
             experience_entries=tuple(experience_entries),
@@ -231,6 +243,8 @@ class Profile:
             },
             "resume_constraints": self.resume_constraints.to_dict(),
             "eeo_voluntary": self.application_defaults.eeo_voluntary.to_dict(),
+            "application_attestations": self.application_attestations.to_dict(),
+            "application_preferences": self.application_preferences.to_dict(),
         }
         # Forward-compat: re-emit unknown keys verbatim so migrations don't lose data.
         for key, value in self.extra.items():

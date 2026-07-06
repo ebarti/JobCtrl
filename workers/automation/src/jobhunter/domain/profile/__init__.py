@@ -16,7 +16,9 @@ from jobhunter.domain.profile.ports import (
 )
 from jobhunter.domain.profile.value_objects import (
     Availability,
+    ApplicationAttestations,
     ApplicationDefaults,
+    ApplicationPreferences,
     Compensation,
     EducationEntry,
     EeoVoluntary,
@@ -43,6 +45,8 @@ __all__ = [
     # Value objects
     "Availability",
     "ApplicationDefaults",
+    "ApplicationAttestations",
+    "ApplicationPreferences",
     "Compensation",
     "EducationEntry",
     "EeoVoluntary",

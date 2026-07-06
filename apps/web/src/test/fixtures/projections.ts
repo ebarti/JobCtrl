@@ -615,6 +615,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         startedAt: "2026-05-06T06:30:00Z",
         finishedAt: "2026-05-06T06:35:00Z",
       },
+      emailApplication: null,
       review: {
         state: "pending",
         decision: null,
@@ -685,6 +686,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         coverLetterText: null,
       },
       latestApplyRun: null,
+      emailApplication: null,
       review: {
         state: "pending",
         decision: null,

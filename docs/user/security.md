@@ -35,9 +35,9 @@ run the step that needs them and have configured the relevant provider:
 | LLM provider APIs | Scoring, employer analysis, resume tailoring, and cover-letter generation | Job posting text, your profile evidence (experience, skills, verified metrics), and the generated resume/cover-letter text. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
 | The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers) plus the tailored resume and cover-letter text. Profile passwords and CAPTCHA-provider keys are not included in the prompt. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
 | Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobHunter never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
-| Gmail (read-only) | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails. The connector requests read-only scope; raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. |
+| Gmail | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails, plus approved email application sends. Raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs; outgoing sends require `gmail.send` and a matching Apply Review binding. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
-| CAPTCHA solving service | Not used by the apply agent until an owned solver tool ships | CAPTCHA challenges fail closed; no CAPTCHA-provider key is sent through the model prompt. |
+| CAPTCHA solving service | Only when `CAPSOLVER_API_KEY` is configured and a supported apply-page widget is detected | The owned local solver tool sends the site key and page URL to the configured provider; provider keys and solver tokens are not sent through the model prompt. Unsupported or unconfigured CAPTCHA flows fail closed. |
 | Langfuse / OpenTelemetry | Only if you configure Langfuse credentials | LLM prompts and completions, workflow spans, and JSON-RPC spans. Export is off unless configured, and `LANGFUSE_DISABLE=1` opts out even when credentials are present. |
 
 The apply prompt is the largest single batch of personal data that leaves your
@@ -115,6 +115,14 @@ recorded approval while the gate is on. You can turn the gate off in Preferences
 which is why the settings form shows a persistent warning when it is off — with
 the gate off, the agent may submit immediately after claiming a job.
 
+Email-only application paths still use this approval model. During dry-run, the
+agent may report a posted recipient with `RESULT:EMAIL_ONLY:<address>`, but it
+does not draft or send email. JobHunter verifies that recipient against stored
+posting text, records a deterministic candidate with the selected resume PDF
+attachment, and sends through Gmail only when Apply Review approves that exact
+recipient and attachment. A stale binding, missing `gmail.send` token, or missing
+sender parks or fails closed instead of sending.
+
 ### Dry-Run Cannot Submit
 
 Run dry-runs before approving any real submission. Dry-run does two things, so
@@ -156,8 +164,9 @@ actions, or bypass third-party controls unless you explicitly authorize that
 behavior. This includes CAPTCHA, paywall, login, rate-limit, and bot-control
 bypass. The apply agent is instructed to stop on single sign-on and third-party login
 screens (SSO/OAuth), decline browser permission prompts, refuse ID or biometric
-verification, and never enter payment or bank details. When CapSolver is not configured, the agent is told not
-to attempt CAPTCHAs at all.
+verification, and never enter payment or bank details. CAPTCHA solving is limited
+to the owned local solver tool for supported widgets; unsupported or unconfigured
+challenges fail closed.
 
 ### Crawl Politeness
 
@@ -205,10 +214,16 @@ Different secrets live in different places, and it is worth knowing which:
   `~/.jobhunter/.env`. When stored in the Keychain they are never written to
   SQLite, logs, traces, or artifacts.
 - **The CapSolver key** is the `CAPSOLVER_API_KEY` environment variable
-  (`.env`). The apply agent no longer receives this key in its model prompt.
+  (`.env`). The apply agent does not receive this key in its model prompt; the
+  owned solver tool reads it locally and never returns provider keys or solver
+  tokens to the model.
 - **Account passwords for login autofill** are profile data if you store them,
-  but the apply agent no longer receives profile passwords in its prompt. If a
-  password login is required, it stops for operator handling.
+  but the apply agent does not receive profile passwords in its prompt. For a
+  regular job-site password field, it can call a local credential tool that
+  reads the password from the local profile database and types it into the
+  focused field without returning the value to the model. If the credential is
+  missing or the field is not a password field, login fails closed for operator
+  handling.
 
 JobHunter never commits any of these; the release gate scans for accidental
 secret commits (see the [developer Security page](../developer/security.md)).
@@ -219,8 +234,10 @@ The apply agent is a local Claude runtime subprocess that drives a real Chrome
 browser through Playwright. It uses a system `claude` when present, then the
 pinned Claude Agent SDK bundled binary unless `JOBHUNTER_CLAUDE_BIN` is set. It
 runs with an explicit MCP tool allowlist for apply automation: browser form
-tools plus read-only Gmail verification-code tools, not shell/file access,
-Gmail write tools, raw page-script evaluation, or broad permission bypass.
+tools plus bounded Gmail verification-code tools, not shell/file access, raw
+Gmail mailbox send tools, raw page-script evaluation, or broad permission
+bypass. Email-only applications are sent by JobHunter's owned Gmail connector
+after Apply Review approval, not by an agent mailbox tool.
 
 ::: warning Prompt injection is a real risk
 Because the agent reads live, untrusted job pages and acts on them, a malicious

@@ -16,9 +16,11 @@ from jobhunter.apply import chrome
 
 class _HostileEmployerHandler(BaseHTTPRequestHandler):
     posts: list[str] = []
+    deletes: list[str] = []
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
-        employer_origin = f"http://127.0.0.1.nip.io:{self.server.server_port}"
+        employer_origin = f"http://127.0.0.1:{self.server.server_port}"
+        websocket_origin = f"ws://127.0.0.1:{self.server.server_port}"
         body = f"""
         <!doctype html>
         <html>
@@ -28,6 +30,9 @@ class _HostileEmployerHandler(BaseHTTPRequestHandler):
             </form>
             <script>
               fetch("{employer_origin}/auto-submit", {{ method: "POST", body: "auto" }}).catch(() => {{}});
+              fetch("{employer_origin}/delete-submit", {{ method: "DELETE" }}).catch(() => {{}});
+              try {{ navigator.sendBeacon("{employer_origin}/beacon", "beacon"); }} catch (_) {{}}
+              try {{ new WebSocket("{websocket_origin}/socket"); }} catch (_) {{}}
               window.addEventListener("load", () => {{
                 setTimeout(() => {{
                   document.getElementById("application-form").requestSubmit();
@@ -48,6 +53,11 @@ class _HostileEmployerHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.end_headers()
 
+    def do_DELETE(self) -> None:  # noqa: N802 - stdlib hook name
+        type(self).deletes.append(self.path)
+        self.send_response(204)
+        self.end_headers()
+
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
@@ -59,6 +69,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_posts(tmp_path, monkeypatch):
         pytest.skip(str(exc))
 
     _HostileEmployerHandler.posts = []
+    _HostileEmployerHandler.deletes = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _HostileEmployerHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -69,17 +80,6 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_posts(tmp_path, monkeypatch):
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
-    real_popen = chrome.subprocess.Popen
-
-    def popen_with_loopback_host_mapping(cmd, **kwargs):
-        mapped_cmd = [
-            *cmd,
-            "--host-resolver-rules=MAP 127.0.0.1.nip.io 127.0.0.1",
-            "--no-proxy-server",
-        ]
-        return real_popen(mapped_cmd, **kwargs)
-
-    monkeypatch.setattr(chrome.subprocess, "Popen", popen_with_loopback_host_mapping)
     try:
         dry_port = _free_port()
         dry_proc = chrome.launch_chrome(
@@ -98,6 +98,12 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_posts(tmp_path, monkeypatch):
             time.sleep(1.0)
             assert blocked is True
             assert _HostileEmployerHandler.posts == []
+            assert _HostileEmployerHandler.deletes == []
+            evidence = chrome.get_dry_run_cdp_guard_evidence(dry_port)
+            channels = set(evidence["blocked_channels"])
+            assert evidence["coverage"] == "partial"
+            assert "network:POST" in channels
+            assert "network:DELETE" in channels
         finally:
             chrome.cleanup_worker(901, dry_proc)
 
@@ -114,14 +120,78 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_posts(tmp_path, monkeypatch):
                 f"http://127.0.0.1:{server.server_port}/",
             )
             deadline = time.time() + 5
-            while not _HostileEmployerHandler.posts and time.time() < deadline:
+            while (
+                (not _HostileEmployerHandler.posts or not _HostileEmployerHandler.deletes)
+                and time.time() < deadline
+            ):
                 time.sleep(0.1)
             assert _HostileEmployerHandler.posts
+            assert _HostileEmployerHandler.deletes
         finally:
             chrome.cleanup_worker(902, live_proc)
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_dry_run_request_policy_blocks_all_mutating_methods():
+    assert chrome._should_block_dry_run_request("POST") is True
+    assert chrome._should_block_dry_run_request("PUT") is True
+    assert chrome._should_block_dry_run_request("PATCH") is True
+    assert chrome._should_block_dry_run_request("DELETE") is True
+    assert chrome._should_block_dry_run_request("OPTIONS") is True
+    assert chrome._should_block_dry_run_request("GET") is False
+    assert chrome._should_block_dry_run_request("HEAD") is False
+
+
+def test_dry_run_guard_evidence_records_sanitized_submission_channels():
+    guard = chrome._DryRunCdpGuard(port=1)
+    guard.record_blocked_request(
+        channel="network",
+        method="DELETE",
+        url="https://example.com/apply?token=secret#frag",
+        resource_type="Fetch",
+    )
+    guard.record_blocked_request(
+        channel="sendBeacon",
+        method="POST",
+        url="https://example.com/analytics?token=secret",
+        resource_type="Ping",
+    )
+    guard.record_blocked_request(
+        channel="WebSocket",
+        method="WEBSOCKET",
+        url="wss://example.com/socket?token=secret",
+        resource_type="WebSocket",
+    )
+
+    evidence = guard.evidence()
+    assert evidence["coverage"] == "partial"
+    assert evidence["blocked_channels"] == (
+        "WebSocket:WEBSOCKET",
+        "network:DELETE",
+        "sendBeacon:POST",
+    )
+    assert evidence["blocked_requests"] == (
+        {
+            "channel": "network",
+            "method": "DELETE",
+            "url": "https://example.com/apply",
+            "resource_type": "Fetch",
+        },
+        {
+            "channel": "sendBeacon",
+            "method": "POST",
+            "url": "https://example.com/analytics",
+            "resource_type": "Ping",
+        },
+        {
+            "channel": "WebSocket",
+            "method": "WEBSOCKET",
+            "url": "wss://example.com/socket",
+            "resource_type": "WebSocket",
+        },
+    )
 
 
 def _free_port() -> int:
