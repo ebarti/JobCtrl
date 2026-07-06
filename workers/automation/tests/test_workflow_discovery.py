@@ -52,14 +52,19 @@ _EVENTS: list[tuple[str, Any]] = []
 _FAIL_FAMILY: str | None = None
 _TARGETS: list[_Target] = []
 _RESUME_GATE: dict[str, asyncio.Event] = {}
+_MAX_PARALLEL: int = 1
+_SOURCE_CONCURRENCY: dict[str, int] = {"current": 0, "peak": 0}
 
 
 def _reset_state() -> None:
     _EVENTS.clear()
     _TARGETS.clear()
     _RESUME_GATE.clear()
-    global _FAIL_FAMILY
+    global _FAIL_FAMILY, _MAX_PARALLEL
     _FAIL_FAMILY = None
+    _MAX_PARALLEL = 1
+    _SOURCE_CONCURRENCY["current"] = 0
+    _SOURCE_CONCURRENCY["peak"] = 0
 
 
 def test_discover_workflow_detects_activity_cancellation_cause() -> None:
@@ -150,6 +155,7 @@ async def _plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDis
         families=["jobspy", "workday", "smartextract"],
         progress_total=5,
         start_count=7,
+        max_parallel_families=_MAX_PARALLEL,
     )
 
 
@@ -809,6 +815,187 @@ async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.Monk
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS), "prep fan-out did not run after restart"
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+# ---------------------------------------------------------------------------
+# R9 Phase 3 — parallel source families (gated)
+# ---------------------------------------------------------------------------
+
+
+@activity.defn(name="discovery_source_family")
+async def _parallel_tracking_source(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+    """Records peak concurrency and completes families in a different order than
+    they were submitted, so tests can assert both the cap and the deterministic
+    submission-order fold."""
+    _SOURCE_CONCURRENCY["current"] += 1
+    _SOURCE_CONCURRENCY["peak"] = max(_SOURCE_CONCURRENCY["peak"], _SOURCE_CONCURRENCY["current"])
+    _EVENTS.append(("source", payload.family))
+    try:
+        # Later-submitted families finish first, so completion order != order.
+        hold = {"jobspy": 0.15, "workday": 0.10, "smartextract": 0.05}.get(payload.family, 0.05)
+        await asyncio.sleep(hold)
+        if payload.family == _FAIL_FAMILY:
+            raise ApplicationError(
+                f"{payload.family} unavailable", type="source_unavailable", non_retryable=True
+            )
+        return DiscoverySourceActivityOutput(
+            family=payload.family, status="ok", result={"new": 1}, source_ids=[]
+        )
+    finally:
+        _SOURCE_CONCURRENCY["current"] -= 1
+
+
+def _parallel_activities():
+    return [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _parallel_tracking_source,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+
+async def _run_parallel_discover(queue: str) -> Any:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=_parallel_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            return await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"{queue}-wf",
+                task_queue=queue,
+            )
+
+
+@pytest.mark.asyncio
+async def test_parallel_families_respect_the_cap() -> None:
+    """Phase 3 bound: with 3 families and a cap of 2, no more than 2 source
+    crawls run concurrently, and at least 2 do (parallelism actually happens)."""
+    _reset_state()
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 2
+    result = await _run_parallel_discover(f"discover-cap2-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert _SOURCE_CONCURRENCY["peak"] == 2
+
+
+@pytest.mark.asyncio
+async def test_sequential_default_runs_one_family_at_a_time() -> None:
+    """The default cap (1) keeps families strictly sequential — the safe,
+    unchanged behavior."""
+    _reset_state()  # _MAX_PARALLEL stays 1
+    result = await _run_parallel_discover(f"discover-cap1-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert _SOURCE_CONCURRENCY["peak"] == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_family_results_fold_in_submission_order() -> None:
+    """Determinism: even though families finish in reverse order (smartextract
+    first), the completed list is folded in submission order — the fold does not
+    depend on wall-clock completion order, so replay stays deterministic."""
+    _reset_state()
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 3
+    result = await _run_parallel_discover(f"discover-cap3-{uuid.uuid4().hex[:8]}")
+
+    assert _SOURCE_CONCURRENCY["peak"] == 3
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_partial_failure_preserves_folding() -> None:
+    """I2 under parallelism: a family failing while peers run concurrently keeps
+    the tolerated-partial-failure folding — the run SUCCEEDS with the failed
+    family recorded, and the peers' streaming fan-out still ran."""
+    _reset_state()
+    global _MAX_PARALLEL, _FAIL_FAMILY
+    _MAX_PARALLEL = 3
+    _FAIL_FAMILY = "workday"
+    _TARGETS.append(
+        _Target(job_url="https://example.com/job/1", idempotency_key="t1", target_version="3", steps=["score"])
+    )
+    result = await _run_parallel_discover(f"discover-parfail-{uuid.uuid4().hex[:8]}")
+
+    assert result.families_completed == ["jobspy", "smartextract"]
+    assert result.families_failed == ["workday"]
+    assert any(event[0] == "fanout" for event in _EVENTS)
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@activity.defn(name="discovery_source_family")
+async def _blocking_cancelable_source(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+    _EVENTS.append(("source", payload.family))
+    _SOURCE_CONCURRENCY["current"] += 1
+    if _SOURCE_CONCURRENCY["current"] >= _MAX_PARALLEL:
+        _RESUME_GATE["all_started"].set()
+    try:
+        while True:
+            activity.heartbeat("blocking")
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        _EVENTS.append(("source_canceled", payload.family))
+        raise
+
+
+@pytest.mark.asyncio
+async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 3 cancel-all: canceling the run while multiple families crawl in
+    parallel cooperatively cancels every in-flight family and terminalizes the
+    workflow as canceled."""
+    _reset_state()
+    monkeypatch.setattr(
+        "jobhunter.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2)
+    )
+    global _MAX_PARALLEL
+    _MAX_PARALLEL = 2
+    _RESUME_GATE["all_started"] = asyncio.Event()
+    queue = f"discover-parcancel-{uuid.uuid4().hex[:8]}"
+
+    activities = [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _blocking_cancelable_source,
+        _discovery_enrichment,
+        _discovery_preparation_fanout,
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"{queue}-wf",
+                task_queue=queue,
+            )
+            await asyncio.wait_for(_RESUME_GATE["all_started"].wait(), timeout=30)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as excinfo:
+                await asyncio.wait_for(handle.result(), timeout=60)
+
+    # The run terminates as a cancellation.
+    assert isinstance(excinfo.value.cause, CancelledError)
+    # Both concurrently-active families received cooperative cancellation — the
+    # cancel fans out to EVERY in-flight family, not just one.
+    canceled = {event[1] for event in _EVENTS if event[0] == "source_canceled"}
+    assert canceled == {"jobspy", "workday"}
 
 
 def test_discovery_source_progress_emits_temporal_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:

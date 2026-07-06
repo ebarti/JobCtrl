@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -17,6 +18,7 @@ with workflow.unsafe.imports_passed_through():
         DiscoveryPreparationFanoutInput,
         DiscoverySourceActivityInput,
         PlanDiscoverySourcesInput,
+        PlanDiscoverySourcesOutput,
         discovery_enrichment_activity,
         discovery_preparation_fanout_activity,
         discovery_source_family_activity,
@@ -184,34 +186,35 @@ class DiscoverWorkflow:
         # sweep here also keeps it correct when families run concurrently
         # (Phase 3).
         await self._sweep_preexisting_preparation(payload)
-        for index, family in enumerate(plan.families):
-            try:
-                await workflow.execute_activity(
-                    discovery_source_family_activity,
-                    DiscoverySourceActivityInput(
-                        tenant_id=payload.tenant_id,
-                        family=family,
-                        expected_app_dir=payload.expected_app_dir,
-                        expected_db_path=payload.expected_db_path,
-                        workers=payload.workers,
-                        limit=payload.limit,
-                        source_ids=payload.source_ids,
-                        start_count=plan.start_count,
-                        progress_completed=index,
-                        progress_total=plan.progress_total,
-                    ),
-                    start_to_close_timeout=_DISCOVERY_TIMEOUT,
-                    heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-                    retry_policy=_SOURCE_RETRY,
-                )
-                completed.append(family)
-            except ActivityError as exc:
-                if _activity_error_was_cancelled(exc):
-                    raise CancelledError() from exc
-                failed.append(family)
-                failures.append(f"{family}: {exc.cause if exc.cause else exc}")
-                continue
-            await self._stream_family_preparation(payload)
+        # R9 Phase 3 — optional parallel source families, GATED. Families are
+        # processed in batches of ``plan.max_parallel_families`` (env
+        # ``JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES``, default 1 = sequential =
+        # current behavior). Within a batch the source crawls run concurrently
+        # (``asyncio.gather``); the batch's streaming enrichment + fan-out then
+        # runs ONCE afterwards, so enrichment is never run concurrently (it
+        # drains globally) and concurrent browser use is bounded to the batch's
+        # source crawls. Batches are ordered and results folded in submission
+        # order, so replay stays deterministic; a canceled source in any batch
+        # cooperatively cancels the run.
+        indexed_families = list(enumerate(plan.families))
+        batch_size = max(1, plan.max_parallel_families)
+        for batch in _chunk(indexed_families, batch_size):
+            results = await asyncio.gather(
+                *(self._run_family_source(payload, index, family, plan) for index, family in batch)
+            )
+            if any(status == "canceled" for _family, status, _failure in results):
+                raise CancelledError()
+            batch_completed = False
+            for family, status, failure in results:
+                if status == "ok":
+                    completed.append(family)
+                    batch_completed = True
+                else:
+                    failed.append(family)
+                    if failure is not None:
+                        failures.append(failure)
+            if batch_completed:
+                await self._stream_family_preparation(payload)
 
         # Legacy semantics: per-source failures are tolerated. The TERMINAL
         # reconcile enrichment + preparation below ALWAYS run so the healthy
@@ -295,6 +298,47 @@ class DiscoverWorkflow:
             enrichment_status=enrichment_status,
             enrichment_site_errors=enrichment_site_errors,
         )
+
+    async def _run_family_source(
+        self,
+        payload: DiscoverWorkflowInput,
+        index: int,
+        family: str,
+        plan: PlanDiscoverySourcesOutput,
+    ) -> tuple[str, str, str | None]:
+        """Run one family's source crawl; return ``(family, status, failure)``.
+
+        Never raises: it folds every outcome into a status
+        (``"ok"``/``"failed"``/``"canceled"``) so ``asyncio.gather`` over a
+        parallel batch always completes and the caller folds results in a
+        deterministic, submission-order pass. Cancellation is surfaced as
+        ``"canceled"`` and re-raised by the caller so it fans out to the whole
+        run.
+        """
+        try:
+            await workflow.execute_activity(
+                discovery_source_family_activity,
+                DiscoverySourceActivityInput(
+                    tenant_id=payload.tenant_id,
+                    family=family,
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
+                    workers=payload.workers,
+                    limit=payload.limit,
+                    source_ids=payload.source_ids,
+                    start_count=plan.start_count,
+                    progress_completed=index,
+                    progress_total=plan.progress_total,
+                ),
+                start_to_close_timeout=_DISCOVERY_TIMEOUT,
+                heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
+                retry_policy=_SOURCE_RETRY,
+            )
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                return (family, "canceled", None)
+            return (family, "failed", f"{family}: {exc.cause if exc.cause else exc}")
+        return (family, "ok", None)
 
     async def _sweep_preexisting_preparation(self, payload: DiscoverWorkflowInput) -> None:
         """One-time full-derive fan-out for work left over from a PRIOR run.
@@ -413,6 +457,12 @@ async def _start_preparation_workflows(
         retry_policy=_SOURCE_RETRY,
     )
     return result.started + result.queued
+
+
+def _chunk(items: list[Any], size: int) -> list[list[Any]]:
+    """Split ``items`` into ordered sublists of at most ``size`` (>= 1)."""
+    step = max(1, size)
+    return [items[start : start + step] for start in range(0, len(items), step)]
 
 
 async def _check_spend(payload: DiscoverWorkflowInput) -> None:

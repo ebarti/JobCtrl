@@ -17,7 +17,7 @@ flowchart LR
         EXEC["ThreadPoolExecutor: slots + 2 threads"]
     end
     W --- W2
-    W --> D["DiscoverWorkflow: per-family activities, sequential"]
+    W --> D["DiscoverWorkflow: per-family activities, sequential by default (gated parallel)"]
     W --> P["JobPipelineWorkflow: stages in order, child workflows for discover / apply"]
     W --> A["ApplyWorkflow: single-flight per job id"]
     BUDGET["check_spend_budget preflight"] -.->|blocks over-budget starts| D & P & A
@@ -59,11 +59,12 @@ Two knobs that look like Temporal concurrency but are not:
 ## Where Fan-out Happens (And Why)
 
 - **DiscoverWorkflow** plans sources once (`plan_discovery_sources`), then runs
-  one `discovery_source_family` activity **per source family in a sequential
-  loop**. This is deliberate isolation, not parallelism: each family gets its
-  own activity-level timeout, heartbeat, and retry policy, and a family
-  failure is recorded (`families_failed`) while the loop continues to the next
-  family.
+  the `discovery_source_family` activities **one family at a time by default**
+  (`JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES=1`). This is deliberate isolation:
+  each family gets its own activity-level timeout, heartbeat, and retry policy,
+  and a family failure is recorded (`families_failed`) while the run continues to
+  the next family. Raising the cap runs families concurrently (R9 Phase 3,
+  below).
 - **Score-as-you-discover streaming (R9 Phase 1).** After **each family
   completes**, the workflow immediately runs `discovery_enrichment` (drains that
   family's fresh jobs) and `discovery_preparation_fanout` (starts their per-job
@@ -97,6 +98,17 @@ Two knobs that look like Temporal concurrency but are not:
   `_run_detail_scraper` may enrich sites in parallel threads, and the handoff is
   best-effort (a start failure is logged and left for the fan-out backstop,
   never mistaken for an enrichment failure).
+- **Parallel source families (R9 Phase 3, gated, default off).** Families are
+  processed in batches of `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` (default
+  `1` = sequential = today's behavior). With a value > 1, that many families'
+  **source crawls** run concurrently (`asyncio.gather` over the batch); the
+  batch's streaming enrichment + score-only fan-out then runs **once** afterward,
+  so enrichment (which drains globally) never runs concurrently and concurrent
+  browser use is confined to the batch's source crawls. The cap is resolved at
+  planning time (in `plan_discovery_sources`) and threaded through the plan, so
+  the workflow stays deterministic; results are folded in submission order, and a
+  canceled source in any batch cooperatively cancels the whole run. See the
+  worker-capacity analysis below before raising the cap.
 - **JobPipelineWorkflow** executes the selected stages in pipeline order and
   delegates `discover` and `apply` to child workflows, so the risky surfaces
   keep their own workflow identity, history, and retry policy.
@@ -112,10 +124,36 @@ Two knobs that look like Temporal concurrency but are not:
 | Bound | Mechanism | Where |
 | --- | --- | --- |
 | Activity slots | `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES`, executor `slots + 2` | `infrastructure/temporal/worker.py` |
+| Parallel discovery families | `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1`) | `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |
 | Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime Boundaries](../runtime.md) |
 | Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
+
+### Worker-Capacity Analysis (Parallel Families)
+
+`JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` is off by default (`1`) because
+browser/resource contention is the first-class risk of running families
+concurrently: there is operational history of uncontrolled browser concurrency
+destroying long runs. For a chosen cap `M`:
+
+- **Peak activity slots.** Up to `M` `discovery_source_family` activities run at
+  once, competing with the interleaved enrichment + fan-out + per-job
+  `JobPreparationWorkflow`s from Phases 1–2 for the same
+  `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` slots (default 4). Temporal queues the
+  excess, so `M` above the slot count buys nothing. **Keep `M` ≤ activity
+  slots**, and leave headroom for the streamed prep work.
+- **Peak concurrent browsers.** Enrichment runs once per batch (never
+  concurrently), so browsers overlap only during the batch's source crawls:
+  roughly `M` browser-launching families × the source's own workers. Each
+  headless Chromium is ~300–600 MB. **Size `M` against available memory** — on a
+  typical 16 GB developer machine, `M = 2–3` is a safe starting point; measure
+  before going higher.
+- **No new failure surface.** Parallel families keep each family's own
+  activity timeout / heartbeat / retry isolation and the exact partial-failure
+  folding; a canceled source cancels the whole run. Long-run soak on a real
+  workload remains an owner responsibility given the historical browser-GC
+  incident.
 
 Data-flow context — where each stage persists and how results reach the UI —
 lives in [Operations & Events](operations.md).

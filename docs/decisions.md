@@ -1400,8 +1400,18 @@ Consequences:
   `on_job_enriched` callback threaded from the activity to `enrichment/detail.py`
   (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
   `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
-- Parallel source families remain **out of scope** here — that is R9 Phase 3,
-  gated behind an explicit browser-concurrency bound.
+- Phase 3 (parallel source families) is **gated, default off**:
+  `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1` = sequential = today's
+  behavior). Values > 1 process families in batches of that size — the source
+  crawls run concurrently (`asyncio.gather`), then the batch's enrichment +
+  score-only fan-out runs once (enrichment never runs concurrently). The cap is
+  resolved at planning time and threaded through the plan so the workflow stays
+  deterministic; results fold in submission order; a canceled source cancels the
+  whole run. Browser concurrency is the first-class risk, so the default is off
+  and a worker-capacity analysis lives in
+  `docs/architecture/pipeline/concurrency.md`; the owner tunes the cap and runs a
+  soak before relying on it. A finer-grained cross-activity browser
+  pool/semaphore is a documented follow-up if the family cap proves insufficient.
 
 Cites: R9 streaming-pipeline-latency plan
 (`docs/plans/2026-07-05-streaming-pipeline-latency-plan.md`), Phase 1.
