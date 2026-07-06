@@ -1442,6 +1442,17 @@ describe("<ApplyReviewView>", () => {
         api: {
           applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
           createResumeReviewDraft,
+          // The editor auto-seeds comment threads on mount; production returns the
+          // draft with its persisted latest revision, so echo the cached draft back.
+          // Without this the shared fetch mock returns a revision-less draft that
+          // clobbers the cached "saved revision 1" state under the query cache.
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: draft.commentThreads,
+            seededCount: draft.commentThreads.length,
+            updatedCount: 0,
+          })),
         },
       }),
     });
