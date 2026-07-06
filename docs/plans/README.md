@@ -53,7 +53,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-03 | [Temporal-Native Rearchitecture](implemented/2026-07-03-temporal-native-rearchitecture.md) | Implemented — #230 (plan), #233, #231, #235, #238, #237, #239, #240; ADRs 2026-07-03 |
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
-| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train — W1 apply-safety precondition satisfied; overall R1 remains no-go pending W0.6, W2.1, W2.4, and final owner/release checkpoints |
+| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety precondition satisfied; overall R1 remains no-go pending W2.1, W2.4, and final owner/release checkpoints |
 | 2026-07-05 | [Contact Research And Outreach Planner](implemented/2026-07-05-outreach-planner-plan.md) | Implemented — #266 (plan), #325, #331, #332, #333, #335, #347; ADR 2026-07-06 |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
