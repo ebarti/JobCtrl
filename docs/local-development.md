@@ -18,7 +18,9 @@ pnpm install:interactive
 checks for Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler,
 offers Homebrew installs for missing machine-level tools when available, then
 runs the repository dependency setup: frozen pnpm install, uv sync, and
-Playwright Chromium installs for both the web package and the Python worker.
+Playwright Chromium installs for both the web package and the Python worker. It
+then runs `jobhunter setup` to detect Claude/Codex/Antigravity auth, persist
+enabled analysis legs, and finish with `jobhunter doctor`.
 
 `pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
 `--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
@@ -35,6 +37,14 @@ pnpm dev:setup
 Python worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
 the Python dev tools used by local checks. It does not install Temporal,
 Chrome/Chromium, Poppler, or Playwright browser binaries.
+
+Run the Python setup command directly when you only need to refresh vendor auth
+or analysis-leg configuration:
+
+```bash
+uv --project workers/automation run jobhunter setup
+uv --project workers/automation run jobhunter setup --non-interactive --json --skip-dependencies --skip-browsers
+```
 
 ## Run
 

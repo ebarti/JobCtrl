@@ -20,8 +20,8 @@ zoomable screenshots — no install required.
 - JobHunter running locally, open in your browser at a local web address.
 - A local workspace under `~/.jobhunter/` holding your database, settings, and
   generated files.
-- At least one LLM (large language model) provider connected, so scoring and
-  materials can run.
+- At least one LLM (large language model) provider connected for scoring and
+  materials, plus vendor auth for any enabled employer-analysis ensemble legs.
 - The commands to start, check, and stop the app whenever you need it.
 
 ## 1. Install Requirements
@@ -64,7 +64,9 @@ pnpm install:interactive
 
 Downloads the project and runs the guided first-run installer: it checks your
 system tools, installs the JavaScript and Python dependencies, and downloads the
-Playwright Chromium browser. Expect a few minutes on the first run.
+Playwright Chromium browser. It also runs `jobhunter setup`, which detects
+Claude/Codex/Antigravity auth and persists any intentionally enabled or skipped
+analysis legs. Expect a few minutes on the first run.
 
 If your machine already has the system tools and browsers, this non-interactive
 command is enough:
@@ -87,6 +89,7 @@ Downloads the Chromium build that Playwright uses for PDF rendering.
 
 ```bash
 uv --project workers/automation run jobhunter init
+uv --project workers/automation run jobhunter setup
 uv --project workers/automation run jobhunter doctor
 ```
 
@@ -95,7 +98,7 @@ The first command creates your local workspace and configuration under
 available: local database, LLM provider, Temporal, browser automation, the
 Gmail connector, and telemetry.
 
-At minimum, connect one LLM provider. Start from the example file:
+At minimum, connect one general LLM provider. Start from the example file:
 
 ```bash
 cp .env.example ~/.jobhunter/.env
@@ -110,8 +113,21 @@ Then open `~/.jobhunter/.env` in any editor and set one of:
 - `OPENAI_API_KEY` — an OpenAI key.
 - `LLM_URL` — the address of a local, OpenAI-compatible model server.
 
-See [Configuration](configuration.md) for the full list of settings; most people
-only need one of the three above to start.
+The employer-analysis ensemble is checked separately by `jobhunter setup` and
+`jobhunter doctor`:
+
+- Claude uses `ANTHROPIC_API_KEY` or local Claude credentials
+  (`CLAUDE_CODE_OAUTH_TOKEN` / existing Claude login) as a local convenience.
+- Codex needs persisted `CODEX_HOME/auth.json`; a bare `OPENAI_API_KEY` must be
+  enrolled with `codex login --with-api-key` before that leg is ready.
+- Antigravity uses `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env.
+
+Every run reconciles the ensemble with a Claude synthesis pass, so Claude auth is
+required even if you disable the `claude` leg via `JOBHUNTER_ANALYSIS_LEGS`. When
+it is missing, `setup` reports analysis as not ready and `doctor` shows a red
+`Claude synthesis auth` row.
+
+See [Configuration](configuration.md) for the full list of settings.
 
 ## 4. Start The App
 

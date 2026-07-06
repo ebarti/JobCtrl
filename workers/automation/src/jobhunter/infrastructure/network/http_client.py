@@ -19,6 +19,22 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from jobhunter.infrastructure.network.politeness import PolitenessSession
+from jobhunter.infrastructure.network.proxy import parse_proxy
+
+
+def build_opener(proxy: str | None = None) -> urllib.request.OpenerDirector:
+    """Build a urllib opener, optionally routed through a ``host:port[:user:pass]`` proxy.
+
+    Centralizes proxy-opener construction in the network package so fetch
+    surfaces (e.g. Workday) route through the gateway without importing raw
+    ``urllib`` themselves.
+    """
+    if not proxy:
+        return urllib.request.build_opener()
+    config = parse_proxy(proxy)
+    proxy_url = f"http://{config.jobspy}"
+    handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+    return urllib.request.build_opener(handler)
 
 
 def parse_retry_after(value: str | None) -> float | None:
