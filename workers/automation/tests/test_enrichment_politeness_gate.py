@@ -470,3 +470,103 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         assert len(paced) >= 2
     finally:
         close_connection(db_path)
+
+
+# ---------------------------------------------------------------------------
+# 6) robots-block -> allow recovery: a blocked job re-enriches, never stranded
+# ---------------------------------------------------------------------------
+
+
+def test_robots_blocked_job_re_enriches_after_robots_allows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    """A robots-blocked enrich stage re-enriches once robots allows (#314 High).
+
+    The stage folds into ``blocked`` while its aggregate stays
+    enrichment-pending, so a later run re-selects it. The state machine has no
+    ``Blocked -> Running`` edge, so without the Unblock the running transition
+    raised ``ValueError`` -> ``ENRICH_INTERNAL_ERROR`` and the job was excluded
+    from the pending queue forever. Unblocking (``Blocked -> Pending``) before
+    the running transition restores the "a later run re-evaluates robots"
+    promise the ``_record_enrich_robots_blocked`` docstring makes.
+    """
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://example.test/jobs/reeval"
+    try:
+        _seed_pending(conn, url, "RemoteOK")
+        spy = _SpyPlaywright()
+        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
+
+        # Run 1 — robots disallows: folded blocked, zero navigation, je pending.
+        blocked = scrape_site_batch(
+            conn, "RemoteOK", [(url, "Role")], gateway=offline_gateway(robots=DenyAllRobots())
+        )
+        assert blocked["blocked"] == 1
+        assert spy.goto_calls == []
+        assert _enrichment_status(conn, url) is None
+
+        # Run 2 — robots now allows: the job re-enriches instead of stranding.
+        # ``error == 0`` is the direct proof the Blocked->Running ValueError path
+        # (which would have recorded ENRICH_INTERNAL_ERROR) never fired.
+        allowed = scrape_site_batch(
+            conn, "RemoteOK", [(url, "Role")], gateway=offline_gateway(robots=AllowAllRobots())
+        )
+        assert allowed["processed"] == 1
+        assert allowed["error"] == 0
+        assert spy.goto_calls == [url]
+
+        stage = _enrich_stage(conn, url)
+        assert stage["state"] == "succeeded"
+        assert stage["error_code"] != "ENRICH_INTERNAL_ERROR"
+        assert _enrichment_status(conn, url) == "enriched"
+
+        # The unblock is auditable — exactly one StageReset event marks the
+        # robots re-evaluation of the previously blocked job.
+        reset_events = conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE job_url = ? AND stage = 'enrich' "
+            "AND event_type = 'StageReset'",
+            (url,),
+        ).fetchone()[0]
+        assert reset_events == 1
+    finally:
+        close_connection(db_path)
+
+
+def test_repeatedly_robots_blocked_job_stays_blocked_never_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-evaluating a still-disallowed job keeps it blocked, never failed (#314).
+
+    Repeated robots blocks must not accumulate into a spurious failure: each run
+    re-folds ``blocked`` (an idempotent no-op transition), the aggregate stays
+    enrichment-pending, and ``error`` stays 0 so the job keeps being
+    re-evaluated on later runs rather than being stranded.
+    """
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://example.test/jobs/still-blocked"
+    try:
+        _seed_pending(conn, url, "RemoteOK")
+        spy = _SpyPlaywright()
+        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
+
+        for _ in range(3):
+            stats = scrape_site_batch(
+                conn,
+                "RemoteOK",
+                [(url, "Role")],
+                gateway=offline_gateway(robots=DenyAllRobots()),
+            )
+            assert stats["blocked"] == 1
+            assert stats["error"] == 0
+
+        assert spy.goto_calls == []
+        stage = _enrich_stage(conn, url)
+        assert stage["state"] == "blocked"
+        assert stage["error_code"] == "ENRICH_ROBOTS_DISALLOWED"
+        assert _enrichment_status(conn, url) is None
+    finally:
+        close_connection(db_path)
