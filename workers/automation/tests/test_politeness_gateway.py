@@ -199,11 +199,13 @@ def test_robots_allow_path_proceeds_and_consumes_budget() -> None:
 class _VirtualClock:
     def __init__(self) -> None:
         self.t = 0.0
+        self.sleeps: list[float] = []
 
     def now(self) -> float:
         return self.t
 
     def sleep(self, seconds: float) -> None:
+        self.sleeps.append(max(0.0, seconds))
         self.t += max(0.0, seconds)
 
 
@@ -392,3 +394,88 @@ def test_gateway_user_agent_is_honest() -> None:
     gateway = PolitenessGateway(user_agent=HONEST_UA)
     assert gateway.user_agent == "JobHunter/test (+https://example.com/repo)"
     assert "Mozilla" not in gateway.user_agent
+
+
+# ---------------------------------------------------------------------------
+# Retry-After clamp at the sink (R10 P3b) — a hostile/absurd header must never
+# freeze a host (and its pooled worker thread) for an attacker-chosen duration.
+# ---------------------------------------------------------------------------
+
+
+def test_note_retry_after_clamps_absurd_value_at_the_sink() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=300.0)
+
+    effective = limiter.note_retry_after("host", 10**9)
+
+    # The sink caps the deferral: a hostile header cannot push the host out beyond
+    # the ceiling, no matter what value the server sent.
+    assert effective == 300.0
+    assert 0.0 < limiter.hard_rate_limit_remaining("host") <= 300.0
+    # The next low-level slot for the host waits the clamped cooldown, never 1e9s.
+    with limiter.slot("host", min_interval_seconds=0.0, max_concurrency=1):
+        pass
+    assert clock.now() == 300.0
+
+
+def test_within_cap_retry_after_paces_but_is_not_a_hard_skip() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=300.0)
+
+    limiter.note_retry_after("host", 30.0)
+
+    # A within-cap Retry-After is honored by pacing, not flagged for skip.
+    assert limiter.hard_rate_limit_remaining("host") == 0.0
+    with limiter.slot("host", min_interval_seconds=0.0, max_concurrency=1):
+        pass
+    assert clock.now() >= 30.0
+
+
+def test_hard_rate_limit_clears_after_the_clamped_cooldown() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=120.0)
+
+    limiter.note_retry_after("host", 10**9)
+    assert limiter.hard_rate_limit_remaining("host") > 0.0
+
+    clock.t = 121.0  # past the clamped cooldown
+    assert limiter.hard_rate_limit_remaining("host") == 0.0
+
+
+def test_wait_for_turn_single_nap_never_exceeds_the_cap() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=60.0)
+
+    # Defensive ceiling: even if a future writer set an unbounded deadline
+    # directly (bypassing the sink clamp), no single nap exceeds the cap — the
+    # loop re-checks between naps rather than sleeping the whole delta at once.
+    slot = limiter._slot_for("host", 1)
+    slot.retry_after_until = 1000.0
+
+    with limiter.slot("host", min_interval_seconds=0.0, max_concurrency=1):
+        pass
+
+    assert clock.sleeps  # it waited
+    assert max(clock.sleeps) <= 60.0
+    assert clock.now() >= 1000.0  # the deadline is still honored, just in bounded naps
+
+
+def test_guard_skips_hard_rate_limited_host_without_slot_or_budget() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=300.0)
+    limiter.note_retry_after("host", 10**9)  # over-clamp => host is hard rate-limited
+    gateway = PolitenessGateway(
+        user_agent=HONEST_UA, robots=_AllowAllRobots(), rate_limiter=limiter
+    )
+    budget = gateway.new_run_budget(5)
+
+    with gateway.guard("http://host/x", _page_policy(), budget) as decision:
+        assert decision.allowed is False
+        assert decision.outcome is PolitenessOutcome.RATE_LIMITED
+        assert decision.retry_after_seconds and decision.retry_after_seconds > 0.0
+
+    # A hard-limited host is recorded and skipped: no budget spent, no slot held,
+    # no worker parked for the clamped cooldown.
+    assert budget.consumed() == 0
+    assert clock.now() == 0.0
+    assert clock.sleeps == []

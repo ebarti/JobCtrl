@@ -62,6 +62,13 @@ const sampleDiscoverySource = {
   activeVerificationRate: 0.75,
   fullDescriptionSuccessRate: 0.92,
   applyUrlSuccessRate: 0.83,
+  politeness: {
+    robotsDisallowedCount: 0,
+    rateLimitedCount: 0,
+    budgetExhaustedCount: 0,
+    lastBlockedReason: null,
+    lastBlockedAt: null,
+  },
   qualityTrend: "flat",
 };
 

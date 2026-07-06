@@ -1569,3 +1569,55 @@ Consequences:
 - future scheduled or external delivery needs a separate opt-in design and
   safety decision
 - TypeScript/Python parity fixtures guard count drift between the API and CLI
+
+## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
+
+Status: accepted
+
+Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
+`python-jobspy` invocation boundary, and every Playwright navigation — routes
+through one process-shared politeness gateway (`infrastructure/network/`). The
+gateway honors `robots.txt` for page-rendering methods (D6: fail-closed on an
+inconclusive fetch — `5xx` or timeout — but fail-open with a warning when the
+robots endpoint is definitively absent — DNS failure or refused connection),
+paces per host (min-interval + concurrency cap), bounds each
+run's request budget, and stamps a single honest, owner-configurable
+`User-Agent` that never impersonates a browser. Robots-deny, rate-limit, and
+budget-exhaustion are recorded as first-class **outcomes** (never scrape errors)
+and surfaced per source in the discovery UI.
+
+Rationale:
+
+- pre-R10, fetch paths ran with no robots handling, no shared rate limiting, and
+  some browser-spoofed identities — publishing that is the exact risk gate G1
+  exists to close
+- one choke point means a new fetch surface cannot silently reintroduce a bypass
+  (an AST tripwire test enforces this), and pacing survives `ThreadPoolExecutor`
+  fan-out because the limiter is a process singleton
+- recording blocks as outcomes (not errors) keeps root-cause signal honest: a
+  source that yields nothing shows *why* without inflating scrape-failure counts
+
+Consequences:
+
+- documented public JSON APIs (Greenhouse/Lever/Ashby/Workday CXS) are
+  robots-exempt at their API host (D2); page-rendering methods are robots-checked
+- robots unreachability follows the D6 split: a `4xx`/`404` is *no restrictions*
+  (allow), a `5xx`/timeout fails closed and re-checks on a short TTL, and a DNS
+  failure / refused connection fails open with a warning — so a host that refuses
+  `/robots.txt` while still serving content is crawled unenforced (the accepted
+  D6 trade-off)
+- broad boards fetched by `python-jobspy` are policed only at the invocation
+  boundary (budget + pacing) because that library owns its internal transport;
+  `jobhunter doctor` discloses when they are active
+- the authenticated LinkedIn path is an owner-scoped exception (real logged-in
+  session, its own browser identity) that still applies rate + budget
+- a server `Retry-After` is clamped at the limiter sink so a hostile header
+  cannot freeze a pooled worker; an over-clamp value is recorded as rate-limited
+  and skipped rather than slept
+- the honest UA is owner-tunable via `JOBHUNTER_CRAWL_UA_PRODUCT` /
+  `JOBHUNTER_CRAWL_UA_CONTACT`; per-host rate/concurrency/budget defaults live on
+  each `SourcePolicy` (a registry policy editor is deferred, D4)
+
+Cites: R10 crawl-politeness train (PRs #297 → #315); plan
+`docs/plans/2026-07-05-crawl-politeness-plan.md`; gate G1 in
+`docs/plans/2026-07-03-oss-release-remediation-spec.md` §5.

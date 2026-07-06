@@ -13,6 +13,8 @@ from jobhunter.enrichment.detail import (
     scrape_detail_page,
 )
 
+from .politeness_helpers import offline_gateway, offline_session
+
 
 class _FakeResponse:
     status = 200
@@ -106,7 +108,9 @@ def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pyt
     )
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>Expired role</main>")
 
-    result = scrape_detail_page(_FakePage(), "https://example.com/jobs/closed")
+    result = scrape_detail_page(
+        _FakePage(), "https://example.com/jobs/closed", session=offline_session()
+    )
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "expired"
@@ -126,7 +130,9 @@ def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytes
         ),
     )
 
-    result = scrape_detail_page(_FakePage(), "https://example.com/jobs/closed")
+    result = scrape_detail_page(
+        _FakePage(), "https://example.com/jobs/closed", session=offline_session()
+    )
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "closed"
@@ -190,11 +196,14 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
         )
         conn.commit()
 
+        # Force the anonymous browser path so the gate uses the injected offline
+        # gateway (deterministic, no authenticated-session shared limiter).
+        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url: {
+            lambda _page, _url, session=None: {
                 "status": "error",
                 "tier_used": 3,
                 "full_description": None,
@@ -207,7 +216,9 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
             },
         )
 
-        stats = detail.scrape_site_batch(conn, "linkedin", [(job_url, "Director")], delay=0)
+        stats = detail.scrape_site_batch(
+            conn, "linkedin", [(job_url, "Director")], gateway=offline_gateway()
+        )
 
         assert stats["processed"] == 1
         assert stats["partial"] == 1

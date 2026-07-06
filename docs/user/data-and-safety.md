@@ -69,6 +69,18 @@ Depending on configuration, JobHunter can call:
 
 Review configuration before running large pipelines.
 
+Discovery and enrichment fetches go through one crawl-politeness gateway that
+honors `robots.txt` (failing closed on an inconclusive fetch — a `5xx` or timeout
+— but failing open with a warning when the host has no robots endpoint at all — a
+DNS failure or refused connection), paces requests per host, bounds each run's
+request budget, and stamps a single honest
+`User-Agent` — `JobHunter/<version> (+<repo url>)` by default, never a spoofed
+browser. Blocked fetches become recorded outcomes (robots-disallowed /
+rate-limited / budget-exhausted), visible per source in the Source Health card,
+not scrape errors. See [Security → Crawl Politeness](security.md#crawl-politeness)
+for the full posture and [Configuration → Crawl Politeness](configuration.md#crawl-politeness)
+to review or override the user-agent.
+
 ## Responsible Use Boundaries
 
 These boundaries are the operator's responsibility:

@@ -182,8 +182,23 @@ class RateLimiterPort(Protocol):
         """
         ...
 
-    def note_retry_after(self, host: str, retry_after_seconds: float) -> None:
-        """Record a server ``Retry-After`` so the next slot for ``host`` waits."""
+    def note_retry_after(self, host: str, retry_after_seconds: float) -> float:
+        """Record a server ``Retry-After`` so the next slot for ``host`` waits.
+
+        Implementations clamp the deferral to a bounded ceiling at this sink so a
+        hostile/absurd header cannot freeze a host (and a pooled worker thread) for
+        an attacker-chosen duration. Returns the effective (clamped) seconds.
+        """
+        ...
+
+    def hard_rate_limit_remaining(self, host: str) -> float:
+        """Seconds a host must wait due to an *over-clamp* server ``Retry-After`` (0 if none).
+
+        A positive value means the server's ``Retry-After`` exceeded the limiter's
+        cap; the gateway records a rate-limited outcome and skips the fetch instead
+        of holding a worker thread for the clamped cooldown. Within-cap
+        ``Retry-After`` values return 0 and are paced by :meth:`slot`.
+        """
         ...
 
 
@@ -197,8 +212,20 @@ class PolitenessGatewayPort(Protocol):
     budget for the duration of the fetch.
     """
 
+    @property
+    def user_agent(self) -> str:
+        """The honest ``User-Agent`` header value stamped on every fetch."""
+        ...
+
     def new_run_budget(self, max_requests: int) -> RunBudget:
         """Create a per-run request budget (typically ``SourcePolicy`` sized)."""
+        ...
+
+    def note_retry_after(self, url: str, retry_after_seconds: float) -> float:
+        """Forward a server ``Retry-After`` for ``url``'s host to the limiter.
+
+        Returns the effective (clamped) seconds the limiter honored.
+        """
         ...
 
     def check(

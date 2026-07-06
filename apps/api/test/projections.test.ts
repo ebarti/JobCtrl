@@ -3591,6 +3591,135 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       cleanup();
     }
   });
+
+  it("surfaces politeness outcomes per source without counting them as failures", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      // Source A: only politeness "blocked" outcomes — a robots deny then two
+      // rate-limits. These are NON-error outcomes (is_scrape_failure = 0).
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "politeness_gate",
+        outcome: "blocked",
+        occurredAt: "2026-05-15T00:00:00Z",
+        sourceId: "greenhouse:acme",
+        failureCategory: "robots_disallowed",
+      });
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "politeness_gate",
+        outcome: "blocked",
+        occurredAt: "2026-05-15T00:01:00Z",
+        sourceId: "greenhouse:acme",
+        failureCategory: "rate_limited",
+      });
+      insertOperationalMetric(dbPath, {
+        stage: "enrich",
+        attemptKind: "politeness_gate",
+        outcome: "blocked",
+        occurredAt: "2026-05-15T00:02:00Z",
+        sourceId: "greenhouse:acme",
+        failureCategory: "rate_limited",
+      });
+      // Source B: a real scrape failure AND a budget-exhaustion outcome. The two
+      // must be reported on independent axes.
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "discovery_source",
+        outcome: "failed",
+        occurredAt: "2026-05-15T00:03:00Z",
+        sourceId: "jobspy:linkedin",
+        adapter: "jobspy",
+        failureCategory: "timeout",
+        operationalFailure: true,
+        scrapeFailure: true,
+        retryable: true,
+        errorClass: "TimeoutError",
+      });
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "politeness_gate",
+        outcome: "blocked",
+        occurredAt: "2026-05-15T00:04:00Z",
+        sourceId: "jobspy:linkedin",
+        failureCategory: "budget_exhausted",
+      });
+      // Source C: only a real scrape failure, no politeness outcomes at all.
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "discovery_source",
+        outcome: "failed",
+        occurredAt: "2026-05-15T00:05:00Z",
+        sourceId: "workday:beta",
+        adapter: "workday",
+        failureCategory: "http_500",
+        operationalFailure: true,
+        scrapeFailure: true,
+        retryable: true,
+        errorClass: "HttpError",
+      });
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const sources = new Map<string, Record<string, unknown>>(
+          res
+            .json()
+            .sourceHealth.map((source: { sourceId: string }) => [source.sourceId, source]),
+        );
+
+        // Blocked-only source: counts recorded, most-recent reason wins, and it
+        // is NOT counted as any kind of failure.
+        expect(sources.get("greenhouse:acme")).toMatchObject({
+          scrapeFailureCount: 0,
+          operationalFailureCount: 0,
+          failedRunCount: 0,
+          consecutiveFailures: 0,
+          politeness: {
+            robotsDisallowedCount: 1,
+            rateLimitedCount: 2,
+            budgetExhaustedCount: 0,
+            lastBlockedReason: "rate_limited",
+            lastBlockedAt: "2026-05-15T00:02:00Z",
+          },
+        });
+
+        // Mixed source: real failure and politeness outcome on independent axes.
+        expect(sources.get("jobspy:linkedin")).toMatchObject({
+          scrapeFailureCount: 1,
+          lastFailureCategory: "timeout",
+          politeness: {
+            robotsDisallowedCount: 0,
+            rateLimitedCount: 0,
+            budgetExhaustedCount: 1,
+            lastBlockedReason: "budget_exhausted",
+            lastBlockedAt: "2026-05-15T00:04:00Z",
+          },
+        });
+
+        // Failure-only source: honest empty politeness state (nothing implied).
+        expect(sources.get("workday:beta")).toMatchObject({
+          scrapeFailureCount: 1,
+          politeness: {
+            robotsDisallowedCount: 0,
+            rateLimitedCount: 0,
+            budgetExhaustedCount: 0,
+            lastBlockedReason: null,
+            lastBlockedAt: null,
+          },
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("dashboard outcome-conversion projection", () => {

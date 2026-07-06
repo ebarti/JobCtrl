@@ -1,3 +1,4 @@
+import { SourcePolitenessBadges } from "../../contexts/discovery/components/SourcePolitenessBadges.js";
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -41,6 +42,10 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                   {pct(source.fullDescriptionSuccessRate)} · apply{" "}
                   {pct(source.applyUrlSuccessRate)} · duplicate {pct(source.duplicateRate)}
                 </span>
+                <SourcePolitenessBadges
+                  politeness={source.politeness}
+                  sourceLabel={source.sourceId}
+                />
               </span>
               {source.consecutiveFailures ? (
                 <span className="tag danger">{source.consecutiveFailures} fails</span>

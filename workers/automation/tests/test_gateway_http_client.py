@@ -170,6 +170,42 @@ def test_server_429_is_recorded_as_rate_limit_and_delays_next_request() -> None:
     assert clock.now() >= 30.0
 
 
+def test_absurd_retry_after_is_clamped_and_next_fetch_is_skipped() -> None:
+    clock = _VirtualClock()
+    limiter = HostRateLimiter(clock=clock.now, sleep=clock.sleep, max_retry_after_seconds=300.0)
+    gateway = PolitenessGateway(user_agent=HONEST_UA, robots=_AllowAllRobots(), rate_limiter=limiter)
+    conn = _conn()
+    opener = _RecordingOpener(
+        raise_exc=urllib.error.HTTPError(
+            "http://host/jobs", 429, "Too Many Requests", {"Retry-After": "999999999"}, None  # type: ignore[arg-type]
+        )
+    )
+    client = GatewayHttpClient(_session(gateway, policy=_policy(), conn=conn), opener=opener)
+
+    # First fetch: the server issues a 429 with an absurd Retry-After.
+    assert client.fetch_json("http://host/jobs") is None
+    row = conn.execute(
+        "SELECT * FROM operational_attempt_metrics WHERE failure_category='rate_limited'"
+    ).fetchone()
+    assert row is not None and row["is_scrape_failure"] == 0
+    # Clamped at the sink: the host cooldown never reflects the absurd value.
+    assert 0.0 < limiter.hard_rate_limit_remaining("host") <= 300.0
+
+    # Second fetch to the same host is pre-empted by the gateway: recorded as a
+    # rate-limit outcome and skipped, so it neither hits the opener nor parks the
+    # thread on the (clamped) cooldown.
+    assert client.fetch_json("http://host/jobs") is None
+    assert len(opener.requests) == 1  # the skipped second fetch never reached urllib
+    assert clock.now() <= 300.0
+    count = conn.execute(
+        "SELECT COUNT(*) AS c FROM operational_attempt_metrics WHERE failure_category='rate_limited'"
+    ).fetchone()
+    # Exactly two distinct fetches -> exactly two rows: the 429-ed request and
+    # the pre-empted skip. The tight ``== 2`` bites if a future change ever
+    # records a single request on both the server-429 and guard pre-empt paths.
+    assert count["c"] == 2
+
+
 def test_non_rate_limit_http_error_propagates() -> None:
     opener = _RecordingOpener(
         raise_exc=urllib.error.HTTPError("http://host/jobs", 500, "boom", {}, None)  # type: ignore[arg-type]

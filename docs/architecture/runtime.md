@@ -289,6 +289,35 @@ its aggregate, repository (in `infrastructure/<context>/`), and ports (in
 `domain/ports/`). The CLI is the human-facing driving adapter; the JSON-RPC
 server (`jobhunter rpc`) is the API-facing driving adapter.
 
+### Crawl Politeness Gateway (R10)
+
+Every outbound discovery/enrichment fetch — the `urllib` client
+(`infrastructure/network/http_client.py`), the `python-jobspy` invocation
+boundary, and every Playwright navigation — routes through one process-shared
+choke point in `infrastructure/network/`:
+
+- `PolitenessGateway.check` is a side-effect-free pre-fetch verdict (browser
+  callers peek before `page.goto`); `guard` additionally consumes one run-budget
+  unit and holds the per-host rate/concurrency slot for the fetch's duration.
+- `HostRateLimiter` is a process-lifetime singleton (a `BoundedSemaphore` +
+  monotonic min-interval per host) so `ThreadPoolExecutor` fan-out cannot bypass
+  pacing. A server `Retry-After` is honored but clamped at the sink, so a
+  hostile header cannot freeze a pooled worker.
+- The UA is one honest identity resolved from `resolve_honest_user_agent()`
+  (built-in default `JobHunter/<version> (+repo)`, owner-overridable via env);
+  it never impersonates a browser on a controlled surface.
+- Robots-deny / rate-limit / budget-exhaustion are recorded as first-class
+  **outcomes** in `operational_attempt_metrics` (`is_scrape_failure=0`,
+  `is_operational_failure=0`) via `record_politeness_outcome`, and projected to
+  the source-quality read model the discovery UI reads
+  (`SourceHealthCard` / `SourcePolitenessBadges`). Documented (undocumented-API)
+  boards fetched by `python-jobspy` are policed only at the invocation boundary
+  (budget + pacing), since that library owns its internal transport.
+
+The plan and phase-by-phase surface inventory live in
+`docs/plans/2026-07-05-crawl-politeness-plan.md`; the ADR is in
+[`docs/decisions.md`](../decisions.md).
+
 ## Workflow Orchestration (Local Temporal)
 
 A local Temporal dev server (`temporal server start-dev --db-filename
@@ -407,6 +436,13 @@ Production workflows live alongside the activities:
   (`jobhunter/infrastructure/compensation/workflow.py`) — wraps the extracted
   compensation refresh core so posted facts and market estimates no longer run
   inside the JSON-RPC request thread.
+
+One non-pipeline workflow is also registered: `DurabilityProbeWorkflow`
+(`jobhunter/infrastructure/temporal/durability_probe.py`) is a diagnostic
+self-test whose only in-flight state is a durable `workflow.sleep` timer — no
+network, no LLM, no browser, and never any apply. It is inert until explicitly
+started and exists so an operator can prove durable-execution recovery (TR-008 /
+CL-050) hermetically; `scripts/reliability-demo.sh` drives it.
 
 The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 (stage-core functions and `_run_stage_observed`) and `workflow.py` (the
