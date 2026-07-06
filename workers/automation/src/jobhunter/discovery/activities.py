@@ -26,6 +26,10 @@ class PlanDiscoverySourcesOutput:
     families: list[str]
     progress_total: int
     start_count: int
+    # R9 Phase 3 — how many source families the workflow may crawl concurrently.
+    # Resolved from the env at planning time (in the activity) so the workflow
+    # stays deterministic on replay. Default 1 = sequential (current behavior).
+    max_parallel_families: int = 1
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         families=list(plan.get("families") or []),
         progress_total=int(plan.get("progress_total") or 0),
         start_count=int(plan.get("start_count") or 0),
+        max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
     )
 
 

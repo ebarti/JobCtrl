@@ -1330,10 +1330,15 @@ def plan_discovery_source_families(
         families.append("workday")
     if not source_filter_active or smart_extract_sources:
         families.append("smartextract")
+    from jobhunter.infrastructure.temporal.concurrency import (
+        max_parallel_discovery_families_from_env,
+    )
+
     return {
         "families": families,
         "progress_total": len(families) + 2,
         "start_count": _pipeline_job_count() if limit > 0 else 0,
+        "max_parallel_families": max_parallel_discovery_families_from_env(),
     }
 
 
