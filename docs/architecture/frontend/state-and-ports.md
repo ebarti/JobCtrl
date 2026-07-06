@@ -29,6 +29,7 @@ is the canonical decision matrix.
 | Currently active route | **URL** (path) | Trivially. |
 | Global text search ("Filter jobs, errors, companies...") | **URL** | Bookmarkable searches. |
 | Bulk-selection set (checked job keys) | **Component** (`useState`) | Intentionally ephemeral; selecting 50 jobs and refreshing should not preserve the selection. Documented exception. |
+| Saved table view definitions, active view id, column visibility/order/widths, and table density override | **Client** (Zustand+persist) | Local UI preference/template data. Applying a view writes URL-owned filters/sort through `navigate`; active filters/sort are not shadowed in the store. |
 | Theme (light/dark) | **Client** (Zustand+persist) | User preference; not URL-bound; persists across sessions. |
 | Density (compact/regular/comfy) | **Client** (Zustand+persist) | Same. |
 | Tenant identity | **Client** (context fed by Zustand+session in cloud) | Determined by session; not navigation-controlled. |
@@ -36,6 +37,7 @@ is the canonical decision matrix.
 | Profile data | **Server** (Query) | Fetched, cached, mutation-invalidated. |
 | Settings / credentials | **Server** (Query) | Same. |
 | Dashboard summary | **Server** (Query) | Same. |
+| Daily digest and digest acknowledge state | **Server** (Query + mutation) | `GET /v1/digest` is a passive local read. Only explicit acknowledge advances `digest_state`; digest deep links carry filters/sort in the URL. |
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
 | Artifacts list / detail | **Server** (Query) | Same. |

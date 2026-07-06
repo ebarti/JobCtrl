@@ -33,7 +33,7 @@ function buildRouter(harness: ReturnType<typeof buildProviderHarness>, initialEn
 }
 
 describe("<AnalyticsView>", () => {
-  it("renders the analytics read model with the required small-sample caption", async () => {
+  it("renders the analytics read model with the required small-sample and non-causal caption", async () => {
     const harness = buildProviderHarness();
     const { router, Wrapper } = buildRouter(harness, "/analytics?dimension=fit_band");
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
@@ -42,6 +42,7 @@ describe("<AnalyticsView>", () => {
 
     expect(screen.getByRole("heading", { name: "Outcome analytics" })).toBeInTheDocument();
     expect(screen.getByText(/Recorded outcomes from canonical rows only/i)).toBeInTheDocument();
+    expect(screen.getByText(/not causal claims/i)).toBeInTheDocument();
     expect(screen.getByText(/Analytics never enter scoring, ranking, or apply eligibility/i)).toBeInTheDocument();
     expect(screen.getByText("4d")).toBeInTheDocument();
     expect(screen.getByText("60%")).toBeInTheDocument();

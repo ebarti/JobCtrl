@@ -40,6 +40,8 @@ export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "al
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
+const STAGE_OR_ALL = [...STAGES, "all"] as const;
+const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 
 export const JOB_SORT_FIELDS = [
   "discovered_at",
@@ -60,6 +62,19 @@ export const JOB_SORT_FIELDS = [
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
+export const DAILY_DIGEST_ITEM_KEYS = [
+  "newMatches",
+  "blockedSources",
+  "reviewNeededMaterials",
+  "staleScores",
+  "pendingApprovals",
+  "followUpsDue",
+  "budget",
+] as const;
+export type DailyDigestItemKey = (typeof DAILY_DIGEST_ITEM_KEYS)[number];
+export const DIGEST_FOLLOW_UP_THRESHOLD_DAYS = 7 as const;
+export const DIGEST_DAY_BOUNDARY = "UTC" as const;
+
 export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "status", "size_bytes"] as const;
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
 
@@ -74,6 +89,91 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
+export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export type TableId = z.infer<typeof TableIdSchema>;
+
+export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);
+export type SavedTableViewDensity = z.infer<typeof SavedTableViewDensitySchema>;
+
+export const SavedTableViewTextFilterSchema = z
+  .object({
+    operator: z.enum(["contains", "does_not_contain"]).default("contains").catch("contains"),
+    text: z.string().default("").catch(""),
+    selectedValues: z.array(z.string()).default([]).catch([]),
+  })
+  .strict();
+export type SavedTableViewTextFilter = z.infer<typeof SavedTableViewTextFilterSchema>;
+
+export const SavedTableViewGridFiltersSchema = z.record(
+  z.string(),
+  SavedTableViewTextFilterSchema.optional(),
+);
+export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
+
+export const SavedTableViewUrlFiltersSchema = z
+  .object({
+    q: z.string().optional().catch(undefined),
+    stage: z.enum(STAGE_OR_ALL).optional().catch(undefined),
+    state: z.enum(STATE_OR_ALL).optional().catch(undefined),
+    applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
+    deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
+    discoveredSince: z.string().trim().min(1).optional().catch(undefined),
+    scoredSince: z.string().trim().min(1).optional().catch(undefined),
+  })
+  .strict();
+export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
+
+export const SavedTableViewSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    tableId: TableIdSchema,
+    name: z.string().trim().min(1).max(80),
+    builtIn: z.boolean(),
+    columns: z
+      .object({
+        order: z.array(z.string()).default([]).catch([]),
+        hidden: z.array(z.string()).default([]).catch([]),
+        widths: z.record(z.string(), z.coerce.number().int().min(24).max(2000)).default({}).catch({}),
+      })
+      .strict(),
+    density: SavedTableViewDensitySchema.nullable(),
+    sort: z
+      .object({
+        columnId: z.string(),
+        direction: z.enum(["asc", "desc"]),
+      })
+      .strict(),
+    urlFilters: SavedTableViewUrlFiltersSchema.default({}),
+    gridFilters: SavedTableViewGridFiltersSchema.default({}),
+    grouping: z
+      .object({
+        columnId: z.string(),
+      })
+      .strict()
+      .nullable(),
+    colorRules: z
+      .array(
+        z
+          .object({
+            columnId: z.string(),
+            predicate: z
+              .object({
+                op: z.enum(["eq", "neq", "gte", "lte", "contains"]),
+                value: z.union([z.string(), z.number()]),
+              })
+              .strict(),
+            tone: z.enum(["success", "warning", "danger", "info"]),
+          })
+          .strict(),
+      )
+      .default([]),
+    schemaVersion: z.number().int().min(1),
+  })
+  .strict();
+export type SavedTableView = z.infer<typeof SavedTableViewSchema>;
 
 const optionalText = z
   .string()
@@ -1627,10 +1727,16 @@ export const JobListQuerySchema = z
     company: optionalText,
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    discovered_since: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
+    scored_since: IsoTimestampSchema.optional().catch(undefined),
   })
   .transform((value) => ({
     ...value,
     pageSize: value.pageSize ?? value.page_size ?? 50,
+    discoveredSince: value.discoveredSince ?? value.discovered_since,
+    scoredSince: value.scoredSince ?? value.scored_since,
   }));
 
 export type JobListQuery = z.infer<typeof JobListQuerySchema>;
@@ -2314,6 +2420,72 @@ export interface SourceHealthSummary {
   updatedAt: string | null;
 }
 
+export interface DigestState {
+  lastAcknowledgedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface DailyDigestBudget {
+  status: "ok" | "over_budget";
+  estimatedUsd: number;
+  dailyBudgetUsd: number;
+  remainingUsd: number | null;
+  unlimited: boolean;
+}
+
+export interface DailyDigest {
+  ok: true;
+  generatedAt: string;
+  since: string | null;
+  highFitThreshold: number;
+  newMatches: {
+    count: number;
+    highFitCount: number;
+  };
+  blockedSources: {
+    count: number;
+    sources: Array<{
+      sourceId: string;
+      recommendedState: string;
+      consecutiveFailures: number;
+    }>;
+  };
+  reviewNeededMaterials: {
+    count: number;
+  };
+  staleScores: {
+    count: number;
+  };
+  pendingApprovals: {
+    count: number;
+  };
+  followUpsDue: {
+    count: number;
+    derived: true;
+    thresholdDays: typeof DIGEST_FOLLOW_UP_THRESHOLD_DAYS;
+    dayBoundary: typeof DIGEST_DAY_BOUNDARY;
+  };
+  budget: DailyDigestBudget;
+  deepLinks: Record<DailyDigestItemKey, string>;
+}
+
+export const DigestAcknowledgeRequestSchema = z
+  .object({
+    acknowledgedAt: IsoTimestampSchema.optional().catch(undefined),
+  })
+  .transform((value): { acknowledgedAt?: string } =>
+    value.acknowledgedAt ? { acknowledgedAt: value.acknowledgedAt } : {},
+  );
+
+export interface DigestAcknowledgeRequest {
+  acknowledgedAt?: string;
+}
+
+export interface DigestAcknowledgeResponse {
+  ok: true;
+  state: DigestState;
+}
+
 export interface OperationalMetricsSummary {
   attempts: number;
   failures: number;
@@ -2903,6 +3075,47 @@ export interface SettingsResponse {
   };
 }
 
+export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;
+export type ExtensionCapability = (typeof EXTENSION_CAPABILITY_VALUES)[number];
+
+export const ExtensionCapabilityTokenResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    token: z.string().trim().min(32),
+    tokenPath: z.string().trim().min(1),
+    created: z.boolean(),
+  })
+  .strict();
+export type ExtensionCapabilityTokenResponse = z.infer<
+  typeof ExtensionCapabilityTokenResponseSchema
+>;
+
+export const ExtensionAuthStatusResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    authenticated: z.literal(true),
+    capabilities: z.array(z.enum(EXTENSION_CAPABILITY_VALUES)),
+  })
+  .strict();
+export type ExtensionAuthStatusResponse = z.infer<typeof ExtensionAuthStatusResponseSchema>;
+
+export interface ExtensionAutofillProfileField {
+  path: string;
+  label: string;
+  value: string;
+  source: {
+    kind: "profile";
+    path: string;
+    label: string;
+  };
+}
+
+export interface ExtensionAutofillProfileResponse {
+  ok: true;
+  profileVersion: number | null;
+  fields: ExtensionAutofillProfileField[];
+}
+
 export const COMPENSATION_SOURCE_TYPES = [
   "posted_salary",
   "public_wage_baseline",
@@ -3099,6 +3312,7 @@ export const MANUAL_ACTION_REASON_VALUES = [
   "rate_limit",
   "protected_internal_site",
   "ambiguous_career_system",
+  "browser_extension_capture",
 ] as const;
 export type ManualActionReasonValue = (typeof MANUAL_ACTION_REASON_VALUES)[number];
 
@@ -3684,8 +3898,61 @@ export interface ManualCaptureImportResponse {
     originatingUrl: string;
     captureMode: ManualCaptureModeValue;
     futureManualActionRequired: boolean;
+    captureClient?: string;
+    extensionVersion?: string;
   };
 }
+
+export const ExtensionCaptureIngestSchema = z
+  .object({
+    captureId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9._:-]+$/)
+      .optional(),
+    originatingUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "originatingUrl must be a valid http(s) URL"),
+    captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
+    capturedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "capturedUrl must be a valid http(s) URL")
+      .optional(),
+    contentText: z.string().trim().max(200_000).optional(),
+    contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
+    note: z.string().trim().max(400).optional(),
+    futureManualActionRequired: z.boolean().default(false),
+    captureClient: z.literal("browser_extension").default("browser_extension"),
+    extensionVersion: z.string().trim().min(1).max(80).default("unknown"),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.capturedUrl !== undefined ||
+      value.contentText !== undefined ||
+      value.contentHtmlBase64 !== undefined,
+    { message: "One of capturedUrl, contentText, or contentHtmlBase64 must be provided." },
+  );
+export type ExtensionCaptureIngestRequest = z.infer<typeof ExtensionCaptureIngestSchema>;
+
+export interface ExtensionCaptureDismissedReplayResponse {
+  ok: true;
+  itemId: string;
+  jobKey: null;
+  status: "dismissed";
+  dismissedAt: string | null;
+  message: string;
+}
+
+export type ExtensionCaptureIngestResponse =
+  | ManualCaptureImportResponse
+  | ExtensionCaptureDismissedReplayResponse;
 
 export const ManualCaptureDismissSchema = z
   .object({

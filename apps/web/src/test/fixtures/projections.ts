@@ -8,6 +8,7 @@ import type {
   ApplyReviewQueueResponse,
   CredentialsResponse,
   DashboardSummary,
+  DailyDigest,
   JobAuditEntry,
   JobCompensationAudit,
   JobCompensationSummary,
@@ -1526,6 +1527,45 @@ export const sampleOutcomeAnalyticsSummary: OutcomeAnalyticsSummary = {
   },
 };
 
+export const sampleDailyDigest: DailyDigest = {
+  ok: true,
+  generatedAt: "2026-07-05T12:00:00.000Z",
+  since: "2026-07-01T00:00:00.000Z",
+  highFitThreshold: 7,
+  newMatches: { count: 3, highFitCount: 2 },
+  blockedSources: {
+    count: 1,
+    sources: [
+      {
+        sourceId: "workday:unstable-example",
+        recommendedState: "quarantined",
+        consecutiveFailures: 3,
+      },
+    ],
+  },
+  reviewNeededMaterials: { count: 1 },
+  staleScores: { count: 1 },
+  pendingApprovals: { count: 2 },
+  followUpsDue: { count: 1, derived: true, thresholdDays: 7, dayBoundary: "UTC" },
+  budget: {
+    status: "over_budget",
+    estimatedUsd: 12.5,
+    dailyBudgetUsd: 10,
+    remainingUsd: 0,
+    unlimited: false,
+  },
+  deepLinks: {
+    newMatches:
+      "/jobs?deleted=active&sort=discovered_at&dir=desc&discoveredSince=2026-07-01T00%3A00%3A00.000Z&scoredSince=2026-07-01T00%3A00%3A00.000Z",
+    blockedSources: "/discovery",
+    reviewNeededMaterials: "/apply-review",
+    staleScores: "/jobs?deleted=active&state=stale&sort=fit_score&dir=desc",
+    pendingApprovals: "/apply-review",
+    followUpsDue: "/jobs?applyStatus=applied",
+    budget: "/settings",
+  },
+};
+
 export const sampleProfileResponse: ProfileConfigResponse = {
   ok: true,
   profile: {
@@ -1565,6 +1605,13 @@ export const sampleSettingsResponse: SettingsResponse = {
     targetCriteria: "Director-plus infrastructure roles.",
   },
   paths: { settingsPath: "/tmp/jobhunter-test/settings.json" },
+};
+
+export const sampleExtensionCapabilityTokenResponse = {
+  ok: true as const,
+  token: "jh_ext_test_token_123456789012345678901234567890",
+  tokenPath: "/tmp/jobhunter-test/extension-capability-token",
+  created: false,
 };
 
 export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {

@@ -114,6 +114,10 @@ from jobhunter.domain.events.profile import (
     ProfileImportedPayload,
     create_profile_imported,
 )
+from jobhunter.domain.events.operations import (
+    DigestReviewedPayload,
+    create_digest_reviewed,
+)
 from jobhunter.domain.events.workflow import (
     WorkflowStartedPayload,
     create_workflow_started,
@@ -192,6 +196,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ProfileImported",
     "TailoringPolicyUpdated",
     "CompensationFactsUpdated",
+    "DigestReviewed",
     "WorkflowStarted",
     "WorkflowCompleted",
     "WorkflowFailed",
@@ -311,6 +316,9 @@ __all__ = [
     "create_profile_updated",
     "ProfileImportedPayload",
     "create_profile_imported",
+    # Operations
+    "DigestReviewedPayload",
+    "create_digest_reviewed",
     # Workflow lifecycle (Temporal loop closure)
     "WorkflowStartedPayload",
     "create_workflow_started",

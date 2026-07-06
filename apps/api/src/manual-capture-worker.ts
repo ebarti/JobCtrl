@@ -141,6 +141,8 @@ function workerOutputToResponse(
   const provenance = isRecord(retryContext.manual_capture_provenance)
     ? retryContext.manual_capture_provenance
     : {};
+  const captureClient = optionalText(provenance.capture_client ?? provenance.captureClient);
+  const extensionVersion = optionalText(provenance.extension_version ?? provenance.extensionVersion);
   return {
     ok: true,
     itemId: requiredText(output.itemId, "itemId"),
@@ -154,6 +156,8 @@ function workerOutputToResponse(
       ),
       captureMode: input.captureMode,
       futureManualActionRequired: input.futureManualActionRequired,
+      ...(captureClient ? { captureClient } : {}),
+      ...(extensionVersion ? { extensionVersion } : {}),
     },
   };
 }
