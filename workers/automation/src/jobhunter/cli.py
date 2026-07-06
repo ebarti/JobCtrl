@@ -1339,6 +1339,11 @@ def apply(
 
     if gen:
         from jobhunter.apply.launcher import gen_prompt
+        from jobhunter.config import get_apply_max_budget_usd
+        from jobhunter.infrastructure.apply.claude_code_cli import (
+            _ALLOWED_TOOLS,
+            _DISALLOWED_TOOLS,
+        )
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
@@ -1354,16 +1359,9 @@ def apply(
         console.print(
             f"  claude {model_args}-p "
             f"--mcp-config {mcp_path} "
-            f"--allowedTools mcp__playwright__browser_navigate,"
-            f"mcp__playwright__browser_snapshot,"
-            f"mcp__playwright__browser_take_screenshot,"
-            f"mcp__playwright__browser_click,"
-            f"mcp__playwright__browser_fill_form,"
-            f"mcp__playwright__browser_file_upload,"
-            f"mcp__playwright__browser_tabs,"
-            f"mcp__playwright__browser_wait_for,"
-            f"mcp__gmail__search_emails,"
-            f"mcp__gmail__read_email < {prompt_file}"
+            f"--max-budget-usd {get_apply_max_budget_usd():.2f} "
+            f"--allowedTools {_ALLOWED_TOOLS} "
+            f"--disallowedTools {_DISALLOWED_TOOLS} < {prompt_file}"
         )
         return
 
@@ -2379,6 +2377,7 @@ def doctor() -> None:
     )
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.profile import get_profile_repository
+    from jobhunter.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
     from jobhunter.infrastructure.setup_probes import (
         probe_analysis_setup,
         resolve_claude_apply_binary,
@@ -2516,6 +2515,14 @@ def doctor() -> None:
         claude_bin = resolve_claude_apply_binary()
         if shutil.which(claude_bin) or Path(claude_bin).expanduser().exists():
             results.append(("Claude apply runtime", ok_mark, claude_bin))
+            if _claude_supports_budget_flag(claude_bin):
+                results.append(("Claude apply budget flag", ok_mark, "--max-budget-usd available"))
+            else:
+                results.append((
+                    "Claude apply budget flag",
+                    warn_mark,
+                    "installed Claude runtime does not advertise --max-budget-usd",
+                ))
         else:
             results.append(("Claude apply runtime", fail_mark, "set JOBHUNTER_CLAUDE_BIN or install dependencies"))
     except Exception as exc:  # noqa: BLE001 - doctor is diagnostic

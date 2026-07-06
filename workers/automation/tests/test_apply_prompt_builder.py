@@ -12,6 +12,10 @@ from jobhunter.domain.apply.value_objects import ApplyPrompt
 class _FakeSnapshot:
     """Minimal stand-in for ProfileSnapshot used by the prompt builder."""
 
+    @property
+    def personal(self):
+        return self.as_dict()["personal"]
+
     def as_dict(self):
         return {
             "personal": {
@@ -135,12 +139,15 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
 
     expected_upload = worker_dir / "Test_Applicant_Resume.pdf"
     assert expected_upload.exists()
-    assert f"Resume PDF (upload this): {expected_upload}" in rendered
+    assert str(expected_upload) not in rendered
+    assert 'upload_artifact(kind="resume")' in rendered
+    assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
     assert "RESULT:CAPTCHA and stop" in rendered
     assert "== EMAIL VERIFICATION ==" in rendered
-    assert "search_emails" in rendered
-    assert "read_email" in rendered
+    assert "get_verification_code" in rendered
+    assert "search_emails" not in rendered
+    assert "read_email" not in rendered
     assert "Do not open Gmail in the browser" in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
 
@@ -182,6 +189,7 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "capsolver-secret-never-render" not in rendered
     assert "API key:" not in rendered
     assert "browser_evaluate" not in rendered
+    assert "browser_file_upload" not in rendered
     assert "send_email" not in rendered
     assert "email_application_required" in rendered
     assert "Age 18+: Yes" not in rendered
@@ -189,9 +197,28 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "Background check consent: Yes" in rendered
 
 
-def test_default_mcp_config_includes_gmail_read_connector() -> None:
-    config = _default_mcp_config(9222)
+def test_default_mcp_config_includes_scoped_owned_connectors() -> None:
+    config = _default_mcp_config(
+        9222,
+        job={
+            "url": "https://jobs.example.com/role",
+            "application_url": "https://apply.example.com/job",
+        },
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
 
+    playwright = config["mcpServers"]["playwright"]
+    assert playwright["args"][0] == "@playwright/mcp@0.0.77"
     gmail = config["mcpServers"]["gmail"]
     assert gmail["command"] == sys.executable
     assert gmail["args"] == ["-m", "jobhunter.infrastructure.gmail.mcp_server"]
+    assert gmail["env"]["JOBHUNTER_GMAIL_ALLOWED_DOMAINS"] == "example.com"
+    assert gmail["env"]["JOBHUNTER_GMAIL_TO_EMAIL"] == "test@example.com"
+    apply_tools = config["mcpServers"]["apply_tools"]
+    assert apply_tools["command"] == sys.executable
+    assert apply_tools["args"] == ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"]
+    assert apply_tools["env"] == {
+        "JOBHUNTER_APPLY_CDP_ENDPOINT": "http://localhost:9222",
+        "JOBHUNTER_APPLY_UPLOAD_DIR": "/tmp/worker-0",
+    }

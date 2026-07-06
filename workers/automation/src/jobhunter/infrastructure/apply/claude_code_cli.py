@@ -20,8 +20,9 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from jobhunter import config
 from jobhunter.domain.apply.value_objects import (
@@ -43,47 +44,73 @@ log = logging.getLogger(__name__)
 
 
 # Apply runs get an explicit owned-tool allowlist rather than a broad
-# permission bypass plus a denylist. Keep this list aligned with the prompt:
-# no raw page-script evaluation, no Gmail write tools, and no shell/file tools.
-_ALLOWED_TOOLS = ",".join(
-    (
-        "mcp__playwright__browser_navigate",
-        "mcp__playwright__browser_snapshot",
-        "mcp__playwright__browser_take_screenshot",
-        "mcp__playwright__browser_click",
-        "mcp__playwright__browser_fill_form",
-        "mcp__playwright__browser_file_upload",
-        "mcp__playwright__browser_tabs",
-        "mcp__playwright__browser_wait_for",
-        "mcp__gmail__search_emails",
-        "mcp__gmail__read_email",
-    )
+# permission bypass. Keep this aligned with the pinned Playwright MCP
+# package in ``domain.apply.services``.
+PINNED_PLAYWRIGHT_MCP_TOOLS = frozenset(
+    {
+        "browser_close",
+        "browser_resize",
+        "browser_console_messages",
+        "browser_handle_dialog",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_drop",
+        "browser_fill_form",
+        "browser_press_key",
+        "browser_type",
+        "browser_navigate",
+        "browser_navigate_back",
+        "browser_network_requests",
+        "browser_network_request",
+        "browser_run_code_unsafe",
+        "browser_take_screenshot",
+        "browser_snapshot",
+        "browser_click",
+        "browser_drag",
+        "browser_hover",
+        "browser_select_option",
+        "browser_tabs",
+        "browser_wait_for",
+    }
 )
+PLAYWRIGHT_TOOL_EXCLUSIONS = frozenset(
+    {
+        "browser_console_messages",
+        "browser_drop",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_network_request",
+        "browser_network_requests",
+        "browser_resize",
+        "browser_run_code_unsafe",
+    }
+)
+PLAYWRIGHT_APPLY_TOOLS = frozenset(
+    f"mcp__playwright__{tool}"
+    for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
+)
+GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
+OWNED_APPLY_TOOLS = frozenset({"mcp__apply_tools__upload_artifact"})
+DISALLOWED_CLAUDE_TOOLS = (
+    "Bash",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+)
+_ALLOWED_TOOLS = ",".join(
+    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | OWNED_APPLY_TOOLS)
+)
+_DISALLOWED_TOOLS = ",".join(DISALLOWED_CLAUDE_TOOLS)
 
 _ENV_ALLOWLIST = {
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "CLAUDE_CONFIG_DIR",
-    "GMAIL_MCP_CREDENTIALS_PATH",
-    "GMAIL_MCP_DIR",
-    "GMAIL_MCP_OAUTH_KEYS_PATH",
     "HOME",
-    "JOBHUNTER_APP_DIR",
-    "JOBHUNTER_CLAUDE_BIN",
-    "JOBHUNTER_DB_PATH",
+    "LANG",
+    "LC_ALL",
     "PATH",
-    "PYTHONPATH",
-    "SHELL",
-    "SSL_CERT_FILE",
-    "USER",
-    "UV_PROJECT_ENVIRONMENT",
-    "VIRTUAL_ENV",
+    "TMPDIR",
 }
-_ENV_PREFIX_ALLOWLIST = ("AWS_", "GOOGLE_", "JOBHUNTER_CRAWL_UA_")
 
 # Result codes the agent emits as ``RESULT:CODE`` lines.
 _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
@@ -169,18 +196,20 @@ class ClaudeCodeCliAdapter:
         # Render MCP config to disk per-worker (the agent's --mcp-config
         # flag wants a file, not a literal JSON string).
         mcp_config_path = self._app_dir / f".mcp-apply-{worker_id}.json"
-        mcp_config_path.write_text(json.dumps(prompt.mcp_config), encoding="utf-8")
 
         model_label = (model or "").strip() or "default"
         claude_bin = resolve_claude_apply_binary()
         cmd = [claude_bin]
         if model_label not in _DEFAULT_MODEL_SENTINELS:
             cmd.extend(["--model", model_label])
+        if _claude_supports_budget_flag(claude_bin):
+            cmd.extend(["--max-budget-usd", f"{config.get_apply_max_budget_usd():.2f}"])
         cmd.extend([
             "-p",
             "--mcp-config", str(mcp_config_path),
             "--no-session-persistence",
             "--allowedTools", _ALLOWED_TOOLS,
+            "--disallowedTools", _DISALLOWED_TOOLS,
             "--output-format", "stream-json",
             "--verbose", "-",
         ])
@@ -201,6 +230,7 @@ class ClaudeCodeCliAdapter:
         start = time.time()
 
         try:
+            _write_private_json(mcp_config_path, prompt.mcp_config)
             proc = subprocess.Popen(
                 cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
@@ -378,6 +408,10 @@ class ClaudeCodeCliAdapter:
                 _unregister_active_claude_process(worker_id, proc)
                 if proc.poll() is None:
                     _kill_process_tree_if_alive(proc)
+            try:
+                mcp_config_path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
 
     # ------------------------------------------------------------------
     # RESULT line parsing
@@ -440,14 +474,41 @@ class ClaudeCodeCliAdapter:
 def _apply_subprocess_env() -> dict[str, str]:
     env: dict[str, str] = {}
     for key, value in os.environ.items():
-        if key in _ENV_ALLOWLIST or any(
-            key.startswith(prefix) for prefix in _ENV_PREFIX_ALLOWLIST
-        ):
+        if key in _ENV_ALLOWLIST:
             env[key] = value
-    env.pop("CLAUDECODE", None)
-    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
-    env.pop("CAPSOLVER_API_KEY", None)
     return env
+
+
+def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(payload)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    handle = None
+    try:
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        handle.write(data)
+    except Exception:
+        if handle is None:
+            os.close(fd)
+        raise
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+@lru_cache(maxsize=8)
+def _claude_supports_budget_flag(claude_bin: str) -> bool:
+    try:
+        result = subprocess.run(
+            [claude_bin, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return "--max-budget-usd" in (result.stdout or "") or "--max-budget-usd" in (result.stderr or "")
 
 
 def _applied_confidence(output: str) -> float:
