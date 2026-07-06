@@ -199,6 +199,24 @@ ATS_API_POLICY = SourcePolicy(
     max_requests_per_run=2000,
 )
 
+# Detail-page enrichment crawls arbitrary employer/board detail hosts with a
+# real browser, so it honors robots.txt (fail-closed default) and paces every
+# navigation through the shared host limiter. ``min_request_interval_seconds``
+# subsumes the old fixed per-site ``SITE_DELAYS`` sleep (default was 2.0s); the
+# host-keyed limiter now applies that spacing per host across threads.
+# ``max_requests_per_run`` is a runaway-navigation safety valve, not a normal-run
+# cap. Per-host overrides are an owner/config concern (D4, landed in P5).
+ENRICHMENT_CRAWL_POLICY = SourcePolicy(
+    policy_id="enrichment_detail_crawl",
+    allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
+    max_pages_per_run=500,
+    max_run_frequency="PT6H",
+    robots_policy=RobotsPolicy.HONOR,
+    min_request_interval_seconds=2.0,
+    max_concurrent_requests_per_host=1,
+    max_requests_per_run=1000,
+)
+
 
 @dataclass(frozen=True)
 class SourceQualityPlaceholder:

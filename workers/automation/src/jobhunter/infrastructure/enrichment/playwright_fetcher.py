@@ -25,8 +25,15 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from jobhunter.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobhunter.domain.enrichment.value_objects import DetailPage
 from jobhunter.domain.ports.politeness import default_honest_user_agent
+from jobhunter.infrastructure.network import (
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+    RunBudgetCounter,
+)
 from jobhunter.infrastructure.network.proxy import ProxyConfig
 
 log = logging.getLogger(__name__)
@@ -60,21 +67,57 @@ class PlaywrightDetailPageFetcher:
         proxy: ProxyConfig | None = None,
         user_agent: str = _USER_AGENT,
         headless: bool = True,
+        session: PolitenessSession | None = None,
     ) -> None:
         self._proxy = proxy
         self._user_agent = user_agent
         self._headless = headless
+        # R10: every navigation is gated by the politeness gateway. Callers may
+        # inject a session bound to a run budget + recording connection; a
+        # standalone fetcher self-provisions one per call.
+        self._session = session
+
+    def _politeness_session(self) -> PolitenessSession:
+        if self._session is not None:
+            return self._session
+        return PolitenessSession(
+            PolitenessGateway(),
+            policy=ENRICHMENT_CRAWL_POLICY,
+            budget=RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run),
+            context=PolitenessSourceContext(stage="enrich", adapter="enrichment_detail_fetcher"),
+        )
 
     # ------------------------------------------------------------------
     # Public API — implements ``DetailPageFetcherPort.fetch``
     # ------------------------------------------------------------------
 
     def fetch(self, url: str) -> DetailPage:
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        # R10 pre-navigation gate: a robots-deny / budget-exhaustion performs
+        # zero navigation and returns an empty page rather than fetching.
+        with self._politeness_session().guard(url) as decision:
+            if not decision.allowed:
+                log.warning(
+                    "PlaywrightDetailPageFetcher: navigation skipped by politeness gate %s: %s",
+                    url,
+                    decision.reason,
+                )
+                return DetailPage(
+                    url=url,
+                    final_url=url,
+                    page_title="",
+                    html="",
+                    json_ld=(),
+                    status=None,
+                    fetched_at=fetched_at,
+                )
+            return self._fetch_page(url, fetched_at)
+
+    def _fetch_page(self, url: str, fetched_at: str) -> DetailPage:
         # Imported lazily because Playwright is heavyweight + optional
         # in some test environments (see workers/automation/pyproject).
         from playwright.sync_api import sync_playwright
 
-        fetched_at = datetime.now(timezone.utc).isoformat()
         with sync_playwright() as p:
             launch_opts: dict[str, Any] = {"headless": self._headless}
             if self._proxy is not None:

@@ -263,6 +263,17 @@ class PolitenessSession:
     def check(self, url: str) -> PolitenessDecision:
         return self._gateway.check(url, self._policy, self._budget)
 
+    def record(self, decision: PolitenessDecision, url: str) -> None:
+        """Record a blocked decision observed via :meth:`check` (peek).
+
+        A caller that peeks with :meth:`check` to branch its control flow (e.g.
+        the enrichment lifecycle must fold a robots block into ``Pending ->
+        Blocked`` *before* entering ``running``) commits the outcome with this
+        method. No-op for an allowed decision or when no ``recorder_conn`` is
+        bound. :meth:`guard` records automatically, so never pair it with this.
+        """
+        self._record(decision, url)
+
     @contextmanager
     def guard(self, url: str) -> Iterator[PolitenessDecision]:
         with self._gateway.guard(url, self._policy, self._budget) as decision:

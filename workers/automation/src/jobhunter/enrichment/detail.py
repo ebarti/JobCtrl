@@ -82,7 +82,20 @@ from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
 )
 from jobhunter.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobhunter.infrastructure.llm import get_llm_adapter
-from jobhunter.domain.ports.politeness import default_honest_user_agent
+from jobhunter.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
+from jobhunter.domain.ports.politeness import (
+    PolitenessDecision,
+    PolitenessOutcome,
+    RobotsVerdict,
+    default_honest_user_agent,
+)
+from jobhunter.infrastructure.network import (
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+    RunBudgetCounter,
+    get_shared_rate_limiter,
+)
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +104,55 @@ log = logging.getLogger(__name__)
 # is the owner's real Chrome session and presents its own browser identity
 # (user_agent=None) rather than this bot UA — an owner-scoped posture (D1/D3).
 UA = default_honest_user_agent().header_value()
+
+
+class _OwnerAuthenticatedRobots:
+    """``RobotsPort`` for the owner's authenticated LinkedIn session (R10 D1/D3).
+
+    A logged-in, user-authorized browser session is not anonymous crawling, so
+    ``robots.txt`` is an owner decision here (§Owner decisions D1/D3) and is not
+    enforced — enforcing an anonymous robots verdict on the owner's own account
+    would break a user-authorized flow. This is **not** a controls bypass: the
+    per-host rate limit and the per-run request budget still apply through the
+    shared gateway, and this port is used only for the persistent authenticated
+    context, never for an anonymous fetch.
+    """
+
+    def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:  # noqa: ARG002
+        return RobotsVerdict.ALLOW
+
+
+def _new_enrichment_budget() -> RunBudgetCounter:
+    """A fresh per-run outbound-navigation budget for the enrichment crawl."""
+    return RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run)
+
+
+def _enrichment_session(
+    gateway: PolitenessGateway,
+    budget: RunBudgetCounter,
+    conn: sqlite3.Connection | None,
+    *,
+    site: str | None = None,
+) -> PolitenessSession:
+    """Bind the shared gateway + run budget to one site's recording context."""
+    return PolitenessSession(
+        gateway,
+        policy=ENRICHMENT_CRAWL_POLICY,
+        budget=budget,
+        context=PolitenessSourceContext(
+            stage="enrich",
+            source_id=site,
+            adapter="enrichment_browser",
+        ),
+        recorder_conn=conn,
+    )
+
+
+def _default_enrichment_session(
+    conn: sqlite3.Connection | None = None, *, site: str | None = None
+) -> PolitenessSession:
+    """A self-provisioned enrichment session for standalone/one-off callers."""
+    return _enrichment_session(PolitenessGateway(), _new_enrichment_budget(), conn, site=site)
 
 # Sites that block scraping -- skip detail extraction entirely
 SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
@@ -196,6 +258,11 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
     if not wttj_jobs:
         return 0
 
+    listing_url = (
+        "https://www.welcometothejungle.com/en/jobs"
+        "?query=developer&refinementList%5Bremote%5D%5B%5D=fulltime"
+    )
+
     algolia_data: dict = {}
 
     def capture_algolia(response):
@@ -205,16 +272,21 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
             except Exception:
                 pass
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(user_agent=UA)
-        page.on("response", capture_algolia)
-        page.goto(
-            "https://www.welcometothejungle.com/en/jobs?query=developer&refinementList%5Bremote%5D%5B%5D=fulltime",
-            timeout=60000,
-        )
-        page.wait_for_load_state("networkidle")
-        browser.close()
+    # R10: the Algolia bootstrap is an anonymous crawl of WTTJ — gate it through
+    # the politeness gateway. A robots-deny / budget-exhaustion skips the
+    # navigation entirely (records the outcome, returns no updates).
+    session = _default_enrichment_session(conn, site="WelcomeToTheJungle")
+    with session.guard(listing_url) as decision:
+        if not decision.allowed:
+            log.warning("WTTJ Algolia bootstrap skipped by politeness gate: %s", decision.reason)
+            return 0
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=UA)
+            page.on("response", capture_algolia)
+            page.goto(listing_url, timeout=60000)
+            page.wait_for_load_state("networkidle")
+            browser.close()
 
     if not algolia_data.get("response"):
         log.warning("WTTJ: No Algolia response captured")
@@ -306,14 +378,20 @@ _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 _PERMANENT_FAILURES = {404, 410, 451}
 
 
-def scrape_detail_page(page, url: str) -> dict:
-    """Run the three-tier cascade on one already-loaded Playwright page.
+def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None) -> dict:
+    """Run the three-tier cascade on one Playwright page.
 
     Public API preserved for callers in ``pipeline.py``; internally
     delegates to the domain-layer extractors. Returns the legacy dict
     shape (``status``, ``tier_used``, ``full_description``,
     ``application_url``, ``error``, ``elapsed``) so existing callers
     don't change.
+
+    R10: every ``page.goto`` runs inside a politeness-gateway verdict. A
+    robots-deny or budget-exhaustion yields ``status="blocked"`` (plus the
+    ``politeness_outcome``) and performs **zero** navigation — it never navigates
+    and relabels. ``session`` is supplied by the batch caller (bound to the run
+    budget); a one-off caller lets it self-provision.
     """
     result: dict = {
         "full_description": None,
@@ -327,6 +405,20 @@ def scrape_detail_page(page, url: str) -> dict:
     }
     t0 = time.time()
 
+    if session is None:
+        session = _default_enrichment_session()
+    with session.guard(url) as decision:
+        if not decision.allowed:
+            result["status"] = "blocked"
+            result["politeness_outcome"] = decision.outcome.value
+            result["error"] = decision.reason
+            result["elapsed"] = time.time() - t0
+            return result
+        return _scrape_detail_page_body(page, url, result, t0)
+
+
+def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
+    """Navigate + run the three-tier cascade inside the held politeness slot."""
     status_code: int | None = None
     try:
         resp = page.goto(url, timeout=45000)
@@ -502,8 +594,16 @@ def _apply_authenticated_linkedin_apply_url(
 
     try:
         if page is not None and hasattr(resolver, "resolve_loaded_page"):
+            # Reuses the enrichment page, whose navigation was already gated by
+            # scrape_detail_page — no additional fetch happens here.
             resolution = resolver.resolve_loaded_page(page, url)  # type: ignore[attr-defined]
         elif hasattr(resolver, "resolve"):
+            # Fresh navigation in the owner's authenticated persistent Chrome
+            # session (retry pre-pass). This is an owner-scoped, user-authorized
+            # session (§Owner decisions D1/D3): robots is an owner decision and
+            # is not enforced on the owner's own account, and pacing/budget for
+            # the authenticated session are deferred to owner config (P5). It is
+            # not anonymous crawling and must never be used for one.
             resolution = resolver.resolve(url)  # type: ignore[attr-defined]
         else:
             return cascade_result
@@ -557,15 +657,108 @@ def _make_llm_extractor() -> LlmExtractor:
 # ---------------------------------------------------------------------------
 
 
-SITE_DELAYS = {
-    "RemoteOK": 3.0,
-    "WelcomeToTheJungle": 2.0,
-    "Job Bank Canada": 1.5,
-    "CareerJet Canada": 3.0,
-    "Hacker News Jobs": 1.0,
-    "BuiltIn Remote": 2.0,
-    "linkedin": 6.0,
-}
+def _record_enrich_robots_blocked(
+    conn: sqlite3.Connection, url: str, decision: PolitenessDecision
+) -> None:
+    """Fold a robots-disallowed navigation into the enrichment lifecycle.
+
+    Robots-blocked is a first-class, non-terminal outcome — never a scrape
+    failure. The enrich stage moves to ``blocked`` (``Pending -> Blocked`` is the
+    valid transition; entering ``running`` first would strand it, so this runs
+    before any attempt starts) and the job stays enrichment-pending so a later
+    run re-evaluates robots (or the owner imports the posting manually). The
+    ``robots_disallowed`` metric is recorded separately by the caller via the
+    politeness session, so this never inflates ``attempt_count``.
+    """
+    from jobhunter.state import (
+        ensure_job_stage_rows,
+        record_job_event,
+        set_stage_state,
+        utc_now,
+    )
+
+    finished_at = utc_now()
+    message = decision.reason or "robots.txt disallows automated fetch of this URL"
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(
+        conn,
+        url,
+        "enrich",
+        "blocked",
+        error_code="ENRICH_ROBOTS_DISALLOWED",
+        error_message=message[:500],
+        retryable=True,
+        next_action=f"Import this posting manually — robots.txt disallows automated fetch: {url}",
+        finished_at=finished_at,
+        metadata={"reason": "robots_disallowed", "politenessOutcome": decision.outcome.value},
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        url,
+        "enrich",
+        "StageBlocked",
+        level="warning",
+        message=message,
+        payload={
+            "errorCode": "ENRICH_ROBOTS_DISALLOWED",
+            "reason": "robots_disallowed",
+            "politenessOutcome": decision.outcome.value,
+            "retryable": True,
+        },
+    )
+    conn.commit()
+
+
+def _record_enrich_politeness_deferral(
+    conn: sqlite3.Connection,
+    repo: SqliteEnrichmentRepository,
+    aggregate: JobEnrichment,
+    url: str,
+    started_at: str,
+    cascade_result: dict,
+) -> None:
+    """Fold a mid-flight budget block (peek allowed, guard denied) as a deferral.
+
+    Only reachable in the rare parallel race where the shared run budget drains
+    between the pre-navigation peek and the guard. The politeness *outcome* was
+    already recorded by the guard (non-error); here we close the started attempt
+    as a retryable failure (``Running -> Failed`` is valid) so the job is retried
+    on the next run rather than counted as a scrape failure.
+    """
+    from jobhunter.state import record_job_event, set_stage_state, utc_now
+
+    finished_at = utc_now()
+    message = str(cascade_result.get("error") or "request budget exhausted; will retry")[:500]
+    error = EnrichmentError(code="ENRICH_POLITENESS_DEFERRED", message=message, retryable=True)
+    failed = aggregate.fail_attempt(error=error, finished_at=finished_at)
+    repo.save(failed)
+    set_stage_state(
+        conn,
+        url,
+        "enrich",
+        "failed",
+        attempt_count=failed.attempt_count,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_code=error.code,
+        error_message=error.message,
+        retryable=True,
+        next_action=f"jobhunter retry enrich {url}",
+    )
+    record_job_event(
+        conn,
+        url,
+        "enrich",
+        "StageFailed",
+        level="warning",
+        message=message,
+        payload={
+            "errorCode": error.code,
+            "retryable": True,
+            "politenessOutcome": cascade_result.get("politeness_outcome"),
+        },
+    )
 
 
 def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exception) -> None:
@@ -650,9 +843,11 @@ def scrape_site_batch(
     conn: sqlite3.Connection | None,
     site: str,
     jobs: list[tuple],
-    delay: float = 2.0,
     max_jobs: int | None = None,
     cancel_event: threading.Event | None = None,
+    *,
+    gateway: PolitenessGateway | None = None,
+    run_budget: RunBudgetCounter | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -660,12 +855,20 @@ def scrape_site_batch(
     ``jobs.full_description`` / ``jobs.application_url`` /
     ``jobs.detail_scraped_at`` / ``jobs.detail_error`` columns are NOT
     written.
+
+    R10: every navigation is gated by the politeness gateway. ``gateway`` and
+    ``run_budget`` are supplied by :func:`_run_detail_scraper` so all site
+    batches in one run share a single robots cache + per-run request budget +
+    process-wide host limiter; a standalone caller lets them self-provision. The
+    fixed per-site ``SITE_DELAYS`` sleep is gone — the host-keyed limiter paces
+    each host (per-host min-interval + concurrency across threads).
     """
     stats: dict = {
         "processed": 0,
         "ok": 0,
         "partial": 0,
         "error": 0,
+        "blocked": 0,
         "tiers": {1: 0, 2: 0, 3: 0},
     }
 
@@ -680,6 +883,9 @@ def scrape_site_batch(
         conn = init_db()
     assert conn is not None
 
+    if run_budget is None:
+        run_budget = _new_enrichment_budget()
+
     repo = SqliteEnrichmentRepository(conn)
 
     try:
@@ -689,7 +895,9 @@ def scrape_site_batch(
             if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
                 resolver = LinkedInApplyUrlResolver(
                     proxy=_PROXY_CONFIG,
-                    user_agent=UA,
+                    # Owner's real authenticated Chrome session presents its own
+                    # browser identity, not the honest bot UA (D1/D3).
+                    user_agent=None,
                     playwright=p,
                 )
                 try:
@@ -718,6 +926,19 @@ def scrape_site_batch(
                 context = browser.new_context(user_agent=UA)
                 page = context.new_page()
 
+            # The authenticated LinkedIn context is the owner's logged-in session,
+            # so robots.txt is an owner decision there (D1/D3) — pace + budget it,
+            # but do not enforce an anonymous robots verdict on the owner's own
+            # account. Every other (anonymous) batch honors robots.
+            if resolver is not None:
+                batch_gateway: PolitenessGateway = PolitenessGateway(
+                    robots=_OwnerAuthenticatedRobots(),
+                    rate_limiter=get_shared_rate_limiter(),
+                )
+            else:
+                batch_gateway = gateway or PolitenessGateway()
+            session = _enrichment_session(batch_gateway, run_budget, conn, site=site)
+
             for i, (url, title) in enumerate(jobs):
                 if cancel_event is not None and cancel_event.is_set():
                     raise TransientNetworkError("enrichment canceled")
@@ -728,53 +949,76 @@ def scrape_site_batch(
                     title[:50] if title else url[:50],
                 )
 
-                try:
-                    from jobhunter.state import (
-                        ensure_job_stage_rows,
-                        record_job_event,
-                        set_stage_state,
-                        utc_now,
-                    )
+                from jobhunter.state import (
+                    ensure_job_stage_rows,
+                    record_job_event,
+                    set_stage_state,
+                    utc_now,
+                )
 
+                # Already-enriched rows need no navigation — reaffirm and skip
+                # before the gate so a robots change can't relabel finished work.
+                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                if aggregate is not None and aggregate.is_enriched:
+                    stats["processed"] += 1
+                    stats["ok"] += 1
+                    ensure_job_stage_rows(conn, url)
+                    set_stage_state(
+                        conn,
+                        url,
+                        "enrich",
+                        "succeeded",
+                        attempt_count=aggregate.attempt_count,
+                        finished_at=utc_now(),
+                        validate_transition=False,
+                    )
+                    conn.commit()
+                    continue
+
+                # R10 pre-navigation gate (peek). A block folds into the lifecycle
+                # WITHOUT entering 'running' (Running->Blocked is not valid;
+                # Pending->Blocked is). scrape_detail_page's guard is the
+                # authoritative budget-consume + slot hold.
+                gate = session.check(url)
+                if not gate.allowed:
+                    session.record(gate, url)
+                    if gate.outcome is PolitenessOutcome.BUDGET_EXHAUSTED:
+                        log.warning(
+                            "Enrichment request budget exhausted; deferring %d remaining %s job(s) to a future run",
+                            len(jobs) - i,
+                            site,
+                        )
+                        break
+                    _record_enrich_robots_blocked(conn, url, gate)
+                    stats["blocked"] += 1
+                    continue
+
+                try:
                     started_at = utc_now()
                     ensure_job_stage_rows(conn, url)
                     set_stage_state(conn, url, "enrich", "running", started_at=started_at)
                     record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
 
-                    # Load / build the JobEnrichment aggregate
-                    aggregate = repo.load(LOCAL_TENANT, JobId(url))
-                    if aggregate is None:
-                        aggregate = JobEnrichment.empty(
-                            tenant_id=LOCAL_TENANT,
-                            job_id=JobId(url),
-                            updated_at=started_at,
-                        )
-
-                    if aggregate.is_enriched:
-                        # Already enriched — count as ok and skip.
-                        stats["processed"] += 1
-                        stats["ok"] += 1
-                        set_stage_state(
-                            conn,
-                            url,
-                            "enrich",
-                            "succeeded",
-                            attempt_count=aggregate.attempt_count,
-                            started_at=started_at,
-                            finished_at=utc_now(),
-                        )
-                        if i < len(jobs) - 1:
-                            time.sleep(delay)
-                        continue
-
+                    aggregate = aggregate or JobEnrichment.empty(
+                        tenant_id=LOCAL_TENANT,
+                        job_id=JobId(url),
+                        updated_at=started_at,
+                    )
                     aggregate = aggregate.start_attempt(
                         extraction_tier=ExtractionTier.JSON_LD,
                         started_at=started_at,
                     )
 
                     cascade_result = _apply_discovery_description_fallback(
-                        conn, url, scrape_detail_page(page, url)
+                        conn, url, scrape_detail_page(page, url, session=session)
                     )
+                    if cascade_result.get("status") == "blocked":
+                        # Rare parallel race: budget drained between peek + guard.
+                        _record_enrich_politeness_deferral(
+                            conn, repo, aggregate, url, started_at, cascade_result
+                        )
+                        conn.commit()
+                        break
                     cascade_result = _apply_authenticated_linkedin_apply_url(
                         site=site,
                         url=url,
@@ -1031,10 +1275,8 @@ def scrape_site_batch(
                     stats["error"] += 1
                     _record_enrich_job_failure(conn, url, exc)
 
-                if i < len(jobs) - 1:
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
-                    time.sleep(delay)
+                # No inter-job sleep: the shared host limiter (inside the gate)
+                # now paces each host by min-interval + concurrency across threads.
 
             if browser is not None:
                 browser.close()
@@ -1727,23 +1969,32 @@ def _run_detail_scraper(
         }
         log.exception("Enrichment site batch failed: %s", site)
 
+    # One gateway + one run budget shared by every site batch in this run: the
+    # process-wide host limiter + robots cache are reused, and the per-run
+    # navigation budget is a single counter across sequential and parallel modes.
+    gateway = PolitenessGateway()
+    run_budget = _new_enrichment_budget()
+
     if workers > 1 and len(order) > 1:
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
-            delay = SITE_DELAYS.get(site, 2.0)
-            log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
+            log.info("%s -- %d jobs", site, len(jobs))
             if cancel_event is None:
-                stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site)
+                stats = scrape_site_batch(
+                    None, site, jobs, max_jobs=max_per_site,
+                    gateway=gateway, run_budget=run_budget,
+                )
             else:
                 stats = scrape_site_batch(
                     None,
                     site,
                     jobs,
-                    delay=delay,
                     max_jobs=max_per_site,
                     cancel_event=cancel_event,
+                    gateway=gateway,
+                    run_budget=run_budget,
                 )
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
@@ -1777,19 +2028,22 @@ def _run_detail_scraper(
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
-            delay = SITE_DELAYS.get(site, 2.0)
-            log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
+            log.info("%s -- %d jobs", site, len(jobs))
             try:
                 if cancel_event is None:
-                    stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
+                    stats = scrape_site_batch(
+                        conn, site, jobs, max_jobs=max_per_site,
+                        gateway=gateway, run_budget=run_budget,
+                    )
                 else:
                     stats = scrape_site_batch(
                         conn,
                         site,
                         jobs,
-                        delay=delay,
                         max_jobs=max_per_site,
                         cancel_event=cancel_event,
+                        gateway=gateway,
+                        run_budget=run_budget,
                     )
             except TransientNetworkError:
                 raise
@@ -1891,11 +2145,16 @@ def stream_detail(
                     url, title, site = row[0], row[1], row[2]
                     site_jobs.setdefault(site, []).append((url, title))
 
+                # One shared gateway + per-cycle run budget across this poll's
+                # site batches (a poll cycle is the streaming "run").
+                gateway = PolitenessGateway()
+                run_budget = _new_enrichment_budget()
                 for site, jobs in site_jobs.items():
-                    delay = SITE_DELAYS.get(site, 2.0)
-                    log.info("%s: %d jobs (delay=%.1fs)", site, len(jobs), delay)
+                    log.info("%s: %d jobs", site, len(jobs))
                     try:
-                        stats = scrape_site_batch(conn, site, jobs, delay=delay)
+                        stats = scrape_site_batch(
+                            conn, site, jobs, gateway=gateway, run_budget=run_budget
+                        )
                         total_ok += stats["ok"] + stats["partial"]
                         total_err += stats["error"]
                         log.info(
@@ -1982,7 +2241,6 @@ def run_enrichment(
 __all__ = [
     "DetailPage",
     "SKIP_DETAIL_SITES",
-    "SITE_DELAYS",
     "resolve_url",
     "resolve_all_urls",
     "resolve_wttj_urls",
