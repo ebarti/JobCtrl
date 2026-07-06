@@ -450,13 +450,10 @@ class ClaudeCodeCliAdapter:
             for line in output.split("\n"):
                 if "RESULT:FAILED" not in line:
                     continue
-                idx = line.index("FAILED")
-                tail = line[idx + 6:]
-                reason = _clean_reason(
-                    tail.split("RESULT:FAILED:")[-1].strip()
-                    if ":" in tail
-                    else "unknown"
-                )
+                tail = line.split("RESULT:FAILED", 1)[1].strip()
+                if tail.startswith(":"):
+                    tail = tail[1:].strip()
+                reason = _clean_reason(tail or "unknown")
                 if reason in _PROMOTED_FAILED_REASONS:
                     if reason == "captcha":
                         return Captcha(details="agent reported CAPTCHA")
@@ -465,6 +462,8 @@ class ClaudeCodeCliAdapter:
                     return LoginIssue(details="agent reported login issue")
                 if reason == "manual" or reason.startswith("manual"):
                     return Manual(reason=reason)
+                if reason.startswith("missing_profile_data:"):
+                    return Failed(error=reason, retryable=False)
                 return Failed(error=reason or "unknown", retryable=True)
             return Failed(error="unknown", retryable=True)
 

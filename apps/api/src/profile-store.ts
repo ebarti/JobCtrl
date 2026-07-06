@@ -79,6 +79,8 @@ const SUPPORTED_PROFILE_TOP_LEVEL_KEYS = new Set([
   "compensation",
   "experience",
   "eeo_voluntary",
+  "application_attestations",
+  "application_preferences",
   "resume",
   "resume_constraints",
   // Legacy file metadata, not Candidate Profile data.
@@ -131,6 +133,12 @@ const ROOT_COLUMNS = [
   "eeo_race_ethnicity",
   "eeo_veteran_status",
   "eeo_disability_status",
+  "application_attestation_age_18_plus",
+  "application_attestation_background_check_consent",
+  "application_attestation_felony_conviction",
+  "application_attestation_previously_worked_at_employer",
+  "application_attestation_additional_json",
+  "application_preference_how_heard",
   "resume_baseline_text",
   "tailoring_mode",
   "tailoring_allow_title_reframing",
@@ -212,6 +220,12 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       eeo_race_ethnicity TEXT NOT NULL DEFAULT 'Decline to self-identify',
       eeo_veteran_status TEXT NOT NULL DEFAULT 'Decline to self-identify',
       eeo_disability_status TEXT NOT NULL DEFAULT 'Decline to self-identify',
+      application_attestation_age_18_plus INTEGER DEFAULT NULL,
+      application_attestation_background_check_consent INTEGER DEFAULT NULL,
+      application_attestation_felony_conviction INTEGER DEFAULT NULL,
+      application_attestation_previously_worked_at_employer INTEGER DEFAULT NULL,
+      application_attestation_additional_json TEXT NOT NULL DEFAULT '{}',
+      application_preference_how_heard TEXT NOT NULL DEFAULT '',
       resume_baseline_text TEXT NOT NULL DEFAULT '',
       tailoring_mode TEXT NOT NULL DEFAULT 'balanced',
       tailoring_allow_title_reframing INTEGER NOT NULL DEFAULT 0,
@@ -377,6 +391,12 @@ const CANDIDATE_PROFILE_COLUMN_MIGRATIONS: Record<string, string> = {
   revision_min_fit_score: "INTEGER NOT NULL DEFAULT 8",
   revision_must_have_coverage: "REAL NOT NULL DEFAULT 0.85",
   revision_max_attempts: "INTEGER NOT NULL DEFAULT 1",
+  application_attestation_age_18_plus: "INTEGER DEFAULT NULL",
+  application_attestation_background_check_consent: "INTEGER DEFAULT NULL",
+  application_attestation_felony_conviction: "INTEGER DEFAULT NULL",
+  application_attestation_previously_worked_at_employer: "INTEGER DEFAULT NULL",
+  application_attestation_additional_json: "TEXT NOT NULL DEFAULT '{}'",
+  application_preference_how_heard: "TEXT NOT NULL DEFAULT ''",
 };
 
 function ensureCandidateProfileColumns(db: SqliteDatabase): void {
@@ -689,6 +709,20 @@ function rowToProfile(db: SqliteDatabase, row: ProfileRow): ProfileShape {
       veteran_status: stringColumn(row.eeo_veteran_status, "Decline to self-identify"),
       disability_status: stringColumn(row.eeo_disability_status, "Decline to self-identify"),
     },
+    application_attestations: {
+      age_18_plus: nullableBooleanColumn(row.application_attestation_age_18_plus),
+      background_check_consent: nullableBooleanColumn(
+        row.application_attestation_background_check_consent,
+      ),
+      felony_conviction: nullableBooleanColumn(row.application_attestation_felony_conviction),
+      previously_worked_at_employer: nullableBooleanColumn(
+        row.application_attestation_previously_worked_at_employer,
+      ),
+      additional: parseJsonRecord(row.application_attestation_additional_json),
+    },
+    application_preferences: {
+      how_heard: stringColumn(row.application_preference_how_heard),
+    },
     resume: {
       executive_profile: { baseline_text: stringColumn(row.resume_baseline_text) },
       experience_entries: experienceRows(db),
@@ -933,6 +967,8 @@ function rootValues(
   const experience = record(profile.experience);
   const availability = record(profile.availability);
   const eeo = record(profile.eeo_voluntary);
+  const attestations = record(profile.application_attestations);
+  const preferences = record(profile.application_preferences);
   const resume = record(profile.resume);
   const executive = record(resume.executive_profile);
   const rules = record(resume.tailoring_rules);
@@ -983,6 +1019,12 @@ function rootValues(
     text(eeo.race_ethnicity, "Decline to self-identify"),
     text(eeo.veteran_status, "Decline to self-identify"),
     text(eeo.disability_status, "Decline to self-identify"),
+    nullableBoolInt(attestations.age_18_plus),
+    nullableBoolInt(attestations.background_check_consent),
+    nullableBoolInt(attestations.felony_conviction),
+    nullableBoolInt(attestations.previously_worked_at_employer),
+    jsonRecordText(attestations.additional),
+    text(preferences.how_heard),
     text(executive.baseline_text),
     text(policy.mode, "balanced"),
     boolInt(policy.allow_title_reframing, false),
@@ -1136,6 +1178,10 @@ function jsonTextArray(value: unknown): string {
   return JSON.stringify(asTextArray(value));
 }
 
+function jsonRecordText(value: unknown): string {
+  return JSON.stringify(parseJsonRecord(value));
+}
+
 function parseTextArray(value: unknown): string[] {
   let candidate: unknown = value;
   if (typeof value === "string") {
@@ -1146,6 +1192,27 @@ function parseTextArray(value: unknown): string[] {
     }
   }
   return asTextArray(candidate);
+}
+
+function parseJsonRecord(value: unknown): Record<string, boolean | string | null> {
+  let candidate: unknown = value;
+  if (typeof value === "string") {
+    try {
+      candidate = JSON.parse(value) as unknown;
+    } catch {
+      candidate = {};
+    }
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return {};
+  }
+  const result: Record<string, boolean | string | null> = {};
+  for (const [key, item] of Object.entries(candidate as Record<string, unknown>)) {
+    if (typeof item === "boolean" || typeof item === "string" || item === null) {
+      result[key] = item;
+    }
+  }
+  return result;
 }
 
 function text(value: unknown, fallback = ""): string {
@@ -1162,6 +1229,25 @@ function confidenceNumber(value: unknown): number {
 
 function stringColumn(value: string | number | null, fallback = ""): string {
   return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function nullableBooleanColumn(value: string | number | null): boolean | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") return value !== 0;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || ["unknown", "unset", "null", "none"].includes(normalized)) return null;
+  return ["true", "yes", "y", "1", "on"].includes(normalized);
+}
+
+function nullableBoolInt(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || ["unknown", "unset", "null", "none"].includes(normalized)) return null;
+    return ["true", "yes", "y", "1", "on"].includes(normalized) ? 1 : 0;
+  }
+  return value ? 1 : 0;
 }
 
 function boolInt(value: unknown, fallback: boolean): number {

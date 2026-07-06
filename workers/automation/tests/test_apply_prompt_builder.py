@@ -144,6 +144,10 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
     assert "RESULT:CAPTCHA and stop" in rendered
+    assert "missing_profile_data:<field>" in rendered
+    assert "missing_attestation" not in rendered
+    assert "answer YES only when" in rendered
+    assert "Don't sell short" not in rendered
     assert "== EMAIL VERIFICATION ==" in rendered
     assert "get_verification_code" in rendered
     assert "search_emails" not in rendered
@@ -195,6 +199,44 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "Age 18+: Yes" not in rendered
     assert "Felony: No" not in rendered
     assert "Background check consent: Yes" in rendered
+
+
+def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
+    base_profile = {"application_preferences": {"how_heard": "Referral"}}
+    full = {
+        **base_profile,
+        "application_attestations": {
+            "age_18_plus": True,
+            "background_check_consent": True,
+            "felony_conviction": False,
+            "previously_worked_at_employer": False,
+            "additional": {"can_travel": True},
+        },
+    }
+    partial = {
+        **base_profile,
+        "application_attestations": {
+            "age_18_plus": None,
+            "background_check_consent": True,
+            "felony_conviction": None,
+            "previously_worked_at_employer": None,
+        },
+    }
+    empty = {"application_attestations": {}, "application_preferences": {}}
+
+    assert prompt_mod._build_profile_attestation_lines(full) == [
+        "Age 18+: Yes",
+        "Background check consent: Yes",
+        "Felony conviction: No",
+        "Previously worked at employer: No",
+        "Can travel: Yes",
+        "How heard: Referral",
+    ]
+    assert prompt_mod._build_profile_attestation_lines(partial) == [
+        "Background check consent: Yes",
+        "How heard: Referral",
+    ]
+    assert prompt_mod._build_profile_attestation_lines(empty) == []
 
 
 def test_default_mcp_config_includes_scoped_owned_connectors() -> None:

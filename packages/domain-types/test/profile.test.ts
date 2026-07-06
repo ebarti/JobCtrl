@@ -139,6 +139,16 @@ describe("Profile types", () => {
           disabilityStatus: "Decline to self-identify",
         },
       },
+      applicationAttestations: {
+        age18Plus: null,
+        backgroundCheckConsent: null,
+        felonyConviction: null,
+        previouslyWorkedAtEmployer: null,
+        additional: {},
+      },
+      applicationPreferences: {
+        howHeard: "",
+      },
       resumeBaseline: { baselineText: "Engineer." },
       experienceEntries: [experience],
       educationEntries: [],
@@ -233,6 +243,16 @@ describe("Profile types", () => {
           veteranStatus: "Decline to self-identify",
           disabilityStatus: "Decline to self-identify",
         },
+      },
+      applicationAttestations: {
+        age18Plus: null,
+        backgroundCheckConsent: null,
+        felonyConviction: null,
+        previouslyWorkedAtEmployer: null,
+        additional: {},
+      },
+      applicationPreferences: {
+        howHeard: "",
       },
       resumeBaseline: { baselineText: "" },
       experienceEntries: [],

@@ -30,6 +30,26 @@ depends on it.
 The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optional
 `JOBHUNTER_USER_ENV_PATH` file before starting local services.
 
+## Candidate Profile Application Fields
+
+`profile.example.json` includes an `application_attestations` block for legal
+or screening questions that apply automation is not allowed to infer:
+
+- `age_18_plus`
+- `background_check_consent`
+- `felony_conviction`
+- `previously_worked_at_employer`
+
+Use `true` or `false` only when the answer is explicitly true or false for you.
+Leave unknown answers as `null`; live apply automation fails with
+`missing_profile_data:<field>` instead of guessing. `jobhunter doctor` warns
+when required attestations are incomplete, and Apply Review surfaces the same
+missing fields before approval when the local profile row has unknown values.
+
+The profile also supports `application_preferences.how_heard` for common
+"How did you hear about us?" questions. It is a preference, not a legal
+attestation; leave it empty when there is no truthful answer.
+
 ## Core Runtime
 
 | Variable | Default | What it does |

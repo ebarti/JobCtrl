@@ -2399,6 +2399,28 @@ def doctor() -> None:
             results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
         else:
             results.append(("candidate profile", ok_mark, f"SQLite source of truth at {DB_PATH}"))
+            attestations = profile.to_dict().get("application_attestations") or {}
+            required_attestations = (
+                "age_18_plus",
+                "background_check_consent",
+                "felony_conviction",
+                "previously_worked_at_employer",
+            )
+            missing_attestations = [
+                key for key in required_attestations if attestations.get(key) is None
+            ]
+            if missing_attestations:
+                results.append((
+                    "application attestations",
+                    warn_mark,
+                    "incomplete; live applies may fail on screening questions",
+                ))
+            else:
+                results.append((
+                    "application attestations",
+                    ok_mark,
+                    "typed screening attestations complete",
+                ))
     except FileNotFoundError:
         results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
     except Exception:  # noqa: BLE001 - doctor should report validation problems instead of crashing

@@ -1660,6 +1660,34 @@ const ProfileResumeConstraintsSchema = z
   })
   .partial();
 
+const NullableAttestationSchema = z.boolean().nullable().default(null);
+
+const DEFAULT_APPLICATION_ATTESTATIONS = {
+  age_18_plus: null,
+  background_check_consent: null,
+  felony_conviction: null,
+  previously_worked_at_employer: null,
+  additional: {},
+} as const;
+
+const ProfileApplicationAttestationsSchema = z
+  .object({
+    age_18_plus: NullableAttestationSchema,
+    background_check_consent: NullableAttestationSchema,
+    felony_conviction: NullableAttestationSchema,
+    previously_worked_at_employer: NullableAttestationSchema,
+    additional: z
+      .record(z.string(), z.union([z.boolean(), z.string(), z.null()]))
+      .default({}),
+  })
+  .default(DEFAULT_APPLICATION_ATTESTATIONS);
+
+const ProfileApplicationPreferencesSchema = z
+  .object({
+    how_heard: z.string().default(""),
+  })
+  .default({ how_heard: "" });
+
 /** Canonical profile shape. ``passthrough()`` preserves forward-compatible
  * keys we don't yet model so a round-trip never silently drops data. */
 export const ProfileSchema = z
@@ -1672,6 +1700,8 @@ export const ProfileSchema = z
     eeo_voluntary: ProfileEeoSchema.default({}),
     resume: ProfileResumeMasterSchema,
     resume_constraints: ProfileResumeConstraintsSchema.default({}),
+    application_attestations: ProfileApplicationAttestationsSchema,
+    application_preferences: ProfileApplicationPreferencesSchema,
   })
   .passthrough();
 
