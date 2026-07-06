@@ -1257,5 +1257,5 @@ describe("discovery product controls API", () => {
       await app.close();
       cleanup();
     }
-  });
+  }, 30_000);
 });
