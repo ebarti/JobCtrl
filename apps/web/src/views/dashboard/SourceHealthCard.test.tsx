@@ -12,6 +12,34 @@ describe("SourceHealthCard", () => {
     expect(screen.getByText("greenhouse:acme")).toBeInTheDocument();
     expect(screen.getByText(/active 90%/i)).toBeInTheDocument();
     expect(screen.getByText(/apply 80%/i)).toBeInTheDocument();
+    // The fixture records a robots-disallowed outcome; it surfaces as a badge.
+    expect(screen.getByText("robots disallowed")).toBeInTheDocument();
+  });
+
+  it("omits politeness badges when a source has no recorded outcomes", () => {
+    const [source] = sampleDashboardSummary.sourceHealth;
+    render(
+      <SourceHealthCard
+        summary={{
+          ...sampleDashboardSummary,
+          sourceHealth: [
+            {
+              ...source!,
+              politeness: {
+                robotsDisallowedCount: 0,
+                rateLimitedCount: 0,
+                budgetExhaustedCount: 0,
+                lastBlockedReason: null,
+                lastBlockedAt: null,
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("greenhouse:acme")).toBeInTheDocument();
+    expect(screen.queryByText("robots disallowed")).not.toBeInTheDocument();
   });
 
   it("renders an empty state when no source health exists", () => {

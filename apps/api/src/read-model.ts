@@ -73,6 +73,8 @@ import {
 } from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
+import type { SourcePolitenessOutcomes } from "@jobhunter/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
 import {
@@ -4100,9 +4102,12 @@ function defaultDashboardRow(): DashboardProjectionRow {
 
 function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] {
   const operationalBySource = operationalSourceRollups(db);
+  const politenessBySource = politenessOutcomesBySource(db);
   const seen = new Set<string>();
   if (!tableExists(db, "source_quality_stats")) {
-    return [...operationalBySource.values()].map((source) => sourceRollupToHealth(source));
+    return [...operationalBySource.values()].map((source) =>
+      sourceRollupToHealth(source, politenessBySource.get(source.sourceId ?? source.key)),
+    );
   }
   const rows = allRows<SourceQualityProjectionRow>(
     db,
@@ -4139,12 +4144,13 @@ function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] 
       lastFailureCategory: operational?.lastFailureCategory ?? null,
       lastRunId: row.last_run_id ?? operational?.lastRunId ?? null,
       lastErrorClass: row.last_error_class ?? operational?.lastErrorClass ?? null,
+      politeness: politenessBySource.get(row.source_id) ?? emptyPolitenessOutcomes(),
       updatedAt: row.updated_at,
     };
   });
   for (const source of operationalBySource.values()) {
     if (!source.sourceId || seen.has(source.sourceId)) continue;
-    sourceHealth.push(sourceRollupToHealth(source));
+    sourceHealth.push(sourceRollupToHealth(source, politenessBySource.get(source.sourceId)));
   }
   return sourceHealth;
 }
@@ -4273,7 +4279,10 @@ function rollupToSourceMetric(item: OperationalRollup): DashboardSummary["operat
   };
 }
 
-function sourceRollupToHealth(source: OperationalRollup): DashboardSummary["sourceHealth"][number] {
+function sourceRollupToHealth(
+  source: OperationalRollup,
+  politeness: SourcePolitenessOutcomes | undefined,
+): DashboardSummary["sourceHealth"][number] {
   return {
     sourceId: source.sourceId || source.key,
     recommendedState: "normal",
@@ -4293,6 +4302,7 @@ function sourceRollupToHealth(source: OperationalRollup): DashboardSummary["sour
     lastFailureCategory: source.lastFailureCategory,
     lastRunId: source.lastRunId,
     lastErrorClass: source.lastErrorClass,
+    politeness: politeness ?? emptyPolitenessOutcomes(),
     updatedAt: null,
   };
 }

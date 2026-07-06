@@ -275,6 +275,16 @@ per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
 messages.
 
+Each `sourceHealth[]` entry also carries an additive `politeness` object with
+per-source crawl-politeness outcome counts recorded by the R10 politeness
+gateway — `robotsDisallowedCount`, `rateLimitedCount`, `budgetExhaustedCount`,
+plus `lastBlockedReason` and `lastBlockedAt`. These are sourced from
+`operational_attempt_metrics` rows written with `outcome = "blocked"` and
+`is_scrape_failure = 0`, so a robots-disallowed / rate-limited / budget-exhausted
+source shows *why* it produced nothing without being counted as a scrape
+failure. All counts `0` with a `null` last reason means no politeness outcome was
+recorded.
+
 `GET /v1/analytics/outcomes` returns the outcome analytics read model sourced
 from `dashboard_projections.outcome_conversion_json`. It exposes integer counts
 and read-time rates for totals plus `bySource`, `byScoreBand`, `byFitBand`, and
@@ -303,7 +313,11 @@ type and policy metadata are visible as columns instead of compact badges:
 - `PATCH /v1/discovery/settings` updates those runtime settings without
   dropping the worker search-contract fields stored in the same row.
 - `GET /v1/discovery/sources` lists source registry entries merged with
-  `source_quality_stats`.
+  `source_quality_stats`. Each entry also carries the same additive `politeness`
+  object as `sourceHealth[]` (robots-disallowed / rate-limited / budget-exhausted
+  counts plus the last block reason/time), sourced from
+  `operational_attempt_metrics`, so the registry table can show why a source was
+  blocked instead of a silent zero.
 - `POST /v1/discovery/sources` upserts a local source registry entry and emits
   `SourceRegistryEntryCreated` or `SourceRegistryEntryUpdated`.
 - `PATCH /v1/discovery/sources/:sourceId/state` changes local source state and
