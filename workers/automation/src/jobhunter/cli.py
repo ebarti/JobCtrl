@@ -2578,17 +2578,17 @@ def doctor() -> None:
             f"{gmail_note}; email verification will stop as login_issue",
         ))
 
-    # CapSolver (optional; apply currently fails closed until an owned solver ships)
+    # CapSolver (optional; the owned solve_captcha tool fails closed when absent)
     capsolver = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver:
         results.append((
             "CapSolver API key",
             "[dim]configured[/dim]",
-            "stored, but apply agent fails closed until owned CAPTCHA solving ships",
+            "owned solve_captcha tool can handle supported widgets",
         ))
     else:
         results.append(("CapSolver API key", "[dim]optional[/dim]",
-                        "not required; apply agent fails closed on CAPTCHA"))
+                        "not required; unsupported or unconfigured CAPTCHA flows fail closed"))
 
     # Temporal dev server (workflow engine)
     from jobhunter.infrastructure.temporal import get_temporal_client

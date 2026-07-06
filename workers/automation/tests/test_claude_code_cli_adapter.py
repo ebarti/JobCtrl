@@ -120,7 +120,14 @@ def test_default_model_uses_local_claude_default(monkeypatch, tmp_path) -> None:
     )
 
     result = adapter.submit_application(
-        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        prompt=ApplyPrompt(
+            text="apply",
+            mcp_config={
+                "mcpServers": {
+                    "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
+                }
+            },
+        ),
         browser=_session(),
         model="default",
         dry_run=True,
@@ -171,7 +178,14 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     )
 
     result = adapter.submit_application(
-        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        prompt=ApplyPrompt(
+            text="apply",
+            mcp_config={
+                "mcpServers": {
+                    "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
+                }
+            },
+        ),
         browser=_session(),
         model="default",
         dry_run=True,
@@ -190,6 +204,7 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     disallowed_tools = cmd[cmd.index("--disallowedTools") + 1]
     assert "mcp__playwright__browser_navigate" in allowed_tools
     assert "mcp__gmail__get_verification_code" in allowed_tools
+    assert "mcp__apply_tools__solve_captcha" in allowed_tools
     assert "mcp__apply_tools__type_credential" in allowed_tools
     assert "mcp__apply_tools__upload_artifact" in allowed_tools
     assert "browser_evaluate" not in allowed_tools
@@ -201,6 +216,32 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     assert "ANTHROPIC_API_KEY" not in forwarded_env
     assert "CAPSOLVER_API_KEY" not in forwarded_env
     assert "UNRELATED_SECRET_TOKEN" not in forwarded_env
+
+
+def test_apply_adapter_omits_captcha_tool_when_solver_key_absent(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+    _FakePopen.calls.clear()
+    _FakePopen.kwargs.clear()
+
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    result = adapter.submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    allowed_tools = _FakePopen.calls[0][_FakePopen.calls[0].index("--allowedTools") + 1]
+    assert result.submission_result.kind == "dry_run_complete"
+    assert "mcp__apply_tools__solve_captcha" not in allowed_tools
+    assert "mcp__apply_tools__type_credential" in allowed_tools
+    assert "mcp__apply_tools__upload_artifact" in allowed_tools
 
 
 def test_apply_adapter_minimal_env_is_exact(monkeypatch) -> None:
@@ -264,10 +305,19 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
     expected = (
         advertised
         | claude_code_cli.GMAIL_APPLY_TOOLS
-        | claude_code_cli.OWNED_APPLY_TOOLS
+        | claude_code_cli.BASE_OWNED_APPLY_TOOLS
     )
 
     assert set(claude_code_cli._ALLOWED_TOOLS.split(",")) == expected
+    assert set(claude_code_cli._allowed_tools_for_mcp_config({}).split(",")) == expected
+    with_captcha = {
+        "mcpServers": {
+            "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
+        }
+    }
+    assert set(claude_code_cli._allowed_tools_for_mcp_config(with_captcha).split(",")) == (
+        expected | {claude_code_cli.CAPTCHA_APPLY_TOOL}
+    )
 
 
 def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:

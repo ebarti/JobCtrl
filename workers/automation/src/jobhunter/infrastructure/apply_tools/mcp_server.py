@@ -12,6 +12,11 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from jobhunter import __version__
+from jobhunter.infrastructure.captcha import (
+    CaptchaChallenge,
+    CaptchaSolveResult,
+    solve_with_capsolver,
+)
 
 
 def main() -> None:
@@ -34,6 +39,9 @@ class ApplyToolsMcpServer:
         uploader: Any | None = None,
         credential_resolver: Any | None = None,
         credential_typer: Any | None = None,
+        captcha_key_resolver: Any | None = None,
+        captcha_solver: Any | None = None,
+        captcha_injector: Any | None = None,
     ) -> None:
         raw_upload_dir = upload_dir or os.environ.get("JOBHUNTER_APPLY_UPLOAD_DIR")
         self._upload_dir = Path(raw_upload_dir).expanduser() if raw_upload_dir else None
@@ -41,6 +49,9 @@ class ApplyToolsMcpServer:
         self._uploader = uploader or _upload_file_to_current_input
         self._credential_resolver = credential_resolver or _profile_credential
         self._credential_typer = credential_typer or _type_credential_into_active_field
+        self._captcha_key_resolver = captcha_key_resolver or _captcha_api_key
+        self._captcha_solver = captcha_solver or _solve_with_capsolver
+        self._captcha_injector = captcha_injector or _inject_captcha_token
 
     def handle_json(self, line: str) -> dict[str, Any] | None:
         try:
@@ -60,7 +71,7 @@ class ApplyToolsMcpServer:
                     "serverInfo": {"name": "jobhunter-apply-tools", "version": __version__},
                 }
             elif method == "tools/list":
-                result = {"tools": _tools()}
+                result = {"tools": self._tools()}
             elif method == "tools/call":
                 result = self._call_tool(request.get("params") or {})
             elif method in {"resources/list", "prompts/list"}:
@@ -78,6 +89,8 @@ class ApplyToolsMcpServer:
             return self._call_upload_artifact(args)
         if name == "type_credential":
             return self._call_type_credential(args)
+        if name == "solve_captcha":
+            return self._call_solve_captcha(args)
         raise ValueError(f"Unknown apply tool: {name}")
 
     def _call_upload_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +124,34 @@ class ApplyToolsMcpServer:
             ]
         }
 
+    def _call_solve_captcha(self, args: dict[str, Any]) -> dict[str, Any]:
+        api_key = self._captcha_key_resolver()
+        if not api_key:
+            raise ValueError("CAPTCHA solver is not configured")
+        challenge = _captcha_challenge_from_args(args)
+        result = self._captcha_solver(api_key, challenge)
+        if not isinstance(result, CaptchaSolveResult):
+            result = CaptchaSolveResult(token=str(result or ""), kind=challenge.kind, elapsed_s=0.0)
+        if not result.token:
+            raise ValueError("CAPTCHA solver returned no token")
+        self._captcha_injector(self._cdp_endpoint, challenge, result.token)
+        payload = {
+            "solved": True,
+            "kind": challenge.kind,
+            "elapsed_s": result.elapsed_s,
+        }
+        if result.cost_usd is not None:
+            payload["cost_usd"] = result.cost_usd
+        _record_captcha_usage(self._upload_dir, payload)
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(payload, sort_keys=True),
+                }
+            ]
+        }
+
     def _resolve_artifact(self, kind: str) -> Path:
         patterns = {
             "resume": ("*Resume.pdf",),
@@ -135,9 +176,12 @@ class ApplyToolsMcpServer:
             return resolved
         raise ValueError(f"no reviewed {kind} artifact exists for this run")
 
+    def _tools(self) -> list[dict[str, Any]]:
+        return _tools(captcha_configured=bool(self._captcha_key_resolver()))
 
-def _tools() -> list[dict[str, Any]]:
-    return [
+
+def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
+    tools = [
         {
             "name": "upload_artifact",
             "description": "Upload the reviewed resume or cover-letter artifact for this apply run. The model supplies only the artifact kind, never a path.",
@@ -169,6 +213,29 @@ def _tools() -> list[dict[str, Any]]:
             },
         },
     ]
+    configured = bool(_captcha_api_key()) if captcha_configured is None else captcha_configured
+    if configured:
+        tools.insert(
+            1,
+            {
+                "name": "solve_captcha",
+                "description": "Solve a supported CAPTCHA through the local configured solver. Provider keys and solver tokens are never returned to the model.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["recaptcha_v2", "hcaptcha", "turnstile"],
+                        },
+                        "sitekey": {"type": "string", "minLength": 1},
+                        "page_url": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["kind", "sitekey", "page_url"],
+                    "additionalProperties": False,
+                },
+            },
+        )
+    return tools
 
 
 def _profile_credential(kind: str) -> str:
@@ -206,6 +273,68 @@ def _profile_credential(kind: str) -> str:
     if not password:
         raise ValueError("job-site password credential is not configured")
     return password
+
+
+def _captcha_api_key() -> str:
+    value = os.environ.get("CAPSOLVER_API_KEY", "").strip()
+    return value
+
+
+def _solve_with_capsolver(api_key: str, challenge: CaptchaChallenge) -> CaptchaSolveResult:
+    return solve_with_capsolver(api_key, challenge)
+
+
+def _captcha_challenge_from_args(args: dict[str, Any]) -> CaptchaChallenge:
+    kind = str(args.get("kind") or "")
+    sitekey = str(args.get("sitekey") or "")
+    page_url = str(args.get("page_url") or "")
+    if kind not in {"recaptcha_v2", "hcaptcha", "turnstile"}:
+        raise ValueError("solve_captcha kind must be recaptcha_v2, hcaptcha, or turnstile")
+    if not sitekey.strip():
+        raise ValueError("solve_captcha sitekey is required")
+    if not page_url.strip():
+        raise ValueError("solve_captcha page_url is required")
+    return CaptchaChallenge(kind=kind, sitekey=sitekey, page_url=page_url)
+
+
+def _record_captcha_usage(upload_dir: Path | None, payload: dict[str, Any]) -> None:
+    if upload_dir is None:
+        return
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "event_type": "CaptchaSolveCompleted",
+        "payload": payload,
+    }
+    with (upload_dir / "captcha_solve_events.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def _inject_captcha_token(
+    cdp_endpoint: str, challenge: CaptchaChallenge, token: str
+) -> None:
+    escaped = json.dumps(token)
+    _evaluate_on_page(
+        cdp_endpoint,
+        f"""
+(() => {{
+  const token = {escaped};
+  const names = ["g-recaptcha-response", "h-captcha-response", "cf-turnstile-response"];
+  for (const name of names) {{
+    let field = document.querySelector(`textarea[name="${{name}}"], input[name="${{name}}"]`);
+    if (!field) {{
+      field = document.createElement("textarea");
+      field.name = name;
+      field.style.display = "none";
+      document.body.appendChild(field);
+    }}
+    field.value = token;
+    field.dispatchEvent(new Event("input", {{bubbles: true}}));
+    field.dispatchEvent(new Event("change", {{bubbles: true}}));
+  }}
+  return true;
+}})()
+""",
+    )
 
 
 def _type_credential_into_active_field(cdp_endpoint: str, credential: str) -> None:
@@ -260,6 +389,33 @@ def _type_credential_into_active_field(cdp_endpoint: str, credential: str) -> No
         if not active.get("ok"):
             raise RuntimeError("active element is not a password credential field")
         response(send("Input.insertText", {"text": credential}))
+    finally:
+        ws.close()
+
+
+def _evaluate_on_page(cdp_endpoint: str, expression: str) -> Any:
+    ws_url = _first_page_ws_url(cdp_endpoint)
+    try:
+        import websocket
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("websocket-client is required for apply tools") from exc
+    ws = websocket.create_connection(ws_url, timeout=5, suppress_origin=True)
+    try:
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": expression, "returnByValue": True},
+                }
+            )
+        )
+        while True:
+            message = json.loads(ws.recv())
+            if message.get("id") == 1:
+                if "error" in message:
+                    raise RuntimeError(str(message["error"]))
+                return message.get("result", {}).get("result", {}).get("value")
     finally:
         ws.close()
 

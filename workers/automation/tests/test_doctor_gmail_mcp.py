@@ -78,3 +78,18 @@ def test_doctor_warns_when_application_attestations_are_incomplete(monkeypatch) 
     assert "WARN" in result.output
     assert "incomplete" in result.output
     assert "screening questions" in result.output
+
+
+def test_doctor_reports_owned_captcha_solver_when_configured(monkeypatch) -> None:
+    monkeypatch.setattr("jobhunter.config.load_env", lambda: None)
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "test-capsolver-key")
+
+    with patch(
+        "jobhunter.infrastructure.temporal.client.Client.connect",
+        new=AsyncMock(side_effect=RuntimeError("connection refused")),
+    ):
+        result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert "CapSolver API key" in result.output
+    assert "owned solve_captcha tool" in result.output

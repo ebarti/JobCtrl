@@ -7,6 +7,9 @@ import sqlite3
 
 from jobhunter.infrastructure.apply_tools.mcp_server import (
     ApplyToolsMcpServer,
+    CaptchaChallenge,
+    CaptchaSolveResult,
+    _captcha_api_key,
     _profile_credential,
 )
 
@@ -146,8 +149,89 @@ def test_type_credential_refuses_unknown_kind(tmp_path):
     assert "kind must be job_site_password" in response["error"]["message"]
 
 
-def test_apply_tools_mcp_lists_owned_tools(tmp_path):
-    server = ApplyToolsMcpServer(upload_dir=tmp_path, cdp_endpoint="http://localhost:9222")
+def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
+    challenge = CaptchaChallenge(
+        kind="hcaptcha",
+        sitekey="site-key",
+        page_url="https://example.com/apply",
+    )
+    calls: list[tuple[str, CaptchaChallenge]] = []
+    injected: list[tuple[str, str]] = []
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        captcha_key_resolver=lambda: "capsolver-secret-never-returned",
+        captcha_solver=lambda api_key, detected: calls.append((api_key, detected))
+        or CaptchaSolveResult(
+            token="solver-token",
+            kind=detected.kind,
+            elapsed_s=1.25,
+            cost_usd=0.002,
+        ),
+        captcha_injector=lambda _endpoint, _challenge, token: injected.append((_challenge.kind, token)),
+    )
+
+    response = _call(
+        server,
+        "solve_captcha",
+        {
+            "kind": "hcaptcha",
+            "sitekey": "site-key",
+            "page_url": "https://example.com/apply",
+        },
+    )
+
+    assert calls == [("capsolver-secret-never-returned", challenge)]
+    assert injected == [("hcaptcha", "solver-token")]
+    text = response["result"]["content"][0]["text"]
+    assert "capsolver-secret-never-returned" not in text
+    assert "solver-token" not in text
+    assert json.loads(text) == {
+        "cost_usd": 0.002,
+        "elapsed_s": 1.25,
+        "kind": "hcaptcha",
+        "solved": True,
+    }
+    usage_events = (tmp_path / "captcha_solve_events.jsonl").read_text(encoding="utf-8")
+    assert "solver-token" not in usage_events
+    assert "capsolver-secret-never-returned" not in usage_events
+    assert json.loads(usage_events)["event_type"] == "CaptchaSolveCompleted"
+
+
+def test_solve_captcha_fails_closed_without_solver_key(tmp_path):
+    server = ApplyToolsMcpServer(
+        cdp_endpoint="http://localhost:9222",
+        captcha_key_resolver=lambda: "",
+    )
+
+    response = _call(
+        server,
+        "solve_captcha",
+        {
+            "kind": "hcaptcha",
+            "sitekey": "site-key",
+            "page_url": "https://example.com/apply",
+        },
+    )
+
+    assert response["error"]["code"] == -32000
+    assert "CAPTCHA solver is not configured" in response["error"]["message"]
+
+
+def test_captcha_key_resolves_from_server_env(monkeypatch):
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+    assert _captcha_api_key() == ""
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-from-server-env")
+
+    assert _captcha_api_key() == "capsolver-from-server-env"
+
+
+def test_apply_tools_mcp_omits_captcha_tool_when_key_absent(tmp_path):
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        captcha_key_resolver=lambda: "",
+    )
 
     response = server.handle_json(
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
@@ -157,3 +241,20 @@ def test_apply_tools_mcp_lists_owned_tools(tmp_path):
         "type_credential",
         "upload_artifact",
     }
+
+
+def test_apply_tools_mcp_lists_captcha_tool_when_key_present(tmp_path):
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        captcha_key_resolver=lambda: "configured-key",
+    )
+
+    response = server.handle_json(
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    )
+
+    tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+    assert set(tools) == {"solve_captcha", "type_credential", "upload_artifact"}
+    solve_schema = tools["solve_captcha"]["inputSchema"]
+    assert solve_schema["required"] == ["kind", "sitekey", "page_url"]

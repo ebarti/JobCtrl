@@ -64,8 +64,10 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   the stored profile password and types it into the focused field without
   returning the value to the model; if the tool is unavailable, login fails
   closed for operator handling.
-- CAPTCHA challenges fail closed in the apply agent. Do not solve image/audio
-  challenges manually, switch to stealth browsers, or bypass bot controls.
+- CAPTCHA solving is available only through the owned local solver tool for
+  supported widgets. Image/audio, unsupported, or unconfigured challenges fail
+  closed. Do not solve challenges manually, switch to stealth browsers, or
+  bypass bot controls.
 - Scraping and source access can violate site terms. Default discovery options
   include LinkedIn and Indeed; disable any source you are not allowed to query
   automatically.
@@ -256,8 +258,9 @@ opt-in and configuration-gated:
   if you authenticate the connector; it never requests `gmail.send`.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — currently fails closed in the apply agent; no
-  CAPTCHA-provider key is sent through the model prompt.
+- **CAPTCHA solving** — supported widgets are handled only through the owned
+  local solver tool when configured; no CAPTCHA-provider key or solver token is
+  sent through the model prompt.
 - **Langfuse / OpenTelemetry** — traces, only when you configure it
   (`LANGFUSE_DISABLE=1` opts out even with credentials present).
 
