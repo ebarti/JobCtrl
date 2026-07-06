@@ -365,8 +365,16 @@ def test_by_source_orders_ties_by_source_name(conn: sqlite3.Connection) -> None:
     assert by_source == [["Netflix", 3], ["Acme", 2], ["Wayfair", 2]]
 
 
-def _apply_job(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int) -> None:
+def _apply_job(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    site: str,
+    fit_score: int,
+    applied_at: str | None = None,
+) -> None:
     _seed_job(conn, url, site=site)
+    at = applied_at or utc_now()
     conn.execute(
         """
         INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
@@ -378,22 +386,191 @@ def _apply_job(conn: sqlite3.Connection, url: str, *, site: str, fit_score: int)
     run_id = f"run-{url}"
     record_job_event(
         conn, url, "apply", "ApplyRunStarted",
-        payload={"run_id": run_id, "started_at": utc_now()},
+        payload={"run_id": run_id, "started_at": at},
     )
     record_job_event(
         conn, url, "apply", "ApplicationSubmitted",
-        payload={"run_id": run_id, "finished_at": utc_now(), "result": "applied"},
+        payload={"run_id": run_id, "finished_at": at, "result": "applied"},
     )
 
 
-def _record_outcome(conn: sqlite3.Connection, url: str, kind: str) -> None:
+def _mark_manual_applied(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    site: str,
+    fit_score: int,
+    applied_at: str | None = None,
+) -> None:
+    _seed_job(conn, url, site=site)
+    at = applied_at or utc_now()
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        """,
+        (url, fit_score, utc_now()),
+    )
+    conn.execute(
+        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+        (at, url),
+    )
+    record_job_event(conn, url, "apply", "ApplicationManuallyMarked")
+
+
+def _mark_external_confirmed(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    site: str,
+    fit_score: int,
+    applied_at: str | None = None,
+) -> None:
+    _seed_job(conn, url, site=site)
+    at = applied_at or utc_now()
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        """,
+        (url, fit_score, utc_now()),
+    )
+    conn.execute(
+        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+        (at, url),
+    )
+    _record_outcome(conn, url, "applied_confirmation", occurred_at=at)
+
+
+def _record_fit_band(conn: sqlite3.Connection, url: str, fit_score: int, fit_band: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_reports (
+            job_url, score_version, tenant_id, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, 1, 'local', 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?)
+        """,
+        (url, fit_score, fit_band, utc_now()),
+    )
+
+
+def _record_outcome(
+    conn: sqlite3.Connection,
+    url: str,
+    kind: str,
+    *,
+    occurred_at: str | None = None,
+) -> None:
+    at = occurred_at or utc_now()
     conn.execute(
         """
         INSERT INTO application_outcomes (
             tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
         ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
         """,
-        (f"outcome-{url}-{kind}", url, kind, utc_now(), utc_now()),
+        (f"outcome-{url}-{kind}", url, kind, at, at),
+    )
+
+
+def _record_material_metadata(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    template_id: str | None = None,
+    template_name: str | None = None,
+    policy_version: int | None = None,
+) -> None:
+    metadata: dict[str, object | None] = {"tailoring_policy_version": policy_version}
+    if template_id is not None:
+        metadata["resume_template"] = {
+            "templateId": template_id,
+            "templateVersionId": f"{template_id}:v1",
+            "templateVersionNumber": 1,
+            "templateName": template_name,
+            "templateHash": f"hash:{template_id}",
+            "assignmentSource": "test",
+        }
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+        """,
+        (url, utc_now(), utc_now()),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+        """,
+        (
+            url,
+            f"resume-{url}",
+            f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
+            json.dumps(metadata),
+            utc_now(),
+        ),
+    )
+
+
+def _record_replacement_material_metadata(conn: sqlite3.Connection, url: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)
+        """,
+        (
+            url,
+            utc_now(),
+            utc_now(),
+            json.dumps({"source": "resume_review_draft", "base_generation": 1}),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+        """,
+        (
+            url,
+            f"replacement-{url}",
+            f"/tmp/{url.rsplit('/', 1)[-1]}-replacement.txt",
+            json.dumps(
+                {
+                    "source": "resume_review_draft",
+                    "base_generation": 1,
+                    "base_resume_text_artifact_id": f"resume-{url}",
+                }
+            ),
+            utc_now(),
+        ),
+    )
+
+
+def _record_suggestion(conn: sqlite3.Connection, index: int, status: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO application_outcome_suggestions (
+            tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+            status, created_at, decided_at, decision
+        ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+        """,
+        (
+            f"suggestion-{index}",
+            f"https://example.com/suggestion-{index}",
+            status,
+            utc_now(),
+            utc_now(),
+            status,
+        ),
     )
 
 
@@ -416,7 +593,7 @@ def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) 
     row = _dashboard(conn)
     conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
 
-    assert conversion["version"] == 1
+    assert conversion["version"] == 2
     assert conversion["totals"] == {
         "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
     }
@@ -434,6 +611,200 @@ def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) 
     assert by_band["moderate"] == {
         "band": "moderate", "applied": 2, "reply": 2, "interview": 1, "offer": 1, "rejection": 1,
     }
+    by_apply_mode = {entry["applyMode"]: entry for entry in conversion["byApplyMode"]}
+    assert by_apply_mode["automated_live"] == {
+        "applyMode": "automated_live", "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
+    }
+    by_fit_band = {entry["fitBand"]: entry for entry in conversion["byFitBand"]}
+    assert by_fit_band["unreported"] == {
+        "fitBand": "unreported", "applied": 5, "reply": 4, "interview": 2, "offer": 1, "rejection": 1,
+    }
+
+
+def test_outcome_conversion_counts_by_fit_band_and_apply_mode(conn: sqlite3.Connection) -> None:
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    for idx in range(1, 6):
+        url = f"https://example.com/live-{idx}"
+        _apply_job(conn, url, site="greenhouse", fit_score=9)
+        _record_fit_band(conn, url, 9, "excellent")
+        if idx <= 2:
+            _record_outcome(conn, url, "interview")
+    for idx in range(1, 6):
+        url = f"https://example.com/manual-{idx}"
+        _mark_manual_applied(conn, url, site="linkedin", fit_score=8)
+        _record_fit_band(conn, url, 8, "strong")
+        if idx <= 3:
+            _record_outcome(conn, url, "recruiter_reply")
+    _mark_external_confirmed(conn, "https://example.com/external", site="lever", fit_score=4)
+    _record_fit_band(conn, "https://example.com/external", 4, "stretch")
+    _record_outcome(conn, "https://example.com/external", "recruiter_reply")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    by_fit_band = {entry["fitBand"]: entry for entry in conversion["byFitBand"]}
+    assert by_fit_band["excellent"] == {
+        "fitBand": "excellent", "applied": 5, "reply": 2, "interview": 2, "offer": 0, "rejection": 0,
+    }
+    assert by_fit_band["strong"] == {
+        "fitBand": "strong", "applied": 5, "reply": 3, "interview": 0, "offer": 0, "rejection": 0,
+    }
+    assert by_fit_band["stretch"] == {
+        "fitBand": "stretch", "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
+
+    by_apply_mode = {entry["applyMode"]: entry for entry in conversion["byApplyMode"]}
+    assert by_apply_mode["automated_live"] == {
+        "applyMode": "automated_live", "applied": 5, "reply": 2, "interview": 2, "offer": 0, "rejection": 0,
+    }
+    assert by_apply_mode["manual_marked"] == {
+        "applyMode": "manual_marked", "applied": 5, "reply": 3, "interview": 0, "offer": 0, "rejection": 0,
+    }
+    assert by_apply_mode["external_confirmed"] == {
+        "applyMode": "external_confirmed", "applied": 1, "reply": 1, "interview": 0, "offer": 0, "rejection": 0,
+    }
+
+
+def test_outcome_conversion_counts_by_material_and_feedback_rows(conn: sqlite3.Connection) -> None:
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    applied_at = "2026-06-01T12:00:00+00:00"
+    response_at = "2026-06-05T12:00:00+00:00"
+
+    for idx in range(1, 6):
+        url = f"https://example.com/live-{idx}"
+        _apply_job(conn, url, site="greenhouse", fit_score=9, applied_at=applied_at)
+        _record_fit_band(conn, url, 9, "excellent")
+        _record_material_metadata(
+            conn,
+            url,
+            template_id="template-modern",
+            template_name="Modern compact",
+            policy_version=3,
+        )
+        _record_replacement_material_metadata(conn, url)
+        if idx <= 2:
+            _record_outcome(conn, url, "interview", occurred_at=response_at)
+    for idx in range(1, 6):
+        url = f"https://example.com/manual-{idx}"
+        _mark_manual_applied(conn, url, site="linkedin", fit_score=8, applied_at=applied_at)
+        _record_fit_band(conn, url, 8, "strong")
+        _record_material_metadata(
+            conn,
+            url,
+            template_id="template-plain",
+            template_name="Plain ATS",
+            policy_version=4,
+        )
+        if idx <= 3:
+            _record_outcome(conn, url, "recruiter_reply", occurred_at=response_at)
+    _mark_external_confirmed(
+        conn,
+        "https://example.com/external",
+        site="lever",
+        fit_score=4,
+        applied_at=applied_at,
+    )
+    _record_fit_band(conn, "https://example.com/external", 4, "stretch")
+    _record_outcome(conn, "https://example.com/external", "recruiter_reply", occurred_at=response_at)
+    for index, status in enumerate(["accepted", "accepted", "accepted", "corrected", "ignored"]):
+        _record_suggestion(conn, index, status)
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    by_template = {entry["templateId"]: entry for entry in conversion["byTemplate"]}
+    assert by_template["template-modern"] == {
+        "templateId": "template-modern",
+        "templateName": "Modern compact",
+        "applied": 5,
+        "reply": 2,
+        "interview": 2,
+        "offer": 0,
+        "rejection": 0,
+    }
+    assert by_template["template-plain"] == {
+        "templateId": "template-plain",
+        "templateName": "Plain ATS",
+        "applied": 5,
+        "reply": 3,
+        "interview": 0,
+        "offer": 0,
+        "rejection": 0,
+    }
+    assert by_template["unreported"] == {
+        "templateId": "unreported",
+        "templateName": None,
+        "applied": 1,
+        "reply": 1,
+        "interview": 0,
+        "offer": 0,
+        "rejection": 0,
+    }
+
+    by_policy = {entry["policyLabel"]: entry for entry in conversion["byPolicy"]}
+    assert by_policy["Policy v3"]["tailoringPolicyVersion"] == 3
+    assert by_policy["Policy v3"]["applied"] == 5
+    assert by_policy["Policy v3"]["reply"] == 2
+    assert by_policy["Policy v4"]["tailoringPolicyVersion"] == 4
+    assert by_policy["Policy v4"]["applied"] == 5
+    assert by_policy["Policy v4"]["reply"] == 3
+    assert by_policy["Unreported"]["tailoringPolicyVersion"] is None
+    assert by_policy["Unreported"]["applied"] == 1
+    assert by_policy["Unreported"]["reply"] == 1
+
+    assert conversion["timeToResponseMinutes"] == [5760, 5760, 5760, 5760, 5760, 5760]
+    assert conversion["suggestionAccuracy"] == {
+        "decided": 5,
+        "accepted": 3,
+        "corrected": 1,
+        "ignored": 1,
+    }
+
+
+def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table(
+    conn: sqlite3.Connection,
+) -> None:
+    from jobhunter.infrastructure.gmail.feedback import ensure_application_feedback_tables
+
+    ensure_application_feedback_tables(conn)
+    for idx in range(1, 6):
+        url = f"https://example.com/compat-{idx}"
+        _apply_job(conn, url, site="greenhouse", fit_score=9)
+        _record_material_metadata(
+            conn,
+            url,
+            template_id="template-compat",
+            template_name="Compatibility resume",
+            policy_version=7,
+        )
+    conn.execute("DROP TABLE job_materials")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+    conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
+
+    by_template = {entry["templateId"]: entry for entry in conversion["byTemplate"]}
+    assert by_template["template-compat"] == {
+        "templateId": "template-compat",
+        "templateName": "Compatibility resume",
+        "applied": 5,
+        "reply": 0,
+        "interview": 0,
+        "offer": 0,
+        "rejection": 0,
+    }
+    by_policy = {entry["policyLabel"]: entry for entry in conversion["byPolicy"]}
+    assert by_policy["Policy v7"]["tailoringPolicyVersion"] == 7
+    assert by_policy["Policy v7"]["applied"] == 5
 
 
 def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection) -> None:
@@ -446,10 +817,16 @@ def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection)
     conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
 
     assert conversion == {
-        "version": 1,
+        "version": 2,
         "totals": {"applied": 0, "reply": 0, "interview": 0, "offer": 0, "rejection": 0},
         "bySource": [],
         "byBand": [],
+        "byFitBand": [],
+        "byApplyMode": [],
+        "byTemplate": [],
+        "byPolicy": [],
+        "timeToResponseMinutes": [],
+        "suggestionAccuracy": {"decided": 0, "accepted": 0, "corrected": 0, "ignored": 0},
     }
 
 

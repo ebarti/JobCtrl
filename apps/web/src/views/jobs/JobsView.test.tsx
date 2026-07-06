@@ -29,6 +29,11 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
+import {
+  JOBS_TABLE_COLUMN_IDS,
+  JOBS_TABLE_ID,
+  useSavedTableViewsStore,
+} from "../../shared/stores/saved-table-views.js";
 import { JobsView } from "./JobsView.js";
 
 const SEARCH =
@@ -61,6 +66,8 @@ const originalConfirm = globalThis.window?.confirm;
 
 beforeEach(() => {
   useStageTriggerStore.getState().reset();
+  useSavedTableViewsStore.getState().reset();
+  window.localStorage.removeItem("jh:saved-table-views");
   Object.defineProperty(window, "confirm", {
     configurable: true,
     writable: true,
@@ -70,6 +77,7 @@ beforeEach(() => {
 
 afterEach(() => {
   useStageTriggerStore.getState().reset();
+  useSavedTableViewsStore.getState().reset();
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -266,6 +274,219 @@ describe("<JobsView> bulk delete integration", () => {
     expect(await screen.findByText(appliedJob.title)).toBeInTheDocument();
     expect(jobs).toHaveBeenCalledWith(
       expect.objectContaining({ applyStatus: "applied" }),
+    );
+  });
+
+  it("saves and reapplies Jobs table views through URL-backed filters", async () => {
+    const user = userEvent.setup();
+    const discoverJob = jobWithStage("job-discover-view", "Discovery view job", "discover");
+    const applyJob = jobWithStage("job-apply-view", "Apply view job", "apply");
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.stage === "apply" ? [applyJob] : [discoverJob, applyJob]),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(discoverJob.title)).toBeInTheDocument();
+    expect(screen.getByText(applyJob.title)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "apply" })),
+    );
+    expect(router.state.location.search).toMatchObject({ stage: "apply" });
+
+    await user.click(screen.getByRole("button", { name: "Configure table columns" }));
+    const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
+    await user.click(within(columnsDialog).getByRole("checkbox", { name: "Company" }));
+    await user.click(within(columnsDialog).getByRole("button", { name: "Compact" }));
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Group table rows" }),
+      "current_stage",
+    );
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Color rule column" }),
+      "title",
+    );
+    await user.type(
+      within(columnsDialog).getByRole("textbox", { name: "Color rule value" }),
+      "Apply",
+    );
+    await user.selectOptions(
+      within(columnsDialog).getByRole("combobox", { name: "Color rule tone" }),
+      "warning",
+    );
+    await user.click(within(columnsDialog).getByRole("button", { name: "Add" }));
+    await user.click(within(columnsDialog).getByRole("button", { name: /close/i }));
+    expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Apply compact");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.selectOptions(viewSelect, "default");
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ stage: "all" }),
+    );
+    expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+    expect(router.state.location.search).toMatchObject({ stage: "all" });
+    expect(screen.getByRole("columnheader", { name: /Company/ })).toBeInTheDocument();
+
+    await user.selectOptions(
+      viewSelect,
+      screen.getByRole("option", { name: "Apply compact" }),
+    );
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "apply" })),
+    );
+    expect(router.state.location.search).toMatchObject({ stage: "apply" });
+    expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
+    expect(document.querySelector(".filterable-data-grid")).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+    expect(screen.getByRole("row", { name: /apply 1/i })).toHaveClass(
+      "data-grid-group-row",
+    );
+    expect(rowForTitle(applyJob.title)).toHaveClass("data-grid-row-tone-warning");
+  });
+
+  it("hydrates active saved table view filters when the jobs view remounts", async () => {
+    const vonageJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-saved-filter-vonage",
+      title: "Saved Filter Manager",
+      company: "Vonage",
+      source: "Greenhouse",
+      discoverySource: "greenhouse:vonage",
+      postingSource: "greenhouse:vonage",
+    };
+    const acaiJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-saved-filter-acai",
+      title: "Saved Filter Engineer",
+      company: "Acai",
+      source: "Ashby",
+      discoverySource: "ashby:acai",
+      postingSource: "ashby:acai",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([vonageJob, acaiJob]));
+    useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Vonage", {
+      columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+      density: null,
+      grouping: null,
+      colorRules: [],
+      sort: { columnId: "discovered_at", direction: "desc" },
+      urlFilters: {
+        q: "",
+        stage: "all",
+        state: "all",
+        applyStatus: "all",
+        deleted: "active",
+        pageSize: 50,
+      },
+      gridFilters: {
+        company: {
+          operator: "contains",
+          text: "",
+          selectedValues: ["Vonage"],
+        },
+      },
+    });
+
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(vonageJob.title)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(acaiJob.title)).not.toBeInTheDocument(),
+    );
+    expect(router.state.location.search).toMatchObject({
+      stage: "all",
+      sort: "discovered_at",
+    });
+    expect(
+      screen.getByRole("button", {
+        name: /filter company column \(active\)/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves and reapplies digest timestamp URL filters in table views", async () => {
+    const user = userEvent.setup();
+    const since = "2026-07-01T00:00:00.000Z";
+    const newMatchJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-digest-new-match",
+      url: "https://example.com/jobs/job-digest-new-match",
+      title: "Digest new match",
+    };
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(
+        query?.discoveredSince === since && query?.scoredSince === since
+          ? [newMatchJob]
+          : [],
+      ),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const digestSearch = `${SEARCH}&discoveredSince=${encodeURIComponent(
+      since,
+    )}&scoredSince=${encodeURIComponent(since)}`;
+    const { router, Wrapper } = buildRouter(harness, digestSearch);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(newMatchJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Digest new");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.selectOptions(viewSelect, "default");
+    await waitFor(() => {
+      expect(router.state.location.search.discoveredSince).toBeUndefined();
+      expect(router.state.location.search.scoredSince).toBeUndefined();
+    });
+    expect(screen.queryByText(newMatchJob.title)).not.toBeInTheDocument();
+
+    await user.selectOptions(
+      viewSelect,
+      screen.getByRole("option", { name: "Digest new" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
+    );
+    expect(await screen.findByText(newMatchJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        discoveredSince: since,
+        scoredSince: since,
+      }),
     );
   });
 

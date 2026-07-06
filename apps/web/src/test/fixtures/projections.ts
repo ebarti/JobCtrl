@@ -1,5 +1,6 @@
 import type {
   ArtifactDetail,
+  ArtifactTailoringExplanation,
   ArtifactSummary,
   ActivityEventSummary,
   ApplyAudit,
@@ -7,14 +8,18 @@ import type {
   ApplyReviewQueueResponse,
   CredentialsResponse,
   DashboardSummary,
+  DailyDigest,
   EvidenceMapResponse,
   JobAuditEntry,
   JobCompensationAudit,
   JobCompensationSummary,
   JobDetail,
   JobSummary,
+  BulletCoverageAudit,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ResumeTemplateState,
   ResumeTemplateListResponse,
   SettingsResponse,
   WorkflowRunDetail,
@@ -855,6 +860,43 @@ export const sampleArtifact: ArtifactSummary = {
   size: "63.9 KB",
 };
 
+export const sampleAcceptedResumeArtifact: ArtifactSummary = {
+  ...sampleArtifact,
+  artifactId: "resume-text-accepted",
+  type: "tailored_resume",
+  status: "approved",
+  localPath: "/tmp/jobhunter-test/artifacts/resume-text-accepted.md",
+  resumeTemplate: makeResumeTemplateState("classic", "Classic"),
+};
+
+export const sampleDraftResumeArtifact: ArtifactSummary = {
+  ...sampleAcceptedResumeArtifact,
+  artifactId: "resume-text-draft",
+  status: "candidate",
+  localPath: "/tmp/jobhunter-test/artifacts/resume-text-draft.md",
+  resumeTemplate: makeResumeTemplateState("compact", "Compact"),
+};
+
+export function makeResumeTemplateState(
+  templateId: string,
+  templateName: string,
+): ResumeTemplateState {
+  return {
+    effective: {
+      templateId,
+      templateVersionId: `${templateId}:v1`,
+      templateVersionNumber: 1,
+      templateName,
+      templateHash: `hash-${templateId}`,
+      assignmentSource: "job_override",
+    },
+    snapshot: null,
+    state: "template_current",
+    reason: null,
+    lastRefreshAttempt: null,
+  };
+}
+
 export function makeArtifactsPage(items: readonly ArtifactSummary[] = [sampleArtifact]):
   PaginatedResponse<ArtifactSummary> {
   return {
@@ -891,8 +933,120 @@ export function makeActivityPage(
   };
 }
 
-export function makeArtifactDetail(artifact: ArtifactSummary = sampleArtifact): ArtifactDetail {
-  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation: null };
+export function makeCoverageAudit(
+  overrides: Partial<BulletCoverageAudit> = {},
+): BulletCoverageAudit {
+  const covered = overrides.covered ?? ["platform reliability", "typescript"];
+  const declared = overrides.declared ?? [];
+  const missing = overrides.missing ?? ["incident response"];
+  const planned = overrides.planned ?? [...covered, ...declared, ...missing];
+  return {
+    computedAgainst: overrides.computedAgainst ?? "rendered_voiced_resume_text_v1",
+    planned,
+    covered,
+    declared,
+    missing,
+    coveredBy: overrides.coveredBy ?? Object.fromEntries(covered.map((keyword) => [keyword, "bullet-1"])),
+    declaredBy: overrides.declaredBy ?? Object.fromEntries(declared.map((keyword) => [keyword, "skills-1"])),
+    counts: overrides.counts ?? {
+      planned: planned.length,
+      covered: covered.length,
+      declared: declared.length,
+      missing: missing.length,
+    },
+  };
+}
+
+export function makeArtifactTailoringExplanation(
+  coverageAudit: BulletCoverageAudit | null = makeCoverageAudit(),
+  overrides: Partial<ArtifactTailoringExplanation> = {},
+): ArtifactTailoringExplanation {
+  return {
+    targetSeniority: "senior",
+    claimMode: "evidence_reframing",
+    validationMode: "normal",
+    safety: {
+      autoApprovableClaimModes: ["verified_only"],
+      allowAdjacentAchievementDrafts: false,
+      qualityPassed: true,
+    },
+    keywords: {
+      coverageRecorded: Boolean(coverageAudit),
+      planned: coverageAudit?.planned ?? [],
+      covered: coverageAudit?.covered ?? [],
+      declared: coverageAudit?.declared ?? [],
+      missing: coverageAudit?.missing ?? [],
+      filtered: {
+        planned: [],
+        covered: [],
+        missing: [],
+      },
+      counts: {
+        planned: coverageAudit?.counts.planned ?? 0,
+        covered: coverageAudit?.counts.covered ?? 0,
+        declared: coverageAudit?.counts.declared ?? 0,
+        missing: coverageAudit?.counts.missing ?? 0,
+        displayedPlanned: coverageAudit?.counts.planned ?? 0,
+        displayedCovered: coverageAudit?.counts.covered ?? 0,
+        displayedDeclared: coverageAudit?.counts.declared ?? 0,
+        displayedMissing: coverageAudit?.counts.missing ?? 0,
+        filteredPlanned: 0,
+        filteredCovered: 0,
+        filteredMissing: 0,
+      },
+    },
+    evidence: {
+      requiredIds: [],
+      seniorityIds: [],
+      representedIds: [],
+      missingIds: [],
+      verifiedMetricCount: null,
+    },
+    quality: {
+      passed: true,
+      errors: [],
+      warnings: [],
+      notes: [],
+      metricClaims: [],
+      repeatedKeywords: [],
+    },
+    judge: {
+      passed: true,
+      verdict: "PASS",
+      score: 0.91,
+      minScore: 0.82,
+      issues: [],
+      unsupportedClaims: [],
+      fabrications: [],
+      missingRequiredEvidence: [],
+      repairInstructions: [],
+    },
+    adversarialReview: null,
+    reviewFeedback: {
+      warningRepairAttempted: null,
+      acceptedWithResidualWarnings: null,
+      acceptedWarnings: [],
+    },
+    annotatedChanges: [],
+    bulletProvenance: [],
+    coverageAudit,
+    voicePass: null,
+    models: {
+      candidateModels: [],
+      selectedModel: null,
+      selectedCandidate: null,
+      judgeModel: null,
+      attempts: null,
+    },
+    ...overrides,
+  };
+}
+
+export function makeArtifactDetail(
+  artifact: ArtifactSummary = sampleArtifact,
+  tailoringExplanation: ArtifactTailoringExplanation | null = null,
+): ArtifactDetail {
+  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {
@@ -1092,6 +1246,327 @@ export const sampleDashboardSummary: DashboardSummary = {
   ],
 };
 
+export const sampleOutcomeAnalyticsSummary: OutcomeAnalyticsSummary = {
+  ok: true,
+  generatedAt: "2026-06-01T12:00:00Z",
+  minSample: 5,
+  totals: {
+    n: 11,
+    applied: 11,
+    reply: 6,
+    interview: 4,
+    offer: 1,
+    rejection: 1,
+    replyRate: 0.5455,
+    interviewRate: 0.3636,
+    offerRate: 0.0909,
+    rejectionRate: 0.0909,
+  },
+  bySource: [
+    {
+      source: "greenhouse",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      source: "linkedin",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      source: "lever",
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  byScoreBand: [
+    {
+      scoreBand: "perfect",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      scoreBand: "strong",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      scoreBand: "weak",
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  byFitBand: [
+    {
+      fitBand: "excellent",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      fitBand: "strong",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      fitBand: "stretch",
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  byApplyMode: [
+    {
+      applyMode: "automated_live",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      applyMode: "manual_marked",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      applyMode: "external_confirmed",
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  byTemplate: [
+    {
+      templateId: "template-modern",
+      templateName: "Modern compact",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      templateId: "template-plain",
+      templateName: "Plain ATS",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      templateId: "unreported",
+      templateName: null,
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  byPolicy: [
+    {
+      tailoringPolicyVersion: 3,
+      policyLabel: "Policy v3",
+      n: 5,
+      applied: 5,
+      reply: 2,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+      replyRate: 0.4,
+      interviewRate: 0.4,
+      offerRate: 0.2,
+      rejectionRate: 0.2,
+    },
+    {
+      tailoringPolicyVersion: 4,
+      policyLabel: "Policy v4",
+      n: 5,
+      applied: 5,
+      reply: 3,
+      interview: 2,
+      offer: 0,
+      rejection: 0,
+      replyRate: 0.6,
+      interviewRate: 0.4,
+      offerRate: 0,
+      rejectionRate: 0,
+    },
+    {
+      tailoringPolicyVersion: null,
+      policyLabel: "Unreported",
+      n: 1,
+      applied: 1,
+      reply: 1,
+      interview: 0,
+      offer: 0,
+      rejection: 0,
+      replyRate: null,
+      interviewRate: null,
+      offerRate: null,
+      rejectionRate: null,
+    },
+  ],
+  timeToResponse: {
+    n: 6,
+    medianMinutes: 5760,
+  },
+  suggestionAccuracy: {
+    n: 5,
+    decided: 5,
+    accepted: 3,
+    corrected: 1,
+    ignored: 1,
+    acceptanceRate: 0.6,
+  },
+};
+
+export const sampleDailyDigest: DailyDigest = {
+  ok: true,
+  generatedAt: "2026-07-05T12:00:00.000Z",
+  since: "2026-07-01T00:00:00.000Z",
+  highFitThreshold: 7,
+  newMatches: { count: 3, highFitCount: 2 },
+  blockedSources: {
+    count: 1,
+    sources: [
+      {
+        sourceId: "workday:unstable-example",
+        recommendedState: "quarantined",
+        consecutiveFailures: 3,
+      },
+    ],
+  },
+  reviewNeededMaterials: { count: 1 },
+  staleScores: { count: 1 },
+  pendingApprovals: { count: 2 },
+  followUpsDue: { count: 1, derived: true, thresholdDays: 7, dayBoundary: "UTC" },
+  budget: {
+    status: "over_budget",
+    estimatedUsd: 12.5,
+    dailyBudgetUsd: 10,
+    remainingUsd: 0,
+    unlimited: false,
+  },
+  deepLinks: {
+    newMatches:
+      "/jobs?deleted=active&sort=discovered_at&dir=desc&discoveredSince=2026-07-01T00%3A00%3A00.000Z&scoredSince=2026-07-01T00%3A00%3A00.000Z",
+    blockedSources: "/discovery",
+    reviewNeededMaterials: "/apply-review",
+    staleScores: "/jobs?deleted=active&state=stale&sort=fit_score&dir=desc",
+    pendingApprovals: "/apply-review",
+    followUpsDue: "/jobs?applyStatus=applied",
+    budget: "/settings",
+  },
+};
+
 export const sampleProfileResponse: ProfileConfigResponse = {
   ok: true,
   profile: {
@@ -1131,6 +1606,13 @@ export const sampleSettingsResponse: SettingsResponse = {
     targetCriteria: "Director-plus infrastructure roles.",
   },
   paths: { settingsPath: "/tmp/jobhunter-test/settings.json" },
+};
+
+export const sampleExtensionCapabilityTokenResponse = {
+  ok: true as const,
+  token: "jh_ext_test_token_123456789012345678901234567890",
+  tokenPath: "/tmp/jobhunter-test/extension-capability-token",
+  created: false,
 };
 
 export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
