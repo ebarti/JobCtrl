@@ -3,7 +3,10 @@ import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
-import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import {
+  InterviewReflectionPanel,
+  JobOutcomePanel,
+} from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
@@ -173,7 +176,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   className="section job-detail-role-analysis"
                   requirementFitReport={detail.requirementFitReport}
                 />
-                <InterviewPrepPanel jobId={detail.job.jobKey} prep={detail.interviewPrep} />
+                <InterviewPrepPanel
+                  jobId={detail.job.jobKey}
+                  prep={detail.interviewPrep}
+                  reflectionContent={
+                    detail.interviewPrep ? (
+                      <InterviewReflectionPanel
+                        jobId={detail.job.jobKey}
+                        prepGeneration={detail.interviewPrep.generation}
+                      />
+                    ) : null
+                  }
+                />
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>

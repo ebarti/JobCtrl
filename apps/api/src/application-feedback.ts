@@ -118,6 +118,7 @@ interface OutcomeRow extends Record<string, unknown> {
   recorded_at: string;
   suggestion_id: string | null;
   evidence_id: string | null;
+  interview_prep_generation: number | null;
 }
 
 interface SuggestionRow extends Record<string, unknown> {
@@ -216,6 +217,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       ON application_outcome_suggestions(tenant_id, status, created_at DESC);
   `);
   ensureApplicationReviewDecisionColumns(db);
+  ensureApplicationOutcomeColumns(db);
 }
 
 function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
@@ -229,6 +231,18 @@ function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
   for (const [column, definition] of Object.entries(additions)) {
     if (!columns.has(column)) {
       db.exec(`ALTER TABLE application_review_decisions ADD COLUMN ${column} ${definition}`);
+    }
+  }
+}
+
+function ensureApplicationOutcomeColumns(db: SqliteDatabase): void {
+  const columns = tableColumnSet(db, "application_outcomes");
+  const additions: Record<string, string> = {
+    interview_prep_generation: "INTEGER",
+  };
+  for (const [column, definition] of Object.entries(additions)) {
+    if (!columns.has(column)) {
+      db.exec(`ALTER TABLE application_outcomes ADD COLUMN ${column} ${definition}`);
     }
   }
 }
@@ -527,6 +541,11 @@ export function recordManualApplicationOutcome(
 ): ApplicationOutcomeWriteResponse {
   ensureApplicationFeedbackTables(db);
   const jobUrl = existingJobUrl(db, jobKey);
+  const interviewPrepGeneration = resolveInterviewPrepGeneration(
+    db,
+    jobUrl,
+    request.interviewPrepGeneration,
+  );
   const outcome = insertOutcome(db, {
     jobKey: jobUrl,
     kind: request.kind,
@@ -535,6 +554,7 @@ export function recordManualApplicationOutcome(
     occurredAt: request.occurredAt ?? new Date().toISOString(),
     suggestionId: null,
     evidenceId: null,
+    interviewPrepGeneration,
   });
   return { ok: true, outcome };
 }
@@ -573,6 +593,7 @@ export function decideOutcomeSuggestion(
         occurredAt: request.occurredAt ?? decidedAt,
         suggestionId: existing.suggestion_id,
         evidenceId: existing.evidence_id,
+        interviewPrepGeneration: null,
       });
     }
 
@@ -635,6 +656,7 @@ function insertOutcome(
     occurredAt: string;
     suggestionId: string | null;
     evidenceId: string | null;
+    interviewPrepGeneration: number | null;
   },
 ): ApplicationOutcome {
   const recordedAt = new Date().toISOString();
@@ -648,13 +670,14 @@ function insertOutcome(
     recordedAt,
     suggestionId: input.suggestionId,
     evidenceId: input.evidenceId,
+    interviewPrepGeneration: input.interviewPrepGeneration,
   };
 
   db.prepare(
     `INSERT INTO application_outcomes (
        tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
-       recorded_at, suggestion_id, evidence_id, created_by
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       recorded_at, suggestion_id, evidence_id, interview_prep_generation, created_by
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     outcome.outcomeId,
@@ -666,6 +689,7 @@ function insertOutcome(
     outcome.recordedAt,
     outcome.suggestionId,
     outcome.evidenceId,
+    outcome.interviewPrepGeneration,
     "user",
   );
 
@@ -683,6 +707,7 @@ function insertOutcome(
       occurredAt: outcome.occurredAt,
       suggestionId: outcome.suggestionId,
       evidenceId: outcome.evidenceId,
+      interviewPrepGeneration: outcome.interviewPrepGeneration,
       notePresent: Boolean(outcome.note),
     },
   });
@@ -696,7 +721,7 @@ function readOutcomes(db: SqliteDatabase, jobKey?: string): ApplicationOutcome[]
   return allRows<OutcomeRow>(
     db,
     `SELECT outcome_id, job_key, kind, source, note, occurred_at,
-            recorded_at, suggestion_id, evidence_id
+            recorded_at, suggestion_id, evidence_id, interview_prep_generation
      FROM application_outcomes
      ${where}
      ORDER BY occurred_at DESC, recorded_at DESC, outcome_id DESC`,
@@ -708,12 +733,40 @@ function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome 
   const row = getRow<OutcomeRow>(
     db,
     `SELECT outcome_id, job_key, kind, source, note, occurred_at,
-            recorded_at, suggestion_id, evidence_id
+            recorded_at, suggestion_id, evidence_id, interview_prep_generation
      FROM application_outcomes
      WHERE tenant_id = ? AND outcome_id = ?`,
     [DEFAULT_TENANT, outcomeId],
   );
   return row ? outcomeFromRow(row) : null;
+}
+
+function resolveInterviewPrepGeneration(
+  db: SqliteDatabase,
+  jobUrl: string,
+  generation: number | undefined,
+): number | null {
+  if (generation === undefined) {
+    return null;
+  }
+  if (!tableExists(db, "job_interview_prep")) {
+    throw new InputError("Interview prep generation not found.");
+  }
+  const row = getRow<{ generation: number }>(
+    db,
+    `SELECT generation
+       FROM job_interview_prep
+      WHERE tenant_id = ?
+        AND job_url = ?
+        AND generation = ?
+        AND status IN ('accepted', 'superseded')
+      LIMIT 1`,
+    [DEFAULT_TENANT, jobUrl, generation],
+  );
+  if (!row) {
+    throw new InputError("Interview prep generation not found.");
+  }
+  return generation;
 }
 
 function readSuggestions(db: SqliteDatabase, jobKey?: string): OutcomeSuggestion[] {
@@ -2523,6 +2576,7 @@ function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
     recordedAt: row.recorded_at,
     suggestionId: row.suggestion_id,
     evidenceId: row.evidence_id,
+    interviewPrepGeneration: row.interview_prep_generation ?? null,
   };
 }
 

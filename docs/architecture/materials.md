@@ -226,6 +226,11 @@ truthfulness pipeline.
   notes, evidence-map links, requirement IDs, source snippets, gate/judge status,
   and accepted-residual warnings. Re-generation is an explicit button action;
   failed generations never hide the last accepted prep.
+- **Post-interview reflections**: the prep panel reuses the existing manual
+  application outcome path. A reflection is an `application_outcomes` row with
+  `kind = 'interview'` and nullable `interview_prep_generation` set to the
+  accepted or superseded prep generation it references. Reflection notes remain
+  local outcome notes and are not copied into `job_events.payload_json`.
 - **Safety boundary**: prep is not live interview assistance. There is no
   in-session, transcript, microphone, streaming, websocket, or real-time answer
   surface on the domain model, workflow input, or JSON-RPC contract.

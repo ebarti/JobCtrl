@@ -475,6 +475,7 @@ export const handlers = [
       kind: string;
       occurredAt?: string;
       note?: string;
+      interviewPrepGeneration?: number;
     };
     return HttpResponse.json({
       ok: true,
@@ -488,6 +489,7 @@ export const handlers = [
         recordedAt: "2026-05-06T08:35:00Z",
         suggestionId: null,
         evidenceId: null,
+        interviewPrepGeneration: body.interviewPrepGeneration ?? null,
       },
     });
   }),

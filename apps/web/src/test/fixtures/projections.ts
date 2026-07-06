@@ -720,6 +720,7 @@ export const sampleApplicationOutcomes: ApplicationOutcomeListResponse = {
       recordedAt: "2026-05-06T07:12:00Z",
       suggestionId: null,
       evidenceId: null,
+      interviewPrepGeneration: null,
     },
   ],
   suggestions: [

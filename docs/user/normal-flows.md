@@ -157,6 +157,10 @@ profile source snippets visible, with evidence links back into the Evidence map.
 Regeneration keeps the last accepted prep visible until a replacement is
 accepted.
 
+After the interview, record reflection notes from the same prep panel. Each
+reflection is saved as a normal manual `interview` outcome linked to that prep
+generation, so it also appears in the job's application outcome timeline.
+
 Interview prep is not live interview assistance. JobHunter does not provide
 in-session answers, transcript upload, microphone input, websocket streaming, or
 real-time interview participation.
