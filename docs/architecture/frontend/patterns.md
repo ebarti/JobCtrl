@@ -14,7 +14,7 @@ keys, route shapes, hook conventions, primitives, forms.
 - [§4.1 Query-Key Convention](#_4-1-query-key-convention) — one tenant-first key factory per context.
 - [§4.2 Hook Conventions](#_4-2-hook-conventions) — components call context hooks, never the API client or `QueryClient` directly.
 - [§4.3 Route Shapes](#_4-3-route-shapes-tanstack-router-file-based) — file-based TanStack Router with Zod-typed search params.
-- [§4.4 Per-Context Tactical Spec](#_4-4-per-context-tactical-spec) — the routes / queries / mutations / components table for each of the eight contexts.
+- [§4.4 Per-Context Tactical Spec](#_4-4-per-context-tactical-spec) — the routes / queries / mutations / components table for each backend context.
 - [§4.5 View Composition](#_4-5-view-composition) — how views assemble context pieces and bind the shared data grid.
 - [§4.6 Forms Convention](#_4-6-forms-convention-tanstack-form) — TanStack Form + Zod, one schema for both the form and the request body.
 - [§4.7 Component Primitives](#_4-7-component-primitives-shadcn-ui) — shadcn/ui (Radix + Tailwind), copied into `shared/ui/` and owned.
@@ -226,9 +226,9 @@ Refresh restores both the filter and the open drawer.
 
 ### 4.4 Per-Context Tactical Spec
 
-The eight subsections below correspond 1:1 to the eight backend bounded
-contexts. View composition (Dashboard, Jobs, Artifacts) is treated
-separately in §4.5.
+The subsections below cover the backend bounded contexts; the Contact & Outreach
+context follows the same conventions (see [Bounded Contexts](contexts.md) §3.11).
+View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 
 #### 4.4.1 Operations / Read-Side
 
@@ -318,7 +318,7 @@ separately in §4.5.
 
 ### 4.5 View Composition
 
-Views compose hooks and components from the eight contexts above. They
+Views compose hooks and components from the contexts above. They
 do not own queries, mutations, or persistent stores. They own:
 
 - **Layout** — table-and-drawer arrangement, card grids, filter-bar

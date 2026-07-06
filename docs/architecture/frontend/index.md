@@ -10,8 +10,8 @@ Three ideas carry the whole design:
 - **Three layers of state.** Every value lives in exactly one home — the server
   cache, the URL, or a small client-side store — so there is never ambiguity
   about where a piece of state belongs (§2.1).
-- **Eight contexts, mirrored from the backend.** The web app is divided into the
-  same eight bounded contexts the backend uses, one-for-one, so a feature and
+- **Nine contexts, mirrored from the backend.** The web app is divided into the
+  same nine bounded contexts the backend uses, one-for-one, so a feature and
   the backend contract behind it share a single vocabulary (§2.2).
 - **Views compose; contexts own.** The pages you see (the dashboard, the jobs
   table) are *views* that only arrange the pieces; the *contexts* own the data,
@@ -20,7 +20,7 @@ Three ideas carry the whole design:
 **Reading path.** Read top to bottom for the first pass; each page answers one
 question:
 
-1. **[Bounded Contexts](contexts.md)** (§3) — What are the eight contexts, and
+1. **[Bounded Contexts](contexts.md)** (§3) — What are the nine contexts, and
    how do views compose them into pages?
 2. **[Folder Structure](structure.md)** (§11) — Where does each file live under
    `apps/web/src`?
@@ -58,7 +58,7 @@ This doc is the authoritative reference for:
 
 - The **three layers of state** (server, URL, client) and the rules that
   decide what goes where.
-- **Frontend bounded contexts** that mirror the backend's eight contexts and
+- **Frontend bounded contexts** that mirror the backend's nine contexts and
   share the same ubiquitous language end-to-end.
 - **Frontend ports** — the hexagonal seams that decouple feature code from
   the API client, the event stream, persistence, and the host environment.
@@ -204,7 +204,7 @@ syntactically obvious in code review.
 ### 2.2 Bounded-Context Mirroring
 
 The frontend folder structure, ubiquitous language, and query-key
-factories **mirror the backend's eight bounded contexts** defined in
+factories **mirror the backend's nine bounded contexts** defined in
 backend domain model [§3](../domain-model/strategic.md) — one frontend folder per backend context, no
 substitutions, no inventions:
 
@@ -218,11 +218,12 @@ substitutions, no inventions:
 | Apply Automation | `contexts/apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>` | Jobs view (per-row + drawer), Dashboard view (apply-runs card) |
 | Pipeline Orchestration | `contexts/pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`; `<StageBadge>`, `<StageTimeline>`, `<JobActions>` | Jobs view, Dashboard view (funnel) |
 | Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useWorkflowRunsListQuery`, `useApplyReviewQueueQuery`, activity/outcomes/health reads, …); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data) |
+| Contact & Outreach | `contexts/outreach/` | `useContactsListQuery`, `useContactDetailQuery`, create / update / delete / import-contact optimistic mutations, `outreachKeys`, contact provenance + role components, `<JobContactsPanel>`, contact event handlers | Contacts view (`/outreach`) + Jobs drawer contacts panel |
 
 **Views are NOT bounded contexts.** The user-facing surfaces are *view
-composers* — today there are eight of them under `views/` (sibling of
-`contexts/`, see §11): `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`,
-`runs/`, `pipelines/`, `discovery/`, and `debug/`. Each consumes read hooks
+composers* under `views/` (sibling of `contexts/`, see §11), including
+`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`,
+`discovery/`, `outreach/`, and `debug/`. Each consumes read hooks
 from `contexts/operations/` plus mutation hooks from the appropriate
 aggregate contexts. Naming the table-and-drawer
 surface "Jobs" matches user vocabulary; the *bounded contexts* it spans

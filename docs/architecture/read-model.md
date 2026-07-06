@@ -134,6 +134,7 @@ tables that back every read-model endpoint:
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
 | `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
+| `contact_projections`        | One row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata. No attribute values (sensitivity). |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
@@ -143,6 +144,22 @@ projections from canonical aggregate state, and advance the watermark in the
 same transaction. Both processes write to the same tables; SQLite handles the
 concurrent advances. Request paths read precomputed projections instead of
 assembling stage state with per-request joins.
+
+Contact & Outreach projections follow the same dual-runtime pattern. The Python
+`ProjectionBuilder._rebuild_contacts` and the TypeScript
+`rebuildContactProjections` both rematerialise `contact_projections` from the
+canonical `contacts` / `contact_attributes` rows, and a cross-runtime parity
+fixture (`test_contact_projection_parity.py` /
+`apps/api/test/contact-projection-parity.test.ts`) guards drift. Contact events
+(`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`,
+`ContactDeleted`) reach SSE and the projection watermark through `job_events`,
+written by `record_job_event` with `entity_kind = 'contact'` /
+`entity_ref = <contactId>` (the generic event-log columns added in schema v2); a
+contact event that also concerns an application keys on that job's `job_url` too.
+Both the events and the projection carry only safe references — attribute values
+(names, emails, notes) stay in `contact_attributes.value_json` and never appear
+in `job_events`, `contact_projections`, logs, or telemetry (INV-2 provenance is
+projected; the value is not).
 
 The evidence-usage projection is read-only and derives from existing canonical
 profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does

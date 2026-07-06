@@ -43,6 +43,13 @@ const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "ContentDuplicateCandidateDetected",
   "DiscoveryFeedbackRecorded",
 ]);
+const CONTACT_EVENT_TYPES = new Set([
+  "ContactCreated",
+  "ContactUpdated",
+  "ContactAttributeRecorded",
+  "ContactDeleted",
+  "WarmIntroIdentified",
+]);
 const COMPENSATION_PROJECTION_VERSION = 1;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -640,6 +647,23 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       ON operational_attempt_metrics(tenant_id, stage, occurred_at DESC, metric_id DESC);
     CREATE INDEX IF NOT EXISTS idx_operational_attempt_metrics_source_time
       ON operational_attempt_metrics(tenant_id, source_id, occurred_at DESC, metric_id DESC);
+    CREATE TABLE IF NOT EXISTS contact_projections (
+      tenant_id          TEXT NOT NULL DEFAULT 'local',
+      contact_id         TEXT NOT NULL,
+      employer           TEXT,
+      job_id             TEXT,
+      role               TEXT NOT NULL DEFAULT 'other',
+      attribute_count    INTEGER NOT NULL DEFAULT 0,
+      confirmed_count    INTEGER NOT NULL DEFAULT 0,
+      source_kinds_json  TEXT NOT NULL DEFAULT '[]',
+      provenance_json    TEXT NOT NULL DEFAULT '[]',
+      created_at         TEXT,
+      updated_at         TEXT,
+      last_updated_at    TEXT,
+      PRIMARY KEY (tenant_id, contact_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_projections_lookup
+      ON contact_projections(tenant_id, employer, job_id);
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
@@ -759,6 +783,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
   let evidenceUsageDirty = projectionSchemaChanged;
+  let contactsDirty = projectionSchemaChanged;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {
     const rows = allRows<{ event_id: number; job_url: string | null; event_type: string }>(
@@ -773,8 +798,16 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (SOURCE_QUALITY_EVENT_TYPES.has(String(row.event_type))) {
         sourceQualityDirty = true;
       }
+      if (CONTACT_EVENT_TYPES.has(String(row.event_type))) {
+        contactsDirty = true;
+      }
       evidenceUsageDirty = true;
     }
+  }
+  // First-run backfill for contacts: canonical rows exist but the read model is
+  // empty (e.g. tables recreated). Mirrors the Python builder's backfill.
+  if (!contactsDirty && contactsBackfillPending(db, tenantId)) {
+    contactsDirty = true;
   }
   const evidenceProjectionCount =
     getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM evidence_usage_projections WHERE tenant_id = ?", [
@@ -838,6 +871,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     dirtyJobs.size === 0 &&
     !sourceQualityDirty &&
     !evidenceUsageDirty &&
+    !contactsDirty &&
     (sourceQualityExists > 0 || !sourceQualityHistory) &&
     maxEventId === watermark
   ) {
@@ -846,6 +880,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 
   if (sourceQualityDirty || (sourceQualityExists === 0 && sourceQualityHistory)) {
     rebuildSourceQualityProjections(db, tenantId);
+  }
+  if (contactsDirty) {
+    rebuildContactProjections(db, tenantId);
   }
 
   for (const jobUrl of dirtyJobs) {
@@ -3754,6 +3791,141 @@ interface DiscoveryRunProjection {
   failedAt: string | null;
   failedSourceId: string | null;
   retryable: boolean;
+}
+
+function contactsBackfillPending(db: SqliteDatabase, tenantId: string): boolean {
+  if (!tableExists(db, "contacts") || !tableExists(db, "contact_projections")) {
+    return false;
+  }
+  const projected =
+    getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM contact_projections WHERE tenant_id = ?", [
+      tenantId,
+    ])?.c ?? 0;
+  if (projected > 0) {
+    return false;
+  }
+  const canonical =
+    getRow<{ c: number }>(
+      db,
+      "SELECT COUNT(*) AS c FROM contacts WHERE tenant_id = ? AND deleted_at IS NULL",
+      [tenantId],
+    )?.c ?? 0;
+  return canonical > 0;
+}
+
+/**
+ * Rematerialise every ``contact_projections`` row from canonical contact rows
+ * (Contact & Outreach, ninth context). Idempotent full rebuild for the tenant.
+ * Attribute VALUES are never read into the projection — only the link, role,
+ * counts, distinct source kinds, and per-attribute provenance (INV-2). Mirrors
+ * the Python ``ProjectionBuilder._rebuild_contacts`` for cross-runtime parity.
+ */
+function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "contacts") || !tableExists(db, "contact_attributes")) {
+    return;
+  }
+  const contacts = allRows<{
+    contact_id: string;
+    employer: string | null;
+    job_url: string | null;
+    role: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+  }>(
+    db,
+    `SELECT contact_id, employer, job_url, role, created_at, updated_at
+     FROM contacts
+     WHERE tenant_id = ? AND deleted_at IS NULL`,
+    [tenantId],
+  );
+  const liveIds = new Set<string>();
+  const upsert = db.prepare(
+    `INSERT INTO contact_projections (
+       tenant_id, contact_id, employer, job_id, role,
+       attribute_count, confirmed_count, source_kinds_json,
+       provenance_json, created_at, updated_at, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, contact_id) DO UPDATE SET
+       employer          = excluded.employer,
+       job_id            = excluded.job_id,
+       role              = excluded.role,
+       attribute_count   = excluded.attribute_count,
+       confirmed_count   = excluded.confirmed_count,
+       source_kinds_json = excluded.source_kinds_json,
+       provenance_json   = excluded.provenance_json,
+       created_at        = excluded.created_at,
+       updated_at        = excluded.updated_at,
+       last_updated_at   = excluded.last_updated_at`,
+  );
+  for (const contact of contacts) {
+    const contactId = String(contact.contact_id);
+    liveIds.add(contactId);
+    const attributes = allRows<{
+      attribute_id: string;
+      attribute_kind: string;
+      source_kind: string;
+      source_ref: string;
+      capture_method: string | null;
+      confidence: number | null;
+      user_confirmed: number | null;
+      recorded_at: string | null;
+    }>(
+      db,
+      `SELECT attribute_id, attribute_kind, source_kind, source_ref,
+              capture_method, confidence, user_confirmed, recorded_at
+       FROM contact_attributes
+       WHERE tenant_id = ? AND contact_id = ?
+       ORDER BY recorded_at ASC, attribute_id ASC`,
+      [tenantId, contactId],
+    );
+    const sourceKinds: string[] = [];
+    let confirmed = 0;
+    const provenance = attributes.map((attr) => {
+      const sourceKind = String(attr.source_kind);
+      if (!sourceKinds.includes(sourceKind)) {
+        sourceKinds.push(sourceKind);
+      }
+      const userConfirmed = Boolean(Number(attr.user_confirmed ?? 0));
+      if (userConfirmed) {
+        confirmed += 1;
+      }
+      return {
+        attributeId: String(attr.attribute_id),
+        attributeKind: String(attr.attribute_kind),
+        sourceKind,
+        sourceRef: String(attr.source_ref),
+        captureMethod: String(attr.capture_method ?? "manual"),
+        confidence: Number(attr.confidence ?? 0),
+        userConfirmed,
+        recordedAt: String(attr.recorded_at ?? ""),
+      };
+    });
+    upsert.run(
+      tenantId,
+      contactId,
+      contact.employer,
+      contact.job_url,
+      String(contact.role ?? "other"),
+      attributes.length,
+      confirmed,
+      JSON.stringify(sourceKinds),
+      JSON.stringify(provenance),
+      contact.created_at,
+      contact.updated_at,
+      contact.updated_at,
+    );
+  }
+  const existing = allRows<{ contact_id: string }>(
+    db,
+    "SELECT contact_id FROM contact_projections WHERE tenant_id = ?",
+    [tenantId],
+  );
+  const drop = db.prepare("DELETE FROM contact_projections WHERE tenant_id = ? AND contact_id = ?");
+  for (const row of existing) {
+    if (!liveIds.has(String(row.contact_id))) {
+      drop.run(tenantId, String(row.contact_id));
+    }
+  }
 }
 
 function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): void {

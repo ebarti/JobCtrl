@@ -35,6 +35,9 @@ supervised step because it can drive browser automation and submit applications.
   override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
   history in a local web UI.
+- Keep recruiter, hiring-manager, and referrer contact records per company or
+  application, each fact carrying its provenance (where it came from), with CSV
+  import. JobHunter never sends anything to your contacts — records only.
 - Optionally run browser-based apply automation, starting with dry runs.
 
 Auto-apply is powerful and must be treated as an explicit submission tool. Use

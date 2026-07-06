@@ -22,6 +22,16 @@ import type {
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
   CompensationSourceRegistryResponse,
+  ContactCreateRequest,
+  ContactDeleteRequest,
+  ContactDeleteResponse,
+  ContactDetailResponse,
+  ContactImportRequest,
+  ContactImportResponse,
+  ContactListQuery,
+  ContactListResponse,
+  ContactMutationResponse,
+  ContactUpdateRequest,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -304,6 +314,13 @@ export interface ApiClientPort {
   credentials(): Promise<CredentialsResponse>;
   updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse>;
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse>;
+
+  listContacts(query?: Partial<ContactListQuery>): Promise<ContactListResponse>;
+  contact(contactId: string): Promise<ContactDetailResponse>;
+  createContact(body: ContactCreateRequest): Promise<ContactMutationResponse>;
+  updateContact(contactId: string, body: ContactUpdateRequest): Promise<ContactMutationResponse>;
+  deleteContact(contactId: string, body?: ContactDeleteRequest): Promise<ContactDeleteResponse>;
+  importContacts(body: ContactImportRequest): Promise<ContactImportResponse>;
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;

@@ -30,6 +30,7 @@ from typing import Iterable
 from jobhunter.domain.operations.projections import (
     ApplyRunProjection,
     ArtifactListProjection,
+    ContactProjection,
     DashboardProjection,
     JobDetailProjection,
     JobListProjection,
@@ -47,6 +48,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "apply_run_projections",
     "workflow_run_projections",
     "source_quality_stats",
+    "contact_projections",
 )
 
 SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -366,6 +368,31 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_operational_attempt_metrics_source_time
         ON operational_attempt_metrics(tenant_id, source_id, occurred_at DESC, metric_id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contact_projections (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            contact_id         TEXT NOT NULL,
+            employer           TEXT,
+            job_id             TEXT,
+            role               TEXT NOT NULL DEFAULT 'other',
+            attribute_count    INTEGER NOT NULL DEFAULT 0,
+            confirmed_count    INTEGER NOT NULL DEFAULT 0,
+            source_kinds_json  TEXT NOT NULL DEFAULT '[]',
+            provenance_json    TEXT NOT NULL DEFAULT '[]',
+            created_at         TEXT,
+            updated_at         TEXT,
+            last_updated_at    TEXT,
+            PRIMARY KEY (tenant_id, contact_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_contact_projections_lookup
+        ON contact_projections(tenant_id, employer, job_id)
         """
     )
     conn.execute(
@@ -931,6 +958,67 @@ class SqliteProjectionStore:
         )
 
     # ------------------------------------------------------------ read side
+
+    def upsert_contact(self, projection: ContactProjection) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO contact_projections (
+                tenant_id, contact_id, employer, job_id, role,
+                attribute_count, confirmed_count, source_kinds_json,
+                provenance_json, created_at, updated_at, last_updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, contact_id) DO UPDATE SET
+                employer          = excluded.employer,
+                job_id            = excluded.job_id,
+                role              = excluded.role,
+                attribute_count   = excluded.attribute_count,
+                confirmed_count   = excluded.confirmed_count,
+                source_kinds_json = excluded.source_kinds_json,
+                provenance_json   = excluded.provenance_json,
+                created_at        = excluded.created_at,
+                updated_at        = excluded.updated_at,
+                last_updated_at   = excluded.last_updated_at
+            """,
+            (
+                str(projection.tenant_id),
+                projection.contact_id,
+                projection.employer,
+                projection.job_id,
+                projection.role,
+                projection.attribute_count,
+                projection.confirmed_count,
+                json.dumps(list(projection.source_kinds)),
+                json.dumps(list(projection.provenance)),
+                projection.created_at,
+                projection.updated_at,
+                projection.last_updated_at,
+            ),
+        )
+
+    def delete_contact(self, tenant_id: str, contact_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM contact_projections WHERE tenant_id = ? AND contact_id = ?",
+            (tenant_id, contact_id),
+        )
+
+    def fetch_contacts(self, tenant_id: str) -> list[sqlite3.Row]:
+        return list(
+            self._conn.execute(
+                """
+                SELECT * FROM contact_projections
+                WHERE tenant_id = ?
+                ORDER BY updated_at DESC, contact_id ASC
+                """,
+                (tenant_id,),
+            ).fetchall()
+        )
+
+    def count_contacts(self, tenant_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM contact_projections WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchone()
+        return int(row[0] if row else 0)
 
     def count_job_list(self, tenant_id: str) -> int:
         row = self._conn.execute(

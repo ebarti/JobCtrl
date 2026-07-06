@@ -3,6 +3,16 @@ import type {
   ActivityEventResponse,
   ActivityEventSummary,
   ActivityListQuery,
+  ContactCreateRequest,
+  ContactDeleteRequest,
+  ContactDeleteResponse,
+  ContactDetailResponse,
+  ContactImportRequest,
+  ContactImportResponse,
+  ContactListQuery,
+  ContactListResponse,
+  ContactMutationResponse,
+  ContactUpdateRequest,
   ApplicationOutcomeListResponse,
   ApplicationOutcomeWriteResponse,
   ApplyJobRequest,
@@ -453,6 +463,30 @@ export class JobHunterApiClient {
 
   evidenceMap(): Promise<EvidenceMapResponse> {
     return this.get("/v1/evidence-map");
+  }
+
+  listContacts(query: Partial<ContactListQuery> = {}): Promise<ContactListResponse> {
+    return this.get("/v1/contacts", query);
+  }
+
+  contact(contactId: string): Promise<ContactDetailResponse> {
+    return this.get(`/v1/contacts/${encodeURIComponent(contactId)}`);
+  }
+
+  createContact(body: ContactCreateRequest): Promise<ContactMutationResponse> {
+    return this.post("/v1/contacts", body);
+  }
+
+  updateContact(contactId: string, body: ContactUpdateRequest): Promise<ContactMutationResponse> {
+    return this.patch(`/v1/contacts/${encodeURIComponent(contactId)}`, body);
+  }
+
+  deleteContact(contactId: string, body: ContactDeleteRequest = {}): Promise<ContactDeleteResponse> {
+    return this.delete(`/v1/contacts/${encodeURIComponent(contactId)}`, body);
+  }
+
+  importContacts(body: ContactImportRequest): Promise<ContactImportResponse> {
+    return this.post("/v1/contacts/import", body);
   }
 
   deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {

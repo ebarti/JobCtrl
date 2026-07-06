@@ -79,7 +79,22 @@ import {
   TailorJobRequestSchema,
   type Stage,
   WorkflowRunsListQuerySchema,
+  ContactCreateRequestSchema,
+  ContactUpdateRequestSchema,
+  ContactImportRequestSchema,
+  ContactListQuerySchema,
+  ContactDeleteRequestSchema,
 } from "./contracts.js";
+import {
+  ContactInputError,
+  ContactNotFoundError,
+  createContact,
+  deleteContact,
+  getContactDetail,
+  importContacts,
+  listContacts,
+  updateContact,
+} from "./contacts.js";
 import {
   decideOutcomeSuggestion,
   listApplicationOutcomes,
@@ -2134,6 +2149,105 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return credentialStore.delete(key as (typeof CredentialKeys)[number]);
   });
+
+  // Contact & Outreach (R6 Phase 1). Reads project provenance for every fact
+  // (INV-2); writes never expose a send transport (INV-1).
+  app.get("/v1/contacts", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => ({
+      ok: true,
+      items: listContacts(db, ContactListQuerySchema.parse(request.query)),
+    })),
+  );
+
+  app.get<{ Params: { contactId: string } }>("/v1/contacts/:contactId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const contact = getContactDetail(db, decodeRouteParam(request.params.contactId));
+      if (!contact) {
+        void reply.code(404);
+        return { ok: false, error: "contact_not_found" };
+      }
+      return { ok: true, contact };
+    }),
+  );
+
+  app.post("/v1/contacts", async (request, reply) => {
+    const body = parseBody(reply, ContactCreateRequestSchema, request.body ?? {});
+    if (!body) {
+      return { ok: false, error: "invalid_contact" };
+    }
+    return withWritableDb(reply, options.dbPath, (db) => {
+      try {
+        return { ok: true, contact: createContact(db, body) };
+      } catch (error) {
+        if (error instanceof ContactInputError) {
+          void reply.code(400);
+          return { ok: false, error: "invalid_contact", message: error.message };
+        }
+        throw error;
+      }
+    });
+  });
+
+  app.post("/v1/contacts/import", async (request, reply) => {
+    const body = parseBody(reply, ContactImportRequestSchema, request.body ?? {});
+    if (!body) {
+      return { ok: false, error: "invalid_contact_import" };
+    }
+    return withWritableDb(reply, options.dbPath, (db) => {
+      try {
+        return importContacts(db, body);
+      } catch (error) {
+        if (error instanceof ContactInputError) {
+          void reply.code(400);
+          return { ok: false, error: "invalid_contact_import", message: error.message };
+        }
+        throw error;
+      }
+    });
+  });
+
+  app.patch<{ Params: { contactId: string } }>("/v1/contacts/:contactId", async (request, reply) => {
+    const body = parseBody(reply, ContactUpdateRequestSchema, request.body ?? {});
+    if (!body) {
+      return { ok: false, error: "invalid_contact" };
+    }
+    return withWritableDb(reply, options.dbPath, (db) => {
+      try {
+        return { ok: true, contact: updateContact(db, decodeRouteParam(request.params.contactId), body) };
+      } catch (error) {
+        if (error instanceof ContactNotFoundError) {
+          void reply.code(404);
+          return { ok: false, error: "contact_not_found", message: error.message };
+        }
+        if (error instanceof ContactInputError) {
+          void reply.code(400);
+          return { ok: false, error: "invalid_contact", message: error.message };
+        }
+        throw error;
+      }
+    });
+  });
+
+  app.delete<{ Params: { contactId: string } }>(
+    "/v1/contacts/:contactId",
+    async (request, reply) => {
+      const body = parseBody(reply, ContactDeleteRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_contact" };
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return deleteContact(db, decodeRouteParam(request.params.contactId), body.reason ?? "");
+        } catch (error) {
+          if (error instanceof ContactNotFoundError) {
+            void reply.code(404);
+            return { ok: false, error: "contact_not_found", message: error.message };
+          }
+          throw error;
+        }
+      });
+    },
+  );
 
   return app;
 }

@@ -42,6 +42,7 @@ need:
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
 | [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
 | [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
+| [Contacts](#contacts) | The six `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, and CSV import. |
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
@@ -641,6 +642,51 @@ known application, with provider message ID dedupe. Outcome notes and linked
 email bodies may be stored locally, but `job_events.payload_json` stores only
 safe IDs, kinds, sources, timestamps, confidence values, prep-generation links,
 link signals, and note/body presence flags.
+
+## Contacts
+
+The Contact & Outreach context exposes six local, loopback-only JSON routes for
+contact records. Phase 1 is contact records only — there is no send, drafting, or
+research route, and nothing here sends anything. Writes are hosted directly in the
+TypeScript API (`apps/api/src/contacts.ts`): they write the canonical
+`contacts` / `contact_attributes` rows, append durable, SSE-visible events to
+`job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`), and refresh
+the `contact_projections` read model. The Python worker's
+`SqliteContactRepository` writes the same tables and event types.
+
+Sensitivity: attribute VALUES (names, emails, notes) live only in
+`contact_attributes.value_json` and reach the client solely through the read DTOs
+below — never in event payloads, projections, logs, or telemetry. Every rendered
+fact carries provenance (`sourceKind`, `sourceRef`, `captureMethod`, `capturedAt`,
+`confidence`, `userConfirmed`).
+
+- `GET /v1/contacts` lists contact summaries from `contact_projections`. Optional
+  `jobId` and `employer` query parameters filter by the linked application or
+  company. Each `ContactSummary` carries `contactId`, `displayName`, `role`,
+  `employer`, `jobId`, `attributeCount`, `confirmedCount`, `sourceKinds`,
+  `allConfirmed`, and timestamps.
+- `GET /v1/contacts/:contactId` returns a `ContactDetail` — the summary fields
+  plus `attributes[]`, each with its `value` and full `provenance`. An unknown id
+  returns `{ ok: false, error: "contact_not_found" }`.
+- `POST /v1/contacts` creates a contact (`ContactCreateRequest`: `role`,
+  optional `employer` / `jobId`, and `attributes[]`). A contact must link to at
+  least one of `employer` / `jobId`, or the route returns `invalid_contact`.
+  Created facts are tagged `sourceKind = user_entered`.
+- `PATCH /v1/contacts/:contactId` updates a contact's link, role, and/or
+  attributes (`ContactUpdateRequest`). Replacing `attributes` re-tags them as
+  `user_entered`; an unknown id returns `contact_not_found`.
+- `DELETE /v1/contacts/:contactId` soft-deletes a contact and returns
+  `{ ok, contactId, deletedAt }`.
+- `POST /v1/contacts/import` imports a CSV list (`ContactImportRequest`:
+  `filename`, `csvText`). Every imported fact is tagged
+  `sourceKind = user_imported_list`, `sourceRef = <filename>`,
+  `captureMethod = manual`; rows that link to neither an employer nor an
+  application are skipped. Returns `{ ok, imported, skipped, contactIds }`.
+
+Contact DTOs and request/response schemas live in `packages/contracts`
+(`ContactSummary`, `ContactDetail`, `ContactAttributeDto`,
+`ContactFactProvenance`, and the create / update / import / delete request and
+response shapes).
 
 ## Pipeline and preparation actions
 

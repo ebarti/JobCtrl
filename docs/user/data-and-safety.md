@@ -31,7 +31,7 @@ Common files and directories:
 
 | Path | Contents |
 | --- | --- |
-| `jobhunter.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, and workflow state. |
+| `jobhunter.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, contacts, and workflow state. |
 | `.env` | Provider keys and runtime settings. |
 | `tailored_resumes/` | Generated resumes and related HTML/PDF outputs. |
 | `cover_letters/` | Generated cover letters. |
@@ -46,6 +46,13 @@ Common files and directories:
 
 The development launcher also writes PIDs and process logs under the repo's
 `.dev/` directory — treat those logs as sensitive too.
+
+Contact records you keep — recruiter, hiring-manager, and referrer names, emails,
+phone numbers, and notes — are stored only in that local `jobhunter.db`, and each
+fact is tagged with its provenance (where it came from). Their values never appear
+in the event log, read-model projections, logs, or telemetry, and JobHunter never
+sends anything to a contact: it keeps records only, with no email, message, or
+outreach sending.
 
 ::: warning Never commit your local data
 Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those

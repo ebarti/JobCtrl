@@ -12,8 +12,8 @@ one of them:
 | Directory | Holds | Rule of thumb |
 |---|---|---|
 | `routes/` | File-based route tree (URL → screen) | Mirrors the URL; routes only mount views and declare typed search-param schemas. |
-| `contexts/` | The eight bounded contexts | 1:1 with the backend; owns hooks, mutations, components, and event handlers. |
-| `views/` | The eight page composers | Arrange context pieces into a layout; never own queries, mutations, or stores. |
+| `contexts/` | The nine bounded contexts | 1:1 with the backend; owns hooks, mutations, components, and event handlers. |
+| `views/` | The page composers | Arrange context pieces into a layout; never own queries, mutations, or stores. |
 | `shared/` | UI primitives, layout, providers, ports, stores, helpers | Only things genuinely shared across contexts and views. |
 | `test/` | MSW handlers, fixtures, setup | Cross-cutting test scaffolding. |
 
@@ -62,6 +62,9 @@ apps/web/
 │   │   ├── apply-review.tsx              # mounts <ApplyReviewView />
 │   │   ├── pipelines.tsx                 # mounts <PipelinesView /> (StageTriggerPanel)
 │   │   ├── discovery.tsx                 # mounts <DiscoveryView />
+│   │   ├── outreach.tsx                  # layout: search-param schema + <OutreachView /> + Outlet (drawer)
+│   │   ├── outreach.index.tsx
+│   │   ├── outreach.$contactId.tsx       # contact detail drawer
 │   │   ├── debug.tsx                     # mounts <DebugView /> + Outlet (activity drawer)
 │   │   ├── activity.$eventId.tsx         # activity-detail drawer
 │   │   ├── spikes.table-filters.tsx      # dev spike
@@ -69,7 +72,7 @@ apps/web/
 │   │   # not-found is a notFoundComponent on __root.tsx — there is no 404.tsx
 │   ├── contexts/                         # 1:1 with backend bounded contexts
 │   │   ├── operations/                   # Operations / Read-Side
-│   │   │   ├── queryKeys.ts              # registry: re-exports 18 factories (11 local + 7 context)
+│   │   │   ├── queryKeys.ts              # registry: re-exports the local + per-context read-key factories (incl. outreachKeys)
 │   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / digestKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
 │   │   │   ├── invalidation-router.ts    # event → invalidations (invalidate, patchApplyRunEvent, useInvalidationRouter)
 │   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobhunter/contracts)
@@ -139,6 +142,15 @@ apps/web/
 │   │   │   ├── selectors/applyRunSelectors.ts
 │   │   │   ├── handlers.ts               # ApplyRunStarted / ApplySubmitIntended / ApplyRunEventRecorded / ApplicationEmailFeedbackIngested / ApplicationSubmitted / ApplicationFailed handlers
 │   │   │   └── index.ts
+│   │   ├── outreach/                     # Contact & Outreach
+│   │   │   ├── queryKeys.ts              # outreachKeys (re-exported from operations/queryKeys.ts)
+│   │   │   ├── hooks/                    # useContactsListQuery, useContactDetailQuery, useCreate/Update/Delete/ImportContactsMutation
+│   │   │   ├── components/               # ContactRoleBadge, ContactProvenanceList/Summary, Contact{Create,Edit,Delete,Import}Button, JobContactsPanel
+│   │   │   ├── forms/                    # contact-form, contact-import-wizard (TanStack Form + Zod safeParse)
+│   │   │   ├── stores/outreach-import-store.ts   # Zustand+persist (jh:outreach-import) for the CSV-import wizard
+│   │   │   ├── lib/                      # contact-copy, contact-patches
+│   │   │   ├── handlers.ts               # contact/outreach event handlers (registered via operations/invalidation-router.ts)
+│   │   │   └── index.ts
 │   │   └── pipeline/                     # Pipeline Orchestration
 │   │       ├── queryKeys.ts              # pipelineKeys
 │   │       ├── hooks/                    # useRunPipelineStagesMutation, useRunJobStageMutation, useRunPendingPreparationMutation, useRetryStageMutation, useRetryFailedJobsMutation, useCancelStageMutation, useCancelWorkflowRunMutation, useMarkAppliedMutation, useMarkSkippedMutation
@@ -147,7 +159,7 @@ apps/web/
 │   │       ├── lib/                      # jobDetailPatches, stage/state tones
 │   │       ├── handlers.ts               # Stage* + PreparationWorkItem* + Workflow* handlers
 │   │       └── index.ts
-│   ├── views/                            # NOT bounded contexts — composers only (8 folders)
+│   ├── views/                            # NOT bounded contexts — composers only
 │   │   ├── dashboard/                    # DashboardView, KpiGrid, DigestPanel, ConversionPanel, Funnel, SourceHealthCard, ApplyRunsCard, apply-run-dot-state
 │   │   ├── jobs/                         # JobsView, JobsTable, JobBulkActions, JobDetailDrawer, JobOverview, JobDescription, JobAuditTriage, columns, jobStageFilters, selectors/jobsSelectors
 │   │   ├── artifacts/                    # ArtifactsView, ArtifactsTable, ArtifactFilterBar, ArtifactDetailPanel, columns
@@ -155,6 +167,7 @@ apps/web/
 │   │   ├── runs/                         # RunsView, RunsTable, RunsFilterBar, WorkflowRunDrawer, columns, temporal-web-ui
 │   │   ├── pipelines/                    # PipelinesView (StageTriggerPanel)
 │   │   ├── discovery/                    # DiscoveryView (sources + schedule settings panels)
+│   │   ├── outreach/                     # OutreachView, OutreachTable, OutreachDetailDrawer, columns
 │   │   └── debug/                        # DebugView, DebugActivityTable, DebugFilterBar, ActivityDetailDrawer, activity-columns, activity-tone
 │   ├── shared/
 │   │   ├── ui/                             # shadcn/ui copies
@@ -185,7 +198,7 @@ apps/web/
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx
 │   │   │   ├── Topbar.tsx                  # global job search → /jobs?q
-│   │   │   ├── NavBar.tsx                   # 11 nav destinations
+│   │   │   ├── NavBar.tsx                   # 14 nav destinations
 │   │   │   ├── ConnectionStatusPill.tsx     # SSE status + events-paused + LLM-spend line
 │   │   │   └── ThemeToggle.tsx
 │   │   ├── providers/                      # EventStreamProvider is NOT here — it lives in contexts/operations/providers/
@@ -281,6 +294,7 @@ graph TB
     CTX --> MAT2["materials/"]
     CTX --> APP2["apply/"]
     CTX --> PIP2["pipeline/"]
+    CTX --> OUT2["outreach/"]
 
     VW --> VD2["dashboard/"]
     VW --> VJ2["jobs/"]
@@ -290,6 +304,7 @@ graph TB
     VW --> VPIP2["pipelines/"]
     VW --> VDISC2["discovery/"]
     VW --> VDBG2["debug/"]
+    VW --> VOUT2["outreach/"]
 
     SHA --> UI2["ui/ (shadcn)"]
     SHA --> LY2["layout/"]
@@ -324,6 +339,7 @@ graph TB
     MAT2 -.->|"handler reg."| OPS2
     APP2 -.->|"handler reg."| OPS2
     PIP2 -.->|"handler reg."| OPS2
+    OUT2 -.->|"handler reg."| OPS2
 ```
 
 **Folder principles:**
@@ -332,7 +348,7 @@ graph TB
    structure greppable from the file tree. Routes do little — they mount
    views, declare typed search-param schemas, and (sometimes) declare
    loaders.
-2. **`contexts/` mirrors the backend bounded contexts 1:1.** Eight
+2. **`contexts/` mirrors the backend bounded contexts 1:1.** Nine
    folders, no inventions, no omissions. Even contexts with thin or zero
    UI (Discovery, Enrichment) have folders so their hooks and event
    handlers have unambiguous homes.

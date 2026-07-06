@@ -1,4 +1,11 @@
 import { JobHunterApiClient } from "@jobhunter/api-client";
+import type {
+  ContactCreateRequest,
+  ContactDeleteRequest,
+  ContactImportRequest,
+  ContactListQuery,
+  ContactUpdateRequest,
+} from "@jobhunter/contracts";
 import type { ApiClientPort } from "../../ports/ApiClientPort.js";
 
 export class FetchApiClientAdapter implements ApiClientPort {
@@ -348,5 +355,24 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   markSkipped(jobKey: string, body: Parameters<JobHunterApiClient["markSkipped"]>[1] = {}) {
     return this.client.markSkipped(jobKey, body);
+  }
+
+  listContacts(query: Partial<ContactListQuery> = {}) {
+    return this.client.listContacts(query);
+  }
+  contact(contactId: string) {
+    return this.client.contact(contactId);
+  }
+  createContact(body: ContactCreateRequest) {
+    return this.client.createContact(body);
+  }
+  updateContact(contactId: string, body: ContactUpdateRequest) {
+    return this.client.updateContact(contactId, body);
+  }
+  deleteContact(contactId: string, body: ContactDeleteRequest = {}) {
+    return this.client.deleteContact(contactId, body);
+  }
+  importContacts(body: ContactImportRequest) {
+    return this.client.importContacts(body);
   }
 }

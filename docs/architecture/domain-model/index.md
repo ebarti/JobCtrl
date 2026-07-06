@@ -17,7 +17,7 @@ Section numbering (§1–§11) is preserved across the subpages because
 `packages/domain-types` comments and `AGENTS.md` cite it. Read the pages in
 sidebar order — each answers one question:
 
-- [Strategic design](strategic.md) — what are the eight bounded contexts, and how do they relate?
+- [Strategic design](strategic.md) — what are the nine bounded contexts, and how do they relate?
 - [Tactical design](tactical.md) — inside each context, what are the aggregates, domain events, and invariants?
 - [Ports & adapters](ports.md) — which interfaces does the domain depend on, and what implements them today?
 - [Cross-context integration](integration.md) — how do contexts coordinate, through domain events and the JSON-RPC bridge?

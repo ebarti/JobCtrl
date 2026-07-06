@@ -5,7 +5,7 @@ Aggregates, entities, value objects, and domain events per context. Part of the
 
 An **aggregate** is a cluster of related data with one entity as its "root",
 treated as a single unit for every change: one command modifies one aggregate,
-and its rules (invariants) must hold when the change commits. Seven of the eight
+and its rules (invariants) must hold when the change commits. Eight of the nine
 contexts own exactly one aggregate root; Operations owns none — it only projects
 read models from the events the others emit.
 
@@ -18,11 +18,12 @@ flowchart LR
     M["Materials Generation"] --> Mm["MaterialsSet"]
     A["Apply Automation"] --> Aa["ApplyRun"]
     O["Pipeline Orchestration"] --> Oo["JobPipelineState"]
+    C["Contact & Outreach"] --> Cc["Contact"]
     R["Operations / Read-Side"] --> Rr["(no aggregate — projections only)"]
 
     classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
-    class D,E,P,S,M,A,O,Djob,Ejob,Pp,Ss,Mm,Aa,Oo py
+    class D,E,P,S,M,A,O,C,Djob,Ejob,Pp,Ss,Mm,Aa,Oo,Cc py
     class R,Rr store
 ```
 
@@ -459,7 +460,7 @@ Orchestration hasn't acknowledged.
 This context has no aggregates of its own. It maintains **projections** (read
 models) built from domain events emitted by other contexts.
 
-**Projections:** seven denormalised read-model tables
+**Projections:** nine denormalised read-model tables
 (`PROJECTION_TABLES` in
 `infrastructure/projections/sqlite_projection_store.py`):
 
@@ -467,9 +468,11 @@ models) built from domain events emitted by other contexts.
 - `dashboard_projections` — aggregate counts by stage, state, source, score distribution.
 - `job_detail_projections` — full job view with all stage states, events, and artifacts.
 - `artifact_list_projections` — all artifacts across jobs with provenance.
+- `evidence_usage_projections` — career-evidence-map rows inverting profile achievement/skill evidence into resume-bullet, requirement-fit, and generation-time coverage usage, plus missing/blocked/transferable gaps.
 - `apply_run_projections` — apply run telemetry with event timelines, keyed by the Temporal workflow run id.
 - `workflow_run_projections` — unified list of all Temporal workflow runs and their terminal status. This projection is **Python-sole-writer** (folded from the `Workflow*` events); the TypeScript API mirrors it read-only.
 - `source_quality_stats` — per-source discovery health (success/failure attribution, quarantine, circuit-breaker signals).
+- `contact_projections` — one row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata; no attribute values (sensitivity).
 
 The retired `discovery_run_projections` write-only table no longer owns any
 read-model behaviour; source health is projected through `source_quality_stats`.
@@ -481,5 +484,50 @@ read-model behaviour; source health is projected through `source_quality_stats`.
   (`apps/api/src/projections.ts`) maintain projections idempotently against the
   shared `event_watermarks.operations_projections` watermark. In the hosted
   future, this becomes an async event consumer.
+
+---
+
+### 4.9 Contact & Outreach Context
+
+#### Aggregate: Contact
+
+```
+Aggregate Root: Contact
+Identity: (TenantId, ContactId)
+```
+
+Phase 1 realises one aggregate — `Contact`. (The context's later phases add
+research-task and outreach-thread aggregates; those are not implemented yet.)
+
+**Invariants:**
+- Every `ContactAttribute` carries a non-null `ContactFactProvenance` (INV-2); constructing an attribute without provenance is impossible.
+- A `Contact` links to at least one of `{employer, jobId}` (enforced by `ContactLink`).
+- `ContactId` is immutable once assigned.
+
+**Lifecycle:**
+1. Created from user input or a CSV import row.
+2. Updated by user edits (link, role, or attributes; `ContactId` and `createdAt` are immutable).
+3. Soft-deleted when the user deletes it.
+
+**Value Objects:**
+- `ContactAttribute { attributeId, kind, value, provenance }` — one fact (name, title, email, phone, profile URL, note). `value` is sensitive.
+- `ContactFactProvenance { sourceKind, sourceRef, captureMethod, capturedAt, confidence, userConfirmed }` — `sourceKind ∈ {user_entered, public_web_page, user_imported_list, derived}`; `captureMethod ∈ {manual, json_ld, css_selectors, llm_assisted}`. Modelled on `AchievementEvidence`.
+- `ContactLink { employer?, jobId? }` — at least one required.
+- `ContactRole` — enum: `recruiter | hiring_manager | referrer | warm_intro | other`.
+- `WarmIntroSignal` — a value-object placeholder only in Phase 1 (no warm-intro inference; that is a later phase — INV-6).
+
+**Domain Events** (all carry `tenantId`; payloads carry only ids, kinds, provenance metadata, and timestamps — never attribute values):
+- `ContactCreated { tenantId, contactId, employer, jobId, role, createdAt }`
+- `ContactUpdated { tenantId, contactId, changedFields, updatedAt }`
+- `ContactAttributeRecorded { tenantId, contactId, attributeId, attributeKind, sourceKind, sourceRef, captureMethod, confidence, userConfirmed, recordedAt }`
+- `ContactDeleted { tenantId, contactId, reason, deletedAt }`
+  — All consumed by: Operations (the `contact_projections` read model).
+
+**Domain Services:** None in Phase 1. (The pure `WarmIntroMatcher` lands with warm-intro identification in a later phase.)
+
+**CSV import:** the import use case tags every imported fact with
+`sourceKind = user_imported_list`, `sourceRef = <filename>`,
+`captureMethod = manual`; a row that links to neither an employer nor an
+application is skipped.
 
 ---
