@@ -21,6 +21,7 @@ import { Route as DebugRouteImport } from "./routes/debug";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
 import { Route as ApplyReviewRouteImport } from "./routes/apply-review";
+import { Route as AnalyticsRouteImport } from "./routes/analytics";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
 import { Route as RunsIndexRouteImport } from "./routes/runs.index";
@@ -97,6 +98,11 @@ const ArtifactsRoute = ArtifactsRouteImport.update({
 const ApplyReviewRoute = ApplyReviewRouteImport.update({
   id: "/apply-review",
   path: "/apply-review",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: "/analytics",
+  path: "/analytics",
   getParentRoute: () => rootRouteImport,
 } as any);
 const IndexRoute = IndexRouteImport.update({
@@ -187,6 +193,7 @@ const JobsJobIdRunRunIdRoute = JobsJobIdRunRunIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
@@ -218,6 +225,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/dashboard": typeof DashboardRoute;
   "/debug": typeof DebugRoute;
@@ -245,6 +253,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
+  "/analytics": typeof AnalyticsRoute;
   "/apply-review": typeof ApplyReviewRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
@@ -278,6 +287,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/artifacts"
     | "/dashboard"
@@ -309,6 +319,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/dashboard"
     | "/debug"
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
   id:
     | "__root__"
     | "/"
+    | "/analytics"
     | "/apply-review"
     | "/artifacts"
     | "/dashboard"
@@ -367,6 +379,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
+  AnalyticsRoute: typeof AnalyticsRoute;
   ApplyReviewRoute: typeof ApplyReviewRoute;
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
@@ -467,6 +480,13 @@ declare module "@tanstack/react-router" {
       path: "/apply-review";
       fullPath: "/apply-review";
       preLoaderRoute: typeof ApplyReviewRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/analytics": {
+      id: "/analytics";
+      path: "/analytics";
+      fullPath: "/analytics";
+      preLoaderRoute: typeof AnalyticsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/": {
@@ -686,6 +706,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
   ApplyReviewRoute: ApplyReviewRoute,
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,

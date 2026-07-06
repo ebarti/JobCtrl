@@ -212,7 +212,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             INSERT INTO job_materials_artifacts (
                 job_url, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_url,
@@ -223,6 +223,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 artifact["path"],
                 artifact["render_format"],
                 artifact["size_bytes"],
+                artifact.get("metadata_json", "{}"),
                 created_at,
             ),
         )
@@ -381,6 +382,22 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
           created_by    TEXT NOT NULL DEFAULT 'user',
           PRIMARY KEY (tenant_id, outcome_id)
         );
+        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          suggestion_id TEXT NOT NULL,
+          job_key TEXT NOT NULL,
+          evidence_id TEXT,
+          suggested_kind TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          rationale TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          decided_at TEXT,
+          decision TEXT,
+          decision_reason TEXT,
+          decided_outcome_id TEXT,
+          PRIMARY KEY (tenant_id, suggestion_id)
+        );
         """
     )
     for job in rows["conversionJobs"]:
@@ -415,6 +432,23 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
                 outcome["kind"],
                 "2026-06-11T09:00:00+00:00",
                 "2026-06-11T09:00:00+00:00",
+            ),
+        )
+    for suggestion in rows["applicationOutcomeSuggestions"]:
+        conn.execute(
+            """
+            INSERT INTO application_outcome_suggestions (
+                tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+                status, created_at, decided_at, decision
+            ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+            """,
+            (
+                suggestion["suggestionId"],
+                suggestion["jobKey"],
+                suggestion["status"],
+                "2026-06-11T09:05:00+00:00",
+                "2026-06-11T09:05:00+00:00",
+                suggestion["status"],
             ),
         )
 
@@ -467,6 +501,131 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     assert json.loads(text_row["bullet_provenance_json"]) == expected["bulletProvenanceJson"]
     assert json.loads(text_row["coverage_audit_json"]) == expected["coverageAuditJson"]
     assert json.loads(text_row["voice_pass_json"]) == expected["voicePassJson"]
+
+
+def test_python_builder_projects_historical_artifact_generation_coverage_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = "https://example.com/jobs/historical-artifacts"
+    created_1 = "2026-06-08T12:00:00+00:00"
+    created_2 = "2026-06-09T12:00:00+00:00"
+    ensure_materials_tables(conn)
+    ensure_bullet_provenance_tables(conn)
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, company, site, discovered_at)
+        VALUES (?, 'Historical artifact job', 'Acme', 'greenhouse', ?)
+        """,
+        (job_url, created_1),
+    )
+    for generation, created_at in ((1, created_1), (2, created_2)):
+        conn.execute(
+            """
+            INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+            VALUES (?, ?, 'local', 'complete', ?, ?)
+            """,
+            (job_url, generation, created_at, created_at),
+        )
+    artifacts = [
+        (1, "tailored_resume", "resume-v1", "/tmp/historical-resume-v1.txt", "text", created_1),
+        (1, "resume_pdf", "resume-v1-pdf", "/tmp/historical-resume-v1.pdf", "pdf", created_1),
+        (2, "tailored_resume", "resume-v2", "/tmp/historical-resume-v2.txt", "text", created_2),
+    ]
+    for generation, artifact_type, artifact_id, path, render_format, created_at in artifacts:
+        conn.execute(
+            """
+            INSERT INTO job_materials_artifacts (
+                job_url, generation, artifact_type, artifact_id, status, path,
+                render_format, size_bytes, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'approved', ?, ?, 10, '{}', ?)
+            """,
+            (job_url, generation, artifact_type, artifact_id, path, render_format, created_at),
+        )
+    coverage_v1 = {
+        "computed_against": "rendered_text",
+        "planned": ["latency", "terraform", "python"],
+        "covered": ["latency"],
+        "declared": ["terraform"],
+        "missing": ["python"],
+        "covered_by": {"latency": "experience:latency#0"},
+        "declared_by": {"terraform": "skills:cloud#0"},
+        "counts": {"planned": 3, "covered": 1, "declared": 1, "missing": 1},
+    }
+    coverage_v2 = {
+        "computed_against": "rendered_text",
+        "planned": ["latency", "incident response", "python"],
+        "covered": ["latency", "incident response"],
+        "declared": [],
+        "missing": ["python"],
+        "covered_by": {
+            "latency": "experience:latency#0",
+            "incident response": "experience:incident#0",
+        },
+        "declared_by": {},
+        "counts": {"planned": 3, "covered": 2, "declared": 0, "missing": 1},
+    }
+    voice = {
+        "ran": True,
+        "accepted": True,
+        "model": "claude-opus-4-8",
+        "prompt_version": "voice-pass-v1",
+        "proxy_delta": {},
+        "reason": "",
+    }
+    rows = [
+        (1, "resume-v1", "experience:latency#0", "latency", json.dumps(coverage_v1), created_1),
+        (2, "resume-v2", "experience:incident#0", "incident response", json.dumps(coverage_v2), created_2),
+    ]
+    for generation, artifact_id, bullet_id, keyword, coverage_json, created_at in rows:
+        conn.execute(
+            """
+            INSERT INTO job_bullet_provenance (
+                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                source_id, evidence_ids_json, requirement_ids_json,
+                matched_keywords_json, transform_type, control, rationale,
+                generated_text, position, created_at, coverage_json, voice_json
+            ) VALUES (?, ?, ?, 'local', ?, 'experience', ?, '[]', '[]', ?, 'voice',
+                'rephrase_allowed', 'Voiced bullet.', 'Generated text.', 0, ?, ?, ?)
+            """,
+            (
+                job_url,
+                generation,
+                bullet_id,
+                artifact_id,
+                keyword.replace(" ", "_"),
+                json.dumps([keyword]),
+                created_at,
+                coverage_json,
+                json.dumps(voice),
+            ),
+        )
+    conn.execute(
+        """
+        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+        VALUES (?, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')
+        """,
+        (job_url, created_2),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    projected = {
+        row["artifact_id"]: json.loads(row["coverage_audit_json"])
+        for row in conn.execute(
+            """
+            SELECT artifact_id, coverage_audit_json
+            FROM artifact_list_projections
+            WHERE job_id = ? AND artifact_id IN ('resume-v1', 'resume-v2')
+            """,
+            (job_url,),
+        )
+        if row["coverage_audit_json"] is not None
+    }
+    assert projected["resume-v1"]["covered"] == ["latency"]
+    assert projected["resume-v1"]["declared"] == ["terraform"]
+    assert projected["resume-v2"]["covered"] == ["latency", "incident response"]
+    assert projected["resume-v2"]["declared"] == []
 
 
 def test_python_builder_projects_full_projection_columns_matching_shared_fixture(

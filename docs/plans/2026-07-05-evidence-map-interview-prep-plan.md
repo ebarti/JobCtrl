@@ -607,10 +607,10 @@ application, feeding the existing outcome lifecycle without inventing a new stor
 **Scope.**
 - Reuse the existing `application_outcomes` mechanism: reflections are recorded
   as an `interview`-kind `ApplicationOutcome` with a `note` (already supported by
-  `ManualApplicationOutcomeRequestSchema`). Where a stronger link to the specific
-  prep generation is warranted, add a nullable `interview_prep_generation` column
-  to `application_outcomes` (additive) so a reflection can reference the prep it
-  followed — owner decision on whether the link is needed.
+  `ManualApplicationOutcomeRequestSchema`). Add a nullable
+  `interview_prep_generation` column to `application_outcomes` (additive) so a
+  reflection can reference the prep it followed. Owner decision 6 is resolved in
+  favor of this nullable-link option.
 - Surface reflections in the prep panel and the existing `OutcomeTimeline`
   (`apps/web/src/contexts/apply/components/ApplicationOutcomes.tsx`), and offer a
   "Record reflection" affordance from the prep view that reuses
@@ -702,8 +702,9 @@ workers/automation/tests/test_audit_projection_parity.py` and
       no-live-assistance guard; no pipeline spend.
 - [ ] P2 prep read model + UI expose provenance safely; the no-live-assistance
       guard remains green; SSE/invalidation handlers added with parity green.
-- [ ] P3 reflections persist as `interview` outcomes with notes and never leak
-      raw note text into events/projections/logs.
+- [x] P3 reflections persist as `interview` outcomes with notes and never leak
+      raw note text into events/projections/logs; owner decision 6 resolved as
+      the nullable `interview_prep_generation` link.
 - [ ] Every displayed map/prep claim has an explicit, cited source of truth.
 - [ ] Docs updated (below). Full verification matrix green. `git diff --check`
       clean.
@@ -764,7 +765,9 @@ Per `CLAUDE.md` documentation table, when each phase lands:
 
 ## Owner Decisions
 
-Resolved 2026-07-05 during implementation:
+Resolved 2026-07-05 during implementation. Per owner instruction, proceed on
+the plan recommendations for decisions 1-5. Decision 6 was later resolved as
+the nullable-link option, so the P3 boundary is no longer blocked:
 
 1. **Evidence-map read model: projection vs live read.** Decision:
    `evidence_usage_projections` (dual-builder, parity-tested, SSE-fresh). The
@@ -788,11 +791,11 @@ Resolved 2026-07-05 during implementation:
    default LLM lane with the existing spend-budget controls. Generation is
    explicit, user-triggered, and never unattended.
 
-Still open; STOP at the P3 boundary if unresolved:
-
 6. **Reflection ↔ prep link.** Whether to add a nullable
    `interview_prep_generation` column to `application_outcomes` (P3) or keep
-   reflections as plain `interview` outcome notes.
+   reflections as plain `interview` outcome notes. Decision: add the nullable
+   `interview_prep_generation` link so a post-interview reflection can identify
+   the stored prep generation it followed when one exists.
 
 ## References (in-repo)
 

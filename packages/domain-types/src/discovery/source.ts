@@ -59,6 +59,7 @@ export const MANUAL_ACTION_REASONS = [
   "rate_limit",
   "protected_internal_site",
   "ambiguous_career_system",
+  "browser_extension_capture",
 ] as const;
 export type ManualActionReason = (typeof MANUAL_ACTION_REASONS)[number];
 
@@ -185,6 +186,8 @@ export interface ManualCaptureProvenance {
   readonly capturedAt: string;
   readonly captureMode: ManualCaptureMode;
   readonly futureManualActionRequired: boolean;
+  readonly captureClient?: string;
+  readonly extensionVersion?: string;
 }
 
 export interface SourceLocationCandidate {

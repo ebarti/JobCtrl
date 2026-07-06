@@ -274,6 +274,268 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     )
 
 
+def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
+    conn: sqlite3.Connection,
+) -> None:
+    """Regression for the R5 evidence-usage index: soft delete only writes a
+    jobhunter_deleted_jobs tombstone (and hide only writes jobhunter_hidden_jobs),
+    leaving the job_bullet_provenance / job_requirement_fit_items /
+    artifact_list_projections rows in place. Those rows must not re-surface a
+    removed job's title, employer, generated-text preview, usages, or gaps.
+    """
+    active_url = "https://example.com/jobs/active-role"
+    deleted_url = "https://example.com/jobs/deleted-role"
+    hidden_url = "https://example.com/jobs/hidden-role"
+
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_experience_entries (
+            tenant_id, profile_id, entry_id, position_index, date_range,
+            title, company, location
+        ) VALUES ('local', 'default', 'exp-platform', 0, '2024-2025',
+                  'Senior Engineer', 'Acme', 'Remote')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_achievement_evidence (
+            tenant_id, profile_id, entry_id, evidence_index, evidence_id,
+            source_text, scope, action, tools_json, metrics_json, outcome,
+            seniority_signal, evidence_strength, claim_confidence,
+            user_confirmed, tags_json
+        ) VALUES (
+            'local', 'default', 'exp-platform', 0, 'ev_platform',
+            'Led a platform migration that reduced latency by 40%.',
+            'Platform migration', 'Led migration', '["Python", "Postgres"]',
+            '["40% latency reduction"]', 'Reduced latency', '',
+            'verified', 0.95, 1, '["migration"]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_skill_categories (
+            tenant_id, profile_id, category_id, position_index, label
+        ) VALUES ('local', 'default', 'backend', 0, 'Backend')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO candidate_profile_skill_items (
+            tenant_id, profile_id, category_id, item_index, item_text
+        ) VALUES ('local', 'default', 'backend', 0, 'Python')
+        """
+    )
+
+    # jobhunter_deleted_jobs / jobhunter_hidden_jobs are owned by the TS
+    # write-model; create them here so the Python builder's _table_exists-guarded
+    # exclusion joins engage.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+            job_url TEXT PRIMARY KEY,
+            hidden_at TEXT NOT NULL,
+            reason TEXT,
+            unhidden_at TEXT
+        )
+        """
+    )
+
+    def seed_job_evidence(
+        job_url: str,
+        *,
+        title: str,
+        site: str,
+        artifact_id: str,
+        generated_text: str,
+        created_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, site, strategy, location, salary,
+                              discovered_at, application_url, description)
+            VALUES (?, ?, ?, 'jobspy', 'Remote', '', ?, ?, 'x')
+            """,
+            (job_url, title, site, utc_now(), job_url),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_materials (
+                job_url, generation, tenant_id, status, created_at, updated_at
+            ) VALUES (?, 1, 'local', 'complete',
+                      '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
+            """,
+            (job_url,),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_materials_artifacts (
+                job_url, generation, artifact_type, artifact_id, status, path,
+                render_format, size_bytes, metadata_json, created_at
+            ) VALUES (?, 1, 'tailored_resume', ?, 'approved',
+                      '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
+            """,
+            (job_url, artifact_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_bullet_provenance (
+                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                source_id, evidence_ids_json, requirement_ids_json,
+                matched_keywords_json, transform_type, control, rationale,
+                generated_text, position, created_at, coverage_json
+            ) VALUES (
+                ?, 1, 'experience:exp-platform#0', 'local', ?,
+                'experience', 'exp-platform', '["ev_platform"]',
+                '["req-platform"]', '["latency"]', 'reframe',
+                'rephrase_allowed', 'Used profile evidence.',
+                ?, 0, ?,
+                '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
+            )
+            """,
+            (job_url, artifact_id, generated_text, created_at),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_requirement_fit_reports (
+                job_url, score_version, tenant_id, employer_analysis_generation,
+                profile_snapshot_version, scoring_policy_version, formula_version,
+                resolved_fit_score, fit_band, confidence, summary_json, created_at
+            ) VALUES (
+                ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+                '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
+                '2026-07-05T12:20:00Z'
+            )
+            """,
+            (job_url,),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_requirement_fit_items (
+                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                tier, weight, job_evidence_span, fit_json, contribution_json,
+                tailoring_json, artifact_coverage_json, position
+            ) VALUES (
+                ?, 2, 'local', 'req-platform', 'Own platform migrations',
+                'must_have', 0.8, 'platform migrations',
+                '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
+                '{}', '{}',
+                '{"state":"covered","source":"tailored_resume_bullet_provenance","bullet_count":1,"examples":["Led migration"]}',
+                0
+            )
+            """,
+            (job_url,),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_requirement_fit_items (
+                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                tier, weight, job_evidence_span, fit_json, contribution_json,
+                tailoring_json, artifact_coverage_json, position
+            ) VALUES (
+                ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+                'must_have', 0.7, 'Kubernetes clusters',
+                '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
+                '{}', '{}',
+                '{"state":"missing_from_profile","source":"tailored_resume_bullet_provenance","bullet_count":0,"examples":[]}',
+                1
+            )
+            """,
+            (job_url,),
+        )
+        record_job_event(conn, job_url, "score", "JobScored")
+
+    seed_job_evidence(
+        active_url,
+        title="Active Platform Role",
+        site="ActiveCorp",
+        artifact_id="artifact-active",
+        generated_text="ACTIVE-bullet reduced latency 40%.",
+        created_at="2026-07-05T12:10:00Z",
+    )
+    seed_job_evidence(
+        deleted_url,
+        title="Deleted Platform Role",
+        site="DeletedCorp",
+        artifact_id="artifact-deleted",
+        generated_text="DELETED-bullet should never surface.",
+        created_at="2026-07-04T12:10:00Z",
+    )
+    seed_job_evidence(
+        hidden_url,
+        title="Hidden Platform Role",
+        site="HiddenCorp",
+        artifact_id="artifact-hidden",
+        generated_text="HIDDEN-bullet should never surface.",
+        created_at="2026-07-03T12:10:00Z",
+    )
+
+    conn.execute(
+        "INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at) "
+        "VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)",
+        (deleted_url,),
+    )
+    conn.execute(
+        "INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at) "
+        "VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)",
+        (hidden_url,),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    rows = conn.execute(
+        """
+        SELECT projection_kind, payload_json
+          FROM evidence_usage_projections
+         WHERE tenant_id = 'local'
+           AND projection_kind IN ('entry', 'gap')
+        """
+    ).fetchall()
+    referenced_job_keys: set[str] = set()
+    serialized = ""
+    for row in rows:
+        payload_json = row["payload_json"]
+        serialized += payload_json
+        payload = json.loads(payload_json)
+        if row["projection_kind"] == "entry":
+            for key in ("resumeUsages", "requirementUsages", "coverageUsages"):
+                for usage in payload.get(key, []):
+                    referenced_job_keys.add(usage["jobKey"])
+        else:
+            for ref in payload.get("jobRefs", []):
+                referenced_job_keys.add(ref["jobKey"])
+
+    # The live job still populates the map (positive control) ...
+    assert active_url in referenced_job_keys
+    # ... while the soft-deleted and hidden jobs are fully excluded.
+    assert deleted_url not in referenced_job_keys
+    assert hidden_url not in referenced_job_keys
+
+    # No removed job's title, employer, or generated-text preview may leak
+    # through any evidence field.
+    for leaked in (
+        "Deleted Platform Role",
+        "DeletedCorp",
+        "DELETED-bullet",
+        "Hidden Platform Role",
+        "HiddenCorp",
+        "HIDDEN-bullet",
+    ):
+        assert leaked not in serialized
+    assert "ACTIVE-bullet" in serialized
+
+
 def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
