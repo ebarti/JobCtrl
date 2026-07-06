@@ -1916,7 +1916,7 @@ function attachSkillCoverageUsagesAndGaps(
   gaps: Map<string, EvidenceGapPayload>,
 ): void {
   if (!tableExists(db, "artifact_list_projections")) return;
-  const lifecycle = jobLifecycleExclusionSql(db, "job_id");
+  const lifecycle = jobLifecycleExclusionSql(db, "alp.job_id");
   const rows = allRows<{
     job_id: string;
     job_title: string;
@@ -1927,12 +1927,12 @@ function attachSkillCoverageUsagesAndGaps(
     created_at: string | null;
   }>(
     db,
-    `SELECT job_id, job_title, job_employer, artifact_id, generation,
-            coverage_audit_json, created_at
-       FROM artifact_list_projections${lifecycle.joinSql}
-      WHERE tenant_id = ?${lifecycle.whereSql}
-        AND coverage_audit_json IS NOT NULL
-        AND TRIM(coverage_audit_json) != ''`,
+    `SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
+            alp.coverage_audit_json, alp.created_at
+       FROM artifact_list_projections alp${lifecycle.joinSql}
+      WHERE alp.tenant_id = ?${lifecycle.whereSql}
+        AND alp.coverage_audit_json IS NOT NULL
+        AND TRIM(alp.coverage_audit_json) != ''`,
     [tenantId],
   );
   for (const row of rows) {

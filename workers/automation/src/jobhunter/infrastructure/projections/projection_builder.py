@@ -1345,15 +1345,15 @@ class ProjectionBuilder:
     ) -> None:
         if not _table_exists(self._conn, "artifact_list_projections"):
             return
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "job_id")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.job_id")
         rows = self._conn.execute(
             f"""
-            SELECT job_id, job_title, job_employer, artifact_id, generation,
-                   coverage_audit_json, created_at
-              FROM artifact_list_projections{lifecycle['join_sql']}
-             WHERE tenant_id = ?{lifecycle['where_sql']}
-               AND coverage_audit_json IS NOT NULL
-               AND TRIM(coverage_audit_json) != ''
+            SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
+                   alp.coverage_audit_json, alp.created_at
+              FROM artifact_list_projections alp{lifecycle['join_sql']}
+             WHERE alp.tenant_id = ?{lifecycle['where_sql']}
+               AND alp.coverage_audit_json IS NOT NULL
+               AND TRIM(alp.coverage_audit_json) != ''
             """,
             (str(self._tenant_id),),
         ).fetchall()
