@@ -43,6 +43,7 @@ from jobhunter.domain.events import (
     create_duplicate_job_linked,
 )
 from jobhunter.domain.ports.discovery import ContentOwnerMatch
+from jobhunter.domain.ports.politeness import default_honest_user_agent
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
@@ -67,7 +68,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     except Exception:
         pass
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+# Honest outbound identity (R10) — never impersonate a browser on a surface we
+# control. Sourced from the single honest-UA policy.
+UA = default_honest_user_agent().header_value()
 
 
 # -- Location filtering -------------------------------------------------------

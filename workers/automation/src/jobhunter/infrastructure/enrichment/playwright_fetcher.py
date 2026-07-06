@@ -26,14 +26,14 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from jobhunter.domain.enrichment.value_objects import DetailPage
+from jobhunter.domain.ports.politeness import default_honest_user_agent
 from jobhunter.infrastructure.network.proxy import ProxyConfig
 
 log = logging.getLogger(__name__)
 
 
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-)
+# Honest outbound identity (R10) — no browser impersonation on a surface we control.
+_USER_AGENT = default_honest_user_agent().header_value()
 _NAV_TIMEOUT_MS = 45000
 _DCL_TIMEOUT_MS = 15000
 _IDLE_TIMEOUT_MS = 10000

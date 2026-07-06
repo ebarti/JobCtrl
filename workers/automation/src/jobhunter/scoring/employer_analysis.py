@@ -11,6 +11,7 @@ import sqlite3
 
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
+from jobhunter.infrastructure.setup_probes import analysis_sdk_set_version, enabled_analysis_legs
 from jobhunter.state import record_job_event
 
 
@@ -59,15 +60,21 @@ def build_analyze_use_case(
         CodexAnalysisAdapter,
     )
 
+    enabled_legs = enabled_analysis_legs()
+    adapters = []
+    if "claude" in enabled_legs:
+        adapters.append(ClaudeAnalysisAdapter())
+    if "codex" in enabled_legs:
+        adapters.append(CodexAnalysisAdapter())
+    if "antigravity" in enabled_legs:
+        adapters.append(AntigravityAnalysisAdapter())
+
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
-        adapters=(
-            ClaudeAnalysisAdapter(),
-            CodexAnalysisAdapter(),
-            AntigravityAnalysisAdapter(),
-        ),
+        adapters=tuple(adapters),
         synthesizer=ClaudeAnalysisSynthesizer(),
         publisher=publisher or EmployerAnalyzedEventRecorder(conn, stage=event_stage),
+        sdk_set_version=analysis_sdk_set_version(enabled_legs),
     )
 
 

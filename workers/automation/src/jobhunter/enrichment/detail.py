@@ -82,10 +82,15 @@ from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
 )
 from jobhunter.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobhunter.infrastructure.llm import get_llm_adapter
+from jobhunter.domain.ports.politeness import default_honest_user_agent
 
 log = logging.getLogger(__name__)
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+# Honest outbound identity for anonymous crawl paths (R10). Never impersonate a
+# browser on a surface we control. The authenticated LinkedIn persistent context
+# is the owner's real Chrome session and presents its own browser identity
+# (user_agent=None) rather than this bot UA — an owner-scoped posture (D1/D3).
+UA = default_honest_user_agent().header_value()
 
 # Sites that block scraping -- skip detail extraction entirely
 SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
@@ -689,9 +694,12 @@ def scrape_site_batch(
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
+                # Owner-scoped authenticated context: present the real logged-in
+                # browser identity (user_agent=None), never the bot UA, matching
+                # _default_linkedin_apply_resolver_factory (D1/D3, see module top).
                 resolver = LinkedInApplyUrlResolver(
                     proxy=_PROXY_CONFIG,
-                    user_agent=UA,
+                    user_agent=None,
                     playwright=p,
                 )
                 try:
@@ -1386,8 +1394,15 @@ def _last_failed_attempt_retryable(attempts_json: str | None) -> bool:
 
 
 def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
-    """Build the authenticated resolver used for apply-URL recovery."""
-    return LinkedInApplyUrlResolver(proxy=_PROXY_CONFIG, user_agent=UA)
+    """Build the authenticated resolver used for apply-URL recovery.
+
+    The resolver drives a persistent, user-authenticated Chrome profile — a real
+    logged-in browser session, semantically distinct from anonymous crawling.
+    Passing ``user_agent=None`` lets that session present its own real browser
+    identity rather than the honest JobHunter bot UA (owner decision D1/D3): the
+    product does not evade controls, but must not break a user-authorized flow.
+    """
+    return LinkedInApplyUrlResolver(proxy=_PROXY_CONFIG, user_agent=None)
 
 
 def _reset_authenticated_linkedin_retry_candidates(

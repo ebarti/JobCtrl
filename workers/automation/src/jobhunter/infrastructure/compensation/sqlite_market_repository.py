@@ -9,12 +9,22 @@ import os
 import re
 import sqlite3
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jobhunter.database import ensure_market_compensation_tables
+from jobhunter.domain.discovery.source_registry import (
+    RobotsPolicy,
+    SourcePolicy,
+    SourcePolicyMethod,
+)
+from jobhunter.infrastructure.network import (
+    GatewayHttpClient,
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+)
 from jobhunter.domain.compensation import (
     MarketCompensationEstimate,
     MarketConfidenceFactor,
@@ -69,6 +79,56 @@ UNSAFE_FACTOR_REASON_TERMS = (
 )
 EURO_TOP_TECH_DATA_ENTRIES_URL = "https://www.eurotoptech.com/api/data-entries?sort=submitted&dir=desc"
 EURO_TOP_TECH_ATTRIBUTION = "Euro Top Tech public crowdsourced compensation data (https://www.eurotoptech.com/data)"
+
+# Compensation feeds are documented public APIs / operator-configured licensed
+# feeds, so robots is exempt (D2); the politeness gateway still applies the
+# honest UA, per-host pacing/concurrency, and a per-run request budget (R10).
+COMPENSATION_FEED_POLICY = SourcePolicy(
+    policy_id="compensation_feed",
+    allowed_methods=(SourcePolicyMethod.FEED,),
+    robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
+    max_requests_per_run=100,
+)
+
+JsonFeedFetcher = Callable[[str], Any]
+TextFeedFetcher = Callable[[str, str | None], str | None]
+
+
+def _feed_client(
+    gateway: PolitenessGateway,
+    source_id: str,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
+) -> GatewayHttpClient:
+    session = PolitenessSession(
+        gateway,
+        policy=COMPENSATION_FEED_POLICY,
+        budget=gateway.new_run_budget(COMPENSATION_FEED_POLICY.max_requests_per_run),
+        context=PolitenessSourceContext(
+            stage="compensation",
+            source_id=source_id,
+            source_role="compensation_feed",
+            adapter="compensation_feed",
+            run_id=run_id,
+        ),
+        recorder_conn=conn,
+    )
+    return GatewayHttpClient(session)
+
+
+def _text_feed_fetcher(
+    gateway: PolitenessGateway,
+    source_id: str,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
+) -> TextFeedFetcher:
+    client = _feed_client(gateway, source_id, conn, run_id)
+
+    def fetch(url: str, auth_token: str | None) -> str | None:
+        headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+        return client.fetch_text(url, extra_headers=headers)
+
+    return fetch
 EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
     {
         "albania",
@@ -497,15 +557,30 @@ def load_default_reported_compensation_observations(
     include_eurotoptech: bool = True,
     eurotoptech_max_pages: int = 10,
     env: dict[str, str] | None = None,
+    gateway: PolitenessGateway | None = None,
+    recorder_conn: sqlite3.Connection | None = None,
+    run_id: str | None = None,
 ) -> ReportedCompensationSourceLoad:
-    """Load every configured reported-compensation source for refresh paths."""
+    """Load every configured reported-compensation source for refresh paths.
+
+    Every URL-backed feed fetches through the R10 politeness gateway (honest UA,
+    per-host pacing, per-run budget). Robots is exempt for these documented /
+    licensed feeds (D2); blocked/rate-limited outcomes are recorded when a
+    ``recorder_conn`` is supplied.
+    """
 
     source_env = env if env is not None else os.environ
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
     observations: list[ReportedCompensationObservation] = []
-    local = _load_optional_observation_ref(local_observations_path, default_source_id=None)
+    local = _load_optional_observation_ref(
+        local_observations_path,
+        default_source_id=None,
+        text_fetch=_text_feed_fetcher(active_gateway, "local", recorder_conn, run_id),
+    )
     levels_fyi = _load_configured_provider_observations(
         source_env,
         provider="levels_fyi",
+        text_fetch=_text_feed_fetcher(active_gateway, "levels_fyi", recorder_conn, run_id),
         default_source_id="levels_fyi",
         access_var="JOBHUNTER_LEVELS_FYI_ACCESS_MODE",
         permitted_access_modes={"licensed_api", "licensed_data_feed", "enterprise_mcp"},
@@ -532,6 +607,7 @@ def load_default_reported_compensation_observations(
     glassdoor = _load_configured_provider_observations(
         source_env,
         provider="glassdoor",
+        text_fetch=_text_feed_fetcher(active_gateway, "glassdoor", recorder_conn, run_id),
         default_source_id="glassdoor",
         access_var="JOBHUNTER_GLASSDOOR_ACCESS_MODE",
         permitted_access_modes={"partner_api", "written_permission"},
@@ -553,7 +629,14 @@ def load_default_reported_compensation_observations(
             Path.home() / ".jobhunter" / "compensation" / "glassdoor.csv",
         ),
     )
-    eurotoptech = load_euro_top_tech_observations(max_pages=eurotoptech_max_pages) if include_eurotoptech else ()
+    eurotoptech = (
+        load_euro_top_tech_observations(
+            max_pages=eurotoptech_max_pages,
+            http=_feed_client(active_gateway, "euro_top_tech", recorder_conn, run_id).fetch_json,
+        )
+        if include_eurotoptech
+        else ()
+    )
     observations.extend(local)
     observations.extend(levels_fyi)
     observations.extend(glassdoor)
@@ -606,16 +689,20 @@ def _load_optional_observation_ref(
     ref: Path | str | None,
     *,
     default_source_id: str | None,
+    text_fetch: TextFeedFetcher,
 ) -> tuple[ReportedCompensationObservation, ...]:
     if ref is None or str(ref).strip() == "":
         return ()
-    return _load_observation_ref(str(ref), default_source_id=default_source_id, auth_token=None)
+    return _load_observation_ref(
+        str(ref), default_source_id=default_source_id, auth_token=None, text_fetch=text_fetch
+    )
 
 
 def _load_configured_provider_observations(
     env: dict[str, str],
     *,
     provider: str,
+    text_fetch: TextFeedFetcher,
     default_source_id: str,
     access_var: str,
     permitted_access_modes: set[str],
@@ -643,7 +730,14 @@ def _load_configured_provider_observations(
     observations: list[ReportedCompensationObservation] = []
     for ref in refs:
         try:
-            observations.extend(_load_observation_ref(ref, default_source_id=default_source_id, auth_token=auth_token))
+            observations.extend(
+                _load_observation_ref(
+                    ref,
+                    default_source_id=default_source_id,
+                    auth_token=auth_token,
+                    text_fetch=text_fetch,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - one unavailable licensed feed should not block refresh
             log.warning("%s reported compensation feed could not be loaded from %s: %s", provider, ref, exc)
     return tuple(row for row in observations if row.source_id == provider)
@@ -654,12 +748,14 @@ def _load_observation_ref(
     *,
     default_source_id: str | None,
     auth_token: str | None,
+    text_fetch: TextFeedFetcher,
 ) -> tuple[ReportedCompensationObservation, ...]:
     if _is_url(ref):
-        return _load_reported_compensation_payload(
-            _fetch_text(ref, timeout_seconds=20.0, auth_token=auth_token),
-            default_source_id=default_source_id,
-        )
+        body = text_fetch(ref, auth_token)
+        if body is None:
+            # Gateway blocked / rate-limited the feed; recorded as an outcome.
+            return ()
+        return _load_reported_compensation_payload(body, default_source_id=default_source_id)
 
     path = Path(ref).expanduser()
     if path.is_dir():
@@ -670,15 +766,6 @@ def _load_observation_ref(
             observations.extend(load_reported_compensation_observations(child, default_source_id=default_source_id))
         return tuple(observations)
     return load_reported_compensation_observations(path, default_source_id=default_source_id)
-
-
-def _fetch_text(url: str, *, timeout_seconds: float, auth_token: str | None) -> str:
-    headers = {"Accept": "application/json, text/csv;q=0.9, */*;q=0.8", "User-Agent": "JobHunter/0.3"}
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
-    request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        return response.read().decode("utf-8")
 
 
 def _is_url(value: str) -> bool:
@@ -693,10 +780,17 @@ def load_euro_top_tech_observations(
     *,
     url: str = EURO_TOP_TECH_DATA_ENTRIES_URL,
     max_pages: int = 10,
-    timeout_seconds: float = 10.0,
+    http: JsonFeedFetcher | None = None,
 ) -> tuple[ReportedCompensationObservation, ...]:
-    """Load public Euro Top Tech approved data-entry rows as compensation observations."""
+    """Load public Euro Top Tech approved data-entry rows as compensation observations.
 
+    ``http`` is a gateway-routed JSON fetcher (``(url) -> dict | None``). When
+    omitted a default politeness gateway is used so this public API is fetched
+    with the honest UA, per-host pacing, and a per-run budget (R10). A ``None``
+    payload means the gateway blocked the page; loaded rows are kept.
+    """
+
+    fetch = http if http is not None else _feed_client(PolitenessGateway(), "euro_top_tech", None, None).fetch_json
     observations: list[ReportedCompensationObservation] = []
     next_url: str | None = url
     seen_urls: set[str] = set()
@@ -704,11 +798,13 @@ def load_euro_top_tech_observations(
     while next_url and pages < max(0, max_pages) and next_url not in seen_urls:
         seen_urls.add(next_url)
         try:
-            payload = _fetch_json(next_url, timeout_seconds=timeout_seconds)
+            payload = fetch(next_url)
         except Exception:
             if observations:
                 break
             raise
+        if not isinstance(payload, dict):
+            break
         rows = payload.get("rows")
         if not isinstance(rows, list):
             break
@@ -719,14 +815,6 @@ def load_euro_top_tech_observations(
         cursor = payload.get("nextCursor") if payload.get("hasMore") else None
         next_url = _cursor_url(url, str(cursor)) if cursor else None
     return tuple(observations)
-
-
-def _fetch_json(url: str, *, timeout_seconds: float) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "JobHunter/0.3"})
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        raw = response.read()
-    parsed = json.loads(raw.decode("utf-8"))
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _cursor_url(base_url: str, cursor: str) -> str:

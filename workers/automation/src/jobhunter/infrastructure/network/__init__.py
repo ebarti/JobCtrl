@@ -12,6 +12,7 @@ concurrency, per-run request budgets, and honest-UA stamping.
 
 from jobhunter.infrastructure.network.http_client import (
     GatewayHttpClient,
+    build_opener,
     parse_retry_after,
 )
 from jobhunter.infrastructure.network.politeness import (
@@ -47,5 +48,6 @@ __all__ = [
     "get_shared_rate_limiter",
     "RobotsCache",
     "GatewayHttpClient",
+    "build_opener",
     "parse_retry_after",
 ]
