@@ -48,6 +48,50 @@ def test_routed_non_browser_surfaces_have_no_adhoc_urllib() -> None:
         assert offenders == [], f"{rel} still imports raw HTTP transport: {offenders}"
 
 
+def _linkedin_resolver_user_agent_args(source: str) -> list[ast.expr | None]:
+    """Return the ``user_agent`` argument node for every ``LinkedInApplyUrlResolver(...)``
+    construction in *source* (``None`` when the call omits the keyword)."""
+    tree = ast.parse(source)
+    args: list[ast.expr | None] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "LinkedInApplyUrlResolver"
+        ):
+            ua = next((kw.value for kw in node.keywords if kw.arg == "user_agent"), None)
+            args.append(ua)
+    return args
+
+
+def test_authenticated_linkedin_context_never_uses_bot_ua_at_any_site() -> None:
+    """The authenticated LinkedIn persistent context is constructed in two places
+    -- the module-level factory and the ``scrape_site_batch`` inline construction.
+    Both must present the owner's real logged-in browser identity
+    (``user_agent=None``), never the honest bot UA; otherwise the authenticated
+    session self-identifies as ``JobHunter/<ver>`` on the primary batch path,
+    contradicting the module comment and the D1/D3 owner-scoped posture. This is
+    the assertion that would have caught the divergence between the two sites.
+    """
+    source = (SRC_ROOT / "enrichment" / "detail.py").read_text(encoding="utf-8")
+    ua_args = _linkedin_resolver_user_agent_args(source)
+    assert len(ua_args) >= 2, (
+        "expected both LinkedInApplyUrlResolver construction sites (factory + batch)"
+    )
+    for ua in ua_args:
+        assert isinstance(ua, ast.Constant) and ua.value is None, (
+            "every LinkedInApplyUrlResolver(...) must pass user_agent=None; a "
+            "non-None user_agent presents the bot UA on the authenticated session"
+        )
+
+
+def test_linkedin_apply_resolver_factory_uses_owner_browser_identity() -> None:
+    from jobhunter.enrichment import detail
+
+    resolver = detail._default_linkedin_apply_resolver_factory()
+    assert resolver._user_agent is None
+
+
 # Browser surfaces whose Playwright contexts must carry the honest UA, never a
 # spoofed desktop browser. The authenticated LinkedIn persistent context is the
 # owner-scoped exception (real user session, user_agent=None) per D1/D3.

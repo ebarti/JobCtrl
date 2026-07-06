@@ -687,9 +687,12 @@ def scrape_site_batch(
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
+                # Owner-scoped authenticated context: present the real logged-in
+                # browser identity (user_agent=None), never the bot UA, matching
+                # _default_linkedin_apply_resolver_factory (D1/D3, see module top).
                 resolver = LinkedInApplyUrlResolver(
                     proxy=_PROXY_CONFIG,
-                    user_agent=UA,
+                    user_agent=None,
                     playwright=p,
                 )
                 try:
