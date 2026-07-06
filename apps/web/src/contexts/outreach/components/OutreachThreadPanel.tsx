@@ -62,11 +62,13 @@ function OutreachThreadBody({
   contactId: string;
   jobId?: string;
 }): JSX.Element {
-  const [revising, setRevising] = useState(false);
+  const [revisionTarget, setRevisionTarget] = useState<"approved" | "candidate" | null>(null);
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
   const canApprove = candidate ? candidate.gateResults.passed : false;
+  const revisingApproved = revisionTarget === "approved";
+  const revisingCandidate = revisionTarget === "candidate";
 
   return (
     <>
@@ -77,7 +79,26 @@ function OutreachThreadBody({
           <DraftBody bodyText={approved.bodyText} />
           <div className="outreach-draft-actions">
             <CopyDraftButton draft={approved} />
+            <button
+              type="button"
+              className="tab"
+              aria-expanded={revisingApproved}
+              onClick={() =>
+                setRevisionTarget((value) => (value === "approved" ? null : "approved"))
+              }
+            >
+              {revisingApproved ? "cancel revision" : "revise approved message"}
+            </button>
           </div>
+          {revisingApproved ? (
+            <ReviseDraftForm
+              threadId={thread.threadId}
+              contactId={contactId}
+              initialBodyText={approved.bodyText}
+              onRevised={() => setRevisionTarget(null)}
+              {...(jobId ? { jobId } : {})}
+            />
+          ) : null}
           <details className="outreach-draft-audit">
             <summary>Provenance and gate results</summary>
             <DraftClaimProvenanceList provenance={approved.provenance} />
@@ -115,18 +136,20 @@ function OutreachThreadBody({
             <button
               type="button"
               className="tab"
-              aria-expanded={revising}
-              onClick={() => setRevising((value) => !value)}
+              aria-expanded={revisingCandidate}
+              onClick={() =>
+                setRevisionTarget((value) => (value === "candidate" ? null : "candidate"))
+              }
             >
-              {revising ? "cancel revision" : "revise draft"}
+              {revisingCandidate ? "cancel revision" : "revise draft"}
             </button>
           </div>
-          {revising ? (
+          {revisingCandidate ? (
             <ReviseDraftForm
               threadId={thread.threadId}
               contactId={contactId}
               initialBodyText={candidate.bodyText}
-              onRevised={() => setRevising(false)}
+              onRevised={() => setRevisionTarget(null)}
               {...(jobId ? { jobId } : {})}
             />
           ) : null}
@@ -154,7 +177,7 @@ function OutreachThreadBody({
 }
 
 // Context-owned composer for the outreach draft review surface. Shows the current
-// approved draft prominently (with clipboard copy), the latest candidate under
+// approved draft prominently (with clipboard copy + revision), the latest candidate under
 // review with its gate results + claim provenance + approve/reject/revise actions,
 // and the full generation history so a re-draft never hides prior generations
 // (INV-5). There is no send action anywhere (INV-1).
