@@ -20,6 +20,14 @@
 > authoring-time baseline at `a488e4e9`, now historical. The close-out run
 > MUST regenerate the full inventory against current `main` using §1's
 > method — do not trust any status written here.
+>
+> **Post-train closeout status (2026-07-06 R1):** §9 regenerates the inventory
+> against `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`, after `gh`
+> verified the R10, R7a, and I0 prerequisite trains merged. Result: **NO-GO**.
+> W1 apply hardening is not complete: W1.1 is merged, but W1.2-W1.8 remain
+> not-done on current `main`. W2.1 is open, W2.2 and W2.4 are partial, W0.6 is
+> repo-side only until owner disposition closure, and D-6/R11 guarded submission
+> must wait.
 
 ---
 
@@ -409,9 +417,142 @@ Docs-only change; no runtime surface. Confirm:
 - `python3 scripts/release_check.py` — zero findings (this file names no PII, no
   secrets, and no forbidden literals; the three `apply/prompt.py` tripwires
   remain the expected W1-gated warnings and are unaffected by this doc).
-- Every path in this plan is backticked and resolves in-repo at
-  `a488e4e9`; every PR reference is a real repository PR number; no external
-  product or company is named.
+- Every path in the historical sections resolves in-repo at `a488e4e9`; every
+  §9 anchor resolves against `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`;
+  every PR reference is a real repository PR number; no forbidden source
+  document, secret, or user data is cited.
+
+## 9. Post-train R1 close-out inventory (2026-07-06)
+
+### 9.1 Snapshot and prerequisite gate
+
+- **Tree checked:** `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`.
+- **Prerequisite gate:** passed by `gh` at 2026-07-06T11:02:29Z. R10
+  politeness train (#272, #297-#316, including #313), R7a launch-asset train
+  (#262, #298-#305), and I0 pair (#254 + #317) were all merged.
+- **Read constraints honored:** no forbidden competitive/launch strategy
+  documents were read or cited; `docs/claims-ledger.md` was read-only.
+- **Decision:** **R1 release gate NO-GO**. The merged prerequisite trains do not
+  make W1 apply hardening complete.
+
+### 9.2 W1 apply hardening status (R11/D-6 hard precondition)
+
+**Status: NOT COMPLETE.** W1.1 is done. W1.2-W1.8 are not done on the merged
+tree, so R11 guarded submission / browser-extension Phase 3 must not start.
+
+| Item | Status | Evidence on `main` |
+| --- | --- | --- |
+| W1.1 approval bindings + partial-evidence gate | done | Approval decisions persist `materials_generation`, `profile_version`, `application_url`, and `partial_override_run_id` (`apps/api/src/application-feedback.ts:140`, `:148`, `:469`); stale profile/URL and invalid partial overrides reject at `apps/api/src/application-feedback.ts:965` and `:977`. Passing regressions: `workers/automation/tests/test_apply_regressions.py:539` and `:588`. |
+| W1.2 dry-run violation must fail closed | not-done | Current parser still maps `RESULT:APPLIED` during `dry_run` to `DryRunComplete` (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:369`-`:376`) and treats `RESULT:DRY_RUN` as success (`:381`-`:382`). Existing CDP guard coverage is useful (`workers/automation/tests/test_apply_chrome_dry_run_guard.py:55`) but does not satisfy W1.2's stricter fail-closed parser/invariant. |
+| W1.3 reduce Claude permissions / owned MCP tools / env allowlist | not-done | The adapter still starts Claude with `--permission-mode bypassPermissions` and no owned apply-tool allowlist (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:149`-`:156`), and still copies the whole environment (`:159`). |
+| W1.4 remove hardcoded legal attestations | not-done | The apply prompt still hardcodes `Age 18+: Yes` and `Felony: No` (`workers/automation/src/jobhunter/apply/prompt.py:78`-`:84`); user docs still tell the operator to confirm those prompt-supplied defaults (`docs/user/security.md:247`-`:249`). |
+| W1.5 keep profile password out of prompt | not-done | The prompt still interpolates `personal['email'] / personal.get('password', '')` (`workers/automation/src/jobhunter/apply/prompt.py:614`), and security docs still disclose that profile passwords enter the apply-agent prompt (`docs/user/security.md:209`-`:213`). |
+| W1.6 keep CapSolver key out of prompt | not-done | The prompt builder still reads `CAPSOLVER_API_KEY` and inserts `API key: {capsolver_key...}` into prompt text (`workers/automation/src/jobhunter/apply/prompt.py:217`-`:240`). The release-check self-test still expects that tripwire (`workers/automation/tests/test_release_check.py:78`). |
+| W1.7 quarantine email application sending | not-done | The apply prompt still instructs the agent to `send_email` and emit `RESULT:APPLIED` for email-only applications (`workers/automation/src/jobhunter/apply/prompt.py:607`-`:609`), while the shipped Gmail connector is documented as read-only (`README.md:58`-`:60`). No `EmailApplicationCandidateRecorded` event exists in the merged tree. |
+| W1.8 invert submit default / strict prompt gate | not-done | `jobhunter apply` still defaults to live mode with `--dry-run` as an opt-in flag (`workers/automation/src/jobhunter/cli.py:1263`-`:1279`), workflow specs still default `dryRun` to `False` (`workers/automation/src/jobhunter/workflow_specs.py:79`, `:123`, `:150`), and CI runs `scripts/release_check.py` without `--strict-prompt` (`.github/workflows/release-check.yml:25`-`:29`). |
+
+### 9.3 W0/W1/W2 inventory
+
+| Item | Status | Evidence on `main` |
+| --- | --- | --- |
+| W0.1 remove private planning corpus from tracking | done | `.planning/` is ignored at `.gitignore:26`, and `git ls-files` returns no tracked `.planning/` entries. Historical merge anchor: #242 / `9bc9edc`. |
+| W0.2 purge owner-derived fixtures and generated artifacts | done | Historical merge anchor: #243 / `a33f1169`; release-check coverage for forbidden/private/runtime/browser-profile classes is at `workers/automation/tests/test_release_check.py:30`-`:80`. |
+| W0.3 add/strengthen release scanner | done | Scanner covers text suffixes (`scripts/release_check.py:25`-`:36`), secret assignments (`:89`-`:96`), strict prompt mode (`:208`-`:215`), and W1 prompt tripwires (`:404`-`:419`). Passing self-tests: synthetic violations (`workers/automation/tests/test_release_check.py:30`-`:80`), clean tree (`:83`-`:110`), and prompt-tripwire strict mode (`:142`-`:158`). Historical merge anchor: #245 / `10125d0`. |
+| W0.4 wire scanner into CI | done | Release Privacy Gate runs on `push` to `main` and all pull requests (`.github/workflows/release-check.yml:3`-`:7`), then runs the scanner and self-test (`:25`-`:29`). Historical merge anchor: #246 / `066e380`. |
+| W0.5 disable publishing while unsafe | done | Publish workflow is manual only, with tag publishing deferred until W2.1 (`.github/workflows/publish.yml:1`-`:5`). Historical merge anchor: #244 / `802f839`. |
+| W0.6 close disposition backlog | partially-done | Public sanitized follow-ups exist in `docs/backlog.md:34`-`:52`. The spec still requires owner closure of all W0.6 dispositions (`docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1122`-`:1123`) and accepted-risk decisions (`:164`-`:165`), which are not verifiable from `main`. Historical merge anchor: #247 / `dca6a76`. |
+| W1.1 approval bindings + partial-evidence gate | done | See §9.2 W1.1. |
+| W1.2 dry-run violation fail-closed | not-done | See §9.2 W1.2. |
+| W1.3 reduce Claude permissions / owned MCP tools / env allowlist | not-done | See §9.2 W1.3. |
+| W1.4 remove hardcoded attestations | not-done | See §9.2 W1.4. |
+| W1.5 remove profile password from prompt | not-done | See §9.2 W1.5. |
+| W1.6 remove CapSolver key from prompt | not-done | See §9.2 W1.6. |
+| W1.7 quarantine email application sending | not-done | See §9.2 W1.7. |
+| W1.8 invert submit default / strict prompt gate | not-done | See §9.2 W1.8. |
+| W2.1 final distribution name + publish re-enable | not-done | PR #257 is open (`gh pr view 257`: state `OPEN`, no merge commit). The package name remains `jobhunter` (`workers/automation/pyproject.toml:1`-`:3`), and `publish.yml` remains `workflow_dispatch` only (`.github/workflows/publish.yml:1`-`:5`). |
+| W2.2 responsible-use docs + doctor warnings | partially-done | Responsible-use docs landed in `README.md:50`-`:85` and `docs/user/data-and-safety.md:84`-`:126`; spend docs are at `docs/user/data-and-safety.md:165`-`:174`. Doctor now surfaces crawl-politeness notices (`workers/automation/src/jobhunter/cli.py:2327`-`:2345`) and CapSolver config (`:2543`-`:2549`), with crawl regressions at `workers/automation/tests/test_crawl_politeness_config.py:83`-`:102`. Missing on `main`: W2.2 doctor rows for approval-gate-off and incomplete attestations, because W1.4 is not done and no CLI doctor row was found for those checks. |
+| W2.3 local API / CSRF hardening | done | Loopback host, mutation origin/referer, `Sec-Fetch-Site`, and extension-token checks are enforced at `apps/api/src/server.ts:303`-`:341`. Passing matrix starts at `apps/api/test/server.test.ts:807`. Historical merge anchor: #268 / `5e5ee0e`. |
+| W2.4 per-lane spend attribution + token ceilings | partially-done | P5 base exists: `llm_spend` day aggregate table (`workers/automation/src/jobhunter/database.py:184`-`:190`), daily-budget preflight (`workers/automation/src/jobhunter/llm.py:124`-`:156`), and budget regression `test_check_spend_budget_raises_non_retryable_budget_exceeded` (`workers/automation/tests/test_llm_spend_budget.py:73`-`:91`). Apply usage is recorded but unlaned (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:309`-`:317`; regression at `workers/automation/tests/test_claude_code_cli_adapter.py:141`-`:168`). W2.4 requires lane-attributed usage, per-lane token ceilings, owner-confirmed defaults, doctor visibility, and health-surface breakdown (`docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1041`-`:1066`); those are not present in the current ledger/API shape (`workers/automation/src/jobhunter/llm.py:50`-`:57`). |
+| W2.5 DCO / contribution governance | done | DCO workflow is present with owner exemption (`.github/workflows/dco.yml:1`-`:24`) and contributor docs require `Signed-off-by` for external PR commits (`CONTRIBUTING.md:37`-`:48`). Historical merge anchor: #269 / `1470bd3`. |
+| W2.6 doctor Tier-2 auth chain | done | Setup probes cover Claude synthesis auth, Codex persisted auth, and Antigravity key/Vertex auth (`workers/automation/src/jobhunter/infrastructure/setup_probes.py:122`-`:180`, `:221`-`:236`, `:331`-`:351`). Passing regressions are `workers/automation/tests/test_setup_probes.py:26`-`:41`, `:61`-`:75`, `:83`-`:147`, and `workers/automation/tests/test_setup_synthesis_auth.py:42`-`:84`. User docs disclose the chain at `docs/user/getting-started.md:116`-`:128` and `docs/user/configuration.md:76`-`:108`. I0 anchors: #254 / `4223acf` and #317 / `7d6ad3d`. |
+
+### 9.4 D-6 decision brief for guarded submission
+
+#### §6.1 precondition checklist
+
+| §6.1 precondition | Status | Anchors |
+| --- | --- | --- |
+| Phase 1 and Phase 2 are merged to `main` with QA `Gate: PASS` | partially-satisfied | R3 extension implementation is merged (#277, #281, #282). Current tests prove loopback-only manifest/source (`apps/extension/src/privacy.test.ts:13`-`:35`), built bundle runtime loopback calls (`apps/extension/src/privacy.e2e.test.ts:19`-`:46`, `:100`-`:115`), supported ATS detection (`apps/extension/src/ats.test.ts:5`-`:17`), and deterministic autofill behavior (`apps/extension/src/content-script.test.ts:36`-`:67`, `:170`-`:225`). A QA `Gate: PASS` artifact is not recorded in the tree. |
+| Apply-safety hardening from the OSS spec is complete and merged | not-satisfied | W1.2-W1.8 are not done; see §9.2. |
+| Extension security review (§8) completed/published and privacy-invariant test (§7) enforced in CI | partially-satisfied | Privacy-invariant tests exist (`apps/extension/src/privacy.test.ts:13`-`:35`; `apps/extension/src/privacy.e2e.test.ts:19`-`:46`), but no completed/published extension security review was found in the merged docs. |
+| Release privacy gate green for extension package/archive | partially-satisfied | Release gate exists and runs scanner/self-test (`.github/workflows/release-check.yml:25`-`:29`); built extension privacy tests cover the dist package (`apps/extension/src/privacy.e2e.test.ts:19`-`:46`). This close-out did not independently run the extension package/archive privacy test suite; the PR verification runs the repository release scanner. |
+| Explicit owner go/no-go D-6 | not-satisfied | Browser plan D-6 remains an open owner decision (`docs/plans/2026-07-05-browser-extension-plan.md:386`). |
+
+#### §6.2 safety-substrate status
+
+| Substrate | Status | Passing regression named |
+| --- | --- | --- |
+| Approval gate | present, but not enough to start R11 while W1 remains open | `test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile` (`workers/automation/tests/test_apply_regressions.py:539`) and `test_apply_approval_gate_rejects_invalid_partial_override` (`:588`). |
+| CDP dry-run guard | present as a browser-layer guard, but W1.2 parser/invariant hardening is still not done | `test_dry_run_cdp_guard_blocks_hostile_employer_posts` (`workers/automation/tests/test_apply_chrome_dry_run_guard.py:55`). |
+| At-most-once + `ApplySubmitIntended` | present | `test_double_start_returns_existing_handle_no_duplicate` (`workers/automation/tests/test_workflow_id_overlap.py:39`), `test_live_apply_workflow_does_not_retry_transient_failures` (`workers/automation/tests/test_workflow_apply.py:86`), and `test_live_saga_records_submit_intent_before_agent_result` (`workers/automation/tests/test_apply_saga.py:192`). Event type and process-manager anchors: `packages/domain-types/src/events/apply.ts:66`-`:82` and `workers/automation/src/jobhunter/domain/apply/process_manager.py:217`-`:225`. |
+| Spend ceiling | base present; W2.4 per-lane delta incomplete | `test_check_spend_budget_raises_non_retryable_budget_exceeded` (`workers/automation/tests/test_llm_spend_budget.py:73`-`:91`). |
+
+#### §6.3 boundary list (verbatim)
+
+- Must not add a submission code path to the extension or content scripts.
+- Must not weaken, flag-off, or bypass the approval gate, dry-run guard, at-most-once lifecycle, or spend cap.
+- Must not submit as a side effect of capture or autofill.
+- The extension's role is limited to handing a reviewed application to the supervised path and reflecting its status; the human `approve_submit` decision remains mandatory (I-2, I-3, BR-001, BR-023, BR-054).
+
+#### Open D-6 risks
+
+- **Apply prompt-injection posture:** still high-risk because the apply agent is a
+  local Claude subprocess reading untrusted pages with `--permission-mode
+  bypassPermissions` (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:149`-`:156`);
+  the claims ledger itself says prompt injection is real and only limited, not
+  removed (`docs/claims-ledger.md:141`).
+- **D-4 generic matcher confirmation:** the starting ATS family set and rollout
+  order remain owner-confirmed scope (`docs/plans/2026-07-05-browser-extension-plan.md:384`).
+- **Partial-submission behavior:** W1.2 remains open; current dry-run parsing can
+  still convert `RESULT:APPLIED` during dry-run into `DryRunComplete`
+  (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:369`-`:376`).
+
+#### Launch-copy consequence
+
+- **Go later:** only after §6.1 is actually satisfied should ledger/comparison
+  rows describe guarded submission as shipped/current, and every claim needs a
+  pointer-backed row.
+- **Wait now:** current decision is wait/no-go. Any guarded-submission or Phase 3
+  row in the ledger/comparison/public launch copy must say **Roadmap** if it is
+  post-launch. `docs/claims-ledger.md` was not edited in this close-out.
+
+### 9.5 Remaining owner-action checklist
+
+| Owner action | Source |
+| --- | --- |
+| Pick/confirm final distribution name, complete the pre-publication repository/distribution rename path, and re-enable tag publishing. | OSS spec checkpoints `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:160`-`:167`; W2.1 evidence in §9.3. |
+| Confirm W2.4 default per-lane token ceilings and spend defaults. | OSS spec checkpoint `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:162`-`:163`; W2.4 DoD `:1052`-`:1068`. |
+| Close W0.6 dispositions: fix, backlog sanitized, or owner-accept every remaining concern. | OSS spec checkpoints `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:164`-`:165` and `:1122`-`:1123`. |
+| Record historical-blob acceptance and live capability posture before visibility flip. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1124`-`:1127`. |
+| Complete final manual QA and owner-only visibility flip / first release tag. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1128`-`:1132`. |
+| Confirm comparison page row categories, alternative columns, maintenance cadence interval, and final sidebar label/placement; replace all alternative `TODO(owner)` placeholders only after facts are verified. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:503`-`:516`; comparison placeholders `docs/comparison.md:26`-`:35`, `:44`-`:57`. |
+| Confirm the initial launch demo-asset set. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:517`-`:532`. |
+| Set the Current-vs-Beta threshold and resolve the named reclassification candidates. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:545`-`:554`; claims-ledger sign-off list `docs/claims-ledger.md:224`-`:237`. |
+| Name the claims-freeze sign-off owner and each Phase C publish-step owner. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:555`-`:560`; claims ledger `docs/claims-ledger.md:240`-`:241`. |
+| Re-stamp the claims ledger against the final `main` SHA at actual freeze time. | Claims ledger freeze status `docs/claims-ledger.md:24`-`:38`. |
+| Confirm the claims-ledger location/publication decision. | Claims ledger owner row `docs/claims-ledger.md:222`-`:223`. |
+| Review final honest crawl user-agent contact string before real crawls. | Crawl-politeness plan `docs/plans/2026-07-05-crawl-politeness-plan.md:676`-`:697`. |
+| Decide whether per-source politeness policy editor / web knobs remain deferred or enter scope. | Crawl-politeness plan `docs/plans/2026-07-05-crawl-politeness-plan.md:737`-`:751`. |
+| Browser extension D-1: exact token model, storage, pairing UX, and whether a valid token relaxes the mutation-origin gate. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:381`. |
+| Browser extension D-2: whether unauthenticated loopback API reads stay open. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:382`. |
+| Browser extension D-3: extension provenance fields and source-id scheme. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:383`. |
+| Browser extension D-4: starting generic matcher family set and rollout order. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:384`. |
+| Browser extension D-5: offline capture queue retention policy. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:385`. |
+| Browser extension D-6: go/no-go to begin guarded-submission Phase 3 once §6.1 is satisfied. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:386`. |
+| Browser extension D-7: distribution channel and signing key ownership. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:387`. |
+| Browser extension D-8: target browser/engine for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:388`. |
+| Browser extension D-9: whether to ship LLM-assisted free-text drafts or keep deterministic-only for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:389`. |
+| Claims-ledger `TODO(owner)` cells. | None found by `rg -n "TODO\\(owner\\)" docs/claims-ledger.md`; remaining claims-ledger owner actions are listed above instead. |
 
 ## Delivery Model: Stacked PRs On This Plan
 
