@@ -8,7 +8,9 @@ Most people never need this page. JobHunter ships with working defaults, and the
 Discovery targets and preferences you set in the web app cover day-to-day use.
 The two settings worth knowing first are an **LLM provider key** (required before
 scoring or materials can run) and the **daily LLM spend budget** (which caps
-cost) — both are covered below.
+cost). Employer-analysis also has per-vendor auth checks because it runs a
+Claude + Codex + Antigravity ensemble; `jobhunter setup` and `jobhunter doctor`
+report those separately.
 
 JobHunter configuration is intentionally local. Some settings live in the local
 SQLite database, set through the web app; secrets and runtime switches are read
@@ -52,8 +54,8 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 
 | Variable | What it does |
 | --- | --- |
-| `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials. |
-| `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. |
+| `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials and the Antigravity/Gemini analysis leg. |
+| `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. For the Codex analysis leg, enroll this into `CODEX_HOME/auth.json`; a bare env key is not enough. |
 | `LLM_URL` | Enables a local OpenAI-compatible HTTP endpoint. |
 | `LLM_API_KEY` | Optional bearer token for the `LLM_URL` endpoint. |
 | `GOOGLE_API_KEY` | Fallback for the Antigravity/Gemini analysis leg when `GEMINI_API_KEY` is unset. |
@@ -61,6 +63,49 @@ The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optiona
 
 The pipeline default model spec is currently `gemini:gemini-3.5-flash` unless a
 stage or UI control overrides it.
+
+## Employer-Analysis Ensemble
+
+Run this after first install or whenever vendor auth changes:
+
+```bash
+uv --project workers/automation run jobhunter setup
+uv --project workers/automation run jobhunter doctor
+```
+
+The ensemble legs use vendor SDK runtimes pinned in the Python environment. The
+setup command detects auth before prompting and writes only local `.env`
+configuration; it never commits or ships credentials.
+
+Every employer-analysis run reconciles its legs with a Claude Agent SDK
+synthesis pass, so Claude auth (`ANTHROPIC_API_KEY` or local Claude credentials)
+is required even when you disable the `claude` leg via `JOBHUNTER_ANALYSIS_LEGS`.
+`jobhunter setup` warns that analysis is not ready when synthesis auth is
+missing, and `jobhunter doctor` reports a dedicated `Claude synthesis auth` row
+that stays red until Claude auth is present.
+
+| Variable | What it does |
+| --- | --- |
+| `JOBHUNTER_ANALYSIS_LEGS` | Comma-separated enabled legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg so runs do not burn retries. Disabling the `claude` leg does **not** remove the Claude synthesis-auth requirement above. |
+| `ANTHROPIC_API_KEY` | Supported Claude Agent SDK auth path. |
+| `ANTHROPIC_AUTH_TOKEN` | Alternate Claude auth token path. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Local/dev Claude subscription convenience. The distributed product path remains API/provider auth. |
+| `CLAUDE_CONFIG_DIR` | Overrides the local Claude credential directory checked for `.credentials.json`. |
+| `CODEX_HOME` | Codex home containing `auth.json`. Defaults to `~/.codex`; the JobHunter adapter copies this auth into isolated `~/.jobhunter/codex_home`. |
+| `JOBHUNTER_CODEX_BIN` | Explicit Codex runtime override. The default is the pinned `openai-codex-cli-bin` bundled binary. |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Set to `1` to allow the Antigravity leg to use Vertex AI ADC instead of an API key. |
+| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_PROJECT_ID` / `GCLOUD_PROJECT` | Project used with Vertex AI ADC. |
+| `GOOGLE_CLOUD_LOCATION` / `GOOGLE_VERTEX_LOCATION` | Optional Vertex location for Antigravity. |
+
+Codex auth is the common gotcha: `OPENAI_API_KEY` and `CODEX_API_KEY` can feed
+other surfaces, but the Codex SDK app-server path used by JobHunter needs
+persisted `auth.json`. Enroll a key with:
+
+```bash
+printenv OPENAI_API_KEY | codex login --with-api-key
+```
+
+or run the Codex device login locally, then rerun `jobhunter setup`.
 
 ## LLM Spend Budget
 
@@ -77,6 +122,7 @@ budget, and the Preferences form edits the value.
 | --- | --- | --- |
 | `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER` | `auto` | Uses an LLM to adjudicate loose role-title matches when an LLM provider is configured. Set `0` to force deterministic matching only. |
 | `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL` | configured LLM model | Optional model spec for discovery role adjudication. |
+| `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` | `1` | How many discovery source families (`jobspy`, `ats_api`, `workday`, `smartextract`) crawl at once. `1` (default) keeps families sequential — the safe, isolated behavior. Values `> 1` run that many source crawls concurrently to cut total discovery wall-clock; enrichment still runs once per batch (never concurrently). Read at run start and applied for the whole run; change it in the worker environment and restart the worker. **Tune conservatively:** each concurrent family may launch its own headless browser, so keep this ≤ `JOBHUNTER_MAX_CONCURRENT_ACTIVITIES` and mind memory (~roughly 300–600 MB per Chromium). Uncontrolled browser concurrency has historically destabilized long runs — see [Concurrency & Fan-out](../architecture/pipeline/concurrency.md) for the worker-capacity analysis before raising it. |
 
 Discovery target roles, locations, seniority, work models, source controls, and
 automation preferences are normally edited in the Discovery page and stored in
@@ -91,6 +137,42 @@ Discovery scheduling is also a SQLite-backed setting: `scheduling_enabled`
 defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker
 startup reconciles the local Temporal schedule — creating it (with `SKIP`
 overlap semantics) when enabled and deleting it when disabled.
+
+## Crawl Politeness
+
+Every discovery/enrichment fetch routes through one politeness gateway
+(`robots.txt` + per-host rate limit + per-run budget + honest user-agent). The
+defaults are conservative and fail-closed and need no configuration; the one
+knob you should review before real crawls is the **outbound user-agent**.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JOBHUNTER_CRAWL_UA_PRODUCT` | `JobHunter` | Product token in the outbound `User-Agent`. |
+| `JOBHUNTER_CRAWL_UA_CONTACT` | project repo URL | Contact appended as `(+<contact>)`. Set it **empty** to drop the suffix. |
+
+The effective identity is `<product>/<version> (+<contact>)` — for example
+`JobHunter/0.3 (+https://github.com/ebarti/JobHunter)`. It **never impersonates
+a browser**. The built-in default points at the public project repository, not
+any personal identity; **owners should review it (and set a contact they own)
+before crawling real sites** — `jobhunter doctor` prints the effective value.
+
+The remaining defaults are not env-tunable and live where the rest of discovery
+policy lives, so per-source overrides ride the existing registry rather than a
+parallel config surface:
+
+- **Per-host rate/concurrency + per-run request budget** are fields on each
+  source's `SourcePolicy` (`domain/discovery/source_registry.py`), with
+  conservative fail-closed values (robots honored for page rendering, a non-zero
+  min-interval, a concurrency of one, a finite run budget). Per-source overrides
+  ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
+  planned addition, not yet in the UI.
+- **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
+  fetched by `python-jobspy`, which owns its own transport — JobHunter cannot
+  robots-gate or count its per-board requests, so it applies budget + pacing at
+  the invocation boundary only, and `jobhunter doctor` warns when they are on.
+- A malformed `proxy` value (the SQLite discovery setting, `host:port[:user:pass]`)
+  now **fails loud** rather than silently degrading to a direct connection, so a
+  crawl never quietly runs without the proxy you intended.
 
 ## Materials And Resume Rendering
 
@@ -114,6 +196,7 @@ rendering, and layout boxes stay tied to the same material generation.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `CHROME_PATH` | auto-detected | Chrome/Chromium executable path. |
+| `JOBHUNTER_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBHUNTER_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
 | `CAPSOLVER_API_KEY` | unset | Optional CAPTCHA solving support for explicitly authorized apply runs. |
 | `JOBHUNTER_LINKEDIN_APPLY_RESOLVER` | enabled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution. |

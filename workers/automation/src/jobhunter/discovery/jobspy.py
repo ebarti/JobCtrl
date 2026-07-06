@@ -20,7 +20,9 @@ from jobhunter import config
 from jobhunter.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
 from jobhunter.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobhunter.domain.discovery.identity import normalize_observed_url
+from jobhunter.domain.discovery.source_registry import BROAD_BOARD_LEAD_POLICY
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
+from jobhunter.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
 from jobhunter.domain.job_content_identity import (
     content_match_basis,
     is_genuine_employer_identity,
@@ -47,10 +49,26 @@ from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobReposi
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.network import (
+    PolitenessGateway,
+    PolitenessSourceContext,
+    RunBudgetCounter,
+    get_shared_rate_limiter,
+    record_politeness_outcome,
+)
 from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
 _SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Broad boards (indeed/linkedin/zip/glassdoor) are fetched by the python-jobspy
+# library, which owns its own tls-client/requests transport. Per owner decision
+# D3 we therefore CANNOT robots-gate or honest-UA-stamp jobspy's internal
+# per-board requests. Instead we enforce politeness at OUR invocation boundary:
+# a per-run request budget + inter-search pacing via the shared host limiter,
+# recording a budget-exhausted outcome when the budget stops a crawl. The
+# residual (jobspy's internal requests are unpoliced) is a documented risk.
+_JOBSPY_HOST_KEY = "jobspy"
 
 
 class DiscoveryCancelled(RuntimeError):
@@ -1021,8 +1039,15 @@ def search_jobs(
     if "linkedin" in sites:
         kwargs["linkedin_fetch_description"] = True
 
+    # Pace this single manual search via the shared limiter (R10, D3). jobspy's
+    # internal per-board transport remains unpoliced (documented residual).
     try:
-        df = _scrape_with_retry(kwargs)
+        with get_shared_rate_limiter().slot(
+            _JOBSPY_HOST_KEY,
+            min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
+            max_concurrency=BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host,
+        ):
+            df = _scrape_with_retry(kwargs)
     except Exception as e:
         log.error("JobSpy search failed: %s", e)
         return {"error": str(e), "total": 0, "new": 0, "existing": 0}
@@ -1106,6 +1131,27 @@ def _full_crawl(
     # Ensure DB schema is ready
     init_db()
 
+    # Politeness invocation boundary (R10, D3): pace searches + bound the run's
+    # search fan-out. jobspy owns its internal per-board tls-client transport, so
+    # we cannot count (or robots-gate) its individual outbound requests. The
+    # budget here therefore counts SEARCH INVOCATIONS, not outbound requests: one
+    # unit == one ``_run_one_search`` call (each of which fans out to up to two
+    # ``scrape_jobs`` calls with internal board x page requests we can't police).
+    # We pace on the shared process-wide limiter's "jobspy" bucket so every jobspy
+    # invocation path (this crawl + the single manual ``search_jobs``) shares one
+    # pacing budget.
+    politeness_ua = PolitenessGateway().user_agent
+    limiter = get_shared_rate_limiter()
+    search_budget = RunBudgetCounter(BROAD_BOARD_LEAD_POLICY.max_requests_per_run)
+    politeness_context = PolitenessSourceContext(
+        stage="discover",
+        source_id=_JOBSPY_HOST_KEY,
+        source_role="broad_board",
+        adapter="jobspy",
+        run_id=run_id,
+    )
+    politeness_conn = get_connection()
+
     total_new = 0
     total_existing = 0
     total_errors = 0
@@ -1138,23 +1184,47 @@ def _full_crawl(
         remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
+        if not search_budget.try_consume(1):
+            record_politeness_outcome(
+                politeness_conn,
+                decision=PolitenessDecision(
+                    allowed=False,
+                    outcome=PolitenessOutcome.BUDGET_EXHAUSTED,
+                    user_agent=politeness_ua,
+                    reason="jobspy per-run search-invocation budget exhausted",
+                ),
+                context=politeness_context,
+            )
+            # record_politeness_outcome does not commit; commit here so the
+            # outcome is durable even though we break out before the crawl's
+            # normal end-of-run persistence.
+            politeness_conn.commit()
+            log.warning(
+                "JobSpy per-run search-invocation budget exhausted after %d searches", completed
+            )
+            break
         emit_progress(s, "JobSpy search started")
-        result = _run_one_search(
-            s,
-            sites,
-            results_per_site,
-            hours_old,
-            proxy_config,
-            defaults,
-            max_retries,
-            accept_locs,
-            reject_locs,
-            local_accept_locs,
-            glassdoor_map,
-            limit=remaining if limit > 0 else 0,
-            run_id=run_id,
-            search_cfg=search_cfg,
-        )
+        with limiter.slot(
+            _JOBSPY_HOST_KEY,
+            min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
+            max_concurrency=BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host,
+        ):
+            result = _run_one_search(
+                s,
+                sites,
+                results_per_site,
+                hours_old,
+                proxy_config,
+                defaults,
+                max_retries,
+                accept_locs,
+                reject_locs,
+                local_accept_locs,
+                glassdoor_map,
+                limit=remaining if limit > 0 else 0,
+                run_id=run_id,
+                search_cfg=search_cfg,
+            )
         completed += 1
         total_new += result["new"]
         total_existing += result["existing"]

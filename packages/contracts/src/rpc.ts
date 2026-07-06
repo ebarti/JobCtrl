@@ -68,6 +68,7 @@ export const RpcMethods = {
   RetailorCurrentPolicy: "retailor_current_policy",
   AnalyzeJob: "analyze_job",
   RefreshCompensation: "refresh_compensation",
+  GenerateInterviewPrep: "generate_interview_prep",
   Apply: "apply",
   ProfileImport: "profile_import",
   CancelRun: "cancel_run",
@@ -213,6 +214,17 @@ export const RefreshCompensationResultSchema = z
   })
   .strict();
 export type RefreshCompensationResult = z.infer<typeof RefreshCompensationResultSchema>;
+
+export const GenerateInterviewPrepParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    jobUrl: z.string().min(1),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
+  })
+  .strict();
+export type GenerateInterviewPrepParams = z.infer<typeof GenerateInterviewPrepParamsSchema>;
 
 export const RetailorJobParamsSchema = z
   .object({

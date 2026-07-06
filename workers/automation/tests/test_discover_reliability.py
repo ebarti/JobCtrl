@@ -29,6 +29,8 @@ from jobhunter.domain.errors import ConfigurationError, TransientNetworkError
 from jobhunter.enrichment import detail
 from jobhunter.pipeline import runner
 
+from .politeness_helpers import offline_gateway
+
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -265,7 +267,15 @@ def test_run_detail_scraper_isolates_failed_site(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             if site == "RemoteOK":
                 raise RuntimeError("BrowserType.launch: Executable doesn't exist at /x")
             return _healthy_stats()
@@ -292,7 +302,15 @@ def test_run_detail_scraper_raises_configuration_error_when_all_sites_fail(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise RuntimeError(f"BrowserType.launch: Executable doesn't exist at /{site}")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -317,7 +335,15 @@ def test_run_detail_scraper_transient_network_still_all_sites_fail_stays_retryab
     try:
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise RuntimeError("net::ERR_TIMED_OUT")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -338,7 +364,15 @@ def test_run_detail_scraper_propagates_cancellation(
         _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
         _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
 
-        def fake_batch(_conn, site, jobs, delay=2.0, max_jobs=None, cancel_event=None):
+        def fake_batch(
+            _conn,
+            site,
+            jobs,
+            max_jobs=None,
+            cancel_event=None,
+            on_job_enriched=None,
+            **_politeness,
+        ):
             raise TransientNetworkError("enrichment canceled")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -372,7 +406,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def fake_scrape(_page, url):
+        def fake_scrape(_page, url, session=None):
             if url == bad_url:
                 raise ValueError("boom parsing page")
             return {
@@ -390,7 +424,10 @@ def test_scrape_site_batch_isolates_single_job_failure(
         monkeypatch.setattr(detail, "scrape_detail_page", fake_scrape)
 
         stats = detail.scrape_site_batch(
-            conn, "RemoteOK", [(bad_url, "Bad"), (good_url, "Good")], delay=0
+            conn,
+            "RemoteOK",
+            [(bad_url, "Bad"), (good_url, "Good")],
+            gateway=offline_gateway(),
         )
 
         assert stats["error"] == 1
@@ -436,6 +473,126 @@ def test_scrape_site_batch_isolates_single_job_failure(
             (good_url,),
         ).fetchone()
         assert good["current_status"] == "enriched"
+    finally:
+        close_connection(db_path)
+
+
+def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9 Phase 2 promptness proof: the per-job handoff fires immediately after
+    each job is enriched (and committed), BEFORE the next sibling in the same
+    family is scraped — the structural proxy for lower per-job TTFS. A job that
+    fails enrichment produces no handoff."""
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    first = "https://remoteok.com/first"
+    bad = "https://remoteok.com/bad"
+    second = "https://remoteok.com/second"
+    events: list[tuple[str, str]] = []
+    try:
+        _seed_pending(conn, first, "RemoteOK")
+        _seed_pending(conn, bad, "RemoteOK")
+        _seed_pending(conn, second, "RemoteOK")
+
+        monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
+
+        def fake_scrape(_page, url, session=None):
+            events.append(("scrape", url))
+            if url == bad:
+                return {
+                    "status": "error",
+                    "tier_used": None,
+                    "full_description": "",
+                    "application_url": None,
+                    "error": "not found",
+                    "elapsed": 1.0,
+                    "active_state": "active",
+                    "http_status": 404,
+                }
+            return {
+                "status": "ok",
+                "tier_used": 1,
+                "full_description": _long_description(),
+                "application_url": "https://apply.example/x",
+                "error": None,
+                "elapsed": 1.0,
+                "active_state": "active",
+                "verification_method": "json_ld",
+                "http_status": 200,
+            }
+
+        monkeypatch.setattr(detail, "scrape_detail_page", fake_scrape)
+
+        def on_job_enriched(url: str) -> None:
+            events.append(("handoff", url))
+
+        detail.scrape_site_batch(
+            conn,
+            "RemoteOK",
+            [(first, "First"), (bad, "Bad"), (second, "Second")],
+            gateway=offline_gateway(),
+            on_job_enriched=on_job_enriched,
+        )
+
+        # Each successful job is handed off right after it is enriched, before
+        # the next job is scraped. The failed job produces no handoff.
+        assert events == [
+            ("scrape", first),
+            ("handoff", first),
+            ("scrape", bad),
+            ("scrape", second),
+            ("handoff", second),
+        ]
+    finally:
+        close_connection(db_path)
+
+
+def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-job handoff failure is isolated: enrichment still succeeds and is
+    not mis-recorded as an enrichment error."""
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://remoteok.com/job"
+    try:
+        _seed_pending(conn, url, "RemoteOK")
+        monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
+        monkeypatch.setattr(
+            detail,
+            "scrape_detail_page",
+            lambda _page, _url, session=None: {
+                "status": "ok",
+                "tier_used": 1,
+                "full_description": _long_description(),
+                "application_url": "https://apply.example/x",
+                "error": None,
+                "elapsed": 1.0,
+                "active_state": "active",
+                "verification_method": "json_ld",
+                "http_status": 200,
+            },
+        )
+
+        def exploding_handoff(_url: str) -> None:
+            raise RuntimeError("temporal unreachable")
+
+        stats = detail.scrape_site_batch(
+            conn,
+            "RemoteOK",
+            [(url, "Job")],
+            gateway=offline_gateway(),
+            on_job_enriched=exploding_handoff,
+        )
+
+        assert stats["ok"] == 1
+        assert stats["error"] == 0
+        state = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+            (url,),
+        ).fetchone()
+        assert state["state"] == "succeeded"
     finally:
         close_connection(db_path)
 
@@ -501,7 +658,7 @@ def test_until_idle_resets_linkedin_candidates_only_on_first_pass(
 
     reset_flags: list[bool] = []
 
-    def fake_enrich(*, workers, limit, cancel_event=None, reset_linkedin_candidates=True):
+    def fake_enrich(*, workers, limit, cancel_event=None, reset_linkedin_candidates=True, on_job_enriched=None):
         reset_flags.append(reset_linkedin_candidates)
         return {"status": "ok"}
 
@@ -542,7 +699,7 @@ def _capture_pipeline_events(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 def test_stage_progress_emits_started_and_completed(monkeypatch: pytest.MonkeyPatch) -> None:
     events = _capture_pipeline_events(monkeypatch)
 
-    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None):
+    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None, on_job_enriched=None):
         result.update({"status": "ok", "passes": 1, "pending": 0})
 
     monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", fake_until_idle)
@@ -561,7 +718,7 @@ def test_stage_progress_emits_started_and_completed(monkeypatch: pytest.MonkeyPa
 def test_stage_progress_emits_partial_site_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     events = _capture_pipeline_events(monkeypatch)
 
-    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None):
+    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None, on_job_enriched=None):
         result.update(
             {
                 "status": "partial",
@@ -591,7 +748,7 @@ def test_stage_progress_emits_partial_site_errors(monkeypatch: pytest.MonkeyPatc
 def test_stage_progress_emits_failed_with_real_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     events = _capture_pipeline_events(monkeypatch)
 
-    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None):
+    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None, on_job_enriched=None):
         result.update(
             {
                 "status": "failed",
@@ -617,7 +774,7 @@ def test_stage_progress_emits_failed_with_real_cause(monkeypatch: pytest.MonkeyP
 def test_stage_progress_silent_without_total(monkeypatch: pytest.MonkeyPatch) -> None:
     events = _capture_pipeline_events(monkeypatch)
 
-    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None):
+    def fake_until_idle(discovery_done, result, *, workers, limit, cancel_event=None, on_job_enriched=None):
         result.update({"status": "ok", "passes": 0, "pending": 0})
 
     monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", fake_until_idle)

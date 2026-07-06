@@ -28,12 +28,14 @@ from jobhunter.database import (
 )
 from jobhunter.domain.discovery.identity import AtsKind, CanonicalJobIdentity
 from jobhunter.domain.discovery.source_registry import (
+    ATS_API_POLICY,
     LocatorPolicy,
     ManualActionReason,
     ManualActionRequired,
     SourceDiscoveryEvidence,
     SourceKind,
     SourceLocationCandidate,
+    SourcePolicy,
     SourceRegistryEntry,
     validate_locator_candidate,
 )
@@ -71,6 +73,12 @@ from jobhunter.infrastructure.discovery.ats_adapters import (
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobhunter.infrastructure.network import (
+    GatewayHttpClient,
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
 )
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.infrastructure.enrichment import (
@@ -472,13 +480,33 @@ def run_scheduled_ats_sources(
     search_cfg: Mapping[str, Any],
     run_id: str,
     http: HttpFetcher | None = None,
+    gateway: PolitenessGateway | None = None,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Run Greenhouse, Lever, and Ashby through the Discovery use case."""
+    """Run Greenhouse, Lever, and Ashby through the Discovery use case.
+
+    Each adapter fetches through the R10 politeness gateway: when no explicit
+    ``http`` fetcher is injected (production), a per-source
+    :class:`GatewayHttpClient` is built from the source policy so robots
+    (exempt for documented APIs, D2), per-host rate/concurrency, the per-run
+    request budget, and the honest UA all apply. Tests may inject ``http`` to
+    bypass the network.
+    """
     ensure_worker_discovery_tables(conn)
+    resolved_gateway = gateway if gateway is not None else (PolitenessGateway() if http is None else None)
     runnable = tuple(source for source in sources if getattr(source, "should_run", True))
-    adapters = tuple(_adapter_for_source(source, http=http, search_cfg=search_cfg) for source in runnable)
+    adapters = tuple(
+        _adapter_for_source(
+            source,
+            http=http,
+            gateway=resolved_gateway,
+            conn=conn,
+            run_id=run_id,
+            search_cfg=search_cfg,
+        )
+        for source in runnable
+    )
     adapters = tuple(adapter for adapter in adapters if adapter is not None)
     if not adapters:
         return ScheduledAtsSummary().to_result_dict()
@@ -969,6 +997,12 @@ def import_manual_capture_item(
         "captured_at": now,
         "future_manual_action_required": capture.future_manual_action_required,
     }
+    capture_client = retry_context.get("capture_client")
+    if isinstance(capture_client, str) and capture_client.strip():
+        retry_context["manual_capture_provenance"]["capture_client"] = capture_client.strip()
+    extension_version = retry_context.get("extension_version")
+    if isinstance(extension_version, str) and extension_version.strip():
+        retry_context["manual_capture_provenance"]["extension_version"] = extension_version.strip()
 
     use_case = DiscoverJobsUseCase(
         repository=SqliteJobRepository(conn),
@@ -1769,6 +1803,9 @@ def _adapter_for_source(
     source: Any,
     *,
     http: HttpFetcher | None,
+    gateway: PolitenessGateway | None,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
     search_cfg: Mapping[str, Any],
 ) -> Any | None:
     source_id = str(getattr(source, "source_id", "")).strip()
@@ -1777,37 +1814,65 @@ def _adapter_for_source(
     adapter_config = dict(getattr(source, "adapter_config", {}) or {})
     ats_kind = _source_ats_kind(source_id, adapter_config)
     location_accept, location_reject = configured_location_filters(search_cfg)
+    if ats_kind not in (AtsKind.GREENHOUSE, AtsKind.LEVER, AtsKind.ASHBY):
+        return None
+    fetcher = http if http is not None else _gateway_ats_fetcher(
+        source,
+        source_id=source_id,
+        ats_kind=ats_kind,
+        gateway=gateway,
+        conn=conn,
+        run_id=run_id,
+    )
+    common = dict(
+        source_id=source_id,
+        company=_company_name(source, adapter_config),
+        http=fetcher,
+        location_accept=location_accept,
+        location_reject=location_reject,
+    )
     if ats_kind is AtsKind.GREENHOUSE:
-        board_token = _board_token(source_id, adapter_config)
-        return GreenhouseBoardAdapter(
-            source_id=source_id,
-            board_token=board_token,
-            company=_company_name(source, adapter_config),
-            http=http,
-            location_accept=location_accept,
-            location_reject=location_reject,
-        )
+        return GreenhouseBoardAdapter(board_token=_board_token(source_id, adapter_config), **common)
     if ats_kind is AtsKind.LEVER:
-        site = _site_token(source_id, adapter_config)
-        return LeverBoardAdapter(
-            source_id=source_id,
-            site=site,
-            company=_company_name(source, adapter_config),
-            http=http,
-            location_accept=location_accept,
-            location_reject=location_reject,
-        )
-    if ats_kind is AtsKind.ASHBY:
-        board_name = _board_name(source_id, adapter_config)
-        return AshbyBoardAdapter(
-            source_id=source_id,
-            board_name=board_name,
-            company=_company_name(source, adapter_config),
-            http=http,
-            location_accept=location_accept,
-            location_reject=location_reject,
-        )
-    return None
+        return LeverBoardAdapter(site=_site_token(source_id, adapter_config), **common)
+    return AshbyBoardAdapter(board_name=_board_name(source_id, adapter_config), **common)
+
+
+def _gateway_ats_fetcher(
+    source: Any,
+    *,
+    source_id: str,
+    ats_kind: AtsKind,
+    gateway: PolitenessGateway | None,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
+) -> HttpFetcher:
+    """Build a per-source gateway-routed JSON fetcher for an ATS adapter."""
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
+    policy: SourcePolicy = getattr(source, "policy", None) or ATS_API_POLICY
+    context = PolitenessSourceContext(
+        stage="discover",
+        source_id=source_id,
+        source_kind=_enum_value(getattr(source, "source_kind", None)),
+        source_priority=_enum_value(getattr(source, "priority", None)),
+        source_role="ats_api",
+        adapter=f"{ats_kind.value}_api",
+        run_id=run_id,
+    )
+    session = PolitenessSession(
+        active_gateway,
+        policy=policy,
+        budget=active_gateway.new_run_budget(policy.max_requests_per_run),
+        context=context,
+        recorder_conn=conn,
+    )
+    return GatewayHttpClient(session).fetch_json
+
+
+def _enum_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    return getattr(value, "value", str(value))
 
 
 def _ats_query_specs(search_cfg: Mapping[str, Any]) -> tuple[dict[str, object], ...]:

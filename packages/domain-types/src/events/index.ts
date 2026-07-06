@@ -145,6 +145,15 @@ export {
 } from "./materials.js";
 
 export {
+  type InterviewPrepGeneratedPayload,
+  type InterviewPrepGenerated,
+  createInterviewPrepGenerated,
+  type InterviewPrepFailedPayload,
+  type InterviewPrepFailed,
+  createInterviewPrepFailed,
+} from "./interview.js";
+
+export {
   PREPARATION_WORK_ITEM_KINDS,
   type PreparationWorkItemKind,
   type PreparationWorkItemQueuedPayload,
@@ -229,6 +238,12 @@ export {
 } from "./compensation.js";
 
 export {
+  type DigestReviewedPayload,
+  type DigestReviewed,
+  createDigestReviewed,
+} from "./operations.js";
+
+export {
   type WorkflowLifecycleStatus,
   type WorkflowStartedPayload,
   type WorkflowStarted,
@@ -294,6 +309,7 @@ import type {
   TailorRetailorRequested,
   JobResumeTemplateAssigned,
 } from "./materials.js";
+import type { InterviewPrepFailed, InterviewPrepGenerated } from "./interview.js";
 import type {
   PreparationWorkItemCompleted,
   PreparationWorkItemFailed,
@@ -320,6 +336,7 @@ import type {
 } from "./orchestration.js";
 import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
 import type { CompensationFactsUpdated } from "./compensation.js";
+import type { DigestReviewed } from "./operations.js";
 import type {
   WorkflowStarted,
   WorkflowCompleted,
@@ -363,6 +380,8 @@ export type DomainEventUnion =
   | MaterialsExhausted
   | EmployerAnalyzed
   | BulletProvenanceRecorded
+  | InterviewPrepGenerated
+  | InterviewPrepFailed
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | ResumeTemplateVersionSaved
@@ -392,6 +411,7 @@ export type DomainEventUnion =
   | ProfileImported
   | TailoringPolicyUpdated
   | CompensationFactsUpdated
+  | DigestReviewed
   | WorkflowStarted
   | WorkflowCompleted
   | WorkflowFailed
@@ -435,6 +455,8 @@ export const DOMAIN_EVENT_TYPES = [
   "MaterialsExhausted",
   "EmployerAnalyzed",
   "BulletProvenanceRecorded",
+  "InterviewPrepGenerated",
+  "InterviewPrepFailed",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "ResumeTemplateVersionSaved",
@@ -464,6 +486,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ProfileImported",
   "TailoringPolicyUpdated",
   "CompensationFactsUpdated",
+  "DigestReviewed",
   "WorkflowStarted",
   "WorkflowCompleted",
   "WorkflowFailed",

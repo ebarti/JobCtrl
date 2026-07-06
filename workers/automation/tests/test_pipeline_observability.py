@@ -706,7 +706,7 @@ def test_discovery_detail_enrichment_uses_same_worker_count(monkeypatch):
     monkeypatch.setattr(
         runner,
         "_run_enrich",
-        lambda workers=1, limit=0, cancel_event=None, reset_linkedin_candidates=True: calls.append(
+        lambda workers=1, limit=0, cancel_event=None, reset_linkedin_candidates=True, on_job_enriched=None: calls.append(
             {"workers": workers, "limit": limit, "reset_linkedin_candidates": reset_linkedin_candidates}
         )
         or {"status": "ok"},
@@ -739,7 +739,7 @@ def test_enrich_limit_propagates_to_runner(monkeypatch):
         sys.modules,
         "jobhunter.enrichment.detail",
         SimpleNamespace(
-            run_enrichment=lambda limit=0, workers=1, reset_linkedin_candidates=True: calls.append(
+            run_enrichment=lambda limit=0, workers=1, reset_linkedin_candidates=True, on_job_enriched=None: calls.append(
                 {"limit": limit, "workers": workers, "reset_linkedin_candidates": reset_linkedin_candidates}
             )
             or {"processed": 0, "ok": 0, "partial": 0, "error": 0, "site_errors": {}}

@@ -10,6 +10,7 @@ const REPO_URL = "https://github.com/ebarti/JobHunter";
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set([
   "docs/backlog.md",
+  "docs/claims-ledger.md",
   "docs/delivered.md",
   "docs/README.md",
 ]);
@@ -40,6 +41,9 @@ function routeForRewrittenPage(docPath: string): string | null {
 // and order may change here.
 const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
+  // Frozen slot for the alternatives-comparison page (launch-readiness plan
+  // §8.2). Label/placement are an owner decision (§11.3); the URL is frozen.
+  { text: "How It Compares", link: "/comparison" },
   {
     text: "User Guide",
     collapsed: false,
@@ -171,7 +175,7 @@ export default withMermaid(
     title: "JobHunter",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
-    srcExclude: ["plans/**", "incidents/**", "backlog.md", "delivered.md", "README.md"],
+    srcExclude: ["plans/**", "incidents/**", "backlog.md", "claims-ledger.md", "delivered.md", "README.md"],
     cleanUrls: true,
     lastUpdated: true,
     rewrites: PAGE_REWRITES,

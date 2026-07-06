@@ -1,11 +1,18 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
+> **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
+> inventory against current `main`. This is **not** a release-ready outcome:
+> W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release
+> checkpoints remain open. The document is preserved as the historical work-item
+> definition source; do not treat the move to `implemented/` as proof that the
+> OSS release gate passed.
+>
 > **Audience:** an external implementing agent (Codex). This document is
 > self-contained and prescriptive: follow it literally. Where it says STOP,
 > stop and report rather than improvising.
-> **Companions:** `docs/plans/2026-07-03-temporal-native-rearchitecture.md`
+> **Companions:** `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`
 > (PR #230, the architectural plan) and
-> `docs/plans/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
+> `docs/plans/implemented/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
 > the P1b–P5 implementation spec). Workstream W1 below **builds on top of
 > temporal phase P2** and must not re-implement anything P2 delivers.
 > **Goal:** make this repository safe to publish as open source while
@@ -1097,6 +1104,15 @@ first tag. Assemble this checklist, with links, as the final deliverable.
 - [ ] W0.1–W0.6 merged; `release-check` CI green on `main` on every commit
       since W0.4 landed.
 - [ ] Temporal P1b–P5 merged (PR #232 program complete).
+- [ ] **G1 (crawl politeness) met:** every discovery/enrichment fetch surface
+      (#1–#10 in the crawl-politeness plan) routes through the politeness gateway
+      — robots honored, per-host rate limit + per-run budget, one honest
+      owner-configurable user-agent, blocked/rate-limited/budget-exhausted
+      recorded as non-error outcomes; no spoofed browser UA remains on any
+      product fetch path. Delivered by the R10 train (PRs #297 → #315); ADR in
+      `docs/decisions.md` (2026-07-06); plan
+      `docs/plans/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
+      is merged to `main`.
 - [ ] W1.1–W1.8 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
 - [ ] W2.1 name chosen and live; `publish.yml` re-enabled and gated on the

@@ -27,6 +27,7 @@ import {
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { applyReviewKeys } from "../../operations/applyReviewKeys.js";
+import { artifactsKeys } from "../../operations/artifactsKeys.js";
 import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { outcomesKeys } from "../../operations/outcomesKeys.js";
@@ -220,6 +221,15 @@ export function useRenderResumeReviewDraftMutation(): UseMutationResult<
         ok: true,
         draft: data.draft,
       });
+      void queryClient.invalidateQueries({ queryKey: artifactsKeys.lists(tenantId) });
+      if (data.ok) {
+        void queryClient.invalidateQueries({
+          queryKey: artifactsKeys.detail(tenantId, data.artifacts.resumeText.artifactId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: artifactsKeys.detail(tenantId, data.artifacts.resumePdf.artifactId),
+        });
+      }
     },
     onSettled: (_data, _error, variables) => {
       invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);

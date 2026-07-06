@@ -42,8 +42,15 @@ from jobhunter.domain.events import (
     DuplicateJobLinkedPayload,
     create_duplicate_job_linked,
 )
+from jobhunter.domain.discovery.source_registry import SMART_EXTRACT_EXPERIMENTAL_POLICY
 from jobhunter.domain.ports.discovery import ContentOwnerMatch
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.network import (
+    PolitenessGateway,
+    PolitenessSession,
+    PolitenessSourceContext,
+    RunBudgetCounter,
+)
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
@@ -67,7 +74,20 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     except Exception:
         pass
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+def _smart_extract_session() -> PolitenessSession:
+    """Politeness session for the smart-extract crawl (robots + rate + budget).
+
+    Uses the process-wide host limiter so parallel site fetches share per-host
+    pacing. The experimental smart-extract surface fetches one page per site, so
+    the run budget is provisioned per call; recording is deferred (no conn here).
+    """
+    return PolitenessSession(
+        PolitenessGateway(),
+        policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        budget=RunBudgetCounter(SMART_EXTRACT_EXPERIMENTAL_POLICY.max_requests_per_run),
+        context=PolitenessSourceContext(stage="discover", adapter="smart_extract"),
+    )
 
 
 # -- Location filtering -------------------------------------------------------
@@ -359,9 +379,14 @@ def _normalize_job_url(url: object, source_url: str | None = None) -> str | None
 # -- Page intelligence collector ---------------------------------------------
 
 
-def collect_page_intelligence(url: str, headless: bool = True) -> dict:
+def collect_page_intelligence(
+    url: str, headless: bool = True, *, session: PolitenessSession | None = None
+) -> dict:
     """Load a page with Playwright and collect every signal a scraping engineer
-    would look at in DevTools. Returns a structured intelligence report."""
+    would look at in DevTools. Returns a structured intelligence report.
+
+    R10: the navigation is politeness-gated. A robots-deny / budget-exhaustion
+    performs zero navigation and returns the empty intelligence report."""
     intel: dict = {
         "url": url,
         "json_ld": [],
@@ -397,13 +422,26 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
             except Exception:
                 pass
 
+    session = session or _smart_extract_session()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        page = browser.new_page(user_agent=UA)
+        # Present the gateway-resolved honest UA (the same identity robots is
+        # evaluated with in session.guard below), never an import-time constant —
+        # so an owner UA override reaches the browser fetch.
+        page = browser.new_page(user_agent=session.user_agent)
         page.on("response", on_response)
 
-        page.goto(url, timeout=60000)
-        page.wait_for_load_state("networkidle")
+        with session.guard(url) as decision:
+            if not decision.allowed:
+                log.warning(
+                    "smart-extract: navigation skipped by politeness gate %s: %s",
+                    url,
+                    decision.reason,
+                )
+                browser.close()
+                return intel
+            page.goto(url, timeout=60000)
+            page.wait_for_load_state("networkidle")
 
         intel["page_title"] = page.title()
 

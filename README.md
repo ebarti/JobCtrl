@@ -1,16 +1,20 @@
 # JobHunter
 
-JobHunter is a local-first job search automation system. It keeps your profile,
-job database, generated materials, browser state, and logs on your machine while
-helping you move jobs through a focused pipeline:
+JobHunter helps you **find jobs worth applying to, judge them against your real
+profile, tailor audited materials, and apply — safely and entirely on your own
+machine.** Your profile, job database, generated resumes and cover letters,
+browser state, and logs stay on your computer; nothing leaves it except the
+specific steps you configure and run.
+
+Work moves through a focused pipeline:
 
 ```text
 discover -> apply
 ```
 
 Discovery finds and enriches jobs, scores them against your candidate profile,
-and prepares tailored materials when the job is eligible. Apply is separate
-because it can drive browser automation and submit applications.
+and prepares tailored materials when a job is eligible. Apply is a separate,
+supervised step because it can drive browser automation and submit applications.
 
 ## What It Does
 
@@ -18,9 +22,15 @@ because it can drive browser automation and submit applications.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
+- Capture a current browser job page through the optional local browser
+  extension, which feeds the existing manual-capture import path.
 - Score jobs as an applicant-side triage aid with auditable evidence.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Review and edit generated resumes in Apply Review before approval.
+- Inspect the evidence map to see which profile achievements and skills are
+  reused in generated materials, requirement-fit decisions, and recorded gaps.
+- Generate stored interview prep for a selected job from grounded JobHunter
+  data, with evidence links and gap drills kept inspectable before the interview.
 - Edit resume PDF style templates in Preferences, choose a default template, and
   override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
@@ -36,6 +46,52 @@ applications immediately after claiming a job. Dry-run still keeps the prompt
 instruction, and it also installs a browser-layer CDP guard that blocks
 non-loopback POST/PUT/PATCH requests and form submits (only localhost
 targets are allowed).
+
+## Responsible Use
+
+JobHunter is an applicant-side automation tool. Treat the paths that touch
+employers, accounts, provider APIs, and third-party sites as live operations:
+
+- Live apply automation can submit real applications to real employers. Keep
+  `applyApprovalRequired` on, rehearse with dry runs, and target one job or site
+  at a time until you trust the behavior.
+- Email-based application sending, if you enable or build it, is also a live
+  employer submission. The current Gmail connector is read-only; do not grant or
+  wire Gmail `gmail.send` unless you intend JobHunter to send application email
+  from your account.
+- Browser automation can type credentials you provide. Use a unique, dedicated
+  job-site password, not an email, banking, work, or reused personal password.
+- CAPTCHA solving is off unless `CAPSOLVER_API_KEY` is configured. Setting that
+  key sends CAPTCHA site keys and page URLs to a paid third-party solver, and
+  you are responsible for each site's terms and legal constraints.
+- Scraping and source access can violate site terms. Default discovery options
+  include LinkedIn and Indeed; disable any source you are not allowed to query
+  automatically.
+- The local API is intended for loopback use. Ordinary web and CLI callers use
+  the loopback boundary; browser-extension API routes additionally require a
+  local capability token shown in Settings and stored under `~/.jobhunter/`. Do
+  not bind the API to a network interface or tunnel it unless you accept
+  exposing private profile, job, and artifact data.
+- LLM work can spend money and send job, profile, and generated-material text to
+  configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
+  but it is an estimate rather than the provider bill.
+- Interview prep is stored pre-interview material only. You can record
+  post-interview reflection notes against an accepted prep generation, but do
+  not use JobHunter as a live interview assistant; it has no transcript,
+  microphone, streaming, websocket, or real-time answer surface.
+- Profiles, generated materials, browser state, logs, SQLite databases, and
+  local worker state are sensitive local artifacts. Public bug reports,
+  screenshots, and reproduction cases should use synthetic data only; `pnpm
+  qa:seed` creates a disposable synthetic workspace for that purpose.
+
+## Current vs Roadmap
+
+Everything in [What It Does](#what-it-does) above is **shipped and runs on your
+machine today**. Work that is planned but **not built yet** — desktop packaging,
+workspace export/import, and any hosted or multi-user deployment (accounts,
+billing, managed browsers, object storage, cloud sync) — lives in
+[ROADMAP.md](ROADMAP.md) and is never presented as current here. Nothing above
+the roadmap boundary depends on a hosted service.
 
 ## Current System
 
@@ -64,7 +120,8 @@ Requirements:
 - Playwright Chromium for HTML/CSS PDF rendering
 - Chrome or Chromium for browser automation
 - Poppler (`pdftoppm` on `PATH`) for PDF page previews
-- an LLM provider key or local LLM endpoint for scoring and materials
+- an LLM provider key or local LLM endpoint for scoring/materials, plus
+  vendor auth for any enabled employer-analysis ensemble legs
 
 Install and run:
 
@@ -72,6 +129,7 @@ Install and run:
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
 pnpm install:interactive
+uv --project workers/automation run jobhunter setup
 uv --project workers/automation run jobhunter init
 uv --project workers/automation run jobhunter doctor
 pnpm dev
@@ -80,6 +138,8 @@ pnpm dev
 `pnpm install:interactive` checks local system tools, offers guided installs
 when Homebrew is available, installs the Node and Python dependencies, and
 installs the Playwright Chromium browsers used by web tests and PDF rendering.
+It then hands off to `jobhunter setup` to detect vendor auth, persist enabled
+employer-analysis legs, and run `doctor`.
 For an already provisioned machine or CI-style setup, `pnpm dev:setup` remains
 the non-interactive Node + Python dependency sync.
 
@@ -99,6 +159,31 @@ only non-browser activities).
 `pnpm dev` starts the full local stack in the foreground: Temporal dev server,
 TypeScript API, Vite web app, and Python worker. Keep the terminal open while
 using the app and stop it with Ctrl-C.
+
+### Browser Extension Capture And Autofill
+
+The optional Manifest V3 browser extension is a local capture and assist
+surface. Build it with:
+
+```bash
+pnpm extension:build
+```
+
+Load `dist/extension/` as an unpacked extension in Chrome/Chromium developer
+mode, then open JobHunter Settings and copy the browser-extension pairing token
+into the extension popup.
+
+Clicking **Save job** captures the active http(s) page URL and visible text,
+posts it over loopback to `/v1/extension/captures`, and reuses the existing
+manual-capture importer so dedupe, snapshots, quarantine, and source provenance
+remain identical to other user-mediated captures. If the local stack is down,
+the extension stores a bounded local queue in extension storage and retries
+after the next successful save.
+
+On supported ATS application pages, **Review autofill** fetches a whitelisted
+profile snapshot over loopback and shows deterministic field suggestions with
+their profile source. You choose which values to fill. The extension does not
+generate free-text answers and has no submission path.
 
 Commands that start work (`jobhunter run`, per-stage commands, `jobhunter
 apply`, `jobhunter action profile_import`, and `jobhunter
@@ -128,10 +213,56 @@ Important local files include:
 - `codex_home/`: isolated Codex SDK home when apply/review agents need it.
 - `backups/`: timestamped database snapshots written by `jobhunter backup`.
 
+The daily digest is local-only. `jobhunter digest` and the Dashboard digest read
+from `jobhunter.db` without sending notifications or advancing review state;
+only the explicit Dashboard acknowledge action or `jobhunter digest
+--acknowledge` updates the `digest_state` watermark.
+
 Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
 profiles, logs, SQLite databases, screenshots containing real data, or local
 worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
 and [SECURITY.md](SECURITY.md).
+
+Discovery and enrichment fetch politely: every request runs through one gateway
+that honors `robots.txt` — failing closed on an inconclusive fetch (`5xx` or
+timeout) but failing open with a warning when the host has no robots endpoint at
+all (DNS failure or refused connection) — paces each host, bounds each run's
+request budget, and sends an honest `User-Agent`
+(`JobHunter/<version> (+<repo url>)`) that never impersonates a browser. Review
+or override that identity before crawling real sites via
+`JOBHUNTER_CRAWL_UA_PRODUCT` / `JOBHUNTER_CRAWL_UA_CONTACT`
+([Configuration → Crawl Politeness](docs/user/configuration.md#crawl-politeness));
+`jobhunter doctor` prints the effective value. JobHunter never bypasses login,
+paywall, CAPTCHA, rate-limit, or bot-control gates.
+
+### What Leaves Your Machine
+
+Nothing leaves your machine by default. Privacy-sensitive content leaves only
+when you deliberately run a step that needs an outside service, and each path is
+opt-in and configuration-gated:
+
+- **LLM providers** — scoring, employer analysis, resume tailoring, and
+  cover-letter generation (job text, your profile evidence, and generated
+  material text).
+- **The apply agent's model** — the apply prompt during apply or dry-run (your
+  profile summary, the tailored materials, and, only if you configured them, a
+  login password and the CapSolver key).
+- **Job boards, ATS APIs, and posting pages** — discovery and enrichment
+  fetches.
+- **Gmail (read-only)** — verification-code and application-outcome lookups, only
+  if you authenticate the connector; it never requests `gmail.send`.
+- **Google Maps** — address autocomplete, only if you set
+  `VITE_GOOGLE_MAPS_API_KEY`.
+- **CAPTCHA solving** — site keys and page URLs, only if you set
+  `CAPSOLVER_API_KEY` for a live apply.
+- **Langfuse / OpenTelemetry** — traces, only when you configure it
+  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
+
+The apply prompt is the largest single batch of personal data that can leave. For
+the full per-call breakdown of what is sent and when, see
+[Security → What Leaves Your Machine](docs/user/security.md#what-leaves-your-machine);
+for the storage-and-privacy inventory, see
+[docs/user/data-and-safety.md](docs/user/data-and-safety.md).
 
 ### Back Up And Restore
 
@@ -173,12 +304,16 @@ sqlite3 ~/.jobhunter/jobhunter.db \
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
-5. Generate or inspect materials for promising jobs.
-6. Use Apply Review to edit/approve the resume and review comments.
-7. Run apply dry-runs before approving any real browser submission; the default
+5. Open Evidence from the main nav, Profile, or a job detail drawer to inspect
+   which profile evidence backs generated materials and requirement-fit gaps.
+6. Generate or inspect materials and stored interview prep for promising jobs.
+7. Use Apply Review to edit/approve the resume, review comments, and compare a
+   rendered draft against the accepted artifact before approval.
+8. Run apply dry-runs before approving any real browser submission; the default
    live path requires an `approve_submit` decision in Apply Review before the
    backend claim can proceed.
-8. Track progress in Dashboard, Jobs, Runs, Artifacts, Apply Review, and Debug.
+9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence, Apply Review,
+   and Debug.
 
 See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
 expected state transitions.
@@ -192,6 +327,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | Command | What it does |
 | --- | --- |
 | `init` | Create local configuration under `~/.jobhunter/`. |
+| `setup` | Check/sync dependencies, detect vendor auth, and persist enabled employer-analysis legs. |
 | `doctor` | Report feature tiers: database, LLM, Temporal, browser, Gmail, telemetry. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores reset stale scores. |
@@ -201,6 +337,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |
 | `status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
+| `digest` | Print the local daily digest (`--json`, `--acknowledge`, `--min-fit-score`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
 | `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
@@ -222,7 +359,16 @@ Start with [.env.example](.env.example), then read the full reference in
 Common variables:
 
 - `JOBHUNTER_DIR`: override the local app directory.
-- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
+- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure general LLM access.
+- `ANTHROPIC_API_KEY` or local Claude credentials: authenticate the Claude
+  employer-analysis leg.
+- `CODEX_HOME/auth.json`: authenticates the Codex employer-analysis leg; a bare
+  `OPENAI_API_KEY` must be enrolled with `codex login --with-api-key` or
+  `jobhunter setup`.
+- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env: authenticate the
+  Antigravity/Gemini employer-analysis leg.
+- `JOBHUNTER_ANALYSIS_LEGS`: comma-separated enabled analysis legs when setup
+  intentionally skips an unauthenticated leg.
 - `LLM_MODEL`: choose the default model for the configured provider.
 - `VITE_GOOGLE_MAPS_API_KEY`: optional address search in the Profile form.
 - `CHROME_PATH`: override Chrome/Chromium detection.
@@ -267,6 +413,9 @@ pnpm web:check
 pnpm web:build
 pnpm web:test
 pnpm web:e2e
+pnpm extension:check
+pnpm extension:test
+pnpm extension:e2e
 uv --project workers/automation run --extra dev pytest -q
 ```
 
