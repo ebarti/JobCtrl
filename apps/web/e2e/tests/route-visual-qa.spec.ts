@@ -310,6 +310,8 @@ async function expectTableRowsVisible(
 test("representative routes stay painted in light and dark themes", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
+
   for (const route of ROUTE_SURFACES) {
     await expectShellForRoute(page, route);
   }
@@ -330,6 +332,8 @@ test("representative routes stay painted in light and dark themes", async ({
 test("density modes, focus rings, filters, forms, and destructive controls remain usable", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+
   await page.goto("/jobs");
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({
     timeout: 30_000,

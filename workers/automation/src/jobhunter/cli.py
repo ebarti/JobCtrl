@@ -1354,7 +1354,16 @@ def apply(
         console.print(
             f"  claude {model_args}-p "
             f"--mcp-config {mcp_path} "
-            f"--permission-mode bypassPermissions < {prompt_file}"
+            f"--allowedTools mcp__playwright__browser_navigate,"
+            f"mcp__playwright__browser_snapshot,"
+            f"mcp__playwright__browser_take_screenshot,"
+            f"mcp__playwright__browser_click,"
+            f"mcp__playwright__browser_fill_form,"
+            f"mcp__playwright__browser_file_upload,"
+            f"mcp__playwright__browser_tabs,"
+            f"mcp__playwright__browser_wait_for,"
+            f"mcp__gmail__search_emails,"
+            f"mcp__gmail__read_email < {prompt_file}"
         )
         return
 
@@ -2540,13 +2549,17 @@ def doctor() -> None:
             f"{gmail_note}; email verification will stop as login_issue",
         ))
 
-    # CapSolver (optional)
+    # CapSolver (optional; apply currently fails closed until an owned solver ships)
     capsolver = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver:
-        results.append(("CapSolver API key", ok_mark, "CAPTCHA solving enabled"))
+        results.append((
+            "CapSolver API key",
+            "[dim]configured[/dim]",
+            "stored, but apply agent fails closed until owned CAPTCHA solving ships",
+        ))
     else:
         results.append(("CapSolver API key", "[dim]optional[/dim]",
-                        "Set CAPSOLVER_API_KEY in .env for CAPTCHA solving"))
+                        "not required; apply agent fails closed on CAPTCHA"))
 
     # Temporal dev server (workflow engine)
     from jobhunter.infrastructure.temporal import get_temporal_client

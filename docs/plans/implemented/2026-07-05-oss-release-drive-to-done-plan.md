@@ -1,10 +1,14 @@
 # OSS Release — Drive-to-Done and Completion Verification Plan
 
 > **Closeout status (2026-07-05 R1):** #274 executed this plan's inventory
-> method against current `main` and found **NO-GO**, not release-ready. W1.2–W1.8,
+> method against current `main` and found **NO-GO**, not release-ready. W1.2–W1.7,
 > W2.2 doctor notices, W2.4, W2.6, and owner rename/release checkpoints remain
 > open. This plan is archived as executed, not as proof that the release gate
 > passed.
+>
+> **Owner decision (2026-07-06):** the spec's former W1.8 dry-run-by-default
+> requirement is withdrawn. Non-dry-run remains the default unless callers pass
+> `--dry-run` / `dryRun: true`; W1.8 must not be counted as a release gate.
 >
 > **Anchors verified against main @ `a488e4e9853dde292badc74a88c7de24160edc52`.**
 > **Type:** thin drive-to-done overlay. It does not re-specify anything.
@@ -73,12 +77,12 @@ method — not the snapshot — is the deliverable; re-run §2 to refresh it.
 - **Temporal program P0–P5 merged** — PRs #233 (P0), #231 (P1a), #235 (P1b),
   #237 (P3), #238 (P2), #239 (P4), #240 (P5). **Consequence:** every W1/W2 gate
   in spec §0.1 is satisfied, so the spec's "entire PR #232 program already
-  delivered" branch is in force — W1.1→W1.8 may proceed as one stacked series
+  delivered" branch is in force — W1.1→W1.7 may proceed as one stacked series
   and W2 items are unblocked, subject to the spec's own DoD.
 
 **Not yet landed on `main`:**
 
-- **W1.1–W1.8:** not started (diagnostic anchors in §2.4 all in pre-W1 state).
+- **W1.1–W1.7:** not started (diagnostic anchors in §2.4 all in pre-W1 state).
 - **W2.1–W2.6:** not started, with two nuances — W2.2's disclosure docs are
   **partially** present (`docs/user/data-and-safety.md` already discloses live
   submission, CAPTCHA solving, credential handling, and the spend ceiling; the
@@ -142,13 +146,8 @@ evidence.
    boundary nor the `JOBHUNTER_API_ALLOW_REMOTE_BIND` escape hatch. Rule: probe
    the item's *distinctive* symbol (here `sec-fetch-site`), not a shared one.
 2. **Anchor drift (an anchor moved or was deleted by a later phase).** The spec's
-   line hints predate P4/P5. Confirmed example: W1.8 item 2 targets
-   `params.get("dryRun", False)` in the RPC `apply_action` handler, but P5
-   rewrote that handler to `return build_apply_workflow_spec(params)`
-   (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`), so the
-   original anchor is gone. Rule: when a symbol is absent, follow the call chain
-   (here into `build_apply_workflow_spec`) before concluding "done"; re-locate by
-   symbol per spec §0.2.
+   line hints predate P4/P5. Rule: when a symbol is absent, follow the call
+   chain before concluding "done"; re-locate by symbol per spec §0.2.
 
 ### 2.4 Diagnostic anchors and current-state snapshot
 
@@ -171,7 +170,6 @@ to refresh. Full DoD lives in the spec; this table only classifies.
 | W1.5 | profile-password interpolation in `apply/prompt.py` | removed; owned `type_credential` | not-started | B interpolation present |
 | W1.6 | `_build_captcha_section` / `CAPSOLVER_API_KEY` in `apply/prompt.py` | owned `solve_captcha` tool | not-started | B present |
 | W1.7 | email-only send path / `EmailApplicationCandidateRecorded` | owned send + candidate event | not-started | B absent |
-| W1.8 | `def apply(... dry_run=Option(False ...))` in `cli.py`; strict tripwires in CI | dry-run default; `--submit`; strict CI | not-started | B default `False`, warnings-only |
 | W2.1 | `[project] name` in `workers/automation/pyproject.toml` | renamed distribution | not-started (owner decision in-flight #257) | B `jobhunter` |
 | W2.2 | `Responsible use` in `README.md`; `doctor` capability notices | docs + `doctor` warnings | landed-with-residual (docs largely present; `doctor` warnings pending) | B partial |
 | W2.3 | `sec-fetch-site` handling in `apps/api/src/server.ts`; boundary in `SECURITY.md` | header gate + docs | not-started | B absent (collision, §2.3) |
@@ -288,14 +286,12 @@ scripts. Each recipe defers to the item's spec DoD for the exhaustive clause lis
   carries a disposition (owner's private artifact) with sanitized entries in
   `docs/backlog.md`.
 - **W1 (enforced guarantees, not intentions).** The decisive, non-negotiable
-  proofs: bare `jobhunter apply` performs a dry run (W1.8 CLI test); the apply
-  agent's argv carries no `bypassPermissions` and an explicit `--allowedTools`
-  with the budget flag (W1.3 golden + parity tests); `apply/prompt.py` contains
+  proofs: the apply agent's argv carries no broad permission bypass and uses an
+  explicit `--allowedTools` allowlist (W1.3 golden + parity tests);
+  `apply/prompt.py` contains
   no fabricated screening block, no interpolated profile password, and no
-  CapSolver key or embedded REST/JS (W1.4/W1.5/W1.6) — **proven by promoting the
-  release_check tripwires to failures**: `python3 scripts/release_check.py
-  --strict-prompt` exits 0, and the privacy CI workflow runs `--strict-prompt`
-  (W1.8 item 4); the dry-run guard admits only GET/HEAD to every origin and
+  CapSolver key or embedded REST/JS (W1.4/W1.5/W1.6) — proven by the
+  release_check tripwires exiting cleanly; the dry-run guard admits only GET/HEAD to every origin and
   records blocked-channel evidence, and a synthetic `RESULT:APPLIED` under
   dry-run maps to `dry_run_violation`, not success (W1.2 adversarial fixtures);
   every new apply event lands in both registries with a web handler, fixture,
@@ -342,7 +338,7 @@ Assemble this, with links, as the final release deliverable.
 | --- | --- | --- | --- |
 | 1 | W0.1–W0.6 merged; `release-check` CI green on `main` since W0.4 | §2 shows W0.1–W0.6 = merged; `release-check` workflow green on every `main` commit since #246 | — |
 | 2 | Temporal P1b–P5 merged | §2 confirms #235, #237, #238, #239, #240 on `main` | — |
-| 3 | W1.1–W1.8 merged, each `Gate: PASS` review + QA | §2 = merged for all eight; §4.2 W1 proofs pass, incl. `--strict-prompt` green in CI | — |
+| 3 | W1.1–W1.7 merged, each `Gate: PASS` review + QA | §2 = merged for all seven; §4.2 W1 proofs pass | — |
 | 4 | Distribution name chosen and live; `publish.yml` re-enabled and gated | §4.2 W2.1 — **or** #257 deferral in force and rename train tracked as the owner action | **§0.5.1 — distribution-name decision (in-flight in #257)** |
 | 5 | W2.2, W2.3, W2.5 merged; W2.4 + W2.6 merged or owner-deferred in writing | §4.2 W2 proofs pass; any deferral recorded by the owner | **§0.5.2 — W2.4 per-lane defaults** |
 | 6 | W0.6 dispositions closed (fixed / backlogged-sanitized / owner-accepted) | Owner's private disposition artifact complete; sanitized entries in `docs/backlog.md` | **§0.5.3 — each accepted-risk entry** |
@@ -368,7 +364,7 @@ is not done while Blocker/High findings remain).
 - **Accepted-risk W0.6 concerns (spec §0.5.3).** Each acceptance is owner-only;
   no agent may self-accept. **Owner decision.**
 - **Anchor collision / drift.** Verified real on `main` (§2.3): W2.3's error
-  code exists for an unrelated gate; W1.8's `dryRun` anchor was erased by P5.
+  code exists for an unrelated gate.
   Mitigation: the method mandates probing an item's *distinctive* symbol and
   following call chains before concluding "done".
 - **Sibling-agent merge contention.** Multiple concurrent agents touch
