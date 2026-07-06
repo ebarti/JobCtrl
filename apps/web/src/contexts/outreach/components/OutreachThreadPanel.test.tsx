@@ -3,10 +3,11 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  makeOutreachDraft,
+  makeOutreachThreadDetail,
   makeBlockedCandidateThread,
   makeCandidateThread,
   makeOutreachSendLog,
-  makeOutreachThreadDetail,
   makeOutreachThreadResponse,
 } from "../../../test/fixtures/outreach.js";
 import { server } from "../../../test/msw/server.js";
@@ -41,6 +42,49 @@ describe("<OutreachThreadPanel>", () => {
     );
     fireEvent.click(view.getByRole("button", { name: "revise draft" }));
     expect(view.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("lets an approved-only thread revise the approved draft without hiding it", async () => {
+    const approvedOnlyThread = makeOutreachThreadDetail({
+      drafts: [
+        makeOutreachDraft({
+          draftId: "draft-approved",
+          generation: 1,
+          status: "approved",
+          approvedAt: "2026-07-06T00:05:00+00:00",
+          bodyText: "Hi Dana,\n\nApproved message to revise.\n\nBest,\nJordan",
+        }),
+      ],
+    });
+    let submittedBody = "";
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(approvedOnlyThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
+        const body = (await request.json()) as { editedBodyText?: string };
+        submittedBody = body.editedBodyText ?? "";
+        return HttpResponse.json(makeOutreachThreadResponse(approvedOnlyThread));
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Approved message" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "revise approved message" }));
+    expect(view.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+      "Hi Dana,\n\nApproved message to revise.\n\nBest,\nJordan",
+    );
+    fireEvent.change(view.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: "Hi Dana,\n\nEdited approved message.\n\nBest,\nJordan" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "revise draft" }));
+
+    await waitFor(() =>
+      expect(submittedBody).toBe("Hi Dana,\n\nEdited approved message.\n\nBest,\nJordan"),
+    );
+    expect(view.getByRole("heading", { name: "Approved message" })).toBeInTheDocument();
   });
 
   it("offers a generate action and an empty message when there is no thread yet", async () => {
