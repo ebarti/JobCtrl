@@ -437,6 +437,13 @@ Production workflows live alongside the activities:
   compensation refresh core so posted facts and market estimates no longer run
   inside the JSON-RPC request thread.
 
+One non-pipeline workflow is also registered: `DurabilityProbeWorkflow`
+(`jobhunter/infrastructure/temporal/durability_probe.py`) is a diagnostic
+self-test whose only in-flight state is a durable `workflow.sleep` timer — no
+network, no LLM, no browser, and never any apply. It is inert until explicitly
+started and exists so an operator can prove durable-execution recovery (TR-008 /
+CL-050) hermetically; `scripts/reliability-demo.sh` drives it.
+
 The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 (stage-core functions and `_run_stage_observed`) and `workflow.py` (the
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is

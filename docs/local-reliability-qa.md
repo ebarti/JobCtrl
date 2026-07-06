@@ -82,22 +82,32 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 kill-worker → clean-recovery story (launch-asset 9; `docs/requirements.md`
 `TR-008`). It complements the per-workflow "Kill worker mid-activity" column
 above — which is unit/integration-tested — with a full-process demonstration on
-a live, isolated Temporal stack: it starts an isolated dev server on a free
-port and a throwaway `JOBHUNTER_DIR`, launches a burst of hermetic no-op
-`discover` runs, kills the worker **by its captured PID**, then starts a fresh
-worker and shows the same runs resume from Temporal history to a terminal state.
+a live, isolated Temporal stack. It starts an isolated dev server on a free port
+and a throwaway `JOBHUNTER_DIR`, then drives a burst of `DurabilityProbeWorkflow`
+runs — a diagnostic workflow whose only in-flight state is a durable
+`workflow.sleep` timer, so it fetches no job boards, spends no LLM tokens, and
+opens no browser (the timer is what keeps a run in flight long enough to be
+killed mid-flight, which a no-op that finishes in milliseconds cannot). The
+script **asserts** each run is `Running`, kills the worker **by its captured PID
+tree**, asserts the runs are *still* `Running` with no worker alive, starts a
+fresh worker, and asserts the **same run ids** resume from Temporal history to
+`Completed` exactly once — cross-checked in both Temporal and the read-model
+projection. Any violation (including a run that finished before the kill, which
+prints advice to raise the hold) exits non-zero.
 
 ```bash
-scripts/reliability-demo.sh          # default: 3-run burst
-scripts/reliability-demo.sh 5        # larger burst
+scripts/reliability-demo.sh            # default: 3-run burst, 25s hold each
+scripts/reliability-demo.sh 5          # larger burst
+scripts/reliability-demo.sh 3 40       # longer hold — more margin on slow machines
 ```
 
-Safety: isolated stack only (never `~/.jobhunter`, never ports 7233/8233/8766),
-no LLM spend, no crawl (discovery boards are emptied so the workflow is a
-hermetic no-op), no application submission, and it kills only the PIDs it
-captured. Confirm your build has no additional default discovery source families
-active before trusting a fully offline run (see the script header). Requires the
-`temporal` CLI, `uv`, `python3`, and `sqlite3` on `PATH`.
+Safety: isolated stack only (never `~/.jobhunter`, never ports 7233/8233/8766/5173),
+genuinely hermetic (no crawl, no LLM spend, no browser; `LANGFUSE_DISABLE=1` stops
+telemetry egress), no application submission, and it kills only the process trees
+it captured. The probe workflow itself is covered by
+`workers/automation/tests/test_workflow_durability_probe.py` (including same-run
+resume across a worker crash on a real dev server). Requires the `temporal` CLI,
+`uv`, `python3`, and `sqlite3` on `PATH`.
 
 ## High-Risk Regression Areas
 
