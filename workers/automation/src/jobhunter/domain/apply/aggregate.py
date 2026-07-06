@@ -110,6 +110,7 @@ _KIND_TO_STATUS: dict[str, str] = {
     "login_issue": ApplyRunStatus.LOGIN_ISSUE,
     "expired": ApplyRunStatus.EXPIRED,
     "manual": ApplyRunStatus.MANUAL,
+    "email_only": ApplyRunStatus.MANUAL,
     "dry_run_complete": ApplyRunStatus.DRY_RUN_COMPLETE,
 }
 

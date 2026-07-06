@@ -97,6 +97,8 @@ interface ReviewQueueRow extends Record<string, unknown> {
   decision_profile_version: number | null;
   decision_application_url: string | null;
   partial_override_run_id: string | null;
+  email_recipient: string | null;
+  email_attachment_artifact_id: string | null;
   run_id: string | null;
   apply_run_status: string | null;
   result: string | null;
@@ -149,6 +151,8 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       profile_version INTEGER,
       application_url TEXT,
       partial_override_run_id TEXT,
+      email_recipient TEXT,
+      email_attachment_artifact_id TEXT,
       PRIMARY KEY (tenant_id, decision_id)
     );
     CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
@@ -227,6 +231,8 @@ function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
     profile_version: "INTEGER",
     application_url: "TEXT",
     partial_override_run_id: "TEXT",
+    email_recipient: "TEXT",
+    email_attachment_artifact_id: "TEXT",
   };
   for (const [column, definition] of Object.entries(additions)) {
     if (!columns.has(column)) {
@@ -298,11 +304,11 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     WITH latest_decision AS (
       SELECT decision_id, job_key, decision, decided_at,
              materials_generation, profile_version, application_url,
-             partial_override_run_id
+             partial_override_run_id, email_recipient, email_attachment_artifact_id
       FROM (
         SELECT decision_id, job_key, decision, decided_at,
                materials_generation, profile_version, application_url,
-               partial_override_run_id,
+               partial_override_run_id, email_recipient, email_attachment_artifact_id,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_key
                  ORDER BY decided_at DESC, decision_id DESC
@@ -354,6 +360,8 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            latest_decision.profile_version AS decision_profile_version,
            latest_decision.application_url AS decision_application_url,
            latest_decision.partial_override_run_id,
+           latest_decision.email_recipient,
+           latest_decision.email_attachment_artifact_id,
            latest_apply_run.run_id, latest_apply_run.status AS apply_run_status,
            latest_apply_run.result, latest_apply_run.dry_run,
            latest_apply_run.started_at, latest_apply_run.finished_at,
@@ -455,6 +463,16 @@ export function recordApplyReviewDecision(
   } else if (request.decision === "approve_submit" && !fullDryRunEvidence) {
     throw new InputError("awaiting_dry_run");
   }
+  const emailCandidate =
+    request.decision === "approve_submit" ? latestEmailApplicationCandidate(db, jobUrl) : null;
+  if (emailCandidate) {
+    if (
+      request.emailRecipient?.toLowerCase() !== emailCandidate.recipient.toLowerCase() ||
+      request.emailAttachmentArtifactId !== emailCandidate.attachmentArtifactId
+    ) {
+      throw new InputError("approval_stale_email_candidate");
+    }
+  }
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
@@ -467,13 +485,16 @@ export function recordApplyReviewDecision(
     profileVersion,
     applicationUrl,
     partialOverrideRunId,
+    emailRecipient: emailCandidate?.recipient ?? null,
+    emailAttachmentArtifactId: emailCandidate?.attachmentArtifactId ?? null,
   };
 
   db.prepare(
     `INSERT INTO application_review_decisions (
        tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
-       materials_generation, profile_version, application_url, partial_override_run_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       materials_generation, profile_version, application_url, partial_override_run_id,
+       email_recipient, email_attachment_artifact_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     decision.decisionId,
@@ -486,6 +507,8 @@ export function recordApplyReviewDecision(
     decision.profileVersion,
     decision.applicationUrl,
     decision.partialOverrideRunId,
+    decision.emailRecipient,
+    decision.emailAttachmentArtifactId,
   );
 
   recordEvent(db, {
@@ -503,6 +526,8 @@ export function recordApplyReviewDecision(
       profileVersion: decision.profileVersion,
       applicationUrl: decision.applicationUrl,
       partialOverrideRunId: decision.partialOverrideRunId,
+      emailRecipient: decision.emailRecipient,
+      emailAttachmentArtifactId: decision.emailAttachmentArtifactId,
     },
   });
 
@@ -812,6 +837,7 @@ function reviewQueueItemFromRow(
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
   const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
+  const emailApplication = latestEmailApplicationCandidate(db, row.job_id);
   const materialsGeneration = materialsPreview.materialsGeneration;
   const profileVersion = currentProfileVersion(db);
   const dryRunEvidence = latestDryRunEvidence(db, {
@@ -925,6 +951,7 @@ function reviewQueueItemFromRow(
     },
     materialsPreview,
     latestApplyRun,
+    emailApplication,
     review: {
       state: reviewState(row.decision),
       decision: reviewDecision(row.decision),
@@ -933,6 +960,8 @@ function reviewQueueItemFromRow(
       profileVersion: nullableNumber(row.decision_profile_version),
       applicationUrl: row.decision_application_url,
       partialOverrideRunId: row.partial_override_run_id,
+      emailRecipient: row.email_recipient,
+      emailAttachmentArtifactId: row.email_attachment_artifact_id,
     },
     approvalGate: {
       materialsGeneration,
@@ -1114,6 +1143,44 @@ function latestDryRunEvidence(
     };
   }
   return null;
+}
+
+function latestEmailApplicationCandidate(
+  db: SqliteDatabase,
+  jobKey: string,
+): ApplyReviewQueueItem["emailApplication"] {
+  if (!tableExists(db, "job_events")) {
+    return null;
+  }
+  const row = getRow<{ payload_json: string | null; occurred_at: string | null }>(
+    db,
+    `SELECT payload_json, occurred_at
+     FROM job_events
+     WHERE job_url = ? AND stage = 'apply' AND event_type = 'EmailApplicationCandidateRecorded'
+     ORDER BY occurred_at DESC, event_id DESC
+     LIMIT 1`,
+    [jobKey],
+  );
+  const payload = parseJsonRecord(row?.payload_json ?? null);
+  if (!payload) return null;
+  const recipient = stringValue(recordValue(payload, "recipient", "recipient"));
+  const subject = stringValue(recordValue(payload, "subject", "subject"));
+  const body = stringValue(recordValue(payload, "body", "body"));
+  const attachmentArtifactId = stringValue(recordValue(payload, "attachmentArtifactId", "attachment_artifact_id"));
+  const attachmentName = stringValue(recordValue(payload, "attachmentName", "attachment_name"));
+  const candidateRunId = stringValue(recordValue(payload, "runId", "run_id"));
+  if (!recipient || !subject || !body || !attachmentArtifactId || !attachmentName || !candidateRunId) {
+    return null;
+  }
+  return {
+    recipient,
+    subject,
+    body,
+    attachmentArtifactId,
+    attachmentName,
+    candidateRunId,
+    recordedAt: row?.occurred_at ?? null,
+  };
 }
 
 function dryRunCompletionMatches(

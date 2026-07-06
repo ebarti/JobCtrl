@@ -13,6 +13,7 @@ import pytest
 from jobhunter.domain.apply.value_objects import (
     ApplyPrompt,
     BrowserWorkerConfig,
+    EmailOnlyApplication,
 )
 from jobhunter.domain.ports.apply import BrowserSession
 from jobhunter.infrastructure.apply import claude_code_cli
@@ -379,6 +380,19 @@ def test_missing_profile_data_failure_is_non_retryable(tmp_path) -> None:
     assert result.kind == "failed"
     assert result.retryable is False
     assert result.error == "missing_profile_data:age_18_plus"
+
+
+def test_email_only_result_parses_valid_recipient(tmp_path) -> None:
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    result = adapter._parse_result("RESULT:EMAIL_ONLY:apply@example.com", dry_run=True)
+
+    assert isinstance(result, EmailOnlyApplication)
+    assert result.recipient_email == "apply@example.com"
 
 
 def test_claude_subprocess_starts_in_isolated_unix_session(

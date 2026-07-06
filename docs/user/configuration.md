@@ -246,8 +246,12 @@ uv --project workers/automation run jobhunter doctor
 The first runs the Gmail sign-in and writes your local token; the second
 re-checks that the connector is now available.
 
-The connector requests Gmail read-only scope. Raw Gmail bodies stay local and are
-not copied into events, telemetry, broad projections, or logs.
+The connector requests Gmail read-only and send scopes. Read scope is used for
+bounded verification-code and outcome lookups. Send scope is used only for the
+owned email-application path after a dry-run records the recipient and
+attachment candidate and Apply Review approves that exact binding. Raw Gmail
+bodies stay local and are not copied into events, telemetry, broad projections,
+or logs.
 
 ## Compensation Sources
 

@@ -30,6 +30,7 @@ from jobhunter.domain.apply.value_objects import (
     ApplyPrompt,
     Captcha,
     DryRunComplete,
+    EmailOnlyApplication,
     Expired,
     Failed,
     LoginIssue,
@@ -120,6 +121,7 @@ _ENV_ALLOWLIST = {
 
 # Result codes the agent emits as ``RESULT:CODE`` lines.
 _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
+_EMAIL_ONLY_RE = re.compile(r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 
 # Reasons that get promoted from ``RESULT:FAILED:reason`` to a
 # dedicated SubmissionResult variant.
@@ -432,6 +434,10 @@ class ClaudeCodeCliAdapter:
         promotion of failed-reasons to dedicated variants for
         captcha / expired / login_issue.
         """
+        email_only = _EMAIL_ONLY_RE.search(output)
+        if email_only:
+            return EmailOnlyApplication(recipient_email=email_only.group(1))
+
         for code in _RESULT_CODES:
             if f"RESULT:{code}" in output:
                 if code == "APPLIED":

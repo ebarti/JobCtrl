@@ -617,6 +617,33 @@ function TextPreview({
   );
 }
 
+function EmailApplicationPreview({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const preview = item.emailApplication;
+  if (!preview) {
+    return null;
+  }
+  return (
+    <section className="apply-review-preview-block">
+      <h3>Email application</h3>
+      <dl className="apply-review-facts">
+        <div>
+          <dt>To</dt>
+          <dd>{preview.recipient}</dd>
+        </div>
+        <div>
+          <dt>Subject</dt>
+          <dd>{preview.subject}</dd>
+        </div>
+        <div>
+          <dt>Attachment</dt>
+          <dd>{preview.attachmentName}</dd>
+        </div>
+      </dl>
+      <div className="apply-review-document preformatted">{preview.body}</div>
+    </section>
+  );
+}
+
 function RequirementLedAuditPanel({
   audit,
 }: {
@@ -1241,6 +1268,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               onComparisonTargetChange={handleComparisonTargetChange}
               onDraftGateChange={handleDraftGateChange}
             />
+            <EmailApplicationPreview item={item} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

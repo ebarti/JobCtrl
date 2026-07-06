@@ -210,6 +210,18 @@ class Manual:
 
 
 @dataclass(frozen=True)
+class EmailOnlyApplication:
+    """Variant: the agent detected an email-only application address."""
+
+    kind: str = field(default="email_only", init=False)
+    recipient_email: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.recipient_email, str) or "@" not in self.recipient_email:
+            raise ValueError("EmailOnlyApplication.recipient_email must be an email address")
+
+
+@dataclass(frozen=True)
 class DryRunComplete:
     """Variant: dry run finished without submitting (per §4.6 invariant)."""
 
@@ -241,6 +253,7 @@ SubmissionResult = Union[
     LoginIssue,
     Expired,
     Manual,
+    EmailOnlyApplication,
     DryRunComplete,
 ]
 
@@ -254,6 +267,7 @@ SUBMISSION_RESULT_TYPES: tuple[type, ...] = (
     LoginIssue,
     Expired,
     Manual,
+    EmailOnlyApplication,
     DryRunComplete,
 )
 
@@ -270,6 +284,7 @@ __all__ = [
     "BrowserWorkerConfig",
     "Captcha",
     "DryRunComplete",
+    "EmailOnlyApplication",
     "Expired",
     "Failed",
     "LoginIssue",
