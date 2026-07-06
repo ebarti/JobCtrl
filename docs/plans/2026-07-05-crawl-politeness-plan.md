@@ -706,9 +706,14 @@ web knobs (D4).
     (`domain/discovery/source_registry.py:65`), applied to the ATS canonical API
     policy (Greenhouse/Lever/Ashby, `source_registry.py:198`) and the Workday CXS
     API policy (`source_registry.py:189`) — both `allowed_methods=(SourcePolicyMethod.API,)` —
-    and to the compensation feed (`infrastructure/compensation/sqlite_market_repository.py:89`).
-    Page-rendering policies keep `RobotsPolicy.HONOR` (`source_registry.py:135`
-    default, `:214` enrichment).
+    and to the documented compensation feeds via `COMPENSATION_FEED_POLICY`
+    (`allowed_methods=(SourcePolicyMethod.FEED,)`, robots EXEMPT at
+    `infrastructure/compensation/sqlite_market_repository.py:86-89`), which govern
+    Euro Top Tech (`sqlite_market_repository.py:80`) and the other operator-configured
+    compensation feeds. The exemption is robots-off only: the gateway still stamps the
+    honest UA and applies per-host pacing/concurrency + the per-run request budget to
+    these feeds (`sqlite_market_repository.py:83-85`). Page-rendering policies keep
+    `RobotsPolicy.HONOR` (`source_registry.py:135` default, `:214` enrichment).
 - **D3 — `jobspy` broad-board posture.** Keep broad boards with invocation-boundary
   budget + pacing + outcome recording (accepting jobspy's internal requests are
   unpoliced), or gate broad boards behind explicit opt-in + disclosure as
