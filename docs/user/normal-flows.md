@@ -270,6 +270,25 @@ contacts:
   preserved and marked confirmed by you. No public page is fetched unless you
   supply its URL, and login-walled pages are never fetched automatically.
 
-Contacts are records only. JobHunter never sends anything to them: there is no
-email, message, or outreach sending in this workflow, and contact or research
-data never affects scoring or apply decisions.
+Once you have a contact, you can **draft an outreach message** to them — a
+truthful, reviewable message that you send yourself:
+
+- On the contact's detail (the **Outreach** panel), click **generate draft**.
+  JobHunter writes a short message grounded only in your profile and the confirmed
+  contact facts, then runs it through the **same anti-fabrication gates as your
+  resumes and cover letters**: a deterministic never-fabricate check, a content
+  validator, an LLM judge, and a claim-to-fact provenance record.
+- Review the **gate results** and the **claim → fact** bindings shown beside the
+  draft. A draft that invents a metric, an employer, or a relationship it cannot
+  support is blocked — you cannot approve it until the gates pass.
+- **Edit** the draft if you want; saving your edit creates a new version and
+  **re-runs the gates** on your edited text. Earlier versions stay in the
+  generation history, and your last approved message is never overwritten until a
+  replacement is approved.
+- **Approve** the message once the gates pass, then **copy** it and send it
+  yourself through your own channel (your email client, and so on).
+
+You send every message yourself. JobHunter drafts and previews; it never sends
+anything to a contact — there is no email, message, or outreach send transport of
+any kind, drafts terminate at copy/export, and contact, research, or draft data
+never affects scoring or apply decisions.

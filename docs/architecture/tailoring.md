@@ -675,6 +675,73 @@ changes should also exercise the API/web path that displays the audit data.
 - `ContentValidator`: JSON and rendered resume validation.
 - `ResumeAssembler`: JSON payload to final resume text.
 - `build_bullet_provenance()`: final text to provenance rows.
+
+## Outreach Draft Gates (Reused Materials Stack)
+
+Outreach messages (Contact & Outreach, Phase 3) are first-person, claims-bearing
+documents sent to a real person, so they reuse the same truthfulness stack this
+page documents for resumes — exactly as the **cover-letter path** already does
+(`scan_cover_letter` runs the resume never-fabricate and prose skill/tool gates
+verbatim over first-person prose). Outreach adds no parallel gate machinery; it
+wraps the materials gates in
+`workers/automation/src/jobhunter/domain/contact/outreach_gates.py`.
+
+Every gate runs against the **actual draft text** (`OutreachDraft.body_text`),
+never inferred from the recipient or the target company. The recipient's own facts
+(name, title, employer) come from the **confirmed contact record** and are passed
+as the legitimately-named `target_company` / role context — mirroring how a cover
+letter names the job it targets — so referencing them is not a fabrication, while a
+fabricated relationship ("we worked together at X") is caught by the judge.
+
+The stack, in order:
+
+1. **Deterministic never-fabricate detector** (`scan_outreach_draft`, delegating to
+   the materials `scan_cover_letter`). A draft may reference only facts grounded in
+   the candidate profile evidence corpus, the confirmed contact record, and the
+   application — no invented metric, date, title, employer, or named technology.
+   Any finding is a hard block.
+2. **Content validator** (`validate_outreach_draft`). Reuses the materials
+   `BANNED_WORDS` + `LLM_LEAK_PHRASES` lists (stock phrases downgrade quality;
+   model self-talk is fatal) plus outreach-appropriate structure: a greeting, a
+   short sign-off, and a length ceiling (an outreach message is short, not a cover
+   letter).
+3. **LLM-as-judge** (`build_outreach_judge_prompt` +
+   `OUTREACH_JUDGE_RESPONSE_SCHEMA` + `parse_outreach_judge_response`). An
+   outreach-specific rubric (`relevance_to_recipient`, `evidence_support`,
+   `fabrication_safety`, `relationship_accuracy`, `tone_professionalism`) that
+   PASSes only with an explicit PASS verdict, a score at or above the floor, and no
+   blockers — any unsupported claim or fabricated relationship is an automatic
+   FAIL. A judge error is treated as a FAIL, never a crash.
+4. **Claim → fact provenance** (`compute_outreach_claim_provenance`). Each claim
+   (paragraph) binds to the confirmed contact attribute ids and the profile
+   evidence it rests on, computed against the rendered draft text — the same
+   "computed against rendered text" discipline as `build_bullet_provenance()`.
+
+Gates 1–3 aggregate into a persisted `DraftGateResults` whose `passed` is the
+**single authority draft approval is gated on** (INV-5): a draft passes only when
+the deterministic detector found no fabrications, the validator passed, and the
+judge approved. `passed` is stored in `outreach_drafts.gate_results_json`; both the
+Python aggregate (`OutreachDraft.approve`) and the TypeScript approve transition
+(`approveOutreachDraft` in `apps/api/src/outreach.ts`) refuse to approve a draft
+whose persisted record does not confirm `passed`. The gate results and claim
+provenance are surfaced in the review UI, labelled by lifecycle, per the
+root-cause / auditability discipline.
+
+**Lifecycle and generation versioning.** A draft reuses the materials
+`ArtifactStatus` semantics — `candidate | approved | rejected | superseded`
+(`suppressed` is materials-only and never used for a draft). Generating or editing
+a draft mints a **new generation** (`OutreachThread.next_generation`) and
+supersedes prior *candidate* generations, but the last **approved** draft stays
+readable until a replacement is itself approved — the same "never destroy the last
+accepted artifact" rule that governs re-tailoring. A user edit is not an in-place
+mutation: `ReviseOutreachDraftUseCase` accepts the edited body as a new generation
+and **re-runs the identical gate stack**, exactly as an Apply Review resume edit
+creates a validated replacement generation. Rejecting a candidate never touches the
+approved draft.
+
+**No send (INV-1).** The gate stack terminates at an `approved`, copyable draft.
+There is no send transport anywhere on the outreach path, and the aggregate cannot
+represent a "sent" state.
 - `fabrication_detector.py`: never-fabricate token scan and the prose
   skill/tool allowlist gate.
 - `claim_grounding.py`: grounds coverage-bearing claims in shipped rendered

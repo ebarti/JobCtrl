@@ -497,8 +497,8 @@ Identity: (TenantId, ContactId)
 ```
 
 Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
-`ContactResearchTask` aggregate (below). (The outreach-thread aggregate is a
-later phase and is not implemented yet.)
+`ContactResearchTask` aggregate; Phase 3 adds the `OutreachThread` aggregate
+(all below).
 
 **Invariants:**
 - Every `ContactAttribute` carries a non-null `ContactFactProvenance` (INV-2); constructing an attribute without provenance is impossible.
@@ -579,5 +579,65 @@ outcomes, and timestamps — never candidate values):
 - `ContactResearchTaskCompleted { tenantId, taskId, confirmedCount, completedAt }`
 - `ContactResearchTaskFailed { tenantId, taskId, errorClass, retryable, failedAt }`
   — All consumed by: Operations (the `contact_research_task_projections` read model).
+
+#### Aggregate: OutreachThread
+
+```
+Aggregate Root: OutreachThread
+Identity: (TenantId, OutreachThreadId)
+```
+
+The outreach state for one `(Contact, optional application)` — its
+generation-versioned, reviewable, editable drafts (a distinct lifecycle from the
+durable `Contact`, mirroring how `MaterialsSet` is separate from `Job`). Phase 3
+realises truthful **drafting only**; the thread terminates one step before any
+send.
+
+**Invariants:**
+- **No representable "sent" state (INV-1).** The aggregate has no `sent` field, no
+  send log, and no transition to a sent status anywhere. The terminal state a
+  draft can reach is `approved` (reviewable and copyable). Send logging is a later
+  phase and is a separate user-attested record; it never lands as a draft or
+  thread status here.
+- An `OutreachDraft` can only be `approved` when its persisted `DraftGateResults`
+  passed (INV-5); constructing an `approved` draft over failed gates is
+  impossible, so a rehydrated draft can never lie about being
+  approved-but-ungrounded.
+- Re-drafting mints a **new generation** and supersedes prior *candidate* drafts,
+  but the last `approved` draft stays readable until a replacement is itself
+  approved (INV-5) — mirroring `MaterialsSetFactory.next_generation` and the
+  "never destroy the last accepted artifact" rule. Rejecting a candidate never
+  touches the approved draft.
+- Every draft carries claim → fact provenance computed against the **actual draft
+  text**, never inferred from the target (INV-2).
+
+**Lifecycle (per draft, reusing the materials `ArtifactStatus` semantics):**
+`candidate → approved`, `candidate → rejected`, or `candidate | approved →
+superseded`. `suppressed` is a materials-only policy state and is never used for a
+draft.
+
+**Entities:**
+- `OutreachDraft { draftId, threadId, generation, kind, status, bodyText, gateResults, provenance[], createdAt, approvedAt?, rejectedAt?, reason }` — one generation-versioned draft. `bodyText` is the reviewable message and is **sensitive** (the user's own outreach content); `gateResults` is the persisted truthfulness-gate outcome and the ONLY authority approval is gated on; `provenance[]` binds each claim to the confirmed fact it rests on.
+
+**Value Objects:**
+- `OutreachDraftKind` — enum: `intro_request | follow_up`. Phase 3 generates intro requests; `follow_up` is a valid drafting target, but follow-up *scheduling* is a later phase.
+- `DraftGateResults { passed, fabrications[], validation, judge, computedAgainst }` — the aggregated outcome of the reused truthfulness gate stack; `passed` is true only when the deterministic detector found no fabrications, the content validator passed, and the judge approved. `computedAgainst` records that the gates ran against the rendered draft text.
+- `OutreachClaimProvenance { claimId, section, generatedText, contactFactIds[], profileGrounded, rationale }` — one claim (paragraph) bound to the confirmed contact attribute ids and the profile evidence it rests on, computed against the rendered draft text.
+
+**Truthfulness gates (INV-5):** draft generation and every user edit run the reused Materials gate stack (deterministic never-fabricate detector → content validator → LLM-as-judge → claim → fact provenance) against the actual draft text; the [tailoring contract](../tailoring.md) documents the stack in order and the cover-letter reuse precedent.
+
+**Domain Events** (all carry `tenantId`; payloads carry only ids, kinds, generation, and timestamps — never the draft body, gate text, or contact PII):
+- `OutreachDraftGenerated { tenantId, threadId, contactId, jobId, draftId, generation, kind, generatedAt }`
+- `OutreachDraftRevised { tenantId, threadId, draftId, generation, revisedAt }`
+- `OutreachDraftApproved { tenantId, threadId, draftId, generation, approvedAt }`
+- `OutreachDraftRejected { tenantId, threadId, draftId, generation, reason, rejectedAt }`
+  — All consumed by: Operations (the `outreach_thread_projections` read model).
+
+**Sensitivity:** the draft `bodyText`, gate results, and claim provenance live only
+on the canonical write side (`outreach_drafts`) and reach the client through the
+thread detail read; event payloads written to `job_events`
+(`entity_kind = 'outreach'` / `entity_ref = <threadId>`; application-linked threads
+also key on the job's `job_url`) carry only ids, kinds, generation, and
+timestamps.
 
 ---

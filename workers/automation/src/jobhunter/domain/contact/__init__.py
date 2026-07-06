@@ -5,6 +5,28 @@ root, its source-access policy (INV-3), and the research/confirm use cases.
 """
 
 from jobhunter.domain.contact.aggregate import Contact
+from jobhunter.domain.contact.outreach import (
+    OutreachDraft,
+    OutreachDraftKind,
+    OutreachThread,
+)
+from jobhunter.domain.contact.outreach_gates import (
+    DraftGateResults,
+    OutreachClaimProvenance,
+    build_outreach_evidence_corpus,
+    build_outreach_judge_prompt,
+    compute_outreach_claim_provenance,
+    parse_outreach_judge_response,
+    scan_outreach_draft,
+    validate_outreach_draft,
+)
+from jobhunter.domain.contact.outreach_use_cases import (
+    ApproveOutreachDraftUseCase,
+    GenerateOutreachDraftUseCase,
+    OutreachDraftInputError,
+    RejectOutreachDraftUseCase,
+    ReviseOutreachDraftUseCase,
+)
 from jobhunter.domain.contact.research import (
     CandidateStatus,
     ContactCandidate,
@@ -59,6 +81,7 @@ __all__ = [
     "CONTACT_RESEARCH_MANUAL_CAPTURE_MODES",
     "CONTACT_SOURCE_KINDS",
     "RESEARCH_SOURCE_CATEGORIES",
+    "ApproveOutreachDraftUseCase",
     "AttributeInput",
     "CandidateStatus",
     "ConfirmContactCandidateResult",
@@ -76,8 +99,23 @@ __all__ = [
     "ContactRole",
     "CreateContactUseCase",
     "DeleteContactUseCase",
+    "DraftGateResults",
+    "GenerateOutreachDraftUseCase",
     "ImportContactsUseCase",
     "ImportResult",
+    "OutreachClaimProvenance",
+    "OutreachDraft",
+    "OutreachDraftInputError",
+    "OutreachDraftKind",
+    "OutreachThread",
+    "RejectOutreachDraftUseCase",
+    "ReviseOutreachDraftUseCase",
+    "build_outreach_evidence_corpus",
+    "build_outreach_judge_prompt",
+    "compute_outreach_claim_provenance",
+    "parse_outreach_judge_response",
+    "scan_outreach_draft",
+    "validate_outreach_draft",
     "ResearchRunResult",
     "ResearchSourceAttempt",
     "ResearchSourceCategory",

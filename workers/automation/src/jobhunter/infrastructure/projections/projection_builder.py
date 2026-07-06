@@ -56,6 +56,7 @@ from jobhunter.domain.operations.projections import (
     DashboardProjection,
     JobDetailProjection,
     JobListProjection,
+    OutreachThreadProjection,
     StageProjection,
     WorkflowRunProjection,
 )
@@ -152,6 +153,19 @@ CONTACT_RESEARCH_EVENT_TYPES: frozenset[str] = frozenset(
         "ContactResearchTaskNeedsReview",
         "ContactResearchTaskCompleted",
         "ContactResearchTaskFailed",
+    }
+)
+
+# OutreachThread events (§4.3). Any of these marks the outreach read model dirty;
+# ``_rebuild_outreach`` then rematerialises every outreach-thread projection from
+# the canonical ``outreach_threads`` / ``outreach_drafts`` rows (draft body, gate
+# internals, and provenance never enter the projection — sensitivity rule, plan §6).
+OUTREACH_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "OutreachDraftGenerated",
+        "OutreachDraftRevised",
+        "OutreachDraftApproved",
+        "OutreachDraftRejected",
     }
 )
 POSTED_COMPENSATION_WARNING_MESSAGES = {
@@ -371,6 +385,22 @@ def _attribute_kinds(attributes_json: object) -> list[str]:
         if kind and kind not in kinds:
             kinds.append(kind)
     return kinds
+
+
+def _gate_passed(raw: object) -> bool:
+    """Read the persisted gate outcome (INV-5) from ``gate_results_json``.
+
+    Only an explicit ``passed: true`` counts as passed; a missing, null, or
+    malformed gate result is treated as not passed so the projection never
+    reports a draft as approvable when the gate record cannot confirm it.
+    """
+    if not raw:
+        return False
+    try:
+        parsed = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("passed") is True
 
 
 def _material_analytics_from_metadata(metadata_json: str | None) -> dict[str, object]:
@@ -696,6 +726,7 @@ class ProjectionBuilder:
         workflow_runs_dirty = False
         contacts_dirty = False
         contact_research_dirty = False
+        outreach_dirty = False
         evidence_usage_dirty = bool(rows)
         max_event_id = watermark
         for row in rows:
@@ -714,6 +745,8 @@ class ProjectionBuilder:
                 contacts_dirty = True
             if str(event_type) in CONTACT_RESEARCH_EVENT_TYPES:
                 contact_research_dirty = True
+            if str(event_type) in OUTREACH_EVENT_TYPES:
+                outreach_dirty = True
 
         # First-run backfill for contacts: if the contact read model is empty
         # but canonical contact rows exist (e.g. tables recreated), rebuild.
@@ -721,6 +754,8 @@ class ProjectionBuilder:
             contacts_dirty = True
         if not contact_research_dirty and self._contact_research_backfill_pending():
             contact_research_dirty = True
+        if not outreach_dirty and self._outreach_backfill_pending():
+            outreach_dirty = True
 
         # First-run backfill: if projections are empty, mark every
         # existing job as dirty so pre-event-history rows still get
@@ -790,6 +825,7 @@ class ProjectionBuilder:
             and not evidence_usage_dirty
             and not contacts_dirty
             and not contact_research_dirty
+            and not outreach_dirty
         ):
             return 0
 
@@ -814,6 +850,8 @@ class ProjectionBuilder:
                 self._rebuild_contacts()
             if contact_research_dirty:
                 self._rebuild_contact_research()
+            if outreach_dirty:
+                self._rebuild_outreach()
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
@@ -840,6 +878,8 @@ class ProjectionBuilder:
             self._rebuild_contacts()
         if contact_research_dirty:
             self._rebuild_contact_research()
+        if outreach_dirty:
+            self._rebuild_outreach()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
@@ -1048,6 +1088,104 @@ class ProjectionBuilder:
             task_id = str(existing[0])
             if task_id not in live_ids:
                 self._store.delete_contact_research_task(tenant, task_id)
+
+    def _outreach_backfill_pending(self) -> bool:
+        if self._store.count_outreach_threads(str(self._tenant_id)) > 0:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM outreach_threads WHERE tenant_id = ? LIMIT 1",
+                (str(self._tenant_id),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+    def _rebuild_outreach(self) -> None:
+        """Rematerialise every outreach-thread projection from canonical rows.
+
+        Idempotent full tenant rebuild. The draft body, gate internals, and claim
+        provenance are never read into the projection — only the thread lifecycle
+        summary and per-draft metadata (generation, kind, status, the persisted
+        gate outcome INV-5, and timestamps). The read model joins canonical draft
+        content at DETAIL read time. Projections for threads no longer present are
+        dropped so the rebuild stays a faithful mirror of canonical state.
+        """
+        tenant = str(self._tenant_id)
+        try:
+            thread_rows = self._conn.execute(
+                """
+                SELECT thread_id, contact_id, job_url, created_at, updated_at
+                FROM outreach_threads
+                WHERE tenant_id = ?
+                """,
+                (tenant,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+        live_ids: set[str] = set()
+        for row in thread_rows:
+            thread_id = str(row[0])
+            live_ids.add(thread_id)
+            draft_rows = self._conn.execute(
+                """
+                SELECT draft_id, generation, kind, status, gate_results_json,
+                       created_at, approved_at, rejected_at
+                FROM outreach_drafts
+                WHERE tenant_id = ? AND thread_id = ?
+                ORDER BY generation ASC, draft_id ASC
+                """,
+                (tenant, thread_id),
+            ).fetchall()
+            drafts: list[dict[str, Any]] = []
+            latest_generation = 0
+            latest_status: str | None = None
+            has_approved = False
+            approved_draft_id: str | None = None
+            for draft in draft_rows:
+                generation = int(draft[1] or 0)
+                status = str(draft[3] or "candidate")
+                latest_generation = generation
+                latest_status = status
+                if status == "approved":
+                    has_approved = True
+                    approved_draft_id = str(draft[0])
+                drafts.append(
+                    {
+                        "draftId": str(draft[0]),
+                        "generation": generation,
+                        "kind": str(draft[2] or ""),
+                        "status": status,
+                        "gatePassed": _gate_passed(draft[4]),
+                        "createdAt": draft[5],
+                        "approvedAt": draft[6],
+                        "rejectedAt": draft[7],
+                    }
+                )
+            self._store.upsert_outreach_thread(
+                OutreachThreadProjection(
+                    tenant_id=self._tenant_id,
+                    thread_id=thread_id,
+                    contact_id=str(row[1]),
+                    job_id=row[2],
+                    draft_count=len(draft_rows),
+                    latest_generation=latest_generation,
+                    has_approved_draft=has_approved,
+                    approved_draft_id=approved_draft_id,
+                    latest_status=latest_status,
+                    drafts=tuple(drafts),
+                    created_at=row[3],
+                    updated_at=row[4],
+                    last_updated_at=row[4],
+                )
+            )
+        for existing in self._conn.execute(
+            "SELECT thread_id FROM outreach_thread_projections WHERE tenant_id = ?",
+            (tenant,),
+        ).fetchall():
+            thread_id = str(existing[0])
+            if thread_id not in live_ids:
+                self._store.delete_outreach_thread(tenant, thread_id)
 
     def _rebuild_job(self, job_url: str) -> None:
         job_row = self._conn.execute(

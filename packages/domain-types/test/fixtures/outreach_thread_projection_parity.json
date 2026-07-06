@@ -1,0 +1,181 @@
+{
+  "tenantId": "local",
+  "threads": [
+    {
+      "threadId": "thread-a",
+      "contactId": "contact-a",
+      "jobUrl": "https://job/1",
+      "createdAt": "2026-07-06T00:00:00Z",
+      "updatedAt": "2026-07-06T00:00:02Z"
+    },
+    {
+      "threadId": "thread-b",
+      "contactId": "contact-b",
+      "jobUrl": null,
+      "createdAt": "2026-07-06T01:00:00Z",
+      "updatedAt": "2026-07-06T01:05:00Z"
+    }
+  ],
+  "drafts": [
+    {
+      "draftId": "draft-a1",
+      "threadId": "thread-a",
+      "generation": 1,
+      "kind": "intro_request",
+      "status": "candidate",
+      "bodyText": "Hi Dana, I admired your team's work on the payments platform and would value a short chat.",
+      "gateResults": {
+        "passed": true,
+        "computedAgainst": "rendered_draft_text",
+        "fabrications": [],
+        "validation": { "passed": true, "errors": [], "warnings": [] },
+        "judge": {
+          "approved": true,
+          "score": 9,
+          "criterionScores": { "truthfulness": 10 },
+          "issues": [],
+          "notes": "Grounded and specific to the confirmed employer fact."
+        }
+      },
+      "provenance": [
+        {
+          "claimId": "claim-a1",
+          "section": "opening",
+          "generatedText": "admired your team's work on the payments platform",
+          "contactFactIds": ["fact-employer-1"],
+          "profileGrounded": true,
+          "rationale": "Grounded in the confirmed employer attribute and the user's payments background."
+        }
+      ],
+      "createdAt": "2026-07-06T00:00:01Z",
+      "approvedAt": null,
+      "rejectedAt": null,
+      "reason": ""
+    },
+    {
+      "draftId": "draft-b1",
+      "threadId": "thread-b",
+      "generation": 1,
+      "kind": "follow_up",
+      "status": "superseded",
+      "bodyText": "First follow-up body superseded secret one.",
+      "gateResults": {
+        "passed": true,
+        "computedAgainst": "rendered_draft_text",
+        "fabrications": [],
+        "validation": { "passed": true, "errors": [], "warnings": [] },
+        "judge": null
+      },
+      "provenance": [],
+      "createdAt": "2026-07-06T01:00:01Z",
+      "approvedAt": "2026-07-06T01:02:00Z",
+      "rejectedAt": null,
+      "reason": ""
+    },
+    {
+      "draftId": "draft-b2",
+      "threadId": "thread-b",
+      "generation": 2,
+      "kind": "follow_up",
+      "status": "approved",
+      "bodyText": "Second follow-up body approved secret two.",
+      "gateResults": {
+        "passed": true,
+        "computedAgainst": "rendered_draft_text",
+        "fabrications": [],
+        "validation": { "passed": true, "errors": [], "warnings": [] },
+        "judge": {
+          "approved": true,
+          "score": 8,
+          "criterionScores": { "truthfulness": 9 },
+          "issues": [],
+          "notes": "Reconnect message stays grounded in the prior confirmed contact."
+        }
+      },
+      "provenance": [
+        {
+          "claimId": "claim-b2",
+          "section": "body",
+          "generatedText": "reconnecting about the platform role",
+          "contactFactIds": ["fact-prior-contact-9"],
+          "profileGrounded": true,
+          "rationale": "Based on the confirmed prior conversation recorded on the contact."
+        }
+      ],
+      "createdAt": "2026-07-06T01:04:00Z",
+      "approvedAt": "2026-07-06T01:05:00Z",
+      "rejectedAt": null,
+      "reason": ""
+    }
+  ],
+  "expected": [
+    {
+      "threadId": "thread-a",
+      "contactId": "contact-a",
+      "jobId": "https://job/1",
+      "draftCount": 1,
+      "latestGeneration": 1,
+      "hasApprovedDraft": false,
+      "approvedDraftId": null,
+      "latestStatus": "candidate",
+      "drafts": [
+        {
+          "draftId": "draft-a1",
+          "generation": 1,
+          "kind": "intro_request",
+          "status": "candidate",
+          "gatePassed": true,
+          "createdAt": "2026-07-06T00:00:01Z",
+          "approvedAt": null,
+          "rejectedAt": null
+        }
+      ],
+      "createdAt": "2026-07-06T00:00:00Z",
+      "updatedAt": "2026-07-06T00:00:02Z",
+      "lastUpdatedAt": "2026-07-06T00:00:02Z"
+    },
+    {
+      "threadId": "thread-b",
+      "contactId": "contact-b",
+      "jobId": null,
+      "draftCount": 2,
+      "latestGeneration": 2,
+      "hasApprovedDraft": true,
+      "approvedDraftId": "draft-b2",
+      "latestStatus": "approved",
+      "drafts": [
+        {
+          "draftId": "draft-b1",
+          "generation": 1,
+          "kind": "follow_up",
+          "status": "superseded",
+          "gatePassed": true,
+          "createdAt": "2026-07-06T01:00:01Z",
+          "approvedAt": "2026-07-06T01:02:00Z",
+          "rejectedAt": null
+        },
+        {
+          "draftId": "draft-b2",
+          "generation": 2,
+          "kind": "follow_up",
+          "status": "approved",
+          "gatePassed": true,
+          "createdAt": "2026-07-06T01:04:00Z",
+          "approvedAt": "2026-07-06T01:05:00Z",
+          "rejectedAt": null
+        }
+      ],
+      "createdAt": "2026-07-06T01:00:00Z",
+      "updatedAt": "2026-07-06T01:05:00Z",
+      "lastUpdatedAt": "2026-07-06T01:05:00Z"
+    }
+  ],
+  "sensitiveValues": [
+    "Hi Dana, I admired your team's work on the payments platform and would value a short chat.",
+    "First follow-up body superseded secret one.",
+    "Second follow-up body approved secret two.",
+    "Grounded in the confirmed employer attribute and the user's payments background.",
+    "Based on the confirmed prior conversation recorded on the contact.",
+    "Grounded and specific to the confirmed employer fact."
+  ]
+}

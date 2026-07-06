@@ -15,6 +15,8 @@ export type {
   ApplyRunProjection,
   ContactProjection,
   ContactProvenanceEntry,
+  OutreachThreadProjection,
+  OutreachDraftMetadataEntry,
 } from "@jobhunter/domain-types";
 export {
   PROJECTION_TABLES,

@@ -394,4 +394,29 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.confirmContactCandidate(taskId, candidateId, body);
   }
+  outreachThread(contactId: string, query: Parameters<JobHunterApiClient["outreachThread"]>[1] = {}) {
+    return this.client.outreachThread(contactId, query);
+  }
+  generateOutreachDraft(
+    contactId: string,
+    body: Parameters<JobHunterApiClient["generateOutreachDraft"]>[1] = {},
+  ) {
+    return this.client.generateOutreachDraft(contactId, body);
+  }
+  reviseOutreachDraft(
+    threadId: string,
+    body: Parameters<JobHunterApiClient["reviseOutreachDraft"]>[1],
+  ) {
+    return this.client.reviseOutreachDraft(threadId, body);
+  }
+  approveOutreachDraft(threadId: string, draftId: string) {
+    return this.client.approveOutreachDraft(threadId, draftId);
+  }
+  rejectOutreachDraft(
+    threadId: string,
+    draftId: string,
+    body: Parameters<JobHunterApiClient["rejectOutreachDraft"]>[2] = {},
+  ) {
+    return this.client.rejectOutreachDraft(threadId, draftId, body);
+  }
 }

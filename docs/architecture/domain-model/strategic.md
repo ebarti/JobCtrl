@@ -490,12 +490,12 @@ or a specific application (recruiter, hiring manager, referrer, warm intro) —
 with **inspectable provenance for every stored fact**. This is the ninth bounded
 context; it owns a person/relationship concept that none of the other eight own.
 
-> **Scope today.** This section documents the contact-records capability that
-> ships in Phase 1: contact create/update, CSV import, soft-delete, and
-> provenance. Supervised contact *research*, outreach *drafting*, and send
-> *logging* are later phases and are not part of the current implementation. One
-> invariant holds for the whole context from day one: **JobHunter never sends** —
-> there is no send transport of any kind (see below).
+> **Scope today.** This context ships contact records (Phase 1: create/update,
+> CSV import, soft-delete, provenance), supervised contact *research* (Phase 2),
+> and truthful, reviewable outreach *drafting* (Phase 3). Send *logging* and
+> follow-up scheduling are later phases. One invariant holds for the whole context
+> from day one: **JobHunter never sends** — there is no send transport of any kind,
+> and outreach drafts terminate at copy/export (see below).
 
 **Ubiquitous Language:**
 - **Contact** — a person relevant to a company or application. Entity with identity `(TenantId, ContactId)`.
@@ -504,6 +504,8 @@ context; it owns a person/relationship concept that none of the other eight own.
 - **ContactLink** — a contact's link to an `Employer` and/or a `JobId`; a contact must link to at least one.
 - **ContactRole** — enum: `recruiter | hiring_manager | referrer | warm_intro | other`.
 - **WarmIntroSignal** — a value-object placeholder only in Phase 1; warm-intro identification (from user-provided relationship data) is a later phase.
+- **OutreachThread** — the outreach state for one `(Contact, optional application)`: its generation-versioned, reviewable, editable `OutreachDraft`s. Entity with identity `(TenantId, OutreachThreadId)`. It has no representable "sent" state (INV-1).
+- **OutreachDraft** — a generation-versioned, truthful, reviewable message; lifecycle `candidate | approved | rejected | superseded` (reusing the materials `ArtifactStatus`). Approval is gated on the persisted truthfulness-gate outcome (INV-5); a re-draft never destroys the last approved draft until a replacement is approved.
 
 **Upstream/Downstream:**
 - **Consumes** job identity from Job Discovery (a `Contact` links to an `Employer` and optionally a `JobId`); it does not own job identity.
@@ -514,6 +516,7 @@ context; it owns a person/relationship concept that none of the other eight own.
 - Own the `Contact` aggregate and its provenance-bearing attributes.
 - Create, update, CSV-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
 - Emit contact domain events (`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`, `ContactDeleted`) carrying only identifiers, kinds, provenance metadata, and timestamps.
+- Own the `OutreachThread` aggregate (Phase 3): generate truthful, reviewable outreach drafts under the reused materials truthfulness gate stack (INV-5), keep the last approved draft readable across re-drafts, and emit draft-lifecycle events (`OutreachDraftGenerated`, `OutreachDraftRevised`, `OutreachDraftApproved`, `OutreachDraftRejected`). The terminal state is an approved, copyable draft — there is no send (INV-1).
 
 **What it does NOT own:**
 - Job identity, scoring, materials, or apply (each stays in its own context).

@@ -9,7 +9,9 @@ Phase 2 adds ``ContactResearchTaskRepository`` for the supervised research
 aggregate plus ``ResearchPageFetcherPort`` — the gateway-routed public-page
 fetch seam (every research fetch routes through the merged politeness gateway;
 robots-denial / rate-limit / budget-exhaustion are first-class outcomes, not
-scrape errors). ``OutreachThreadRepository`` lands with its aggregate later.
+scrape errors). Phase 3 adds ``OutreachThreadRepository`` for the outreach-draft
+aggregate. Local-mode adapter is
+``jobhunter.infrastructure.contact.outreach_repository.SqliteOutreachThreadRepository``.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from jobhunter.domain.contact.aggregate import Contact
+from jobhunter.domain.contact.outreach import OutreachThread
 from jobhunter.domain.contact.research import ContactResearchTask
 from jobhunter.domain.identifiers import ContactId
 from jobhunter.domain.tenant import TenantId
@@ -25,6 +28,7 @@ from jobhunter.domain.tenant import TenantId
 __all__ = [
     "ContactRepository",
     "ContactResearchTaskRepository",
+    "OutreachThreadRepository",
     "ResearchPageFetch",
     "ResearchPageFetcherPort",
 ]
@@ -63,6 +67,31 @@ class ContactResearchTaskRepository(Protocol):
 
     def list_for_tenant(self, tenant_id: TenantId) -> list[ContactResearchTask]:
         """Return all research tasks for the tenant, newest first."""
+
+
+class OutreachThreadRepository(Protocol):
+    """Persistence port for the ``OutreachThread`` aggregate (drafts).
+
+    Publisher-injected like the other Contact & Outreach adapters: ``save``
+    persists the canonical ``outreach_threads`` + ``outreach_drafts`` rows and
+    publishes the draft lifecycle events (``OutreachDraftGenerated`` /
+    ``OutreachDraftRevised`` / ``OutreachDraftApproved`` / ``OutreachDraftRejected``).
+    There is no send transport on this port (INV-1).
+    """
+
+    def load(self, tenant_id: TenantId, thread_id: str) -> OutreachThread | None:
+        """Return the outreach thread (with all draft generations), or ``None``."""
+
+    def load_for_contact(
+        self, tenant_id: TenantId, contact_id: str, job_id: str | None = None
+    ) -> OutreachThread | None:
+        """Return the thread for a ``(contact, optional application)``, or ``None``."""
+
+    def save(self, tenant_id: TenantId, thread: OutreachThread) -> OutreachThread:
+        """Persist the aggregate (thread + drafts) and publish its domain events."""
+
+    def list_for_tenant(self, tenant_id: TenantId) -> list[OutreachThread]:
+        """Return all outreach threads for the tenant, newest first."""
 
 
 @dataclass(frozen=True)

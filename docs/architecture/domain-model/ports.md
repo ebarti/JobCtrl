@@ -214,8 +214,8 @@ agents are managed fleet resources.
 ### 5.9 Contact & Outreach Context
 
 Phase 1 realises the `Contact` aggregate's ports; Phase 2 adds the
-supervised-research ports. The outreach-thread ports land with their aggregate in
-a later phase.
+supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
+(draft generation/revision and the approve/reject transitions).
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -225,17 +225,23 @@ a later phase.
 | **Driving** | `DeleteContactUseCase` | Soft-delete a contact |
 | **Driving** | `RunContactResearchUseCase` | Start a supervised research run: authorise sources (INV-3), fetch allowed public pages through the gateway, propose candidates in `needs_review` (INV-4) |
 | **Driving** | `ConfirmContactCandidateUseCase` | Promote a `needs_review` candidate into a stored `Contact` fact, preserving provenance (INV-2) |
+| **Driving** | `GenerateOutreachDraftUseCase` | Generate a fresh LLM-authored draft generation and run the full truthfulness gate stack (INV-5); persists a gated `candidate` draft |
+| **Driving** | `ReviseOutreachDraftUseCase` | Accept a user-edited body as a new generation and RE-RUN the identical gates; the prior approved draft stays readable until this revision is approved |
+| **Driving** | `ApproveOutreachDraftUseCase` | Approve a `candidate` draft — only when its persisted `DraftGateResults` passed (INV-5); supersedes the previously-approved draft |
+| **Driving** | `RejectOutreachDraftUseCase` | Reject a `candidate` draft; never destroys the last approved draft (INV-5) |
 | **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
 | **Driven** | `ContactResearchTaskRepository` | Persist and retrieve the `ContactResearchTask` aggregate (task + candidates + source attempts) |
+| **Driven** | `OutreachThreadRepository` | Persist and retrieve the `OutreachThread` aggregate (thread + generation-versioned drafts, gate results, and claim provenance), tenant-scoped |
 | **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (robots/rate-limit/budget are first-class outcomes) |
-| **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page |
-| **Driven** | `EventPublisher` | Publish contact + research domain events |
+| **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page; outreach draft synthesis and the LLM-as-judge gate |
+| **Driven** | `EventPublisher` | Publish contact, research, and outreach-draft domain events |
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `ContactRepository` | `SqliteContactRepository` (publisher-injected; writes `contacts` + `contact_attributes`, then records contact events to `job_events`) | `PostgresContactRepository` (RDS Postgres, tenant-scoped) |
 | `ContactResearchTaskRepository` | `SqliteContactResearchTaskRepository` (publisher-injected; writes `contact_research_tasks` + `contact_candidates`, records research events to `job_events`) | `PostgresContactResearchTaskRepository` (tenant-scoped) |
 | `ResearchPageFetcherPort` | `GatewayContactResearchFetcher` (wraps `PolitenessSession.guard` + urllib) | Hosted fetch behind the same gateway contract |
+| `OutreachThreadRepository` | `SqliteOutreachThreadRepository` (publisher-injected; writes `outreach_threads` + `outreach_drafts`, then records draft-lifecycle events to `job_events`) | `PostgresOutreachThreadRepository` (RDS Postgres, tenant-scoped) |
 
 **Hosting.** Phase 1's contact state-transition commands (create / update / CSV
 import / soft-delete) are simple, LLM-free, and browser-free, so they are hosted
@@ -246,6 +252,12 @@ Phase 2's research **run** (LLM + fetch) executes on the Python worker via
 Temporal (`ContactResearchWorkflow`), started through the `run_contact_research`
 JSON-RPC method; candidate **confirmation** is a simple state transition hosted
 directly in the TypeScript API (`apps/api/src/contact-research.ts`) per
+[§6.8](integration.md). Phase 3's draft **generation** and **revision** (LLM + the
+reused materials truthfulness gate stack) execute on the Python worker via the
+synchronous `generate_outreach_draft` JSON-RPC method (`editedBodyText` selects the
+revise path); draft **approval** and **rejection** are simple lifecycle
+transitions hosted directly in the TypeScript API (`apps/api/src/outreach.ts`) and
+HARD-gated on the persisted `gate_results_json.passed` (INV-5) per
 [§6.8](integration.md).
 
 **Seam justification:** the repository port isolates contact storage exactly like

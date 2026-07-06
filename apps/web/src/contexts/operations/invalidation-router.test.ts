@@ -395,10 +395,22 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     outreachKeys.researchTask(LOCAL_TENANT, "research-2"),
     outreachKeys.researchTaskLists(LOCAL_TENANT),
   ],
-  OutreachDraftGenerated: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
-  OutreachDraftRevised: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
-  OutreachDraftApproved: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
-  OutreachDraftRejected: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
+  OutreachDraftGenerated: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.threads(LOCAL_TENANT),
+  ],
+  OutreachDraftRevised: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.threads(LOCAL_TENANT),
+  ],
+  OutreachDraftApproved: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.threads(LOCAL_TENANT),
+  ],
+  OutreachDraftRejected: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.threads(LOCAL_TENANT),
+  ],
   OutreachSendLogged: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.dueFollowUps(LOCAL_TENANT),

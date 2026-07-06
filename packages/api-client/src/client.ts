@@ -15,6 +15,10 @@ import type {
   ContactUpdateRequest,
   ConfirmContactCandidateRequest,
   ConfirmContactCandidateResponse,
+  GenerateOutreachDraftRequest,
+  ReviseOutreachDraftRequest,
+  RejectOutreachDraftRequest,
+  OutreachThreadResponse,
   ContactResearchDetailResponse,
   ContactResearchListQuery,
   ContactResearchListResponse,
@@ -517,6 +521,47 @@ export class JobHunterApiClient {
   ): Promise<ConfirmContactCandidateResponse> {
     return this.post(
       `/v1/contacts/research/${encodeURIComponent(taskId)}/candidates/${encodeURIComponent(candidateId)}/confirm`,
+      body,
+    );
+  }
+
+  // Contact & Outreach (R6 Phase 3 — outreach drafts). No send transport (INV-1):
+  // an approved draft is copied out via the clipboard, never sent from here.
+  outreachThread(
+    contactId: string,
+    query: { jobId?: string } = {},
+  ): Promise<OutreachThreadResponse> {
+    return this.get(`/v1/contacts/${encodeURIComponent(contactId)}/outreach`, query);
+  }
+
+  generateOutreachDraft(
+    contactId: string,
+    body: GenerateOutreachDraftRequest = {},
+  ): Promise<OutreachThreadResponse> {
+    return this.post(`/v1/contacts/${encodeURIComponent(contactId)}/outreach/drafts`, body);
+  }
+
+  reviseOutreachDraft(
+    threadId: string,
+    body: ReviseOutreachDraftRequest,
+  ): Promise<OutreachThreadResponse> {
+    return this.post(`/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts`, body);
+  }
+
+  approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draftId)}/approve`,
+      {},
+    );
+  }
+
+  rejectOutreachDraft(
+    threadId: string,
+    draftId: string,
+    body: RejectOutreachDraftRequest = {},
+  ): Promise<OutreachThreadResponse> {
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draftId)}/reject`,
       body,
     );
   }

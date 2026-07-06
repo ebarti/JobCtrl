@@ -4,6 +4,7 @@ import { ContactDeleteButton } from "../../contexts/outreach/components/ContactD
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
 import { ContactProvenanceList } from "../../contexts/outreach/components/ContactProvenanceList.js";
 import { ContactRoleBadge } from "../../contexts/outreach/components/ContactRoleBadge.js";
+import { OutreachThreadPanel } from "../../contexts/outreach/components/OutreachThreadPanel.js";
 import { useContactDetailQuery } from "../../contexts/outreach/hooks/useContactDetailQuery.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
@@ -74,6 +75,7 @@ export function OutreachDetailDrawer({ contactId, onClose }: OutreachDetailDrawe
             <Section title="Facts and provenance">
               <ContactProvenanceList attributes={contact.attributes} />
             </Section>
+            <OutreachThreadPanel contactId={contact.contactId} />
           </>
         ) : null}
       </div>

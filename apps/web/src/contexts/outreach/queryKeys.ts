@@ -34,6 +34,8 @@ export const outreachKeys = {
   threads: (tenantId: TenantId) => [...outreachKeys.all(tenantId), "threads"] as const,
   thread: (tenantId: TenantId, threadId: string) =>
     [...outreachKeys.threads(tenantId), threadId] as const,
+  threadForContact: (tenantId: TenantId, contactId: string, jobId: string | null = null) =>
+    [...outreachKeys.threads(tenantId), "for-contact", contactId, jobId] as const,
 
   // Due follow-ups (derived read-model list)
   dueFollowUps: (tenantId: TenantId) =>

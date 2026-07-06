@@ -39,6 +39,10 @@ import type {
   ContactResearchListResponse,
   ContactResearchStartResponse,
   RunContactResearchRequest,
+  OutreachThreadResponse,
+  GenerateOutreachDraftRequest,
+  ReviseOutreachDraftRequest,
+  RejectOutreachDraftRequest,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -336,6 +340,21 @@ export interface ApiClientPort {
     candidateId: string,
     body?: ConfirmContactCandidateRequest,
   ): Promise<ConfirmContactCandidateResponse>;
+  outreachThread(contactId: string, query?: { jobId?: string }): Promise<OutreachThreadResponse>;
+  generateOutreachDraft(
+    contactId: string,
+    body?: GenerateOutreachDraftRequest,
+  ): Promise<OutreachThreadResponse>;
+  reviseOutreachDraft(
+    threadId: string,
+    body: ReviseOutreachDraftRequest,
+  ): Promise<OutreachThreadResponse>;
+  approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse>;
+  rejectOutreachDraft(
+    threadId: string,
+    draftId: string,
+    body?: RejectOutreachDraftRequest,
+  ): Promise<OutreachThreadResponse>;
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
