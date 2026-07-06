@@ -4,9 +4,6 @@ import { useState } from "react";
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 
-// Renders many bare <select>/<button> form fields in the production
-// component (select-name, button-name violations). Phase 4 defect;
-// deferred.
 const meta = {
   title: "Contexts/Profile/StructuredProfileEditor",
   component: StructuredProfileEditor,
@@ -15,10 +12,6 @@ const meta = {
     styleText: JSON.stringify(sampleProfileResponse.style, null, 2),
     onProfileTextChange: () => {},
     onStyleTextChange: () => {},
-  },
-  parameters: {
-    // a11y deferred — StructuredProfileEditor.tsx bare select-name + button-name defects; see meta comment above.
-    a11y: { test: "off" },
   },
 } satisfies Meta<typeof StructuredProfileEditor>;
 

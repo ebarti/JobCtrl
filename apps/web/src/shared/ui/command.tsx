@@ -1,14 +1,66 @@
 import { Command as CommandPrimitive } from "cmdk";
 import { IconSearch } from "@tabler/icons-react";
 import {
+  type ForwardedRef,
   forwardRef,
   type ComponentPropsWithoutRef,
   type ComponentRef,
   type HTMLAttributes,
+  useEffect,
+  useRef,
 } from "react";
 
 import { cn } from "../lib/cn.js";
 import { Dialog, DialogContent } from "./dialog.js";
+
+function assignForwardedRef<T>(ref: ForwardedRef<T>, value: T | null) {
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  if (ref) {
+    (ref as { current: T | null }).current = value;
+  }
+}
+
+function normalizeCommandInputRole(input: HTMLInputElement) {
+  if (input.getAttribute("role") !== "searchbox") {
+    input.setAttribute("role", "searchbox");
+  }
+  for (const attribute of ["aria-autocomplete", "aria-controls", "aria-activedescendant", "aria-expanded"]) {
+    if (input.hasAttribute(attribute)) {
+      input.removeAttribute(attribute);
+    }
+  }
+}
+
+function normalizeCommandListRoles(list: HTMLDivElement) {
+  if (list.hasAttribute("aria-activedescendant")) {
+    list.removeAttribute("aria-activedescendant");
+  }
+  const items = Array.from(list.querySelectorAll("[cmdk-item]"));
+  if (items.length === 0) {
+    if (list.getAttribute("role") !== "presentation") {
+      list.setAttribute("role", "presentation");
+    }
+    return;
+  }
+  if (list.getAttribute("role") !== "menu") {
+    list.setAttribute("role", "menu");
+  }
+  const sizer = list.querySelector("[cmdk-list-sizer]");
+  if (sizer?.getAttribute("role") !== "group") {
+    sizer?.setAttribute("role", "group");
+  }
+  items.forEach((item) => {
+    if (item.getAttribute("role") !== "menuitem") {
+      item.setAttribute("role", "menuitem");
+    }
+    if (item.hasAttribute("aria-selected")) {
+      item.removeAttribute("aria-selected");
+    }
+  });
+}
 
 export const Command = forwardRef<
   ComponentRef<typeof CommandPrimitive>,
@@ -42,31 +94,59 @@ export function CommandDialog({ children, ...props }: CommandDialogProps) {
 export const CommandInput = forwardRef<
   ComponentRef<typeof CommandPrimitive.Input>,
   ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
->(({ className, ...props }, ref) => (
-  <div className="flex items-center border-b border-input bg-background px-3" cmdk-input-wrapper="">
-    <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-    <CommandPrimitive.Input
-      ref={ref}
-      className={cn(
-        "flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
-  </div>
-));
+>(({ className, ...props }, ref) => {
+  const inputRef = useRef<ComponentRef<typeof CommandPrimitive.Input> | null>(null);
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    normalizeCommandInputRole(input);
+    const observer = new MutationObserver(() => normalizeCommandInputRole(input));
+    observer.observe(input, { attributes: true });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="flex items-center border-b border-input bg-background px-3" cmdk-input-wrapper="">
+      <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+      <CommandPrimitive.Input
+        ref={(node) => {
+          inputRef.current = node;
+          assignForwardedRef(ref, node);
+        }}
+        className={cn(
+          "flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
+          className,
+        )}
+        {...props}
+      />
+    </div>
+  );
+});
 CommandInput.displayName = CommandPrimitive.Input.displayName;
 
 export const CommandList = forwardRef<
   ComponentRef<typeof CommandPrimitive.List>,
   ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-));
+>(({ className, ...props }, ref) => {
+  const listRef = useRef<ComponentRef<typeof CommandPrimitive.List> | null>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    normalizeCommandListRoles(list);
+    const observer = new MutationObserver(() => normalizeCommandListRoles(list));
+    observer.observe(list, { attributes: true, childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <CommandPrimitive.List
+      ref={(node) => {
+        listRef.current = node;
+        assignForwardedRef(ref, node);
+      }}
+      className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
+      {...props}
+    />
+  );
+});
 CommandList.displayName = CommandPrimitive.List.displayName;
 
 export const CommandEmpty = forwardRef<

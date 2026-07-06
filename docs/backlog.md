@@ -325,29 +325,10 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-10 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
-they exercise pre-existing production accessibility defects that are scoped
-out of the Phase 7 baseline. Each defect needs a follow-up production fix;
-once fixed, the deferral is removed from the corresponding story
-parameters.
-
-| Production file | Defect | Stories that defer |
-| --- | --- | --- |
-| `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
-| `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
-| `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
-| `apps/web/src/contexts/apply/components/ApplyHistory.tsx` | TanStack Router `<Link>` rendered as a button without an accessible name. | `ApplyHistory.stories.tsx` |
-| Radix `DropdownMenu` portal | `aria-hidden-focus` violation reported during the open animation (Radix transient internal state). | `dropdown-menu.stories.tsx` |
-| Radix `Select` portal | `aria-hidden-focus` violation during the open transition. | `select.stories.tsx` |
-| Radix `Popover` portal | Portal role / ARIA labelling requirements not satisfied by the stock Radix wrapper. | `popover.stories.tsx` |
-| Radix `ScrollArea` viewport | `scrollable-region-focusable` axe rule fires because the viewport is not focusable. | `scroll-area.stories.tsx` |
-| `cmdk` initial mount | `aria-required-children` violation during initial mount of the command palette. | `command.stories.tsx` |
-
-Production fixes for the remaining in-repo files (`ArtifactFilterBar.tsx`,
-`StructuredProfileEditor.tsx`, `ApplyHistory.tsx`) unblock the in-repo
-production-file deferrals immediately. The five remaining wrapper/library
-deferrals (Radix transient internals + cmdk) need either upstream fixes or
-local wrappers with the missing ARIA plumbing.
+No Storybook stories currently defer the a11y bar. The Phase 7 deferrals
+were burned down on 2026-07-06; new production accessibility defects must be
+fixed in the owning component or recorded here with the story path and a
+concrete follow-up.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 

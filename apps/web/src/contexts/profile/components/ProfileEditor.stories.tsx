@@ -4,16 +4,10 @@ import { http, HttpResponse } from "msw";
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
 import { ProfileEditor } from "./ProfileEditor.js";
 
-// ProfileEditor mounts StructuredProfileEditor which renders many bare
-// <select>/<textarea>/<button> elements without associated labels
-// (select-name, button-name violations). Production-code defect from
-// Phase 4; deferred.
 const meta = {
   title: "Contexts/Profile/ProfileEditor",
   component: ProfileEditor,
   parameters: {
-    // a11y deferred — StructuredProfileEditor.tsx bare select-name + button-name defects; see meta comment above.
-    a11y: { test: "off" },
     withRouter: true,
   },
 } satisfies Meta<typeof ProfileEditor>;
