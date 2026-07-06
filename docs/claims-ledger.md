@@ -22,14 +22,19 @@ in one hop.
 ## Freeze status
 
 > **PROVISIONAL FREEZE — not yet owner-signed.** Re-anchored and verified
-> against `main` @ `e54dd903` on **2026-07-06**, after the R5 career-evidence-map
-> / interview-prep stack merged and the duplicated `BR-052` autofill handle was
-> renumbered to `BR-056` (#309). This pass added CL-028, CL-029, CL-056 for the
-> capabilities that stack put on public surfaces (README, normal flows), and
-> updated CL-038's citation to `BR-056`. (The prior pass @ `a4001862` added
-> CL-005, CL-027, CL-038, CL-055 for the R3 browser-extension and R4
-> outcome-analytics / artifact-comparison trains.) Every `Current` and `Beta`
-> row's verification pointer resolved at `e54dd903`. GATE G1 is satisfied only
+> against `main` @ `fec1940f` on **2026-07-06**, after the R10 crawl-politeness
+> train (#297–#316), the I0 vendor-auth setup train (#254/#317), and the R7a
+> launch-asset train (#262–#305) merged. This pass added CL-006/CL-007/CL-008
+> for the crawl-politeness capabilities now claimed on the README, Security, and
+> Configuration surfaces, and CL-073 for first-run vendor-auth setup (including
+> the always-required Claude synthesis auth), and extended CL-061's surfaces
+> with the README's own "What Leaves Your Machine" section. The R9
+> streaming-latency train also merged but introduced no public-surface claim
+> (internal latency work), so no row was added for it. (The prior pass @
+> `e54dd903` added CL-028, CL-029, CL-056 and renumbered the autofill handle to
+> `BR-056`; the pass before that @ `a4001862` added CL-005, CL-027, CL-038,
+> CL-055.) Every `Current` and `Beta` row's verification pointer resolved at
+> `fec1940f`. GATE G1 is satisfied only
 > once the repository owner reviews this ledger, assigns per-claim sign-off
 > owners (§11.7 of the plan), and re-stamps this line with the dated `main` sha
 > at actual freeze time. `main` is advancing quickly while the launch trains
@@ -38,7 +43,7 @@ in one hop.
 > source/test paths) that resolve at any recent `main`.
 >
 > Unless a row's `Last verified` says otherwise, every row was last verified in
-> this pass (2026-07-06 @ `e54dd903`).
+> this pass (2026-07-06 @ `fec1940f`).
 
 ## How to read this ledger
 
@@ -81,6 +86,9 @@ path, or test path that resolves on `main`.
 | CL-003 | Scheduled discovery is off by default; a local Temporal Schedule runs on the configured cron only after the user enables it. | README (What It Does); Configuration | Current | repo owner | [pipeline operations](architecture/pipeline/operations.md) ("off by default"); [configuration](user/configuration.md) | 2026-07-06 |
 | CL-004 | Enrichment adds full descriptions, canonical posting URLs, and apply URLs to postings. | README (What It Does) | Current | repo owner | [pipeline stages](architecture/pipeline/stages.md) | 2026-07-06 |
 | CL-005 | The optional local browser extension captures the active job page (URL and visible text) over loopback and feeds it into the existing manual-capture importer, so dedupe, snapshots, quarantine, and source provenance stay identical to other user-mediated captures. It is loaded unpacked in the browser's developer mode. | README (What It Does; Browser Extension Capture And Autofill) | Current | repo owner | `BR-019` (requirements.md); [local TS API](local-ts-api.md) (`POST /v1/extension/captures`); `apps/api/src/server.ts` (route → `manualCaptureImporter`) | 2026-07-06 |
+| CL-006 | Every discovery and enrichment fetch — `urllib` API calls and Playwright navigations alike — routes through one crawl-politeness gateway that honors `robots.txt` (a `2xx` is parsed and enforced; a `4xx`/`404` means the file is absent and the fetch is allowed per RFC 9309; a `5xx` or timeout is inconclusive and fails closed with a short-TTL recheck; a DNS failure or refused connection fails open with a warning), paces each host (minimum interval + concurrency cap; a server `Retry-After` is honored but clamped), and bounds each run's request budget. | README (What It Does — polite fetching); Security (Crawl Politeness); Configuration (Crawl Politeness) | Current | repo owner | [decisions](decisions.md) (2026-07-06 Crawl Politeness ADR); `workers/automation/src/jobhunter/infrastructure/network/politeness.py` (`PolitenessGateway`, `RunBudgetCounter`), `.../network/robots.py`, `.../network/rate_limiter.py` | 2026-07-06 |
+| CL-007 | Outbound crawling stamps one honest `User-Agent` — `JobHunter/<version> (+<repo url>)` by default, product token and contact overridable via `JOBHUNTER_CRAWL_UA_PRODUCT` / `JOBHUNTER_CRAWL_UA_CONTACT` — that never impersonates a browser on a surface JobHunter controls, and `jobhunter doctor` prints the effective identity. | README (What It Does — polite fetching); Security (Crawl Politeness); Configuration (Crawl Politeness) | Current | repo owner | `workers/automation/src/jobhunter/infrastructure/network/politeness.py` (`resolve_honest_user_agent`); `workers/automation/src/jobhunter/cli.py` (doctor prints effective UA); [configuration](user/configuration.md) (Crawl Politeness) | 2026-07-06 |
+| CL-008 | A blocked fetch is recorded as a first-class outcome — robots-disallowed, rate-limited, or budget-exhausted — never a scrape error, and is surfaced per source in the Source Health card and discovery controls. Broad boards fetched through `python-jobspy` own their internal per-board transport, so JobHunter cannot robots-gate those individual requests and applies pacing + budget at its own invocation boundary, with `jobhunter doctor` disclosing when broad boards are active; the authenticated LinkedIn path uses the user's own logged-in browser session with its real browser identity — an owner-scoped exception that remains rate- and budget-limited. | Security (Crawl Politeness); Data & Safety (External Services) | Current | repo owner | `workers/automation/src/jobhunter/infrastructure/network/politeness.py` (outcomes → `operational_attempt_metrics`); `apps/web/src/contexts/discovery/components/SourcePolitenessBadges.tsx`; [security](user/security.md) (Crawl Politeness) | 2026-07-06 |
 
 ### Scoring
 
@@ -174,7 +182,7 @@ path, or test path that resolves on `main`.
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-060 | JobHunter is local-first: no hosted backend and no account system; the profile, SQLite database, generated materials, browser state, and logs live under the user's home directory, and nothing leaves the machine except steps the user explicitly configures and runs. | Hero (Local-First & Private); README; Data & Safety (Privacy Quick Answer); Security | Current | repo owner | [security](user/security.md); [data & safety](user/data-and-safety.md); `TR-005` (requirements.md) | 2026-07-06 |
-| CL-061 | The outbound calls that can carry private data are enumerated and each is opt-in / configuration-gated: LLM providers, the apply-agent prompt, job boards/ATS/posting pages, Gmail (read-only), Google Maps autocomplete, CAPTCHA solving, and Langfuse telemetry. | Security (What Leaves Your Machine); Data & Safety (External Services) | Current | repo owner | [security](user/security.md) (What Leaves Your Machine table); [data & safety](user/data-and-safety.md) | 2026-07-06 |
+| CL-061 | The outbound calls that can carry private data are enumerated and each is opt-in / configuration-gated: LLM providers, the apply-agent prompt, job boards/ATS/posting pages, Gmail (read-only), Google Maps autocomplete, CAPTCHA solving, and Langfuse telemetry. | README (What Leaves Your Machine); Security (What Leaves Your Machine); Data & Safety (External Services) | Current | repo owner | [security](user/security.md) (What Leaves Your Machine table); [data & safety](user/data-and-safety.md) | 2026-07-06 |
 | CL-062 | The shipped Gmail connector is read-only (it does not request `gmail.send`); raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs. | README (Responsible Use); Security; Data & Safety | Current | repo owner | [security](user/security.md); `workers/automation/src/jobhunter/infrastructure/gmail/feedback.py` | 2026-07-06 |
 | CL-063 | The local API defaults to a loopback bind (`127.0.0.1`); browser-extension routes additionally require a local capability token stored under `~/.jobhunter/` and accepted only on loopback `/v1/extension/*` routes, and that token does not grant application-submission authority. | README (Responsible Use); Security (Browser Extension Pairing) | Current | repo owner | `TR-005` (requirements.md); [security](user/security.md) | 2026-07-06 |
 | CL-064 | LLM provider keys can be stored in the macOS Keychain (never written to SQLite, logs, traces, or artifacts) or in `.env`; a profile password is used only for login autofill and enters the apply-agent prompt only when a login form needs it. | Security (Credentials) | Current | repo owner | [security](user/security.md) | 2026-07-06 |
@@ -188,6 +196,7 @@ path, or test path that resolves on `main`.
 | CL-070 | A local `jobhunter backup` command produces a consistent copy of the SQLite database via `VACUUM INTO` without deleting anything, and schema migrations are guarded by a schema-version check. | README (Back Up And Restore) | Current | repo owner | `BR-053` (requirements.md); [storage](architecture/storage.md) | 2026-07-06 |
 | CL-071 | The daily digest is local-only: `jobhunter digest` and the Dashboard digest read from the database without sending notifications or advancing review state, and only the explicit acknowledge action advances the digest watermark. | README (Local Data And Safety) | Current | repo owner | [read model](architecture/read-model.md); `jobhunter digest` (README CLI Reference) | 2026-07-06 |
 | CL-072 | Documentation screenshots and QA fixtures use synthetic data only, and `scripts/release_check.py` enforces this on every push/PR (scanning for real-profile needles, secrets, prompt tripwires, blocked file types, and blocked distribution paths). | README (Screenshots); Data & Safety (Public Bug Reports); Tour (info callouts) | Current | repo owner | `scripts/release_check.py`; [local development](local-development.md#documentation-screenshots) | 2026-07-06 |
+| CL-073 | First-run setup (`jobhunter setup`, reached from the guided installer) detects local vendor auth, persists intentionally enabled or skipped employer-analysis legs, and hands off to `doctor`; employer-analysis readiness always requires Claude synthesis auth — every ensemble run reconciles through the Claude synthesis pass — even when the `claude` draft leg is disabled, with `setup` warning that analysis is not ready and `doctor` reporting a dedicated `Claude synthesis auth` row. | README (Get Started; CLI Reference `setup`); Getting Started; Configuration (Employer-Analysis Ensemble) | Current | repo owner | `workers/automation/src/jobhunter/infrastructure/setup_probes.py` (`probe_analysis_setup`, `probe_claude_synthesis_auth`); `workers/automation/tests/test_setup_synthesis_auth.py`; [configuration](user/configuration.md) (Employer-Analysis Ensemble) | 2026-07-06 |
 
 ### Profile
 
@@ -233,7 +242,11 @@ Carried from the plan's open owner decisions (§11); resolve at sign-off:
   developer-mode only" as a maturity qualifier warranting `Beta`); and
   **CL-029** (grounded interview-prep generation is a new LLM-generated surface a
   user takes into an interview — the owner may prefer `Beta` despite the reused
-  fabrication / grounding / adversarial gates). **CL-055** is already classified
+  fabrication / grounding / adversarial gates); and **CL-008** (the
+  `python-jobspy` invocation-boundary caveat — JobHunter cannot robots-gate the
+  library's individual per-board requests — is carried in the claim text as a
+  scope note, but the owner may judge it load-bearing enough to present the
+  politeness claim as `Beta` while broad boards are enabled). **CL-055** is already classified
   `Beta` (see its "Why Beta" note); confirm at sign-off. The earlier `BR-052`
   duplicate-handle defect was resolved on `main` by #309 (autofill renumbered to
   `BR-056`), so CL-024 and CL-038 now carry clean one-hop citations.
