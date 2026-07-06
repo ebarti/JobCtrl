@@ -23,6 +23,7 @@ Design notes:
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -51,6 +52,31 @@ POLITENESS_ATTEMPT_KIND = "politeness_gate"
 
 POLITENESS_BLOCKED_OUTCOME = "blocked"
 """Non-terminal ``outcome`` so ``classify_failure`` never reads it as an error."""
+
+UA_PRODUCT_ENV = "JOBHUNTER_CRAWL_UA_PRODUCT"
+"""Env override for the honest-UA product token (default ``JobHunter``)."""
+
+UA_CONTACT_ENV = "JOBHUNTER_CRAWL_UA_CONTACT"
+"""Env override for the honest-UA contact. Set empty to drop the contact suffix."""
+
+
+def resolve_honest_user_agent() -> HonestUserAgent:
+    """The effective honest outbound identity, with owner env overrides applied.
+
+    Starts from :func:`default_honest_user_agent` (``JobHunter/<version>
+    (+<repo url>)``, decision D1) and lets the owner override the product token
+    (:data:`UA_PRODUCT_ENV`) and the contact (:data:`UA_CONTACT_ENV`) via env —
+    keeping the override wiring generic without baking in any owner identity. Set
+    the contact env to an empty string to drop the ``(+contact)`` suffix. This
+    is the single point every gateway resolves its default UA from, so the
+    owner-chosen identity applies to every fetch surface at once. It never
+    impersonates a browser; owners should review the effective value before real
+    crawls (see ``docs/user/configuration.md``)."""
+    base = default_honest_user_agent()
+    product = (os.environ.get(UA_PRODUCT_ENV) or "").strip() or base.product
+    contact_override = os.environ.get(UA_CONTACT_ENV)
+    contact = base.contact_url if contact_override is None else (contact_override.strip() or None)
+    return HonestUserAgent(product=product, version=base.version, contact_url=contact)
 
 
 class RunBudgetCounter(RunBudget):
@@ -93,7 +119,7 @@ class PolitenessGateway(PolitenessGatewayPort):
         robots: RobotsPort | None = None,
         rate_limiter: RateLimiterPort | None = None,
     ) -> None:
-        self._user_agent = user_agent or default_honest_user_agent()
+        self._user_agent = user_agent or resolve_honest_user_agent()
         self._ua_header = self._user_agent.header_value()
         self._robots = robots or RobotsCache()
         self._rate_limiter = rate_limiter or get_shared_rate_limiter()
