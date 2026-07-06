@@ -5,15 +5,12 @@ import { ArtifactFilterBar } from "./ArtifactFilterBar.js";
 
 const baseSearch = artifactsSearchSchema.parse({});
 
-// Bare <select> production-code issue from Phase 4. Deferred.
 const meta = {
   title: "Views/Artifacts/ArtifactFilterBar",
   component: ArtifactFilterBar,
   parameters: {
     withRouter: true,
     initialPath: "/artifacts",
-    // a11y deferred — ArtifactFilterBar.tsx bare <select> select-name defect; see meta comment above.
-    a11y: { test: "off" },
   },
   args: {
     search: baseSearch,

@@ -80,16 +80,19 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 - **Spend ceiling as a blast-radius control.** The `check_spend_budget` preflight
   runs before the apply activity, so a runaway or injected loop cannot spend past
   the daily ceiling.
-- **Prompt-injection surface.** The agent is a Claude apply-runtime subprocess launched
-  with `--permission-mode bypassPermissions` (no per-action prompts) because it
-  must fill arbitrary, unknowable forms. It reads untrusted third-party page text
-  live, so prompt injection is a genuine, unavoidable exposure — the controls
-  above bound the blast radius, they do not eliminate it. The agent's tool surface
-  is narrowed: Gmail write tools (`draft`, `send`, `delete`, `modify`, label, and
-  filter operations) are passed via `--disallowedTools`, so even a hijacked agent
-  keeps read-only Gmail access. The apply prompt also carries profile PII, and,
-  when configured, an account password and the CapSolver key — see the
-  release-gate tripwires under [Secrets And Data Hygiene](#secrets-and-data-hygiene).
+- **Prompt-injection surface.** The agent is a Claude apply-runtime subprocess
+  reading untrusted third-party page text live, so prompt injection is a genuine
+  exposure — the controls above bound the blast radius, they do not eliminate it.
+  The subprocess runs with `--no-session-persistence`, an explicit
+  `--allowedTools` surface, explicit `--disallowedTools`, and a filtered
+  environment. The allowlist is limited to the safe Playwright apply subset,
+  read-only Gmail verification-code lookup, and owned apply tools. Job-site
+  passwords and CAPTCHA provider keys stay out of the model prompt: the local
+  `type_credential` tool types configured credentials into the focused field,
+  and the local `solve_captcha` tool owns provider-key use when configured.
+  Gmail send is not exposed as an agent tool; email-only applications are
+  recorded as review candidates and sent only by the owned email sender after a
+  matching Apply Review approval.
 
 The product-level no-bypass rule (BR-001) is the policy behind these mechanisms:
 JobHunter must never bypass CAPTCHA, paywall, login, rate-limit, or bot-control
@@ -120,10 +123,10 @@ apply-worker state, or raw logs and traces. Use synthetic fixtures or
 **Store credentials in a secret port.** Credentials must use the macOS Keychain
 credential store or explicit environment variables, never SQLite, snapshots,
 logs, traces, or artifacts (TR-013). The Keychain store
-(`apps/api/src/credentials.ts`) currently holds the LLM provider keys; the
-CapSolver key is an env var; a login password, if the user provides one, is
-profile data and is interpolated into the apply prompt (a known trade-off called
-out on the user page).
+(`apps/api/src/credentials.ts`) currently holds the LLM provider keys. The
+CapSolver key is an env var scoped to the owned CAPTCHA tool. A job-site login
+password, if the user provides one, remains local profile data consumed by the
+owned `type_credential` tool; it is not interpolated into the apply prompt.
 
 **The release gate is enforced in CI.** `scripts/release_check.py` runs on every
 push and pull request and scans the git-tracked and untracked tree — plus any
@@ -138,12 +141,12 @@ built wheel/sdist archives — for:
 - browser-profile artifacts and the private `.planning/` corpus;
 - a blocked distribution name combined with a tag-publish trigger.
 
-It also warns on apply-prompt tripwires — the CapSolver key interpolation,
-hardcoded attestation defaults, and profile-password interpolation. These are
-**warnings, not failures**, until the apply-safety hardening lands and the gate is
-run with `--strict-prompt`; treat a passing release check as necessary but not
-sufficient, and do not add real profile data to a fixture just because the
-scrubber is green today.
+It also scans for apply-prompt tripwires: CapSolver key interpolation,
+hardcoded attestation defaults, and profile-password interpolation. The default
+CI mode keeps these as compatibility warnings, while the release gate also runs
+`--strict-prompt`, where any of those tripwires is a failure. Treat a passing
+release check as necessary but not sufficient, and do not add real profile data
+to a fixture just because the scrubber is green today.
 
 **The docs site has a publish boundary.** The VitePress config
 (`docs/.vitepress/config.ts`) excludes `docs/plans/`, `docs/incidents/`,

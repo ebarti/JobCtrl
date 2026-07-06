@@ -134,6 +134,16 @@
   "resume_constraints": {
     "real_metrics": ["2M events per day", "35%", "25%"]
   },
+  "application_attestations": {
+    "age_18_plus": null,
+    "background_check_consent": null,
+    "felony_conviction": null,
+    "previously_worked_at_employer": null,
+    "additional": {}
+  },
+  "application_preferences": {
+    "how_heard": ""
+  },
   "eeo_voluntary": {
     "gender": "Decline to self-identify",
     "race_ethnicity": "Decline to self-identify",

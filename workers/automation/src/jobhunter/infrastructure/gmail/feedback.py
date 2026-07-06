@@ -261,6 +261,8 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           profile_version INTEGER,
           application_url TEXT,
           partial_override_run_id TEXT,
+          email_recipient TEXT,
+          email_attachment_artifact_id TEXT,
           PRIMARY KEY (tenant_id, decision_id)
         );
         CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
@@ -337,6 +339,8 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
             "profile_version": "INTEGER",
             "application_url": "TEXT",
             "partial_override_run_id": "TEXT",
+            "email_recipient": "TEXT",
+            "email_attachment_artifact_id": "TEXT",
         },
     )
 

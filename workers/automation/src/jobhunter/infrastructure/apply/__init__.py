@@ -13,9 +13,11 @@ canonical apply lifecycle row.
 """
 
 from jobhunter.infrastructure.apply.claude_code_cli import ClaudeCodeCliAdapter
+from jobhunter.infrastructure.apply.email_sender import GmailEmailApplicationSender
 from jobhunter.infrastructure.apply.local_chrome import LocalChromeAdapter
 
 __all__ = [
     "ClaudeCodeCliAdapter",
+    "GmailEmailApplicationSender",
     "LocalChromeAdapter",
 ]

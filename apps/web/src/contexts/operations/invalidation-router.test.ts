@@ -287,6 +287,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     applyReviewKeys.queue(LOCAL_TENANT),
     analyticsKeys.all(LOCAL_TENANT),
   ],
+  EmailApplicationCandidateRecorded: [applyReviewKeys.queue(LOCAL_TENANT)],
   ApplicationSubmitted: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),

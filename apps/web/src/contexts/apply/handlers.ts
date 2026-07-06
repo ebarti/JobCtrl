@@ -5,6 +5,7 @@ import type {
   ApplyRunEventRecorded,
   ApplyRunStarted,
   ApplySubmitIntended,
+  EmailApplicationCandidateRecorded,
 } from "@jobhunter/domain-types";
 
 import { analyticsKeys } from "../operations/analyticsKeys.js";
@@ -58,6 +59,12 @@ export const applicationEmailFeedbackIngestedHandler = (
   invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
+];
+
+export const emailApplicationCandidateRecordedHandler = (
+  event: EmailApplicationCandidateRecorded,
+): readonly InvalidationItem[] => [
+  invalidate(applyReviewKeys.queue(event.tenantId)),
 ];
 
 export const applicationSubmittedHandler = (

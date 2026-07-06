@@ -37,7 +37,7 @@ P3 is **not** designed in implementation detail here (§6). Do not start it unti
 
 - Conventional Commits for every commit and PR title; PR body states What / Why / Validation.
 - Never edit code on `main`; every phase is developed in its own worktree/branch; one reviewable unit per PR.
-- **Additive:** this is a new surface. Do not remove or weaken any existing safety/privacy behavior (loopback bind, apply approval gate, dry-run guard, at-most-once, spend cap). Adding auth to the local API (P0) is a strict addition — unauthenticated loopback reads that exist today keep working unless the owner decides otherwise (§13, D-2).
+- **Additive:** this is a new surface. Do not remove or weaken any existing safety/privacy behavior (loopback bind, apply approval gate, explicit dry-run guard when dry-run is requested, at-most-once, spend cap). Adding auth to the local API (P0) is a strict addition — unauthenticated loopback reads that exist today keep working unless the owner decides otherwise (§13, D-2).
 - Public-history-safe: neutral product language only. Name ATS **integration targets** only where the repo already names them in code (`AtsKind` values: Workday, Greenhouse, Lever, Ashby). Never name or allude to rival products/companies; no marketing language.
 - Do not commit or fixture any real profile data, resumes, cover letters, PDFs, browser profiles, SQLite databases, secrets, or logs. Fixtures use synthetic, fictional employers and the existing synthetic seed (`pnpm qa:seed`).
 - Each phase that changes user-facing behavior, the local API, or safety notes MUST update the owning docs per the CLAUDE.md documentation matrix (enumerated per phase under "Docs").
@@ -297,7 +297,7 @@ All of the following must hold:
 A Phase-3 submission MUST enter through the existing apply workflow entry (`apply` JSON-RPC method → `ApplyWorkflow`), inheriting all four mechanisms — not the raw launcher, not the extension:
 
 - **Approval gate:** `apply_approval_required` (default `True`, `workers/automation/src/jobhunter/infrastructure/scoring/criteria_provider.py` » `read_apply_approval_required`) enforced in the worker's claim transaction (`workers/automation/src/jobhunter/apply/launcher.py` » `_latest_apply_review_decision`, the `approval_required and not dry_run` branch); consent recorded via `POST /v1/jobs/:jobKey/apply-review/decision` (`apps/api/src/server.ts`; `apps/api/src/application-feedback.ts` » `recordApplyReviewDecision`, decision `approve_submit` from `APPLY_REVIEW_DECISION_VALUES`).
-- **Dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobhunter/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`).
+- **Explicit dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobhunter/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`). This protects runs that explicitly opt into dry-run mode; it is not a dry-run-by-default requirement.
 - **At-most-once lifecycle:** deterministic `apply_workflow_id` = `apply-{tenant}-{job_key}` (`workers/automation/src/jobhunter/workflow_specs.py`), Temporal `USE_EXISTING` conflict policy, single live attempt (`apply/workflow.py` » `_APPLY_LIVE_RETRY`), active-run exclusion (`_has_active_apply` / `list_active`), and the `ApplySubmitIntended` checkpoint (`workers/automation/src/jobhunter/domain/apply/process_manager.py`).
 - **Spend ceiling:** the `check_spend_budget` preflight (`workers/automation/src/jobhunter/llm.py`) raising `BudgetExceededError`; daily budget default $25 (`read_daily_budget_usd`).
 - **Read model / UI:** `apply_run_projections`; Apply Review queue + `ApplyReviewDecisionControls`; apply events (`ApplyRunStarted`, `ApplySubmitIntended`, `ApplicationSubmitted`, `ApplicationFailed`, `ApplyReviewDecisionRecorded`).
@@ -305,7 +305,7 @@ A Phase-3 submission MUST enter through the existing apply workflow entry (`appl
 ### 6.3 What Phase 3 must NOT do
 
 - Must not add a submission code path to the extension or content scripts.
-- Must not weaken, flag-off, or bypass the approval gate, dry-run guard, at-most-once lifecycle, or spend cap.
+- Must not weaken, flag-off, or bypass the approval gate, explicit dry-run guard when dry-run is requested, at-most-once lifecycle, or spend cap.
 - Must not submit as a side effect of capture or autofill.
 - The extension's role is limited to handing a reviewed application to the supervised path and reflecting its status; the human `approve_submit` decision remains mandatory (I-2, I-3, BR-001, BR-023, BR-054).
 
@@ -378,15 +378,26 @@ Beyond §0.3:
 
 ## 13. Open owner decisions
 
+All nine decisions were resolved by the owner on 2026-07-06:
+
 - **D-1 (P0):** Exact token model — header name, storage location under `~/.jobhunter/`, pairing UX (Settings copy vs. localhost pairing page), and whether a valid token relaxes the mutation-origin gate (recommended: yes, with loopback `Host` still required).
+  - **Resolved (2026-07-06):** recommended defaults accepted — token under `~/.jobhunter/` with restrictive permissions, one-time pairing via the Settings surface, `Authorization: Bearer <token>`; a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
 - **D-2 (P0):** Do existing unauthenticated loopback API reads stay open, or does the owner want auth required for all non-web clients? (Recommended: keep additive; extension routes require token; web app unchanged.)
+  - **Resolved (2026-07-06):** keep additive. Extension routes require the token; existing unauthenticated loopback reads and the web app are unchanged.
 - **D-3 (P1):** Extension provenance fields and source-id scheme (recommended `source_id = manual_capture:extension`, provenance `capture_client="browser_extension"` + version) and whether to add a `browser_extension_capture` manual-action reason.
+  - **Resolved (2026-07-06):** recommended defaults accepted (`source_id = manual_capture:extension`, `capture_client="browser_extension"` + version, new `browser_extension_capture` manual-action reason).
 - **D-4 (P2):** Starting ATS family set and rollout order among Workday/Greenhouse/Lever/Ashby.
+  - **Resolved (2026-07-06):** all four families (Greenhouse, Lever, Workday, Ashby) ship in the first P2a release. The content-script host allowlist is exactly these ATS domains.
 - **D-5 (P0/P1):** Offline capture queue retention policy (size/age limits, clear-on-pair-change).
+  - **Resolved (2026-07-06):** recommended defaults accepted — bounded size + age caps, queue cleared on pair change.
 - **D-6 (P3):** Go/no-go to begin Phase 3 once §6.1 is satisfied.
+  - **Resolved (2026-07-06):** Phase 3 (R11) stays **closed until an explicit owner go**, even after §6.1's technical preconditions (P1–P2 shipped + QA'd, W1 apply hardening merged) are satisfied. The owner is the third lock; the decision brief in the R1 close-out inventory is the input for that future call. No agent may start R11 work without the explicit go.
 - **D-7 (§9):** Distribution channel (self-distributed signed package vs. public store) and signing key ownership.
+  - **Resolved (2026-07-06):** self-distributed signed package for v1; a Chrome Web Store listing is a post-launch follow-up. Signing key owned by the owner.
 - **D-8 (§3):** Target browser/engine for v1 (single MV3 target vs. more).
+  - **Resolved (2026-07-06):** single Chromium MV3 target for v1; Firefox later.
 - **D-9 (P2b):** Whether to ship LLM-assisted free-text drafts at all, or keep Phase 2 deterministic-only for v1.
+  - **Resolved (2026-07-06):** deterministic **values** with LLM-assisted **field matching**. Fill values come only from actual profile data (source-attributed, never generated). When deterministic label matching fails, an LLM may map the form label to an existing profile field (e.g. "Birth name" → the profile's "Maiden name" fact). The LLM never authors fill content — it only resolves label synonyms; unmatched fields stay empty and are visibly flagged. Free-text answer drafting (P2b as originally scoped) stays deferred.
 
 ## 14. Requirements traceability
 

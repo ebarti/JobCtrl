@@ -12,7 +12,15 @@ def test_gmail_mcp_auth_status_reports_authenticated_credentials(
     monkeypatch, tmp_path
 ) -> None:
     creds = tmp_path / "credentials.json"
-    creds.write_text("{}", encoding="utf-8")
+    creds.write_text(
+        json.dumps(
+            {
+                "scope": "https://www.googleapis.com/auth/gmail.readonly "
+                "https://www.googleapis.com/auth/gmail.send"
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("GMAIL_MCP_CREDENTIALS_PATH", str(creds))
     monkeypatch.setenv("GMAIL_MCP_OAUTH_KEYS_PATH", str(tmp_path / "missing.json"))
     monkeypatch.setattr(config, "load_env", lambda: None)
@@ -21,6 +29,19 @@ def test_gmail_mcp_auth_status_reports_authenticated_credentials(
 
     assert ok is True
     assert str(creds) in note
+
+
+def test_gmail_mcp_auth_status_requires_send_scope(monkeypatch, tmp_path) -> None:
+    creds = tmp_path / "credentials.json"
+    creds.write_text(json.dumps({"scope": "https://www.googleapis.com/auth/gmail.readonly"}), encoding="utf-8")
+    monkeypatch.setenv("GMAIL_MCP_CREDENTIALS_PATH", str(creds))
+    monkeypatch.setenv("GMAIL_MCP_OAUTH_KEYS_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(config, "load_env", lambda: None)
+
+    ok, note = config.gmail_mcp_auth_status()
+
+    assert ok is False
+    assert "missing gmail.send scope" in note
 
 
 def test_gmail_mcp_auth_status_points_to_auth_command_when_keys_exist(

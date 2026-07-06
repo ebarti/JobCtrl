@@ -60,6 +60,11 @@ class LocalChromeAdapter:
             pid=proc.pid,
             worker_dir=str(worker_dir),
             handle=proc,
+            dry_run_evidence=(
+                lambda port=config.cdp_port: _chrome.get_dry_run_cdp_guard_evidence(port)
+            )
+            if config.dry_run
+            else None,
         )
 
     def cleanup(self, session: BrowserSession) -> None:

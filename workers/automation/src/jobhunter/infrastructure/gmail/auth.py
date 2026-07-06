@@ -18,6 +18,8 @@ import httpx
 from jobhunter import config
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_SCOPES = (GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE)
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -84,7 +86,7 @@ def build_authorization_url(client: OAuthClient, redirect_uri: str, state: str) 
         "client_id": client.client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": GMAIL_READONLY_SCOPE,
+        "scope": " ".join(GMAIL_SCOPES),
         "access_type": "offline",
         "prompt": "consent",
         "state": state,
@@ -93,7 +95,7 @@ def build_authorization_url(client: OAuthClient, redirect_uri: str, state: str) 
 
 
 def authenticate(*, open_browser: bool = True, timeout_seconds: int = 180) -> Path:
-    """Run the local OAuth callback flow and save a Gmail readonly token."""
+    """Run the local OAuth callback flow and save a Gmail token."""
     client = load_oauth_client()
     token_path = config.get_gmail_mcp_credentials_path()
     token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +155,7 @@ def authenticate(*, open_browser: bool = True, timeout_seconds: int = 180) -> Pa
     thread.start()
     try:
         auth_url = build_authorization_url(client, redirect_uri, state)
-        print(f"Open this URL to authorize Gmail readonly access:\n{auth_url}")
+        print(f"Open this URL to authorize Gmail connector access:\n{auth_url}")
         if open_browser:
             webbrowser.open(auth_url)
         if not done.wait(timeout_seconds):

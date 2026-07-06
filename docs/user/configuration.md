@@ -30,6 +30,26 @@ depends on it.
 The development launcher loads `~/.jobhunter/.env`, repo `.env`, and the optional
 `JOBHUNTER_USER_ENV_PATH` file before starting local services.
 
+## Candidate Profile Application Fields
+
+`profile.example.json` includes an `application_attestations` block for legal
+or screening questions that apply automation is not allowed to infer:
+
+- `age_18_plus`
+- `background_check_consent`
+- `felony_conviction`
+- `previously_worked_at_employer`
+
+Use `true` or `false` only when the answer is explicitly true or false for you.
+Leave unknown answers as `null`; live apply automation fails with
+`missing_profile_data:<field>` instead of guessing. `jobhunter doctor` warns
+when required attestations are incomplete, and Apply Review surfaces the same
+missing fields before approval when the local profile row has unknown values.
+
+The profile also supports `application_preferences.how_heard` for common
+"How did you hear about us?" questions. It is a preference, not a legal
+attestation; leave it empty when there is no truthful answer.
+
 ## Core Runtime
 
 | Variable | Default | What it does |
@@ -230,7 +250,7 @@ rendering, and layout boxes stay tied to the same material generation.
 | `CHROME_PATH` | auto-detected | Chrome/Chromium executable path. |
 | `JOBHUNTER_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBHUNTER_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
-| `CAPSOLVER_API_KEY` | unset | Optional CAPTCHA solving support for explicitly authorized apply runs. |
+| `CAPSOLVER_API_KEY` | unset | Optional key used only by the owned local `solve_captcha` apply tool for supported widgets. Provider keys and solver tokens are not sent through the model prompt; unsupported or unconfigured CAPTCHA flows fail closed. |
 | `JOBHUNTER_LINKEDIN_APPLY_RESOLVER` | enabled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution. |
 | `JOBHUNTER_LINKEDIN_APPLY_PROFILE_DIR` | `~/.jobhunter/chrome-workers/linkedin-apply-url-resolver` | Dedicated Chrome profile for LinkedIn apply URL resolution. |
 | `JOBHUNTER_LINKEDIN_APPLY_SOURCE_PROFILE_DIR` | platform Chrome profile dir | Optional source profile copied into the resolver profile on first use. |
@@ -258,8 +278,12 @@ uv --project workers/automation run jobhunter doctor
 The first runs the Gmail sign-in and writes your local token; the second
 re-checks that the connector is now available.
 
-The connector requests Gmail read-only scope. Raw Gmail bodies stay local and are
-not copied into events, telemetry, broad projections, or logs.
+The connector requests Gmail read-only and send scopes. Read scope is used for
+bounded verification-code and outcome lookups. Send scope is used only for the
+owned email-application path after a dry-run records the recipient and
+attachment candidate and Apply Review approves that exact binding. Raw Gmail
+bodies stay local and are not copied into events, telemetry, broad projections,
+or logs.
 
 ## Compensation Sources
 

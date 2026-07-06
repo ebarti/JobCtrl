@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 const FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PLATFORM_JOB_TITLE = "Director of Platform Engineering";
@@ -295,6 +295,20 @@ function seedSyntheticCompensationData(): void {
   }
 }
 
+async function expectRegionBefore(
+  before: Locator,
+  after: Locator,
+  label: string,
+): Promise<void> {
+  await expect(before, `${label} first region`).toBeVisible();
+  await expect(after, `${label} second region`).toBeVisible();
+  const beforeBox = await before.boundingBox();
+  const afterBox = await after.boundingBox();
+  expect(beforeBox, `${label} first region box`).not.toBeNull();
+  expect(afterBox, `${label} second region box`).not.toBeNull();
+  expect(beforeBox!.y, `${label} vertical order`).toBeLessThan(afterBox!.y);
+}
+
 test("Jobs compensation source-conflict evidence stays product-visible without unsafe actions", async ({
   page,
 }) => {
@@ -308,17 +322,27 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
     (element) => element.scrollWidth > element.clientWidth,
   );
   expect(hasHorizontalScroll).toBe(true);
-  await expect(page.getByRole("columnheader", { name: "Compensation" })).toBeVisible();
+  for (const label of [
+    "Salary min (€ / year)",
+    "Salary max (€ / year)",
+    "Market (€ / year)",
+    "Confidence",
+    "Warnings",
+  ]) {
+    await expect(page.getByRole("button", { name: `Sort by ${label}` })).toBeVisible();
+  }
 
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: PLATFORM_JOB_TITLE });
   await expect(row).toBeVisible();
-  await expect(row.getByText("EUR 112000-142000/year")).toBeVisible();
-  await expect(row.getByText(/market confidence medium/i)).toBeVisible();
+  await expect(row.getByText("55,000").first()).toBeVisible();
+  await expect(row.getByText("112,000-142,000").first()).toBeVisible();
+  await expect(row.getByText("CI 112,000-142,000")).toBeVisible();
+  await expect(row.getByText("Medium")).toBeVisible();
+  await expect(row.getByText("82%")).toBeVisible();
   await expect(row.getByText(/2 sources/i)).toBeVisible();
   await expect(row.getByText("2 warnings")).toBeVisible();
-  await expect(page.getByRole("button", { name: /sort by Compensation/i })).toHaveCount(0);
 
   await row
     .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
@@ -327,23 +351,12 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
-  const orderedSections = await drawer
-    .locator("section")
-    .evaluateAll((sections) =>
-      sections
-        .map((section) => {
-          const text = section.textContent ?? "";
-          if (text.includes("Why this job is here")) return "triage";
-          if (section.getAttribute("aria-label") === "Compensation evidence") return "compensation";
-          if (text.includes("Description")) return "description";
-          return null;
-        })
-        .filter(Boolean),
-    );
-  expect(orderedSections.indexOf("triage")).toBeLessThan(orderedSections.indexOf("compensation"));
-  expect(orderedSections.indexOf("compensation")).toBeLessThan(orderedSections.indexOf("description"));
-
   const compensation = drawer.getByRole("region", { name: "Compensation evidence" });
+  const triage = drawer.getByRole("region", { name: "Job audit triage" });
+  const description = drawer.locator("section.job-detail-description");
+  await expectRegionBefore(triage, compensation, "triage before compensation");
+  await expectRegionBefore(compensation, description, "compensation before description");
+
   await expect(compensation.getByRole("heading", { name: "Compensation" })).toBeVisible();
   await expect(compensation.getByText("EUR 55000/year").first()).toBeVisible();
   await expect(compensation.getByText("EUR 112000-142000/year").first()).toBeVisible();
@@ -360,7 +373,6 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(compensation.getByText("Glassdoor").first()).toBeVisible();
   await expect(compensation.getByText("Confidence factors")).toBeVisible();
 
-  const triage = drawer.getByRole("region", { name: "Why this job is here" });
   await expect(triage.getByText("reported_compensation_sample")).toHaveCount(0);
   await expect(triage.getByText("source_conflict_with_posted_salary")).toHaveCount(0);
   await expect(triage.getByText("Reported compensation diverges materially from the posted salary.")).toHaveCount(0);
@@ -389,11 +401,17 @@ test("Job drawer: opens with requirement fit, stages, artifacts, survives reload
   await expect(drawer).toBeVisible({ timeout: 10_000 });
   await expect(drawer.getByRole("heading", { name: /Preparation diagnostics/i })).toBeVisible();
   await expect(drawer.getByRole("heading", { name: /Active artifacts/i })).toBeVisible();
-  await expect(drawer.getByRole("heading", { name: /Employer analysis/i })).toBeVisible();
-  await expect(drawer.getByText("Requirement fit").first()).toBeVisible();
-  await expect(
-    drawer.getByLabel("Requirement: Lead platform reliability improvements across critical services."),
-  ).toBeVisible();
+  const roleAnalysis = drawer.getByRole("region", { name: "Role Analysis" });
+  await expect(roleAnalysis).toBeVisible();
+  await expect(roleAnalysis.getByRole("heading", { name: /Requirements \(2\)/i })).toBeVisible();
+  const primaryRequirement = roleAnalysis.getByLabel(
+    "Requirement: Lead platform reliability improvements across critical services.",
+  );
+  await expect(primaryRequirement).toBeVisible();
+  await expect(primaryRequirement).toContainText("Requirement fit");
+  await expect(primaryRequirement).toContainText("matched");
+  await expect(primaryRequirement).toContainText("Score contribution");
+  await expect(primaryRequirement).toContainText("Double Down");
 
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Job details" })).toBeVisible({ timeout: 30_000 });

@@ -150,6 +150,35 @@ def test_to_dict_round_trips_canonical_fields():
     assert "resume_facts" not in out
 
 
+def test_application_attestations_are_typed_and_round_trip():
+    original = _valid_profile_dict()
+    original["application_attestations"] = {
+        "age_18_plus": True,
+        "background_check_consent": None,
+        "felony_conviction": "no",
+        "previously_worked_at_employer": "unknown",
+        "additional": {"requires_license": None, "can_travel": True},
+    }
+    original["application_preferences"] = {"how_heard": "Referral"}
+
+    parsed = Profile.from_dict(LOCAL_TENANT, original)
+
+    assert parsed.application_attestations.age_18_plus is True
+    assert parsed.application_attestations.background_check_consent is None
+    assert parsed.application_attestations.felony_conviction is False
+    assert parsed.application_attestations.previously_worked_at_employer is None
+    assert parsed.application_preferences.how_heard == "Referral"
+    out = parsed.to_dict()
+    assert out["application_attestations"] == {
+        "age_18_plus": True,
+        "background_check_consent": None,
+        "felony_conviction": False,
+        "previously_worked_at_employer": None,
+        "additional": {"requires_license": None, "can_travel": True},
+    }
+    assert out["application_preferences"] == {"how_heard": "Referral"}
+
+
 def test_to_dict_round_trips_achievement_evidence_and_claim_controls():
     original = _valid_profile_dict()
     original["resume"]["experience_entries"][0]["achievement_evidence"] = [
