@@ -308,17 +308,27 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
     (element) => element.scrollWidth > element.clientWidth,
   );
   expect(hasHorizontalScroll).toBe(true);
-  await expect(page.getByRole("columnheader", { name: "Compensation" })).toBeVisible();
+  for (const label of [
+    "Salary min (€ / year)",
+    "Salary max (€ / year)",
+    "Market (€ / year)",
+    "Confidence",
+    "Warnings",
+  ]) {
+    await expect(page.getByRole("button", { name: `Sort by ${label}` })).toBeVisible();
+  }
 
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: PLATFORM_JOB_TITLE });
   await expect(row).toBeVisible();
-  await expect(row.getByText("EUR 112000-142000/year")).toBeVisible();
-  await expect(row.getByText(/market confidence medium/i)).toBeVisible();
+  await expect(row.getByText("55,000").first()).toBeVisible();
+  await expect(row.getByText("112,000-142,000").first()).toBeVisible();
+  await expect(row.getByText("CI 112,000-142,000")).toBeVisible();
+  await expect(row.getByText("Medium")).toBeVisible();
+  await expect(row.getByText("82%")).toBeVisible();
   await expect(row.getByText(/2 sources/i)).toBeVisible();
   await expect(row.getByText("2 warnings")).toBeVisible();
-  await expect(page.getByRole("button", { name: /sort by Compensation/i })).toHaveCount(0);
 
   await row
     .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
@@ -389,11 +399,17 @@ test("Job drawer: opens with requirement fit, stages, artifacts, survives reload
   await expect(drawer).toBeVisible({ timeout: 10_000 });
   await expect(drawer.getByRole("heading", { name: /Preparation diagnostics/i })).toBeVisible();
   await expect(drawer.getByRole("heading", { name: /Active artifacts/i })).toBeVisible();
-  await expect(drawer.getByRole("heading", { name: /Employer analysis/i })).toBeVisible();
-  await expect(drawer.getByText("Requirement fit").first()).toBeVisible();
-  await expect(
-    drawer.getByLabel("Requirement: Lead platform reliability improvements across critical services."),
-  ).toBeVisible();
+  const roleAnalysis = drawer.getByRole("region", { name: "Role Analysis" });
+  await expect(roleAnalysis).toBeVisible();
+  await expect(roleAnalysis.getByRole("heading", { name: /Requirements \(2\)/i })).toBeVisible();
+  const primaryRequirement = roleAnalysis.getByLabel(
+    "Requirement: Lead platform reliability improvements across critical services.",
+  );
+  await expect(primaryRequirement).toBeVisible();
+  await expect(primaryRequirement).toContainText("Requirement fit");
+  await expect(primaryRequirement).toContainText("matched");
+  await expect(primaryRequirement).toContainText("Score contribution");
+  await expect(primaryRequirement).toContainText("Double Down");
 
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Job details" })).toBeVisible({ timeout: 30_000 });
