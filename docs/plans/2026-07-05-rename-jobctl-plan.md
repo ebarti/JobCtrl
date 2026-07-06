@@ -592,27 +592,45 @@ no spendful runs.
 
 ## 15. Open owner decisions (STOP and confirm)
 
+All five decisions were resolved by the owner on 2026-07-06:
+
 1. **PyPI distribution name.** Target is `jobctl`. Confirm availability
    (`https://pypi.org/pypi/jobctl/json` → 404 = free) and a quick GitHub/USPTO
    sanity check, mirroring the OSS spec §W2.1 checkpoint. If taken, pick a
    distribution name while the **import package and console script remain
    `jobctl`** regardless (the two may differ, as the OSS spec already
    anticipated). This checkpoint replaces OSS spec §0.5.1.
+   - **Resolved (2026-07-06):** `jobctl` confirmed — **the owner already holds
+     the `jobctl` PyPI distribution name.** No availability contingency needed.
+     The trademark sanity pass remains an owner to-do before publication.
 2. **GitHub repository rename.** Rename `ebarti/JobHunter` → `ebarti/JobCtl`
    (owner-only action; GitHub preserves redirects). Confirm the final
    owner/repo slug so all `REPO_URL` / `[project.urls]` / doc references can be
    updated to match. Owner executes the rename; the implementer updates the
    in-repo URLs.
+   - **Resolved (2026-07-06):** slug confirmed as `ebarti/JobCtl`. Owner
+     executes the rename at cutover (step 9.3).
 3. **DB table names.** `jobhunter_deleted_jobs` / `jobhunter_hidden_jobs`:
    **(a) rename** to `jobctl_*` via `ALTER TABLE … RENAME TO` folded into the
    first-run migration (recommended — clean OSS surface; the migration already
    touches the DB) **or (b) keep** as internal-schema identifiers (justified
    grep exception; lower migration risk). Default recommendation: (a).
+   - **Resolved (2026-07-06):** clean-schema variant of (a). **New installs
+     create a fresh `~/.jobctl` workspace with `jobctl_*` schema from the
+     start — no legacy names, no compat paths.** For the owner's existing
+     workspace only, the train ships a one-time move script that copies
+     `~/.jobhunter` → `~/.jobctl` and renames the two legacy tables inside the
+     copy, preserving the accumulated search history (jobs, scores, materials,
+     apply history, outcome data). The script runs once and is not a
+     maintained migration path.
 4. **Temporal cutover style.** Drain-in-flight vs terminate-in-flight vs full
    dev-server reset (§7). Default: terminate/drain then delete old schedule;
    reset acceptable in a clean owner environment.
+   - **Resolved (2026-07-06):** full dev-server reset. Local single-user
+     environment; workflow history is discarded at cutover.
 5. **Execution shape.** Single-PR vs stacked-train (§4). Default: whichever
    keeps `main` atomic given reviewer availability.
+   - **Resolved (2026-07-06):** single atomic PR during the freeze window.
 
 ---
 
