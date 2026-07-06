@@ -24,8 +24,9 @@
 > **Post-train closeout status (2026-07-06 R1):** §9 regenerates the inventory
 > against `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`, after `gh`
 > verified the R10, R7a, and I0 prerequisite trains merged. Result: **NO-GO**.
-> W1 apply hardening is not complete: W1.1 is merged, but W1.2-W1.8 remain
-> not-done on current `main`. W2.1 is open, W2.2 and W2.4 are partial, W0.6 is
+> W1 apply hardening is not complete: W1.1 is merged, but W1.2-W1.7 remain
+> not-done on the checked tree. W1.8 was later withdrawn by owner decision and
+> is not a release gate. W2.1 is open, W2.2 and W2.4 are partial, W0.6 is
 > repo-side only until owner disposition closure, and D-6/R11 guarded submission
 > must wait.
 
@@ -427,6 +428,9 @@ Docs-only change; no runtime surface. Confirm:
 ### 9.1 Snapshot and prerequisite gate
 
 - **Tree checked:** `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`.
+- **Current-status caveat:** this is a historical snapshot at the checked tree.
+  Later `main` changes, including #328, must be evaluated in a refreshed
+  residual inventory before using this section as current release evidence.
 - **Prerequisite gate:** passed by `gh` at 2026-07-06T11:02:29Z. R10
   politeness train (#272, #297-#316, including #313), R7a launch-asset train
   (#262, #298-#305), and I0 pair (#254 + #317) were all merged.
@@ -437,8 +441,9 @@ Docs-only change; no runtime surface. Confirm:
 
 ### 9.2 W1 apply hardening status (R11/D-6 hard precondition)
 
-**Status: NOT COMPLETE.** W1.1 is done. W1.2-W1.8 are not done on the merged
-tree, so R11 guarded submission / browser-extension Phase 3 must not start.
+**Status: NOT COMPLETE.** W1.1 is done. W1.2-W1.7 are not done on the checked
+tree, and W1.8 is not counted because the owner withdrew the dry-run-by-default
+requirement. R11 guarded submission / browser-extension Phase 3 must not start.
 
 | Item | Status | Evidence on `main` |
 | --- | --- | --- |
@@ -449,7 +454,7 @@ tree, so R11 guarded submission / browser-extension Phase 3 must not start.
 | W1.5 keep profile password out of prompt | not-done | The prompt still interpolates `personal['email'] / personal.get('password', '')` (`workers/automation/src/jobhunter/apply/prompt.py:614`), and security docs still disclose that profile passwords enter the apply-agent prompt (`docs/user/security.md:209`-`:213`). |
 | W1.6 keep CapSolver key out of prompt | not-done | The prompt builder still reads `CAPSOLVER_API_KEY` and inserts `API key: {capsolver_key...}` into prompt text (`workers/automation/src/jobhunter/apply/prompt.py:217`-`:240`). The release-check self-test still expects that tripwire (`workers/automation/tests/test_release_check.py:78`). |
 | W1.7 quarantine email application sending | not-done | The apply prompt still instructs the agent to `send_email` and emit `RESULT:APPLIED` for email-only applications (`workers/automation/src/jobhunter/apply/prompt.py:607`-`:609`), while the shipped Gmail connector is documented as read-only (`README.md:58`-`:60`). No `EmailApplicationCandidateRecorded` event exists in the merged tree. |
-| W1.8 invert submit default / strict prompt gate | not-done | `jobhunter apply` still defaults to live mode with `--dry-run` as an opt-in flag (`workers/automation/src/jobhunter/cli.py:1263`-`:1279`), workflow specs still default `dryRun` to `False` (`workers/automation/src/jobhunter/workflow_specs.py:79`, `:123`, `:150`), and CI runs `scripts/release_check.py` without `--strict-prompt` (`.github/workflows/release-check.yml:25`-`:29`). |
+| W1.8 dry-run-by-default surface defaults | withdrawn | Owner decision #328 removed W1.8 from the release plan. Live/non-dry-run remains the default unless callers pass `--dry-run` / `dryRun: true`; W1.8 is no longer a release requirement, gate, or acceptance criterion. |
 
 ### 9.3 W0/W1/W2 inventory
 
@@ -468,7 +473,7 @@ tree, so R11 guarded submission / browser-extension Phase 3 must not start.
 | W1.5 remove profile password from prompt | not-done | See §9.2 W1.5. |
 | W1.6 remove CapSolver key from prompt | not-done | See §9.2 W1.6. |
 | W1.7 quarantine email application sending | not-done | See §9.2 W1.7. |
-| W1.8 invert submit default / strict prompt gate | not-done | See §9.2 W1.8. |
+| W1.8 dry-run-by-default surface defaults | withdrawn | See §9.2 W1.8. |
 | W2.1 final distribution name + publish re-enable | not-done | PR #257 is open (`gh pr view 257`: state `OPEN`, no merge commit). The package name remains `jobhunter` (`workers/automation/pyproject.toml:1`-`:3`), and `publish.yml` remains `workflow_dispatch` only (`.github/workflows/publish.yml:1`-`:5`). |
 | W2.2 responsible-use docs + doctor warnings | partially-done | Responsible-use docs landed in `README.md:50`-`:85` and `docs/user/data-and-safety.md:84`-`:126`; spend docs are at `docs/user/data-and-safety.md:165`-`:174`. Doctor now surfaces crawl-politeness notices (`workers/automation/src/jobhunter/cli.py:2327`-`:2345`) and CapSolver config (`:2543`-`:2549`), with crawl regressions at `workers/automation/tests/test_crawl_politeness_config.py:83`-`:102`. Missing on `main`: W2.2 doctor rows for approval-gate-off and incomplete attestations, because W1.4 is not done and no CLI doctor row was found for those checks. |
 | W2.3 local API / CSRF hardening | done | Loopback host, mutation origin/referer, `Sec-Fetch-Site`, and extension-token checks are enforced at `apps/api/src/server.ts:303`-`:341`. Passing matrix starts at `apps/api/test/server.test.ts:807`. Historical merge anchor: #268 / `5e5ee0e`. |
@@ -483,7 +488,7 @@ tree, so R11 guarded submission / browser-extension Phase 3 must not start.
 | §6.1 precondition | Status | Anchors |
 | --- | --- | --- |
 | Phase 1 and Phase 2 are merged to `main` with QA `Gate: PASS` | partially-satisfied | R3 extension implementation is merged (#277, #281, #282). Current tests prove loopback-only manifest/source (`apps/extension/src/privacy.test.ts:13`-`:35`), built bundle runtime loopback calls (`apps/extension/src/privacy.e2e.test.ts:19`-`:46`, `:100`-`:115`), supported ATS detection (`apps/extension/src/ats.test.ts:5`-`:17`), and deterministic autofill behavior (`apps/extension/src/content-script.test.ts:36`-`:67`, `:170`-`:225`). A QA `Gate: PASS` artifact is not recorded in the tree. |
-| Apply-safety hardening from the OSS spec is complete and merged | not-satisfied | W1.2-W1.8 are not done; see §9.2. |
+| Apply-safety hardening from the OSS spec is complete and merged | not-satisfied | W1.2-W1.7 are not done on the checked tree; see §9.2. |
 | Extension security review (§8) completed/published and privacy-invariant test (§7) enforced in CI | partially-satisfied | Privacy-invariant tests exist (`apps/extension/src/privacy.test.ts:13`-`:35`; `apps/extension/src/privacy.e2e.test.ts:19`-`:46`), but no completed/published extension security review was found in the merged docs. |
 | Release privacy gate green for extension package/archive | partially-satisfied | Release gate exists and runs scanner/self-test (`.github/workflows/release-check.yml:25`-`:29`); built extension privacy tests cover the dist package (`apps/extension/src/privacy.e2e.test.ts:19`-`:46`). This close-out did not independently run the extension package/archive privacy test suite; the PR verification runs the repository release scanner. |
 | Explicit owner go/no-go D-6 | not-satisfied | Browser plan D-6 remains an open owner decision (`docs/plans/2026-07-05-browser-extension-plan.md:386`). |
