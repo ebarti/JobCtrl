@@ -126,10 +126,17 @@ class PolitenessGateway(PolitenessGatewayPort):
             # A blocked fetch consumes no content budget and holds no slot.
             yield robots_block
             return
+        host = urlsplit(url).netloc or url
+        cooldown = self._rate_limiter.hard_rate_limit_remaining(host)
+        if cooldown > 0.0:
+            # The server asked to wait longer than the limiter's cap: record a
+            # rate-limited outcome and skip rather than park a worker thread for
+            # the (clamped) cooldown. Consumes no budget and holds no slot.
+            yield self._rate_limited(cooldown)
+            return
         if not budget.try_consume(1):
             yield self._budget_exhausted()
             return
-        host = urlsplit(url).netloc or url
         with self._rate_limiter.slot(
             host,
             min_interval_seconds=policy.min_request_interval_seconds,
@@ -137,10 +144,13 @@ class PolitenessGateway(PolitenessGatewayPort):
         ):
             yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
 
-    def note_retry_after(self, url: str, retry_after_seconds: float) -> None:
-        """Forward a server ``Retry-After`` for ``url``'s host to the limiter."""
+    def note_retry_after(self, url: str, retry_after_seconds: float) -> float:
+        """Forward a server ``Retry-After`` for ``url``'s host to the limiter.
+
+        Returns the effective (clamped) seconds the limiter honored.
+        """
         host = urlsplit(url).netloc or url
-        self._rate_limiter.note_retry_after(host, retry_after_seconds)
+        return self._rate_limiter.note_retry_after(host, retry_after_seconds)
 
     def _robots_block(self, url: str, policy: SourcePolicy) -> PolitenessDecision | None:
         if policy.robots_policy is not RobotsPolicy.HONOR:
@@ -169,6 +179,15 @@ class PolitenessGateway(PolitenessGatewayPort):
             PolitenessOutcome.BUDGET_EXHAUSTED,
             self._ua_header,
             reason="per-run request budget exhausted",
+        )
+
+    def _rate_limited(self, retry_after_seconds: float) -> PolitenessDecision:
+        return PolitenessDecision(
+            False,
+            PolitenessOutcome.RATE_LIMITED,
+            self._ua_header,
+            retry_after_seconds=retry_after_seconds,
+            reason="server Retry-After exceeded the limiter cap; deferring this host",
         )
 
 

@@ -182,8 +182,23 @@ class RateLimiterPort(Protocol):
         """
         ...
 
-    def note_retry_after(self, host: str, retry_after_seconds: float) -> None:
-        """Record a server ``Retry-After`` so the next slot for ``host`` waits."""
+    def note_retry_after(self, host: str, retry_after_seconds: float) -> float:
+        """Record a server ``Retry-After`` so the next slot for ``host`` waits.
+
+        Implementations clamp the deferral to a bounded ceiling at this sink so a
+        hostile/absurd header cannot freeze a host (and a pooled worker thread) for
+        an attacker-chosen duration. Returns the effective (clamped) seconds.
+        """
+        ...
+
+    def hard_rate_limit_remaining(self, host: str) -> float:
+        """Seconds a host must wait due to an *over-clamp* server ``Retry-After`` (0 if none).
+
+        A positive value means the server's ``Retry-After`` exceeded the limiter's
+        cap; the gateway records a rate-limited outcome and skips the fetch instead
+        of holding a worker thread for the clamped cooldown. Within-cap
+        ``Retry-After`` values return 0 and are paced by :meth:`slot`.
+        """
         ...
 
 
