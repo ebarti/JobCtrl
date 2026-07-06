@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,6 +59,19 @@ class DiscoveryEnrichmentActivityInput:
     limit: int = 0
     progress_completed: int = 0
     progress_total: int = 0
+    # R9 Phase 2 — per-job handoff. When True, each job that reaches
+    # ``pending_score`` during this enrichment pass immediately starts its own
+    # SCORE_JOB preparation workflow (deterministic id + USE_EXISTING), so a job
+    # is scored the moment it is enriched rather than after its whole family.
+    # The prep params below mirror the fan-out so the per-job start and the
+    # reconciling fan-outs converge on exactly one workflow per job.
+    per_job_handoff: bool = False
+    min_score: int = 7
+    validation_mode: str = "normal"
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +198,7 @@ async def discovery_enrichment_activity(
     )
 
     cancel_event = threading.Event()
+    on_job_enriched = _build_per_job_handoff(payload)
 
     try:
         result = await run_blocking_with_heartbeat(
@@ -193,6 +208,7 @@ async def discovery_enrichment_activity(
                 cancel_event=cancel_event,
                 progress_completed=payload.progress_completed,
                 progress_total=payload.progress_total,
+                on_job_enriched=on_job_enriched,
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
@@ -218,6 +234,43 @@ async def discovery_enrichment_activity(
         raise to_application_error(exc) from exc
     except Exception as exc:
         raise to_application_error(exc) from exc
+
+
+def _build_per_job_handoff(
+    payload: DiscoveryEnrichmentActivityInput,
+) -> Callable[[str], None] | None:
+    """Build the R9 Phase 2 per-job preparation handoff, or ``None`` when off.
+
+    The returned callback is fired by the enrichment worker as each job reaches
+    ``pending_score``. It starts that job's SCORE_JOB preparation workflow with
+    the deterministic id + ``USE_EXISTING`` so it converges with the per-family /
+    terminal fan-outs on exactly one execution per job. Starts are serialized by
+    a lock because ``_run_detail_scraper`` may enrich sites in parallel threads
+    and the workflow starter writes + refreshes projections on SQLite.
+    """
+    if not payload.per_job_handoff:
+        return None
+
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.pipeline.preparation import start_job_preparation_workflow
+
+    handoff_lock = threading.Lock()
+
+    def _handoff(job_url: str) -> None:
+        with handoff_lock:
+            start_job_preparation_workflow(
+                job_url,
+                min_score=payload.min_score,
+                workers=payload.workers,
+                validation_mode=payload.validation_mode,
+                llm_model=payload.llm_model,
+                tailor_models=payload.tailor_models,
+                tailor_judge_model=payload.tailor_judge_model,
+                tailor_judge_min_score=payload.tailor_judge_min_score,
+                tenant_id=TenantId(payload.tenant_id),
+            )
+
+    return _handoff
 
 
 @activity.defn(name="discovery_preparation_fanout")

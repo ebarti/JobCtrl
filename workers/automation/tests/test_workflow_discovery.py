@@ -27,6 +27,7 @@ from jobhunter.discovery.activities import (
     DiscoverySourceActivityOutput,
     PlanDiscoverySourcesInput,
     PlanDiscoverySourcesOutput,
+    _build_per_job_handoff,
     discovery_preparation_fanout_activity,
 )
 from jobhunter.discovery.workflow import (
@@ -300,6 +301,52 @@ async def test_discovery_preparation_fanout_activity_forwards_score_only(
     )
 
     assert captured["fanout_kwargs"]["include_pending_tailor"] is False
+
+
+def test_build_per_job_handoff_disabled_returns_none() -> None:
+    assert (
+        _build_per_job_handoff(
+            DiscoveryEnrichmentActivityInput(tenant_id="local", per_job_handoff=False)
+        )
+        is None
+    )
+
+
+def test_build_per_job_handoff_starts_scored_prep_with_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 2: when enabled, the enrichment activity's handoff callback
+    starts each enriched job's preparation with the run's prep params."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.start_job_preparation_workflow",
+        lambda url, **kwargs: calls.append((url, kwargs)),
+    )
+
+    handoff = _build_per_job_handoff(
+        DiscoveryEnrichmentActivityInput(
+            tenant_id="local",
+            per_job_handoff=True,
+            min_score=8,
+            validation_mode="strict",
+            llm_model="local:model",
+            tailor_models=("draft",),
+            tailor_judge_model="judge",
+            tailor_judge_min_score=8.5,
+        )
+    )
+    assert handoff is not None
+    handoff("https://example.com/job/1")
+
+    assert [url for url, _ in calls] == ["https://example.com/job/1"]
+    _, kwargs = calls[0]
+    assert kwargs["min_score"] == 8
+    assert kwargs["validation_mode"] == "strict"
+    assert kwargs["llm_model"] == "local:model"
+    assert kwargs["tailor_models"] == ("draft",)
+    assert kwargs["tailor_judge_model"] == "judge"
+    assert kwargs["tailor_judge_min_score"] == 8.5
+    assert str(kwargs["tenant_id"]) == "local"
 
 
 @pytest.mark.asyncio

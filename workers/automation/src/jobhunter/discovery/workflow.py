@@ -304,7 +304,13 @@ class DiscoverWorkflow:
         fan-out is score-only.
         """
         try:
-            await _run_enrichment_activity(payload, progress_completed=0, progress_total=0)
+            # per_job_handoff=True: each job starts its prep workflow the moment
+            # it is enriched (R9 Phase 2), tightening TTFS to per-job. The
+            # score-only fan-out below and the terminal reconcile stay as the
+            # dedup-safe backstop for anything the handoff missed.
+            await _run_enrichment_activity(
+                payload, progress_completed=0, progress_total=0, per_job_handoff=True
+            )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
                 raise CancelledError() from exc
@@ -328,6 +334,7 @@ async def _run_enrichment_activity(
     *,
     progress_completed: int,
     progress_total: int,
+    per_job_handoff: bool = False,
 ) -> DiscoveryEnrichmentActivityOutput:
     return await workflow.execute_activity(
         discovery_enrichment_activity,
@@ -339,6 +346,13 @@ async def _run_enrichment_activity(
             limit=payload.limit,
             progress_completed=progress_completed,
             progress_total=progress_total,
+            per_job_handoff=per_job_handoff,
+            min_score=payload.min_score,
+            validation_mode=payload.validation_mode,
+            llm_model=payload.llm_model,
+            tailor_models=payload.tailor_models,
+            tailor_judge_model=payload.tailor_judge_model,
+            tailor_judge_min_score=payload.tailor_judge_min_score,
         ),
         start_to_close_timeout=_DISCOVERY_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

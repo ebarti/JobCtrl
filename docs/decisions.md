@@ -1354,6 +1354,19 @@ resolve the streaming plan's open decisions:
    `pending_tailor` stragglers once (the only moment when `pending_tailor` cannot
    contain a job already owned by a this-run `SCORE_JOB` workflow); every later
    pass is score-only.
+4. **Phase 2 handoff mechanism (Temporal-native, event-driven).** A job's
+   preparation starts the moment it is individually enriched, not after its whole
+   family. The mechanism is event-driven from **inside** the enrichment activity
+   (an `on_job_enriched` callback threaded to `enrichment/detail.py`, fired per
+   job after its commit), chosen over ad-hoc polling. Because the start is a side
+   effect inside the activity, `DiscoverWorkflow`'s command history is unchanged
+   (determinism/replay safe). The per-job start uses the same deterministic
+   `SCORE_JOB` id as the fan-out, so the handoff and the reconciling fan-outs
+   converge on exactly one execution per job (`USE_EXISTING`); a re-enrichment
+   that changes `source_event_id` legitimately forks a new workflow. Per-job
+   starts are serialized by a lock (site enrichment can run in parallel threads)
+   and are best-effort (a start failure is logged and left for the fan-out
+   backstop, never mistaken for an enrichment failure).
 
 Rationale:
 
@@ -1373,6 +1386,11 @@ Consequences:
   `True` preserves the pre-streaming full derive).
 - Fan-out and enrichment activities now run per completed family plus once at the
   terminal reconcile; repeated invocation is safe by construction (I1).
+- Phase 2 adds a `per_job_handoff` flag + prep params on the enrichment activity,
+  a `start_job_preparation_workflow` single-job starter, and an opaque
+  `on_job_enriched` callback threaded from the activity to `enrichment/detail.py`
+  (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
+  `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
 - Parallel source families remain **out of scope** here — that is R9 Phase 3,
   gated behind an explicit browser-concurrency bound.
 
