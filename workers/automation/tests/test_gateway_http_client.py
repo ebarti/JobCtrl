@@ -200,7 +200,10 @@ def test_absurd_retry_after_is_clamped_and_next_fetch_is_skipped() -> None:
     count = conn.execute(
         "SELECT COUNT(*) AS c FROM operational_attempt_metrics WHERE failure_category='rate_limited'"
     ).fetchone()
-    assert count["c"] >= 2  # the 429 and the pre-empted skip both recorded
+    # Exactly two distinct fetches -> exactly two rows: the 429-ed request and
+    # the pre-empted skip. The tight ``== 2`` bites if a future change ever
+    # records a single request on both the server-429 and guard pre-empt paths.
+    assert count["c"] == 2
 
 
 def test_non_rate_limit_http_error_propagates() -> None:
