@@ -136,6 +136,7 @@ tables that back every read-model endpoint:
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 | `contact_projections`        | One row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata. No attribute values (sensitivity). |
 | `contact_research_task_projections` | One row per supervised research task (Contact & Outreach): status, candidate/needs-review/confirmed counts, the source-attempt outcomes (provenance of the search), and per-candidate provenance metadata + attribute kinds. No candidate attribute values (sensitivity). |
+| `outreach_thread_projections` | One row per outreach thread (Contact & Outreach): draft count, latest generation and status, whether an approved draft exists, and per-draft metadata (draft id, generation, kind, status, and the persisted `gatePassed` outcome). No draft body, gate internals, or claim provenance — those stay in canonical `outreach_drafts` and are joined at detail-read time (sensitivity). |
 | `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
@@ -179,6 +180,27 @@ Candidate attribute *values* (proposed names, emails) live only in
 `contact_candidates.attributes_json` and reach the client solely through the
 research-task detail read; they never enter events, the projection, logs, or
 telemetry.
+
+Outreach drafting adds `outreach_thread_projections` under the same dual-runtime
+pattern. The Python `ProjectionBuilder._rebuild_outreach` and the TypeScript
+`rebuildOutreachProjections` both rematerialise it from the canonical
+`outreach_threads` / `outreach_drafts` rows, gated on the outreach draft event set
+(`OutreachDraftGenerated`, `OutreachDraftRevised`, `OutreachDraftApproved`,
+`OutreachDraftRejected`), and a cross-runtime parity fixture
+(`test_outreach_projection_parity.py` /
+`apps/api/test/outreach-projection-parity.test.ts`) guards drift. The projection
+surfaces the draft lifecycle (generation, status, whether an approved draft
+exists) and the per-draft `gatePassed` metadata (the persisted truthfulness-gate
+outcome — INV-5); the review UI joins the canonical `outreach_drafts` rows for the
+full gate results and the claim → fact provenance. The draft `body_text`,
+`gate_results_json`, and `provenance_json` live only in `outreach_drafts` (the
+canonical write side) and are surfaced solely through the thread detail read model;
+the draft-lifecycle events (written by `record_job_event` with
+`entity_kind = 'outreach'` / `entity_ref = <threadId>`; application-linked threads
+also key on the job's `job_url`) and the projection carry only ids, kinds,
+generation, and timestamps. Contact PII and fetched page bodies never enter
+`job_events` payloads, the projection, logs, or telemetry. There is no send
+transport on any outreach read or write path (INV-1).
 
 The evidence-usage projection is read-only and derives from existing canonical
 profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does

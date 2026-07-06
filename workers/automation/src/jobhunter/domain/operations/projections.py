@@ -332,6 +332,34 @@ class ContactResearchTaskProjection:
 
 
 @dataclass(frozen=True)
+class OutreachThreadProjection:
+    """Read-side row for one outreach thread (Contact & Outreach, ninth context).
+
+    Carries the thread lifecycle SUMMARY plus per-draft METADATA — never the draft
+    body, gate internals, or claim provenance (those stay in canonical
+    ``outreach_drafts`` and are joined at DETAIL read time, exactly like research
+    candidates). ``drafts`` holds one metadata dict per generation:
+    ``{draftId, generation, kind, status, gatePassed, createdAt, approvedAt,
+    rejectedAt}``. ``latest_status`` is the highest-generation draft's status.
+    ``gatePassed`` is the persisted gate outcome (INV-5) surfaced for the review UI.
+    """
+
+    tenant_id: TenantId
+    thread_id: str
+    contact_id: str
+    job_id: str | None = None
+    draft_count: int = 0
+    latest_generation: int = 0
+    has_approved_draft: bool = False
+    approved_draft_id: str | None = None
+    latest_status: str | None = None
+    drafts: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_updated_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SourceQualityStats:
     """Operations projection for source health and scheduling feedback."""
 

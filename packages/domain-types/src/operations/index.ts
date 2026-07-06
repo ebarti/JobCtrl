@@ -221,6 +221,43 @@ export interface ContactResearchTaskProjection {
   readonly lastUpdatedAt: string | null;
 }
 
+/**
+ * Read-side row for one outreach thread (Contact & Outreach, ninth context).
+ *
+ * Carries the thread lifecycle SUMMARY plus per-draft METADATA — never the draft
+ * body, gate internals, or claim provenance (those live only in canonical
+ * `outreach_drafts` and are joined at DETAIL read time, exactly like research
+ * candidates). `latestStatus` is the highest-generation draft's status;
+ * `gatePassed` on each entry is the persisted gate outcome (INV-5) surfaced for
+ * the review UI.
+ */
+export interface OutreachDraftMetadataEntry {
+  readonly draftId: string;
+  readonly generation: number;
+  readonly kind: string;
+  readonly status: string;
+  readonly gatePassed: boolean;
+  readonly createdAt: string | null;
+  readonly approvedAt: string | null;
+  readonly rejectedAt: string | null;
+}
+
+export interface OutreachThreadProjection {
+  readonly tenantId: TenantId;
+  readonly threadId: string;
+  readonly contactId: string;
+  readonly jobId: string | null;
+  readonly draftCount: number;
+  readonly latestGeneration: number;
+  readonly hasApprovedDraft: boolean;
+  readonly approvedDraftId: string | null;
+  readonly latestStatus: string | null;
+  readonly drafts: readonly OutreachDraftMetadataEntry[];
+  readonly createdAt: string | null;
+  readonly updatedAt: string | null;
+  readonly lastUpdatedAt: string | null;
+}
+
 export const PROJECTION_TABLES = [
   "job_list_projections",
   "dashboard_projections",
@@ -230,6 +267,7 @@ export const PROJECTION_TABLES = [
   "apply_run_projections",
   "contact_projections",
   "contact_research_task_projections",
+  "outreach_thread_projections",
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 

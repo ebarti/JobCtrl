@@ -21,6 +21,7 @@ import {
   makeResearchListResponse,
   sampleResearchTaskSummary,
 } from "../fixtures/contact-research.js";
+import { makeOutreachThreadResponse } from "../fixtures/outreach.js";
 import {
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
@@ -880,6 +881,24 @@ export const handlers = [
   ),
   http.post("*/v1/contacts/research/:taskId/candidates/:candidateId/confirm", () =>
     HttpResponse.json(makeConfirmCandidateResponse()),
+  ),
+  // Outreach draft routes. The contact-scoped ``/outreach`` reads/writes precede
+  // ``/v1/contacts/:contactId`` for clarity; the ``/v1/outreach/threads`` writes
+  // return the updated gated thread (no send transport anywhere — INV-1).
+  http.get("*/v1/contacts/:contactId/outreach", () =>
+    HttpResponse.json(makeOutreachThreadResponse()),
+  ),
+  http.post("*/v1/contacts/:contactId/outreach/drafts", () =>
+    HttpResponse.json(makeOutreachThreadResponse()),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/approve", () =>
+    HttpResponse.json(makeOutreachThreadResponse()),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/reject", () =>
+    HttpResponse.json(makeOutreachThreadResponse()),
+  ),
+  http.post("*/v1/outreach/threads/:threadId/drafts", () =>
+    HttpResponse.json(makeOutreachThreadResponse()),
   ),
   http.get("*/v1/contacts/:contactId", ({ params }) =>
     HttpResponse.json(

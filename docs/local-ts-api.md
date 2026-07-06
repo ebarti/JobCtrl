@@ -42,7 +42,7 @@ need:
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
 | [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
 | [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
-| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, and the supervised-research run / list / detail / confirm-candidate routes. |
+| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, the supervised-research run / list / detail / confirm-candidate routes, and the outreach draft read / generate / revise / approve / reject routes. |
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
@@ -718,6 +718,58 @@ require an explicit confirm command before becoming stored contact facts (INV-4)
 The `run_contact_research` JSON-RPC method (params `taskId`, optional `employer` /
 `jobUrl`, `sources[]`, `llmModel`) is a workflow-mode method returning the
 `{ runId, workflowId, firstExecutionRunId }` start shape.
+
+### Outreach drafts
+
+Outreach drafting (Phase 3) generates truthful, reviewable messages. Draft
+**generation** and **revision** are not direct SQLite writes — the API dispatches
+the synchronous `generate_outreach_draft` JSON-RPC method to the Python worker,
+which runs the LLM synthesis plus the full truthfulness gate stack inline (the
+reused materials gates: deterministic never-fabricate detector, content validator,
+LLM-as-judge, and claim → fact provenance) and persists the gated draft as a new
+generation. Draft **approval** and **rejection** are simple lifecycle transitions
+hosted in the TypeScript API (`apps/api/src/outreach.ts`); approval is HARD-gated on
+the persisted `gate_results_json.passed` (INV-5). There is no send route anywhere —
+an approved draft is copied out by the browser clipboard, never sent (INV-1).
+
+Sensitivity: the draft `bodyText`, gate results, and claim provenance live only in
+canonical `outreach_drafts` and reach the client through the thread detail read
+below; the draft-lifecycle events written to `job_events` (`entity_kind =
+'outreach'`, `entity_ref = <threadId>`) carry only ids, kinds, generation, and
+timestamps.
+
+- `GET /v1/contacts/:contactId/outreach` returns the `OutreachThreadDetail` for a
+  contact (optional `jobId` query resolves the application-scoped thread), or
+  `{ ok: true, thread: null }` when no thread exists yet. The detail carries the
+  thread summary plus each generation's `bodyText`, `gateResults`, and claim
+  `provenance`.
+- `POST /v1/contacts/:contactId/outreach/drafts` **generates** a new draft
+  (`GenerateOutreachDraftRequest`: optional `kind`, `jobId`, `applicationRole`,
+  `llmModel`). It resolves or mints the thread id, dispatches
+  `generate_outreach_draft`, and returns `{ ok, thread }` with the freshly gated
+  candidate. Requires a ready worker (`503` otherwise).
+- `POST /v1/outreach/threads/:threadId/drafts` **revises** the thread
+  (`ReviseOutreachDraftRequest`: `editedBodyText`, optional `kind`,
+  `applicationRole`, `llmModel`). The edited body becomes a new generation and
+  re-runs the identical gates; returns `{ ok, thread }`.
+- `POST /v1/outreach/threads/:threadId/drafts/:draftId/approve` approves a
+  candidate draft. It returns `409 { error: "draft_gates_not_passed" }` when the
+  persisted gates did not pass (INV-5), `404 { error: "outreach_draft_not_found" }`
+  for an unknown thread/draft, and `400 { error: "invalid_outreach_transition" }`
+  when the draft is not awaiting approval. Approving supersedes the previously
+  approved draft.
+- `POST /v1/outreach/threads/:threadId/drafts/:draftId/reject` rejects a candidate
+  draft (`RejectOutreachDraftRequest`: optional `reason`); the last approved draft
+  is left untouched (INV-5).
+
+The `generate_outreach_draft` JSON-RPC method (params `threadId`, `contactId`,
+optional `jobId` / `kind` / `applicationRole` / `llmModel`, plus `editedBodyText`
+to select the revise path) is a synchronous method — like `analyze_job`, it runs
+the LLM + gate stack inline and returns `{ threadId, contactId, jobId, draftId,
+generation, kind, status, gatePassed }`. Outreach DTOs and request/response schemas
+live in `packages/contracts` (`OutreachThreadSummary`, `OutreachThreadDetail`,
+`OutreachDraftDto`, `OutreachDraftGateResults`, `OutreachClaimProvenanceDto`, and
+the generate / revise / reject request shapes).
 
 ## Pipeline and preparation actions
 

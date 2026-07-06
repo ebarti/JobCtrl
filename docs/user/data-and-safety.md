@@ -65,6 +65,15 @@ becomes a stored contact until you explicitly confirm it, and every proposed fac
 shows its source. It still never sends anything, and research data never affects
 scoring or apply decisions.
 
+**Outreach drafts** are generated under the same anti-fabrication discipline as
+your resumes and cover letters: every draft is checked against your profile and the
+confirmed contact record, and a draft that invents a metric, employer, or
+relationship is blocked from approval. Drafts are yours — the message body, its
+gate results, and its provenance stay in the local `jobhunter.db` and never enter
+the event log, projections, logs, or telemetry. A draft terminates at
+**copy/export**: there is no send transport of any kind, so you send every message
+yourself through your own channel.
+
 ::: warning Never commit your local data
 Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those
 files. They hold your database, provider keys, and generated resumes and cover

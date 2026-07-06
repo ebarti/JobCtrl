@@ -88,6 +88,10 @@ import {
   ConfirmContactCandidateRequestSchema,
   ContactResearchListQuerySchema,
   RunContactResearchRequestSchema,
+  GenerateOutreachDraftRequestSchema,
+  ReviseOutreachDraftRequestSchema,
+  RejectOutreachDraftRequestSchema,
+  OutreachThreadQuerySchema,
 } from "./contracts.js";
 import {
   ContactInputError,
@@ -107,6 +111,16 @@ import {
   getResearchTaskDetail,
   listResearchTasks,
 } from "./contact-research.js";
+import {
+  OutreachDraftGatesNotPassedError,
+  OutreachInputError,
+  OutreachNotFoundError,
+  approveOutreachDraft,
+  findOutreachThreadIdForContact,
+  getOutreachThreadDetail,
+  getOutreachThreadForContact,
+  rejectOutreachDraft,
+} from "./outreach.js";
 import {
   decideOutcomeSuggestion,
   listApplicationOutcomes,
@@ -151,11 +165,13 @@ import {
   defaultActionDispatcher,
   defaultArtifactOpener,
   defaultContactResearchStarter,
+  defaultOutreachDraftGenerator,
   defaultProfilePreviewRenderer,
   defaultProfileImporter,
   type ActionDispatcher,
   type ArtifactOpener,
   type ContactResearchStarter,
+  type OutreachDraftGenerator,
   type ProfilePreviewRenderer,
   type ProfileImporter,
 } from "./local-actions.js";
@@ -280,6 +296,7 @@ export interface BuildAppOptions {
   settingsPath: string;
   actionDispatcher?: ActionDispatcher;
   contactResearchStarter?: ContactResearchStarter;
+  outreachDraftGenerator?: OutreachDraftGenerator;
   artifactPdfPageRenderer?: ArtifactPdfPageRenderer;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
@@ -298,6 +315,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
   const contactResearchStarter = options.contactResearchStarter ?? defaultContactResearchStarter;
+  const outreachDraftGenerator = options.outreachDraftGenerator ?? defaultOutreachDraftGenerator;
   const artifactPdfPageRenderer = options.artifactPdfPageRenderer ?? defaultArtifactPdfPageRenderer;
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
@@ -2353,6 +2371,150 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           if (error instanceof ContactResearchInputError) {
             void reply.code(400);
             return { ok: false, error: "invalid_confirm", message: error.message };
+          }
+          throw error;
+        }
+      });
+    },
+  );
+
+  // Outreach drafts (R6 Phase 3). Generation/revision run the LLM + the reused
+  // materials truthfulness gate stack synchronously on the Python worker;
+  // approval/rejection are TS-API transitions. Approval is HARD-gated on the
+  // persisted gate outcome (INV-5). No route exposes a send transport (INV-1) —
+  // an approved draft is copied out by the browser, never sent.
+  app.get<{ Params: { contactId: string } }>(
+    "/v1/contacts/:contactId/outreach",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) => {
+        const query = OutreachThreadQuerySchema.parse(request.query);
+        return {
+          ok: true,
+          thread: getOutreachThreadForContact(
+            db,
+            decodeRouteParam(request.params.contactId),
+            query.jobId ?? null,
+          ),
+        };
+      }),
+  );
+
+  app.post<{ Params: { contactId: string } }>(
+    "/v1/contacts/:contactId/outreach/drafts",
+    async (request, reply) => {
+      const body = parseBody(reply, GenerateOutreachDraftRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_outreach_draft" };
+      }
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const contactId = decodeRouteParam(request.params.contactId);
+      const jobId = body.jobId ?? null;
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        const threadId = findOutreachThreadIdForContact(db, contactId, jobId) ?? randomUUID();
+        await outreachDraftGenerator(
+          {
+            threadId,
+            contactId,
+            jobId,
+            ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
+            ...(body.llmModel ? { llmModel: body.llmModel } : {}),
+          },
+          actionContext,
+        );
+        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+      });
+    },
+  );
+
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/outreach/threads/:threadId/drafts",
+    async (request, reply) => {
+      const body = parseBody(reply, ReviseOutreachDraftRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_outreach_draft" };
+      }
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const threadId = decodeRouteParam(request.params.threadId);
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        await outreachDraftGenerator(
+          {
+            threadId,
+            editedBodyText: body.editedBodyText,
+            ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
+            ...(body.llmModel ? { llmModel: body.llmModel } : {}),
+          },
+          actionContext,
+        );
+        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+      });
+    },
+  );
+
+  app.post<{ Params: { threadId: string; draftId: string } }>(
+    "/v1/outreach/threads/:threadId/drafts/:draftId/approve",
+    async (request, reply) =>
+      withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: approveOutreachDraft(
+              db,
+              decodeRouteParam(request.params.threadId),
+              decodeRouteParam(request.params.draftId),
+            ),
+          };
+        } catch (error) {
+          if (error instanceof OutreachDraftGatesNotPassedError) {
+            void reply.code(409);
+            return { ok: false, error: "draft_gates_not_passed", message: error.message };
+          }
+          if (error instanceof OutreachNotFoundError) {
+            void reply.code(404);
+            return { ok: false, error: "outreach_draft_not_found", message: error.message };
+          }
+          if (error instanceof OutreachInputError) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_outreach_transition", message: error.message };
+          }
+          throw error;
+        }
+      }),
+  );
+
+  app.post<{ Params: { threadId: string; draftId: string } }>(
+    "/v1/outreach/threads/:threadId/drafts/:draftId/reject",
+    async (request, reply) => {
+      const body = parseBody(reply, RejectOutreachDraftRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_outreach_reject" };
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: rejectOutreachDraft(
+              db,
+              decodeRouteParam(request.params.threadId),
+              decodeRouteParam(request.params.draftId),
+              body.reason ?? "",
+            ),
+          };
+        } catch (error) {
+          if (error instanceof OutreachNotFoundError) {
+            void reply.code(404);
+            return { ok: false, error: "outreach_draft_not_found", message: error.message };
+          }
+          if (error instanceof OutreachInputError) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_outreach_transition", message: error.message };
           }
           throw error;
         }

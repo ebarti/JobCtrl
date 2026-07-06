@@ -70,6 +70,7 @@ export const RpcMethods = {
   RefreshCompensation: "refresh_compensation",
   GenerateInterviewPrep: "generate_interview_prep",
   RunContactResearch: "run_contact_research",
+  GenerateOutreachDraft: "generate_outreach_draft",
   Apply: "apply",
   ProfileImport: "profile_import",
   CancelRun: "cancel_run",
@@ -260,6 +261,44 @@ export const RunContactResearchParamsSchema = z
     path: ["employer"],
   });
 export type RunContactResearchParams = z.infer<typeof RunContactResearchParamsSchema>;
+
+// Outreach draft generation/revision (Contact & Outreach, R6 Phase 3). Runs the
+// LLM + the truthfulness gate stack on the worker (synchronous, like analyze_job)
+// and persists a gated draft. ``editedBodyText`` selects the revise path. There
+// is no send capability on this method (INV-1).
+export const GenerateOutreachDraftParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    threadId: z.string().trim().min(1).max(200),
+    contactId: z.string().trim().min(1).max(200).optional(),
+    jobId: z.string().trim().min(1).max(2000).nullish(),
+    kind: z.enum(["intro_request", "follow_up"]).default("intro_request"),
+    editedBodyText: z.string().trim().min(1).max(8000).optional(),
+    applicationRole: z.string().trim().max(200).optional(),
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict()
+  .refine((params) => Boolean(params.contactId) || Boolean(params.editedBodyText), {
+    message: "provide contactId (generate) or editedBodyText (revise)",
+    path: ["contactId"],
+  });
+export type GenerateOutreachDraftParams = z.infer<typeof GenerateOutreachDraftParamsSchema>;
+
+export const GenerateOutreachDraftResultSchema = z
+  .object({
+    threadId: z.string(),
+    contactId: z.string(),
+    jobId: z.string().nullable(),
+    draftId: z.string(),
+    generation: z.number().int().nonnegative(),
+    kind: z.enum(["intro_request", "follow_up"]),
+    status: z.enum(["candidate", "approved", "rejected", "superseded"]),
+    gatePassed: z.boolean(),
+  })
+  .strict();
+export type GenerateOutreachDraftResult = z.infer<typeof GenerateOutreachDraftResultSchema>;
 
 export const RetailorJobParamsSchema = z
   .object({

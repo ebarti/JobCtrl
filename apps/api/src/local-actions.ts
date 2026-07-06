@@ -216,6 +216,74 @@ export const defaultContactResearchStarter: ContactResearchStarter = async (inpu
   };
 };
 
+export interface OutreachDraftGeneratorInput {
+  threadId: string;
+  contactId?: string | null;
+  jobId?: string | null;
+  kind?: string;
+  editedBodyText?: string;
+  applicationRole?: string;
+  llmModel?: string;
+}
+
+export interface OutreachDraftGeneratorOutcome {
+  threadId: string;
+  contactId: string;
+  jobId: string | null;
+  draftId: string;
+  generation: number;
+  kind: string;
+  status: string;
+  gatePassed: boolean;
+}
+
+export type OutreachDraftGenerator = (
+  input: OutreachDraftGeneratorInput,
+  context: ActionDispatchContext,
+) => Promise<OutreachDraftGeneratorOutcome>;
+
+/**
+ * Generate or revise an outreach draft synchronously on the Python worker via
+ * JSON-RPC (LLM + the reused materials truthfulness gate stack, like analyze_job).
+ * ``contactId`` selects the generate path; ``editedBodyText`` selects revise. This
+ * has no send capability (INV-1) — it only persists a gated draft.
+ */
+export const defaultOutreachDraftGenerator: OutreachDraftGenerator = async (input, context) => {
+  const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
+  const response = await rpc.call("generate_outreach_draft", {
+    tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
+    threadId: input.threadId,
+    ...(input.contactId ? { contactId: input.contactId } : {}),
+    ...(input.jobId ? { jobId: input.jobId } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.editedBodyText ? { editedBodyText: input.editedBodyText } : {}),
+    ...(input.applicationRole ? { applicationRole: input.applicationRole } : {}),
+    llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
+  });
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+  return parseOutreachDraftResult(response.result);
+};
+
+function parseOutreachDraftResult(result: unknown): OutreachDraftGeneratorOutcome {
+  if (!isRecord(result)) {
+    throw new Error("Outreach draft generation returned no result.");
+  }
+  return {
+    threadId: typeof result.threadId === "string" ? result.threadId : "",
+    contactId: typeof result.contactId === "string" ? result.contactId : "",
+    jobId: typeof result.jobId === "string" ? result.jobId : null,
+    draftId: typeof result.draftId === "string" ? result.draftId : "",
+    generation: typeof result.generation === "number" ? result.generation : 0,
+    kind: typeof result.kind === "string" ? result.kind : "intro_request",
+    status: typeof result.status === "string" ? result.status : "candidate",
+    gatePassed: result.gatePassed === true,
+  };
+}
+
 export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
   const opener = openerCommand(artifactPath);
   const child = spawn(opener.command, opener.args, {

@@ -216,6 +216,8 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Supervised contact research fetches a source the policy does not permit, auto-fetches a public page that was not opted in, follows a login-walled/paywalled URL instead of routing it to manual capture, or fails to record a robots/rate-limit/budget block as a first-class `ResearchSourceAttempt` outcome (INV-3; all fetching gateway-routed) | `workers/automation/tests/test_contact_research_source_policy.py`; `workers/automation/tests/test_contact_research_workflow.py` (robots/rate-limit outcomes; disallowed-source rejected without fetching; gateway routing) |
 | A research candidate becomes a stored contact without an explicit user confirm command, a proposed candidate/attribute lacks provenance, or a candidate VALUE leaks into an event/projection instead of living only in `contact_candidates.attributes_json` (INV-4 supervised; INV-2 provenance; sensitivity) | `workers/automation/tests/test_contact_research_workflow.py` (candidate-requires-confirmation; provenance-on-every-candidate; values-never-leak); `workers/automation/tests/test_contact_research_projection_parity.py`; `apps/api/test/contact-research.test.ts`; `apps/api/test/contact-research-projection-parity.test.ts`; `apps/web/src/contexts/outreach/hooks/useConfirmCandidateMutation.test.ts`; `apps/web/src/contexts/outreach/components/CandidateReviewList.a11y.test.tsx`; browser smoke on a job's Contacts panel |
 | The research read model drifts between runtimes — the Python `_rebuild_contact_research` and TS `rebuildContactResearchProjections` disagree on counts, source-attempt outcomes, or per-candidate provenance metadata for the shared fixture | `workers/automation/tests/test_contact_research_projection_parity.py`; `apps/api/test/contact-research-projection-parity.test.ts` |
+| An outreach draft that fabricates a metric, employer, title, or relationship — or otherwise fails the reused truthfulness gate stack (deterministic never-fabricate detector + content validator + LLM judge) — becomes approvable, approval is not HARD-gated on the persisted `gate_results_json.passed` (a failed- or absent-gate draft approves through the aggregate, the worker draft path, or the TS API transition), or approving a draft performs an outbound send (INV-5; INV-1) | `workers/automation/tests/test_outreach_draft_gates.py`; `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_no_send_transport.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/DraftGateResultsPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useApproveDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
+| Re-drafting or editing an outreach message destroys or hides the last approved draft before a replacement is approved — a new generation fails to supersede stale candidates, a re-draft overwrites the approved draft, an edit is applied in place instead of as a gated new generation, or the generation history drops prior drafts (INV-5) | `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_draft_gates.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/OutreachThreadPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useReviseDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
 
 ### Scoring Policy Eval Gate
 
@@ -506,6 +508,23 @@ recorded", a drafted-adjacent bullet shows an explicit "original profile bullet
 not recorded" diff side, and a null voice pass shows "no voice pass recorded".
 Confirm a re-tailor/generate-materials in flight never hides the last accepted
 artifact or its provenance.
+
+### Outreach Draft Review Smoke
+
+For UI/API changes around outreach drafting, open a contact detail (the
+**Outreach** panel on `/outreach/$contactId`) and generate a draft. Verify the
+panel shows the candidate under review with its gate-results panel (the persisted
+truthfulness-gate outcome), the claim → fact provenance list, and the full
+generation history; that **approve is disabled until the gates pass**; that editing
+submits a new generation and re-runs the gates rather than mutating the draft in
+place; and that approving supersedes the previous approved draft while a reject
+leaves the last approved draft readable. Confirm the approved draft exposes a
+**copy** action that writes to the clipboard through the `ClipboardPort`, and that
+**no send or transport control exists anywhere** on the surface. Do not run real
+generation against a live worker for QA automation — exercise the route + UI wiring
+with seeded `outreach_threads` / `outreach_drafts` fixtures (both gate-passed and
+gate-failed drafts) and the E2E stub dispatcher; never a real LLM call and never a
+real send.
 
 ### Interview Prep Smoke
 

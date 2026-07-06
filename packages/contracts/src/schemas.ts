@@ -4477,3 +4477,141 @@ export interface ConfirmContactCandidateResponse {
   contact: ContactDetail;
   task: ContactResearchTaskSummary;
 }
+
+// ---------------------------------------------------------------------------
+// Contact & Outreach (R6 Phase 3 — outreach drafts)
+//
+// Truthful, reviewable, generation-versioned outreach drafts. Generation +
+// revision run the LLM + the reused materials gate stack on the Python worker
+// (draft body, gate results, and claim -> fact provenance are user-owned content
+// that reaches the client through these read DTOs and lives in the thread read
+// model). Approval/rejection are TS-API transitions gated on the persisted gate
+// outcome (INV-5). There is NO send transport on any outreach surface (INV-1):
+// an approved draft is copied out via the browser clipboard, never sent.
+// ---------------------------------------------------------------------------
+
+export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up"] as const;
+export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS).catch("intro_request");
+export type OutreachDraftKind = (typeof OUTREACH_DRAFT_KINDS)[number];
+
+export const OUTREACH_DRAFT_STATUSES = [
+  "candidate",
+  "approved",
+  "rejected",
+  "superseded",
+] as const;
+export type OutreachDraftStatus = (typeof OUTREACH_DRAFT_STATUSES)[number];
+
+/** One deterministic never-fabricate finding against the rendered draft text. */
+export interface OutreachGateFabrication {
+  section: string;
+  kind: string;
+  token: string;
+  control: string;
+  generatedText: string;
+}
+
+export interface OutreachGateValidation {
+  passed: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface OutreachGateJudge {
+  approved: boolean;
+  score: number;
+  criterionScores: Record<string, number>;
+  issues: string[];
+  notes: string;
+}
+
+/** The persisted gate-stack outcome; `passed` is the sole approval authority (INV-5). */
+export interface OutreachDraftGateResults {
+  passed: boolean;
+  computedAgainst: string;
+  fabrications: OutreachGateFabrication[];
+  validation: OutreachGateValidation;
+  judge: OutreachGateJudge | null;
+}
+
+/** One claim in a draft bound to the confirmed fact(s) it rests on (INV-2). */
+export interface OutreachClaimProvenanceDto {
+  claimId: string;
+  section: string;
+  generatedText: string;
+  contactFactIds: string[];
+  profileGrounded: boolean;
+  rationale: string;
+}
+
+export interface OutreachDraftDto {
+  draftId: string;
+  threadId: string;
+  generation: number;
+  kind: OutreachDraftKind;
+  status: OutreachDraftStatus;
+  bodyText: string;
+  gateResults: OutreachDraftGateResults;
+  provenance: OutreachClaimProvenanceDto[];
+  createdAt: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  reason: string;
+}
+
+export interface OutreachThreadSummary {
+  threadId: string;
+  contactId: string;
+  jobId: string | null;
+  draftCount: number;
+  latestGeneration: number;
+  hasApprovedDraft: boolean;
+  approvedDraftId: string | null;
+  latestStatus: OutreachDraftStatus | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface OutreachThreadDetail extends OutreachThreadSummary {
+  drafts: OutreachDraftDto[];
+}
+
+export const GenerateOutreachDraftRequestSchema = z
+  .object({
+    jobId: contactJobIdField,
+    kind: OutreachDraftKindSchema.optional(),
+    applicationRole: z.string().trim().max(200).optional(),
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export type GenerateOutreachDraftRequest = z.infer<typeof GenerateOutreachDraftRequestSchema>;
+
+export const ReviseOutreachDraftRequestSchema = z
+  .object({
+    editedBodyText: z.string().trim().min(1).max(8000),
+    kind: OutreachDraftKindSchema.optional(),
+    applicationRole: z.string().trim().max(200).optional(),
+    llmModel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export type ReviseOutreachDraftRequest = z.infer<typeof ReviseOutreachDraftRequestSchema>;
+
+export const RejectOutreachDraftRequestSchema = z
+  .object({
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
+export type RejectOutreachDraftRequest = z.infer<typeof RejectOutreachDraftRequestSchema>;
+
+export const OutreachThreadQuerySchema = z
+  .object({
+    contactId: optionalText,
+    jobId: optionalText,
+  })
+  .strict();
+export type OutreachThreadQuery = z.infer<typeof OutreachThreadQuerySchema>;
+
+export interface OutreachThreadResponse {
+  ok: true;
+  thread: OutreachThreadDetail | null;
+}

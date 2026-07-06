@@ -35,6 +35,7 @@ from jobhunter.domain.operations.projections import (
     DashboardProjection,
     JobDetailProjection,
     JobListProjection,
+    OutreachThreadProjection,
     SourceQualityStats,
     WorkflowRunProjection,
 )
@@ -51,6 +52,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "source_quality_stats",
     "contact_projections",
     "contact_research_task_projections",
+    "outreach_thread_projections",
 )
 
 SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -425,6 +427,32 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_contact_research_task_projections_lookup
         ON contact_research_task_projections(tenant_id, employer, job_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS outreach_thread_projections (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            thread_id           TEXT NOT NULL,
+            contact_id          TEXT NOT NULL,
+            job_id              TEXT,
+            draft_count         INTEGER NOT NULL DEFAULT 0,
+            latest_generation   INTEGER NOT NULL DEFAULT 0,
+            has_approved_draft  INTEGER NOT NULL DEFAULT 0,
+            approved_draft_id   TEXT,
+            latest_status       TEXT,
+            drafts_json         TEXT NOT NULL DEFAULT '[]',
+            created_at          TEXT,
+            updated_at          TEXT,
+            last_updated_at     TEXT,
+            PRIMARY KEY (tenant_id, thread_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_outreach_thread_projections_lookup
+        ON outreach_thread_projections(tenant_id, contact_id, job_id)
         """
     )
     conn.execute(
@@ -1120,6 +1148,69 @@ class SqliteProjectionStore:
     def count_contact_research_tasks(self, tenant_id: str) -> int:
         row = self._conn.execute(
             "SELECT COUNT(*) FROM contact_research_task_projections WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchone()
+        return int(row[0] if row else 0)
+
+    def upsert_outreach_thread(self, projection: OutreachThreadProjection) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO outreach_thread_projections (
+                tenant_id, thread_id, contact_id, job_id, draft_count,
+                latest_generation, has_approved_draft, approved_draft_id,
+                latest_status, drafts_json, created_at, updated_at, last_updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
+                contact_id         = excluded.contact_id,
+                job_id             = excluded.job_id,
+                draft_count        = excluded.draft_count,
+                latest_generation  = excluded.latest_generation,
+                has_approved_draft = excluded.has_approved_draft,
+                approved_draft_id  = excluded.approved_draft_id,
+                latest_status      = excluded.latest_status,
+                drafts_json        = excluded.drafts_json,
+                created_at         = excluded.created_at,
+                updated_at         = excluded.updated_at,
+                last_updated_at    = excluded.last_updated_at
+            """,
+            (
+                str(projection.tenant_id),
+                projection.thread_id,
+                projection.contact_id,
+                projection.job_id,
+                projection.draft_count,
+                projection.latest_generation,
+                1 if projection.has_approved_draft else 0,
+                projection.approved_draft_id,
+                projection.latest_status,
+                json.dumps(list(projection.drafts)),
+                projection.created_at,
+                projection.updated_at,
+                projection.last_updated_at,
+            ),
+        )
+
+    def delete_outreach_thread(self, tenant_id: str, thread_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM outreach_thread_projections WHERE tenant_id = ? AND thread_id = ?",
+            (tenant_id, thread_id),
+        )
+
+    def fetch_outreach_threads(self, tenant_id: str) -> list[sqlite3.Row]:
+        return list(
+            self._conn.execute(
+                """
+                SELECT * FROM outreach_thread_projections
+                WHERE tenant_id = ?
+                ORDER BY updated_at DESC, thread_id ASC
+                """,
+                (tenant_id,),
+            ).fetchall()
+        )
+
+    def count_outreach_threads(self, tenant_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM outreach_thread_projections WHERE tenant_id = ?",
             (tenant_id,),
         ).fetchone()
         return int(row[0] if row else 0)

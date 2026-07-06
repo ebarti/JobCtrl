@@ -57,6 +57,12 @@ const CONTACT_RESEARCH_EVENT_TYPES = new Set([
   "ContactResearchTaskCompleted",
   "ContactResearchTaskFailed",
 ]);
+const OUTREACH_EVENT_TYPES = new Set([
+  "OutreachDraftGenerated",
+  "OutreachDraftRevised",
+  "OutreachDraftApproved",
+  "OutreachDraftRejected",
+]);
 const COMPENSATION_PROJECTION_VERSION = 1;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -693,6 +699,24 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     );
     CREATE INDEX IF NOT EXISTS idx_contact_research_task_projections_lookup
       ON contact_research_task_projections(tenant_id, employer, job_id);
+    CREATE TABLE IF NOT EXISTS outreach_thread_projections (
+      tenant_id           TEXT NOT NULL DEFAULT 'local',
+      thread_id           TEXT NOT NULL,
+      contact_id          TEXT NOT NULL,
+      job_id              TEXT,
+      draft_count         INTEGER NOT NULL DEFAULT 0,
+      latest_generation   INTEGER NOT NULL DEFAULT 0,
+      has_approved_draft  INTEGER NOT NULL DEFAULT 0,
+      approved_draft_id   TEXT,
+      latest_status       TEXT,
+      drafts_json         TEXT NOT NULL DEFAULT '[]',
+      created_at          TEXT,
+      updated_at          TEXT,
+      last_updated_at     TEXT,
+      PRIMARY KEY (tenant_id, thread_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outreach_thread_projections_lookup
+      ON outreach_thread_projections(tenant_id, contact_id, job_id);
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
@@ -812,6 +836,17 @@ export function refreshContactResearchProjections(db: SqliteDatabase, tenantId =
   rebuildContactResearchProjections(db, tenantId);
 }
 
+/**
+ * Force-rebuild the outreach-thread read model from canonical rows. Approve /
+ * reject transitions and worker-side draft generation each emit an outreach
+ * event, but callers rebuild directly so the projection is honest the instant a
+ * write returns (mirrors `refreshContactResearchProjections`).
+ */
+export function refreshOutreachProjections(db: SqliteDatabase, tenantId = "local"): void {
+  ensureProjectionTables(db);
+  rebuildOutreachProjections(db, tenantId);
+}
+
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
@@ -825,6 +860,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   let evidenceUsageDirty = projectionSchemaChanged;
   let contactsDirty = projectionSchemaChanged;
   let contactResearchDirty = projectionSchemaChanged;
+  let outreachDirty = projectionSchemaChanged;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {
     const rows = allRows<{ event_id: number; job_url: string | null; event_type: string }>(
@@ -845,6 +881,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (CONTACT_RESEARCH_EVENT_TYPES.has(String(row.event_type))) {
         contactResearchDirty = true;
       }
+      if (OUTREACH_EVENT_TYPES.has(String(row.event_type))) {
+        outreachDirty = true;
+      }
       evidenceUsageDirty = true;
     }
   }
@@ -855,6 +894,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   }
   if (!contactResearchDirty && contactResearchBackfillPending(db, tenantId)) {
     contactResearchDirty = true;
+  }
+  if (!outreachDirty && outreachBackfillPending(db, tenantId)) {
+    outreachDirty = true;
   }
   const evidenceProjectionCount =
     getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM evidence_usage_projections WHERE tenant_id = ?", [
@@ -920,6 +962,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     !evidenceUsageDirty &&
     !contactsDirty &&
     !contactResearchDirty &&
+    !outreachDirty &&
     (sourceQualityExists > 0 || !sourceQualityHistory) &&
     maxEventId === watermark
   ) {
@@ -934,6 +977,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   }
   if (contactResearchDirty) {
     rebuildContactResearchProjections(db, tenantId);
+  }
+  if (outreachDirty) {
+    rebuildOutreachProjections(db, tenantId);
   }
 
   for (const jobUrl of dirtyJobs) {
@@ -4152,6 +4198,167 @@ function researchAttributeKinds(attributesJson: string | null): string[] {
     }
   }
   return kinds;
+}
+
+function outreachBackfillPending(db: SqliteDatabase, tenantId: string): boolean {
+  if (
+    !tableExists(db, "outreach_threads") ||
+    !tableExists(db, "outreach_thread_projections")
+  ) {
+    return false;
+  }
+  const projected =
+    getRow<{ c: number }>(
+      db,
+      "SELECT COUNT(*) AS c FROM outreach_thread_projections WHERE tenant_id = ?",
+      [tenantId],
+    )?.c ?? 0;
+  if (projected > 0) {
+    return false;
+  }
+  const canonical =
+    getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM outreach_threads WHERE tenant_id = ?", [
+      tenantId,
+    ])?.c ?? 0;
+  return canonical > 0;
+}
+
+/**
+ * Rematerialise every ``outreach_thread_projections`` row from canonical outreach
+ * rows (ninth context). The draft body, gate internals, and claim provenance are
+ * never read into the projection — only the thread lifecycle summary and per-draft
+ * metadata (generation, kind, status, the persisted gate outcome INV-5, and
+ * timestamps). Mirrors the Python ``ProjectionBuilder._rebuild_outreach`` for
+ * cross-runtime parity.
+ */
+function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "outreach_threads") || !tableExists(db, "outreach_drafts")) {
+    return;
+  }
+  const threads = allRows<{
+    thread_id: string;
+    contact_id: string;
+    job_url: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+  }>(
+    db,
+    `SELECT thread_id, contact_id, job_url, created_at, updated_at
+     FROM outreach_threads
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  const liveIds = new Set<string>();
+  const upsert = db.prepare(
+    `INSERT INTO outreach_thread_projections (
+       tenant_id, thread_id, contact_id, job_id, draft_count,
+       latest_generation, has_approved_draft, approved_draft_id,
+       latest_status, drafts_json, created_at, updated_at, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
+       contact_id         = excluded.contact_id,
+       job_id             = excluded.job_id,
+       draft_count        = excluded.draft_count,
+       latest_generation  = excluded.latest_generation,
+       has_approved_draft = excluded.has_approved_draft,
+       approved_draft_id  = excluded.approved_draft_id,
+       latest_status      = excluded.latest_status,
+       drafts_json        = excluded.drafts_json,
+       created_at         = excluded.created_at,
+       updated_at         = excluded.updated_at,
+       last_updated_at    = excluded.last_updated_at`,
+  );
+  for (const thread of threads) {
+    const threadId = String(thread.thread_id);
+    liveIds.add(threadId);
+    const draftRows = allRows<{
+      draft_id: string;
+      generation: number | null;
+      kind: string | null;
+      status: string | null;
+      gate_results_json: string | null;
+      created_at: string | null;
+      approved_at: string | null;
+      rejected_at: string | null;
+    }>(
+      db,
+      `SELECT draft_id, generation, kind, status, gate_results_json,
+              created_at, approved_at, rejected_at
+       FROM outreach_drafts
+       WHERE tenant_id = ? AND thread_id = ?
+       ORDER BY generation ASC, draft_id ASC`,
+      [tenantId, threadId],
+    );
+    let latestGeneration = 0;
+    let latestStatus: string | null = null;
+    let hasApproved = false;
+    let approvedDraftId: string | null = null;
+    const drafts = draftRows.map((draft) => {
+      const generation = Number(draft.generation ?? 0);
+      const status = String(draft.status ?? "candidate");
+      latestGeneration = generation;
+      latestStatus = status;
+      if (status === "approved") {
+        hasApproved = true;
+        approvedDraftId = String(draft.draft_id);
+      }
+      return {
+        draftId: String(draft.draft_id),
+        generation,
+        kind: String(draft.kind ?? ""),
+        status,
+        gatePassed: gatePassed(draft.gate_results_json),
+        createdAt: draft.created_at ?? null,
+        approvedAt: draft.approved_at ?? null,
+        rejectedAt: draft.rejected_at ?? null,
+      };
+    });
+    upsert.run(
+      tenantId,
+      threadId,
+      String(thread.contact_id),
+      thread.job_url,
+      draftRows.length,
+      latestGeneration,
+      hasApproved ? 1 : 0,
+      approvedDraftId,
+      latestStatus,
+      JSON.stringify(drafts),
+      thread.created_at,
+      thread.updated_at,
+      thread.updated_at,
+    );
+  }
+  const existing = allRows<{ thread_id: string }>(
+    db,
+    "SELECT thread_id FROM outreach_thread_projections WHERE tenant_id = ?",
+    [tenantId],
+  );
+  const drop = db.prepare(
+    "DELETE FROM outreach_thread_projections WHERE tenant_id = ? AND thread_id = ?",
+  );
+  for (const row of existing) {
+    if (!liveIds.has(String(row.thread_id))) {
+      drop.run(tenantId, String(row.thread_id));
+    }
+  }
+}
+
+function gatePassed(raw: string | null): boolean {
+  if (!raw) {
+    return false;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return (
+      Boolean(parsed) &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).passed === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): void {

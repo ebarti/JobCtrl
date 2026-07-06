@@ -350,6 +350,114 @@ def run_contact_research(params: dict[str, Any]) -> WorkflowStartSpec:
         raise invalid_params(str(exc)) from exc
 
 
+def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
+    """Generate or revise a truthful outreach draft (Contact & Outreach, Phase 3).
+
+    Synchronous (like ``analyze_job``): the LLM synthesis + the full truthfulness
+    gate stack (deterministic never-fabricate detector, content validator, judge,
+    claim -> fact provenance) run inline on the worker and the gated draft is
+    persisted as a new generation, superseding prior *candidate* drafts while the
+    last approved draft stays readable (INV-5). There is NO send path (INV-1).
+
+    ``editedBodyText`` selects the revise path: the user's edited body becomes a
+    new generation and RE-RUNS the identical gates. Approval/rejection are separate
+    transitions hosted in the TS API and gated on the persisted gate outcome.
+    """
+    import uuid
+
+    from jobhunter.database import get_connection, load_job_with_enrichment
+    from jobhunter.domain.contact.outreach import OutreachDraftKind
+    from jobhunter.domain.contact.outreach_use_cases import (
+        GenerateOutreachDraftUseCase,
+        OutreachDraftInputError,
+        ReviseOutreachDraftUseCase,
+    )
+    from jobhunter.infrastructure.contact import (
+        SqliteContactRepository,
+        SqliteOutreachThreadRepository,
+    )
+    from jobhunter.infrastructure.events import get_default_publisher
+    from jobhunter.infrastructure.llm.llm_client import get_llm_adapter
+    from jobhunter.infrastructure.profile.factory import get_profile_repository
+
+    tenant = TenantId(_tenant_id(params))
+    thread_id = str(_require(params, "threadId"))
+    edited_body = str(params.get("editedBodyText") or "").strip()
+    application_role = str(params.get("applicationRole") or "").strip()
+    model = params.get("llmModel") or None
+    try:
+        kind = OutreachDraftKind(str(params.get("kind") or "intro_request"))
+    except ValueError:
+        kind = OutreachDraftKind.INTRO_REQUEST
+
+    conn = get_connection()
+    try:
+        profile = get_profile_repository().load_snapshot(tenant).as_dict()
+    except FileNotFoundError as exc:
+        raise invalid_params(str(exc)) from exc
+
+    publisher = get_default_publisher()
+    contact_repo = SqliteContactRepository(conn, publisher=publisher)
+    thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher)
+    llm = get_llm_adapter()
+    new_id = lambda: uuid.uuid4().hex  # noqa: E731 — trivial id seam
+
+    try:
+        if edited_body:
+            thread = ReviseOutreachDraftUseCase(
+                repository=thread_repo,
+                contact_repository=contact_repo,
+                llm=llm,
+                new_id=new_id,
+            ).execute(
+                tenant,
+                thread_id=thread_id,
+                edited_body_text=edited_body,
+                profile=profile,
+                application_role=application_role,
+                kind=kind,
+                model=model,
+            )
+        else:
+            contact_id = str(_require(params, "contactId"))
+            job_id = params.get("jobId") or None
+            if not application_role and job_id:
+                job = load_job_with_enrichment(conn, str(job_id))
+                if job is not None:
+                    application_role = str(job.get("title") or "")
+            thread = GenerateOutreachDraftUseCase(
+                repository=thread_repo,
+                contact_repository=contact_repo,
+                llm=llm,
+                new_id=new_id,
+            ).execute(
+                tenant,
+                thread_id=thread_id,
+                contact_id=contact_id,
+                job_id=job_id,
+                kind=kind,
+                profile=profile,
+                application_role=application_role,
+                model=model,
+            )
+    except OutreachDraftInputError as exc:
+        raise invalid_params(str(exc)) from exc
+
+    draft = thread.latest_draft
+    if draft is None:  # pragma: no cover — a save always yields a draft
+        raise invalid_params("draft generation produced no draft")
+    return {
+        "threadId": thread.thread_id,
+        "contactId": thread.contact_id,
+        "jobId": thread.job_id,
+        "draftId": draft.draft_id,
+        "generation": draft.generation,
+        "kind": draft.kind.value,
+        "status": draft.status.value,
+        "gatePassed": draft.gate_results.passed,
+    }
+
+
 def make_cancel_run(canceler: WorkflowCanceler):
     """Build a ``cancel_run`` handler bound to *canceler*.
 
@@ -393,6 +501,9 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")
+    # Outreach draft generation/revision — synchronous (LLM + gate stack inline,
+    # like analyze_job); persists a gated draft. No send path (INV-1).
+    server.register("generate_outreach_draft", generate_outreach_draft, mode="sync")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

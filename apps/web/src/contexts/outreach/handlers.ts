@@ -97,28 +97,37 @@ export const contactResearchTaskFailedHandler = (
 
 // -- OutreachThread aggregate -----------------------------------------------
 
+// The by-thread read (`thread`) and the by-contact read (`threadForContact`,
+// nested under `threads`) are both draft-review surfaces. Invalidating the parent
+// `threads` scope refreshes the drawer's by-contact query from SSE without the
+// event needing to carry the contactId/jobId that key the by-contact read.
+
 export const outreachDraftGeneratedHandler = (
   event: OutreachDraftGenerated,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
+  invalidate(outreachKeys.threads(event.tenantId)),
 ];
 
 export const outreachDraftRevisedHandler = (
   event: OutreachDraftRevised,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
+  invalidate(outreachKeys.threads(event.tenantId)),
 ];
 
 export const outreachDraftApprovedHandler = (
   event: OutreachDraftApproved,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
+  invalidate(outreachKeys.threads(event.tenantId)),
 ];
 
 export const outreachDraftRejectedHandler = (
   event: OutreachDraftRejected,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
+  invalidate(outreachKeys.threads(event.tenantId)),
 ];
 
 export const outreachSendLoggedHandler = (

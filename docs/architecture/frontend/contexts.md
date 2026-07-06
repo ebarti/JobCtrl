@@ -34,7 +34,7 @@ graph TB
         APP["apply/<br/>apply / dry-run / cancel,<br/>apply-run timeline"]
         PIP["pipeline/<br/>retry / cancel / mark-applied / mark-skipped<br/>+ stage badges + timeline"]
         OPS["operations/<br/>read hooks, query-key registry,<br/>SSE subscription, invalidation router"]
-        OUT["outreach/<br/>contact records + provenance,<br/>CSV import"]
+        OUT["outreach/<br/>contacts + provenance, research,<br/>outreach drafts + gate review"]
     end
 
     subgraph "View composers (NOT bounded contexts)"
@@ -514,7 +514,7 @@ another view (cross-view navigation goes through the URL).
 | `views/pipelines/` | `<PipelinesView>` — renders the pipeline context's `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). |
 | `views/discovery/` | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery). |
 | `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), `<ActivityDetailDrawer>` (operations: `useActivityEventQuery`) at `/activity/$eventId`. |
-| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-badge cells), `<OutreachDetailDrawer>` (outreach: contact detail; renders provenance for every fact) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs drawer. |
+| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-badge cells), `<OutreachDetailDrawer>` (outreach: contact detail; renders provenance for every fact and composes the outreach context's `<OutreachThreadPanel>` for draft review) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs drawer. |
 
 **The view's only owned components are layout and view-local affordances**
 (filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
@@ -526,9 +526,10 @@ forms, and timelines are imported from the contexts that own them.
 
 **Purpose:** Surface the `Contact` aggregate — keep recruiter / hiring-manager /
 referrer contact records per company or application, render every fact with its
-provenance, and import contacts from a CSV file. Phase 1 is **contact records
-only**; there is no research, drafting, or sending in the UI (and the product
-never sends).
+provenance, and import contacts from a CSV file — plus supervised research
+(Phase 2) and the truthful outreach draft **review** surface (Phase 3). There is
+**no sending** in the UI: drafts terminate at an approved, copyable message, and
+the product never sends.
 
 **Ubiquitous language** (matches backend):
 - **Contact** — the `Contact` aggregate identified by `(TenantId, ContactId)`.
@@ -543,6 +544,8 @@ never sends).
 - Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
 - Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
 - Components: `<ContactRoleBadge>`, `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs drawer).
+- Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
+- Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.
 
 **What it does NOT own:**
 - Job / dashboard / artifact / apply-run projections (those stay in `operations/`).
@@ -551,5 +554,18 @@ never sends).
 **Audit rendering:** the contact list and detail render provenance for every
 stored fact (INV-2); attribute values reach the UI only through the read DTOs and
 never leave the local machine.
+
+**Outreach draft review (Phase 3):** `<OutreachThreadPanel>` (composed into the
+contact detail drawer, `views/outreach/OutreachDetailDrawer.tsx`) is the draft
+review surface. It shows the current **approved** draft prominently, the latest
+**candidate** under review with its `<DraftGateResultsPanel>` (the persisted
+truthfulness-gate outcome) and `<DraftClaimProvenanceList>` (claim → fact
+bindings), and the full **generation history** so a re-draft never hides a prior
+generation (INV-5). Approve stays disabled until the gates pass; editing opens the
+`revise-draft-form`, which submits a new generation that re-runs the gates.
+**Copy-to-send goes through the `ClipboardPort`** (`usePorts().clipboard`, via
+`<CopyDraftButton>`, enabled only for an approved draft) — a user-initiated
+clipboard write, never `navigator.clipboard` directly and never a network send.
+There is no send action anywhere (INV-1).
 
 ---
