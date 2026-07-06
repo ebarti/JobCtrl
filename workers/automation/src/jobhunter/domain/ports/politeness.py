@@ -212,8 +212,20 @@ class PolitenessGatewayPort(Protocol):
     budget for the duration of the fetch.
     """
 
+    @property
+    def user_agent(self) -> str:
+        """The honest ``User-Agent`` header value stamped on every fetch."""
+        ...
+
     def new_run_budget(self, max_requests: int) -> RunBudget:
         """Create a per-run request budget (typically ``SourcePolicy`` sized)."""
+        ...
+
+    def note_retry_after(self, url: str, retry_after_seconds: float) -> float:
+        """Forward a server ``Retry-After`` for ``url``'s host to the limiter.
+
+        Returns the effective (clamped) seconds the limiter honored.
+        """
         ...
 
     def check(

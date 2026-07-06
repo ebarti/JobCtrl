@@ -19,7 +19,7 @@ from jobhunter.infrastructure.network.http_client import GatewayHttpClient
 SRC_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "jobhunter"
 
 # Files that have been rerouted through the gateway and must not import a raw
-# outbound HTTP transport. Extended per phase (P2b Workday, P2c compensation, ...).
+# outbound HTTP transport. Extended per phase (P2b compensation, P2c Workday, ...).
 ROUTED_NON_BROWSER_SURFACES = [
     "infrastructure/discovery/ats_adapters.py",
     "infrastructure/compensation/sqlite_market_repository.py",
@@ -27,21 +27,62 @@ ROUTED_NON_BROWSER_SURFACES = [
 ]
 
 
+def _is_raw_transport(module: str) -> bool:
+    """True when *module* is an ad-hoc outbound HTTP/network transport.
+
+    Covers the stdlib (``urllib.request``/``error``, ``http.client``, ``socket``)
+    and the common third-party clients (``requests``, ``httpx``, ``urllib3``) — a
+    routed surface must reach the network only through the gateway client.
+    ``urllib.parse`` (URL utilities) and ``http.server`` (test loopback) are not
+    transports and stay allowed.
+    """
+    module = module or ""
+    root = module.split(".")[0]
+    if root == "urllib":
+        return module != "urllib.parse"
+    if root == "http":
+        return module == "http.client" or module.startswith("http.client.")
+    return root in {"socket", "requests", "httpx", "urllib3"}
+
+
 def _imports_raw_http(source: str) -> list[str]:
     tree = ast.parse(source)
     offenders: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.split(".")[0] == "urllib" and alias.name != "urllib.parse":
-                    offenders.append(alias.name)
+            offenders.extend(alias.name for alias in node.names if _is_raw_transport(alias.name))
         elif isinstance(node, ast.ImportFrom):
-            if (node.module or "").split(".")[0] == "urllib" and node.module != "urllib.parse":
+            if _is_raw_transport(node.module or ""):
                 offenders.append(node.module or "")
     return offenders
 
 
-def test_routed_non_browser_surfaces_have_no_adhoc_urllib() -> None:
+def test_raw_transport_detector_flags_every_known_transport() -> None:
+    # Self-test: the tripwire is only as good as its vocabulary, so pin what it
+    # must catch and what it must not (a false positive would block a clean PR).
+    for snippet in (
+        "import urllib.request",
+        "from urllib.error import HTTPError",
+        "import http.client",
+        "import socket",
+        "import requests",
+        "import httpx",
+        "import urllib3",
+        "from requests import get",
+        "from httpx import Client",
+    ):
+        assert _imports_raw_http(snippet), f"detector missed a raw transport: {snippet!r}"
+    for snippet in (
+        "import urllib.parse",
+        "from urllib.parse import urlsplit",
+        "import http.server",
+        "import json",
+        "import logging",
+    ):
+        assert _imports_raw_http(snippet) == [], f"detector false-positive: {snippet!r}"
+
+
+def test_routed_non_browser_surfaces_have_no_adhoc_transport() -> None:
     for rel in ROUTED_NON_BROWSER_SURFACES:
         source = (SRC_ROOT / rel).read_text(encoding="utf-8")
         offenders = _imports_raw_http(source)

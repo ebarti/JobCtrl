@@ -11,7 +11,19 @@ import sqlite3
 
 from jobhunter.discovery import jobspy
 from jobhunter.domain.discovery.source_registry import SourcePolicy, SourcePolicyMethod
+from jobhunter.infrastructure.network.rate_limiter import HostRateLimiter
 from jobhunter.operational_metrics import ensure_operational_metric_tables
+
+
+class _VirtualClock:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.t += max(0.0, seconds)
 
 
 def test_jobspy_budget_exhaustion_stops_crawl_and_records(monkeypatch) -> None:
@@ -59,3 +71,42 @@ def test_jobspy_budget_exhaustion_stops_crawl_and_records(monkeypatch) -> None:
     assert row["outcome"] == "blocked"
     assert row["is_operational_failure"] == 0
     assert row["is_scrape_failure"] == 0
+
+
+def test_jobspy_searches_are_paced_between_invocations(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE jobs (url TEXT)")
+    ensure_operational_metric_tables(conn)
+
+    paced_policy = SourcePolicy(
+        policy_id="broad-board-paced",
+        allowed_methods=(SourcePolicyMethod.RENDERED_LISTING,),
+        min_request_interval_seconds=3.0,
+        max_requests_per_run=100,
+    )
+    monkeypatch.setattr(jobspy, "BROAD_BOARD_LEAD_POLICY", paced_policy)
+    monkeypatch.setattr(jobspy, "init_db", lambda: None)
+    monkeypatch.setattr(jobspy, "get_connection", lambda: conn)
+
+    # Inject a virtual clock into the shared limiter the crawl paces on, so the
+    # assertion is deterministic (no wall-clock sleeps).
+    clock = _VirtualClock()
+    monkeypatch.setattr(
+        jobspy, "get_shared_rate_limiter", lambda: HostRateLimiter(clock=clock.now, sleep=clock.sleep)
+    )
+    monkeypatch.setattr(jobspy, "_run_one_search", lambda *_a, **_k: {"new": 0, "existing": 0, "errors": 0})
+
+    jobspy._full_crawl(
+        {
+            "queries": [{"query": f"q{i}"} for i in range(3)],
+            "locations": [{"label": "remote", "location": "Remote"}],
+            "defaults": {},
+        },
+        sites=["indeed"],
+        limit=0,
+        run_id="discovery:jobspy:pacing",
+    )
+
+    # Three searches paced by the 3.0s min interval => at least two 3.0s gaps.
+    assert clock.now() >= 2 * 3.0
