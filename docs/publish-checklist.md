@@ -20,8 +20,8 @@ The **authoritative release gate is OSS spec §5**
 §5 "Release gate — flipping public"). That gate owns the capability and privacy
 preconditions (W0.\* privacy scanner, W1.\* apply safety, W2.\* naming/governance,
 Temporal P1b–P5). This checklist does not duplicate those; it lists only the
-publish *mechanics* that feed the gate. **Do not flip visibility or tag a release
-until every OSS spec §5 box is checked.**
+publish *mechanics* that feed the gate. **Do not flip visibility, deploy the
+public docs site, or tag a release until every OSS spec §5 box is checked.**
 
 ## Owner-only actions (do not execute here)
 
@@ -53,6 +53,22 @@ to the rename train / post-rename launch assets (R7b).
 
 ### 9.2 — Docs-site deploy (owner-only)
 
+- **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
+  public `jobctl-docs` Cloudflare project is itself a going-public act, so it
+  carries the **same OSS spec §5 gate as 9.1**. The `deploy` job in
+  `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED`, `main`, and
+  non-`pull_request` — **not** on `release-check` — so this checklist is the
+  only guard. Before setting `DOCS_DEPLOY_ENABLED` or configuring the Cloudflare
+  secrets:
+  - `python3 scripts/release_check.py` reports zero findings locally on the
+    exact commit to be deployed, and `release-check`
+    (`.github/workflows/release-check.yml`) is green on that `main` commit.
+  - Every box in OSS spec §5 is checked — in particular the W0.\* privacy
+    scanner, the owner's recorded capability-posture acceptance, and the final
+    human manual QA — exactly as required for 9.1.
+  - The claims-ledger freeze (`docs/claims-ledger.md`, GATE G1) is re-stamped at
+    the actual freeze `main` sha and owner-signed, so the public site cannot
+    ship provisional or unsigned public claims.
 - **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
   Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
   `deploy` job in `.github/workflows/docs-site.yml` runs from `main` (it is
