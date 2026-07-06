@@ -49,10 +49,24 @@ class GenerateInterviewPrepActivityOutput:
 async def generate_interview_prep_activity(
     payload: GenerateInterviewPrepActivityInput,
 ) -> GenerateInterviewPrepActivityOutput:
-    return generate_interview_prep_by_url(
-        payload.job_url,
-        tenant_id=TenantId(payload.tenant_id or LOCAL_TENANT),
-        llm_model=payload.llm_model,
+    from jobhunter.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    # Generation is a blocking DB + projection-refresh + two-LLM-call runner.
+    # Offloading it to the worker thread pool keeps heartbeats flowing (so a
+    # long generation never trips the heartbeat timeout) and stops it from
+    # starving the shared event loop. ``workflow_run_id`` makes a retried
+    # attempt reuse this run's already-generated prep instead of re-spending.
+    origin_run_id = activity.info().workflow_run_id
+    return await run_blocking_with_heartbeat(
+        lambda: generate_interview_prep_by_url(
+            payload.job_url,
+            tenant_id=TenantId(payload.tenant_id or LOCAL_TENANT),
+            llm_model=payload.llm_model,
+            origin_run_id=origin_run_id,
+        ),
+        starting_message="interview-prep starting",
+        progress_message="interview-prep still running",
+        activity_name="generate_interview_prep",
     )
 
 
@@ -61,6 +75,7 @@ def generate_interview_prep_by_url(
     *,
     tenant_id: TenantId = LOCAL_TENANT,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    origin_run_id: str = "",
 ) -> GenerateInterviewPrepActivityOutput:
     conn = get_connection()
     job = load_job_with_enrichment(conn, job_url)
@@ -85,6 +100,7 @@ def generate_interview_prep_by_url(
         requirements=_load_requirements(conn, tenant_id, job_url),
         accepted_materials=_load_accepted_materials(conn, tenant_id, job_url),
         model=llm_model,
+        origin_run_id=origin_run_id,
     )
     return GenerateInterviewPrepActivityOutput(
         status=outcome.status,

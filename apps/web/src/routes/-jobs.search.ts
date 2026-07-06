@@ -14,6 +14,12 @@ const optionalScore = z
     z.coerce.number().int().min(1).max(10).optional(),
   )
   .catch(undefined);
+const optionalTimestamp = z
+  .preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.string().trim().min(1).optional(),
+  )
+  .catch(undefined);
 
 export const jobsSearchSchema = z.object({
   q: z.string().default(""),
@@ -27,6 +33,8 @@ export const jobsSearchSchema = z.object({
   pageSize: z.number().int().min(1).max(200).default(50),
   minFitScore: optionalScore,
   maxFitScore: optionalScore,
+  discoveredSince: optionalTimestamp,
+  scoredSince: optionalTimestamp,
 });
 
 export type JobsSearch = z.infer<typeof jobsSearchSchema>;

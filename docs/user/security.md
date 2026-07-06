@@ -69,6 +69,28 @@ security. Treat `~/.jobhunter/` as sensitive: do not commit it, copy it into
 shared locations, or attach it to bug reports.
 :::
 
+## Browser Extension Pairing
+
+The browser-extension API surface uses a local capability token so an installed
+extension can prove it is paired with your local JobHunter stack. The token is
+generated under `~/.jobhunter/`, shown in Settings for pairing, and only
+accepted on `/v1/extension/*` routes that still target a loopback host. It does
+not grant application-submission authority; live submission remains behind
+Apply Review.
+
+In Phase 1, the extension can only capture the active http(s) page after you
+click **Save job** in the popup. It sends the page URL and visible text to the
+local API over loopback, where JobHunter records it through the same
+manual-capture importer used by the web app. If the local stack is down, the
+extension keeps a bounded local queue in browser extension storage. It does not
+send captures to third-party services and it has no submit/apply action.
+
+In deterministic autofill mode, the extension reads only a whitelisted profile
+field list from `/v1/extension/autofill/profile`; password and resume content
+are excluded. Content scripts are limited to supported ATS hosts and show a
+review panel before filling accepted values. The extension code does not call
+form submit, `requestSubmit`, or an apply route.
+
 ## Approval And Control Gates
 
 Applying to jobs is JobHunter's one genuinely risky action, because it can drive

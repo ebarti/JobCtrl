@@ -27,13 +27,17 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
   DashboardSummary,
+  DailyDigest,
   DeleteJobRequest,
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  ExtensionCapabilityTokenResponse,
   EvidenceMapResponse,
   GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
@@ -55,6 +59,7 @@ import type {
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -149,6 +154,9 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
+  digest(): Promise<DailyDigest>;
+  acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;
@@ -289,6 +297,8 @@ export interface ApiClientPort {
 
   settings(): Promise<SettingsResponse>;
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse>;
+  extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
+  rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse>;
 
   credentials(): Promise<CredentialsResponse>;

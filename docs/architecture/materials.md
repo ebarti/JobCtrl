@@ -319,6 +319,15 @@ The read model serves tailoring audit data from canonical projection rows.
   text). When a generation recorded no coverage the block is empty with
   `coverageRecorded: false`; coverage is never inferred from the job description
   at read time.
+- **Artifact comparison.** Apply Review and Artifacts compose a Materials-owned
+  comparison component over existing artifact detail reads. Its pure selector
+  compares only stored `ArtifactTailoringExplanation.coverageAudit` buckets
+  (`covered`, `declared`, and `missing`),
+  template metadata, validation/judge fields, and recorded resume-review
+  `riskLabel` values. If either side has no coverage audit, the read model stays
+  `coverage not recorded`; it does not convert absent rows into zero coverage.
+  Rendering a draft creates candidate artifacts for comparison, while the last
+  accepted artifact remains visible until an approval replaces it.
 - **Cross-runtime drift guard.** The Python builder test
   (`workers/automation/tests/test_audit_projection_parity.py`) and the TypeScript
   builder test (`apps/api/test/audit-projection-parity.test.ts`) both seed the

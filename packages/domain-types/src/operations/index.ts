@@ -55,6 +55,10 @@ export interface JobListProjection {
   readonly hasPdf: boolean;
   readonly applyStatus: string | null;
   readonly appliedAt: string | null;
+  readonly applyMode: string | null;
+  readonly resumeTemplateId: string | null;
+  readonly resumeTemplateName: string | null;
+  readonly tailoringPolicyVersion: number | null;
   readonly artifactCount: number;
   readonly deletedAt: string | null;
   readonly lastUpdatedAt: string | null;
