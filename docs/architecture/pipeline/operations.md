@@ -32,6 +32,41 @@ spendful workflow and reuses this **same** preflight — the `check_spend_budget
 activity + the `dailyBudgetUsd` ledger — before its LLM candidate extraction.
 There is no second spend table or preflight.
 
+## Standing Auto-Apply Loop
+
+Auto apply is a settings-reconciled continuous Apply workflow, not a hidden UI
+shortcut. The `auto_apply` setting defaults to **false**. When it is **true**,
+the Python worker ensures one deterministic workflow id,
+`apply-auto-local`, is running on the worker task queue with
+`ApplyWorkflowInput(continuous=True, auto_apply_loop=True)`. When it is
+**false**, the worker cancels that deterministic workflow if it exists. The
+reconciler runs at worker startup and from the worker heartbeat loop, so
+turning the setting on or off takes effect without restarting the worker.
+
+The loop intentionally reuses the existing continuous poll mode in
+`ApplyWorkflow` and `apply.launcher.worker_loop`:
+
+- `apply_approval_required` is re-read by the apply activity at claim time. With
+  the default **true** value, the loop submits only jobs already approved in
+  Apply Review and parks unapproved jobs as awaiting approval. With **false**,
+  the loop may submit eligible prepared jobs autonomously.
+- `min_fit_score` and `apply_concurrency` are re-read by auto-apply activities,
+  so threshold and fan-out changes affect later polls without recreating the
+  workflow.
+- The spend ceiling still runs as the workflow preflight. A depleted budget
+  fails the standing loop before browser apply work starts, instead of retrying
+  into a spend storm. The reconciler treats that failed projection as a budget
+  halt and does not restart the loop while today's spend remains at or above the
+  configured ceiling.
+- The existing launcher protections remain the source of truth: dry-run apply
+  paths never submit, submit-intent tracking enforces at-most-once, and CAPTCHA
+  or third-party challenge handling fails closed.
+
+Because the loop is a normal workflow run, it is projected into
+`workflow_run_projections` and appears in the Runs / Operations surface as
+**Standing apply loop**. Automation is therefore visible and cancelable from the
+same place as manually-started runs.
+
 ## Discovery Schedule
 
 Scheduled discovery is **off by default**. A single Temporal Schedule,

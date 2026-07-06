@@ -65,6 +65,26 @@ def read_apply_approval_required(
     return bool(default)
 
 
+def read_auto_apply_enabled(
+    path: Path | str | None = None,
+    *,
+    default: bool = False,
+) -> bool:
+    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    value = settings.get("auto_apply")
+    if value is None:
+        value = settings.get("autoApply")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return bool(default)
+
+
 def read_daily_budget_usd(
     path: Path | str | None = None,
     *,
@@ -90,7 +110,19 @@ def read_min_fit_score(
     value = settings.get("min_fit_score")
     if value is None:
         value = settings.get("minFitScore")
-    return min(10, max(1, _int(value, default)))
+    return min(10, max(0, _int(value, default)))
+
+
+def read_apply_concurrency(
+    path: Path | str | None = None,
+    *,
+    default: int = 1,
+) -> int:
+    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    value = settings.get("apply_concurrency")
+    if value is None:
+        value = settings.get("applyConcurrency")
+    return min(16, max(1, _int(value, default)))
 
 
 def _int(value: Any, default: int) -> int:

@@ -443,14 +443,36 @@ def _setup_ai_features() -> None:
 def _setup_auto_apply() -> None:
     """Configure autonomous job application (requires a Claude apply runtime)."""
     console.print(Panel(
-        "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
-        "JobHunter can autonomously fill and submit job applications\n"
-        "using a local Claude runtime as the browser agent."
+        "[bold]Step 5: Apply automation (optional)[/bold]\n"
+        "By default, JobHunter does not start a standing apply loop and live "
+        "submissions require Apply Review approval. You can opt into a worker-"
+        "maintained loop for eligible prepared jobs."
     ))
 
-    if not Confirm.ask("Enable autonomous job applications?", default=True):
-        console.print("[dim]You can apply manually using the tailored resumes JobHunter generates.[/dim]")
+    if not Confirm.ask("Enable the standing auto-apply loop?", default=False):
+        _update_dashboard_settings(auto_apply=False, apply_approval_required=True)
+        console.print("[dim]Auto apply is off. You can start apply runs manually after reviewing materials.[/dim]")
         return
+
+    approval_required = Confirm.ask(
+        "Require Apply Review approval before live submit?",
+        default=True,
+    )
+    _update_dashboard_settings(
+        auto_apply=True,
+        apply_approval_required=approval_required,
+    )
+    if approval_required:
+        console.print(
+            "[dim]Auto apply will poll eligible jobs, but live submissions park "
+            "until Apply Review approves them.[/dim]"
+        )
+    else:
+        console.print(
+            "[yellow]Autonomous submit mode enabled: eligible live applications "
+            "may be submitted without human review. Min score, spend budget, "
+            "at-most-once, dry-run, and CAPTCHA fail-closed safeguards still apply.[/yellow]"
+        )
 
     # Check for the apply runtime. A system Claude CLI is accepted, but setup
     # can also use the pinned Claude Agent SDK bundled binary.
@@ -485,6 +507,21 @@ def _setup_auto_apply() -> None:
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. CAPTCHA challenges will fail closed.[/dim]")
+
+
+def _update_dashboard_settings(**patch: object) -> None:
+    path = APP_DIR / "dashboard.json"
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            current = {}
+        if not isinstance(current, dict):
+            current = {}
+    else:
+        current = {}
+    current.update(patch)
+    path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

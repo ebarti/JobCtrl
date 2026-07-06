@@ -316,6 +316,40 @@ def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch)
         close_connection(db_path)
 
 
+def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+
+    def fail_run_job(*_args, **_kwargs):
+        raise AssertionError("unapproved live job reached browser automation")
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        monkeypatch.setattr(launcher_module, "run_job", fail_run_job)
+
+        applied, failed = worker_loop(
+            worker_id=1,
+            limit=1,
+            approval_required=True,
+            workflow_id="apply-auto-local",
+        )
+
+        assert (applied, failed) == (0, 0)
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert row is None or row["state"] == "pending"
+    finally:
+        close_connection(db_path)
+
+
 def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)

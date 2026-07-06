@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 import pytest
 from temporalio import activity
+from temporalio.client import WorkflowFailureError
+from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -219,6 +221,52 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
         await workflow.run(ApplyWorkflowInput(tenant_id="local", continuous=True))
     assert captured["sleep"] == timedelta(seconds=30)
     assert captured["continued_payload"].continuous is True
+
+
+@pytest.mark.asyncio
+async def test_continuous_apply_workflow_budget_exceeded_halts_before_apply():
+    queue = f"apply-wf-budget-{uuid.uuid4()}"
+    workflow_id = f"apply-budget-{uuid.uuid4()}"
+
+    @activity.defn(name="check_spend_budget")
+    async def budget_exceeded(_payload):
+        raise ApplicationError(
+            "LLM daily spend budget exceeded",
+            type="budget_exceeded",
+            non_retryable=True,
+        )
+
+    with patch(
+        "jobhunter.apply.launcher.main",
+        return_value=(1, 0),
+    ) as apply_main_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[ApplyWorkflow],
+                activities=[
+                    apply_activity,
+                    budget_exceeded,
+                    record_workflow_started,
+                    record_workflow_outcome,
+                ],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await env.client.execute_workflow(
+                        ApplyWorkflow.run,
+                        ApplyWorkflowInput(tenant_id="local", continuous=True),
+                        id=workflow_id,
+                        task_queue=queue,
+                    )
+
+    cause = exc_info.value.cause
+    assert isinstance(cause, ActivityError)
+    app_error = cause.cause
+    assert isinstance(app_error, ApplicationError)
+    assert app_error.type == "budget_exceeded"
+    assert apply_main_mock.call_count == 0
 
 
 @pytest.mark.asyncio

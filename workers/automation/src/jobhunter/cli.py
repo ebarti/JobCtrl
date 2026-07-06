@@ -2008,6 +2008,15 @@ def worker(
     async def _run() -> None:
         client = await get_temporal_client()
         await _reconcile_discovery_schedule(client, queue)
+        from jobhunter.apply.auto_apply import reconcile_auto_apply_loop
+
+        identity = current_runtime_identity()
+        startup_auto_apply = await reconcile_auto_apply_loop(
+            client,
+            task_queue=queue,
+            expected_app_dir=str(identity.app_dir),
+            expected_db_path=str(identity.db_path),
+        )
         worker = build_worker(
             client,
             workflows=WORKFLOWS,
@@ -2015,7 +2024,6 @@ def worker(
             task_queue=queue,
         )
         worker_started_at = datetime.now(timezone.utc)
-        identity = current_runtime_identity()
         heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
         heartbeat_task = asyncio.create_task(
             _worker_heartbeat_loop(
@@ -2031,6 +2039,11 @@ def worker(
             f"{len(ACTIVITIES)} activity(ies) against DB "
             f"[bold]{identity.db_path}[/bold] — Ctrl-C to stop."
         )
+        if startup_auto_apply.changed:
+            console.print(
+                f"[yellow]Auto-apply loop {startup_auto_apply.action}: "
+                f"{startup_auto_apply.workflow_id}.[/yellow]"
+            )
         try:
             await worker.run()
         finally:
@@ -2080,6 +2093,25 @@ async def _worker_heartbeat_loop(
                     console.print(
                         f"[yellow]Reconciler terminalized {terminalized} orphaned "
                         "workflow run(s).[/yellow]"
+                    )
+            try:
+                from jobhunter.apply.auto_apply import reconcile_auto_apply_loop
+                from jobhunter.infrastructure.runtime_identity import current_runtime_identity
+
+                identity = current_runtime_identity()
+                auto_apply = await reconcile_auto_apply_loop(
+                    temporal_client,
+                    task_queue=task_queue,
+                    expected_app_dir=str(identity.app_dir),
+                    expected_db_path=str(identity.db_path),
+                )
+            except Exception:
+                log.warning("Auto-apply loop reconciler iteration failed; will retry", exc_info=True)
+            else:
+                if auto_apply.changed:
+                    console.print(
+                        f"[yellow]Auto-apply loop {auto_apply.action}: "
+                        f"{auto_apply.workflow_id}.[/yellow]"
                     )
 
 

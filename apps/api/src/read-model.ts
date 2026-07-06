@@ -5932,21 +5932,28 @@ function compareWorkflowRuns(
 function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSummary {
   const workflowId = stringField(row.workflow_id);
   const workflowType = stringField(row.workflow_type);
+  const inputSummary = parseInputSummary(row.input_summary_json);
+  const isStandingApplyLoop =
+    workflowType === "ApplyWorkflow" &&
+    (inputSummary.autoApplyLoop === true || inputSummary.auto_apply_loop === true) &&
+    inputSummary.continuous === true;
   // Apply rows carry job context via the LEFT JOIN; non-apply rows have a
   // NULL apply_job_id and surface their workflow type instead of a job title.
   const hasApplyJob = Boolean(stringField(row.apply_job_id));
   const dryRun = hasApplyJob
     ? Boolean(row.apply_dry_run)
-    : inputSummaryDryRun(row.input_summary_json);
+    : inputSummaryDryRun(inputSummary);
   return {
     workflowId,
     runId: workflowId,
     workflowType,
     jobKey: stringField(row.apply_job_id),
     title:
+      (isStandingApplyLoop ? "Standing apply loop" : "") ||
       stringField(row.job_title) ||
       (hasApplyJob ? "Untitled" : workflowType || "Workflow run"),
     company:
+      (isStandingApplyLoop ? "Auto apply" : "") ||
       stringField(row.job_employer) || (hasApplyJob ? "Unknown company" : ""),
     status: normalizeWorkflowRunStatus(row.status),
     result: nullableString(row.apply_result),
@@ -5959,7 +5966,7 @@ function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSumm
 }
 
 function inputSummaryDryRun(value: unknown): boolean {
-  const summary = parseInputSummary(value);
+  const summary = isRecord(value) ? value : parseInputSummary(value);
   return summary.dryRun === true || summary.dry_run === true;
 }
 

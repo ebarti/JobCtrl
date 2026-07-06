@@ -200,6 +200,16 @@ The first dry-runs Apply for one eligible job; the second dry-runs a specific jo
 by URL. A dry run never submits — it shows what would happen without sending
 anything.
 
+Auto apply is separate from a one-off dry run. When the Discovery automation
+setting `autoApply` is on, a running worker keeps one continuous Apply workflow
+active and the Runs page shows it as the standing apply loop. With
+`applyApprovalRequired` still on, that loop live-submits only jobs already
+approved in Apply Review and parks the rest as awaiting approval. If you also
+turn approval off, the same loop may submit eligible prepared jobs
+autonomously, bounded by the minimum fit score, daily spend ceiling,
+at-most-once submit intent tracking, CAPTCHA fail-closed behavior, and the
+dry-run guard for dry-run apply paths.
+
 Only approve real submission after inspecting the dry run, final materials,
 field mapping, blockers, and apply-run history. Submit approval is valid only
 for the materials generation, profile version, and application URL shown in
