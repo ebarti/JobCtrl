@@ -662,6 +662,8 @@ def record_job_event(
     payload: dict[str, Any] | None = None,
     occurred_at: str | None = None,
     publisher: EventPublisher | None = None,
+    entity_kind: str | None = None,
+    entity_ref: str | None = None,
 ) -> None:
     """Append a durable per-job event and publish through the in-process bus.
 
@@ -694,10 +696,21 @@ def record_job_event(
     conn.execute(
         """
         INSERT INTO job_events (
-            job_url, stage, event_type, level, message, occurred_at, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            job_url, stage, event_type, level, message, occurred_at, payload_json,
+            entity_kind, entity_ref
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (job_url, stage, event_type, level, message, ts, _json_dumps(payload)),
+        (
+            job_url,
+            stage,
+            event_type,
+            level,
+            message,
+            ts,
+            _json_dumps(payload),
+            entity_kind,
+            entity_ref,
+        ),
     )
     if publisher is None:
         # Default to the process-wide ``InProcessEventBus`` so the

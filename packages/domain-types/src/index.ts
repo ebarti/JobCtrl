@@ -7,7 +7,20 @@
 
 export { type TenantId, createTenantId, LOCAL_TENANT } from "./tenant.js";
 
-export { type JobId, createJobId, generateJobId } from "./identifiers.js";
+export {
+  type JobId,
+  createJobId,
+  generateJobId,
+  type ContactId,
+  createContactId,
+  generateContactId,
+  type ResearchTaskId,
+  createResearchTaskId,
+  generateResearchTaskId,
+  type OutreachThreadId,
+  createOutreachThreadId,
+  generateOutreachThreadId,
+} from "./identifiers.js";
 
 export {
   STAGES,

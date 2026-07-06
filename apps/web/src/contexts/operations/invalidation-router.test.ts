@@ -16,6 +16,7 @@ import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
+import { outreachKeys } from "../outreach/queryKeys.js";
 
 type ExpectedKeys = readonly QueryKey[];
 
@@ -363,6 +364,45 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   WorkflowTerminated: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  ContactCreated: [outreachKeys.contactLists(LOCAL_TENANT)],
+  ContactUpdated: [
+    outreachKeys.contactDetail(LOCAL_TENANT, "contact-1"),
+    outreachKeys.contactLists(LOCAL_TENANT),
+  ],
+  ContactAttributeRecorded: [outreachKeys.contactDetail(LOCAL_TENANT, "contact-1")],
+  ContactDeleted: [
+    outreachKeys.contactDetail(LOCAL_TENANT, "contact-1"),
+    outreachKeys.contactLists(LOCAL_TENANT),
+  ],
+  WarmIntroIdentified: [outreachKeys.contactDetail(LOCAL_TENANT, "contact-1")],
+  ContactResearchTaskStarted: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
+  ContactCandidateProposed: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
+  ContactResearchTaskNeedsReview: [outreachKeys.researchTask(LOCAL_TENANT, "research-1")],
+  ContactResearchTaskCompleted: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.contactLists(LOCAL_TENANT),
+  ],
+  ContactResearchTaskFailed: [outreachKeys.researchTask(LOCAL_TENANT, "research-2")],
+  OutreachDraftGenerated: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
+  OutreachDraftRevised: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
+  OutreachDraftApproved: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
+  OutreachDraftRejected: [outreachKeys.thread(LOCAL_TENANT, "thread-1")],
+  OutreachSendLogged: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.dueFollowUps(LOCAL_TENANT),
+  ],
+  FollowUpScheduled: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.dueFollowUps(LOCAL_TENANT),
+  ],
+  FollowUpCompleted: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.dueFollowUps(LOCAL_TENANT),
+  ],
+  FollowUpDismissed: [
+    outreachKeys.thread(LOCAL_TENANT, "thread-1"),
+    outreachKeys.dueFollowUps(LOCAL_TENANT),
   ],
 };
 
