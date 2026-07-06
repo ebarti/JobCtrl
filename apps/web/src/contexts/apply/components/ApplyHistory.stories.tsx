@@ -4,18 +4,14 @@ import { http, HttpResponse } from "msw";
 import { sampleDashboardSummary } from "../../../test/fixtures/projections.js";
 import { ApplyHistory } from "./ApplyHistory.js";
 
-// ApplyHistory rows wrap a TanStack Router <Link> around badge/icon
-// content. The Link surface lacks discernible text in the production
-// component (a button-name violation). Deferred — production code, out
-// of Phase 7 scope.
 const meta = {
   title: "Contexts/Apply/ApplyHistory",
   component: ApplyHistory,
   args: { jobId: "job-1" },
   parameters: {
     layout: "padded",
-    // a11y deferred — TanStack Router Link button-name defect in ApplyHistory.tsx; see meta comment above.
-    a11y: { test: "off" },
+    withRouter: true,
+    initialPath: "/jobs/job-1",
   },
 } satisfies Meta<typeof ApplyHistory>;
 

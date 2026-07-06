@@ -35,6 +35,7 @@ export function ApplyHistory({ jobId }: ApplyHistoryProps): JSX.Element {
             to="/jobs/$jobId/run/$runId"
             params={{ jobId, runId: run.runId }}
             className="title-link"
+            aria-label={`Open apply run ${run.runId} for this job`}
           >
             <span className="mono">{run.runId}</span>
           </Link>

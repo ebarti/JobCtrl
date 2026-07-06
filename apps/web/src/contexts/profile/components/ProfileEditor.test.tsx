@@ -47,6 +47,8 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
     expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(document.querySelector("main.resume-page")).toBeNull();
+    expect(document.querySelector("div.resume-page")).toBeInTheDocument();
     expect(screen.queryByText("Baseline resume preview")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /open PDF/i })).not.toBeInTheDocument();
   });

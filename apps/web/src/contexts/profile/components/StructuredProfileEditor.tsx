@@ -559,6 +559,7 @@ export function StructuredProfileEditor({
     <label className="field">
       <span>{label}</span>
       <select
+        aria-label={label}
         value={textAt(profile, path)}
         onChange={(event) => updateProfilePath(path, event.target.value)}
       >
@@ -1067,6 +1068,7 @@ export function StructuredProfileEditor({
     <label className="field">
       <span>{label}</span>
       <select
+        aria-label={label}
         value={textAt(style, path)}
         onChange={(event) => updateStylePath(path, event.target.value)}
       >
