@@ -220,6 +220,7 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Re-drafting or editing an outreach message destroys or hides the last approved draft before a replacement is approved — a new generation fails to supersede stale candidates, a re-draft overwrites the approved draft, an edit is applied in place instead of as a gated new generation, or the generation history drops prior drafts (INV-5) | `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_draft_gates.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/OutreachThreadPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useReviseDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
 | Outreach drafting/logging starts an automated send, exposes a send transport, or marks a thread sent without a user-attested send log (INV-1) — the four enforcement layers: (a) the `OutreachThread` aggregate lets a thread reach "sent" without a user-attested `OutreachSendLog` over an approved draft; (b) any send-transport symbol (`smtp`, `gmail.send`, `messages.send`, `sendMail`, `nodemailer`, `createTransport`, …) appears in outreach code on either runtime; (c) any transport-shaped seam is invoked on an outreach path; or (d) "approve draft" and "log send" collapse into one action (approving performs an outbound action or marks the thread sent) | (a) `workers/automation/tests/test_outreach_thread_aggregate.py`; (b) `workers/automation/tests/test_outreach_no_send_transport.py` (scans Python domain/infra + `apps/api/src/outreach.ts` + `apps/web/src/contexts/outreach/` + `views/outreach/`); (c) `workers/automation/tests/test_outreach_no_auto_send.py` (`test_no_transport_is_invoked_on_any_outreach_path`); (d) `workers/automation/tests/test_outreach_no_auto_send.py` (approve-records-a-fact / log-send-is-separate) + `apps/api/test/outreach.test.ts` (records-a-send / refuses-non-approved / no `/send` route) |
 | Outreach follow-ups auto-act or auto-send, or an optional recurring follow-up reminder defaults ON — a follow-up is sent or acted on without an explicit user action, the due-follow-ups read model triggers an outbound effect instead of only surfacing, the 7-day/14-day derivation is wrong, or `outreach_follow_up_reminders_enabled` defaults to `true` (§9; INV-1) | `workers/automation/tests/test_outreach_follow_up_derivation.py` (7d/14d derivation; default-off; even-when-enabled-only-surfaces); `workers/automation/tests/test_due_follow_up_projection_parity.py`; `apps/api/test/outreach.test.ts` (schedule/complete/dismiss + only-arrived-follow-ups-are-due); `apps/api/test/due-follow-up-projection-parity.test.ts`; `apps/web/src/contexts/outreach/hooks/useScheduleFollowUpMutation.test.ts`; browser smoke on the Follow-ups panel |
+| The full contact-and-outreach product path regresses even though isolated units pass — contacts cannot be reviewed from both the job drawer and Outreach route, candidate provenance is not visible before confirmation, the approved draft is hidden during revision, the send-log/follow-up surfaces imply automation, or due follow-ups do not surface as reminders only | `apps/web/e2e/tests/outreach.spec.ts`; existing focused rows above plus the seeded **Outreach Planner Product Smoke** below; keep it synthetic-only with no live fetch, no live LLM call, no browser submission, and no outbound transport |
 
 ### Scoring Policy Eval Gate
 
@@ -386,7 +387,7 @@ destructive profile/database actions, or worker-backed jobs for visual QA.
 | --- | --- | --- |
 | Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 11 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery`, `useWorkflowRunsListQuery`, and `useEvidenceMapQuery`, using typed test files in Vitest's typecheck runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 16 specs in `apps/web/e2e/tests/` — 15 flow specs (`analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `analytics.spec.ts` checks the Analytics route with a canonical-shaped read-model response and verifies a below-minimum-sample group stays count-only. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the drawer renders a STAR draft, records a linked reflection through the existing outcome endpoint, and follows an evidence-map provenance link through the SSE realtime loop. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
+| End-to-end (Playwright headless) | 17 specs in `apps/web/e2e/tests/` — 16 flow specs (`analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `outreach`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `analytics.spec.ts` checks the Analytics route with a canonical-shaped read-model response and verifies a below-minimum-sample group stays count-only. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the drawer renders a STAR draft, records a linked reflection through the existing outcome endpoint, and follows an evidence-map provenance link through the SSE realtime loop. `outreach.spec.ts` asserts the seeded contact-and-outreach planner path across the job drawer, supervised candidate review, `/outreach` contact detail, approved/blocked draft review, user-attested send logging, due follow-up reminders, and the event/projection no-value-leak boundary. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 16 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, command, analytics, and inspector components (`EmployerAnalysisPanel`, `BulletProvenanceList`, `InterviewPrepPanel`, `EvidenceMapView`) — fails on critical/serious violations (target §10.7). |
 
 ### Scoring Policy Feedback Smoke
@@ -527,6 +528,44 @@ generation against a live worker for QA automation — exercise the route + UI w
 with seeded `outreach_threads` / `outreach_drafts` fixtures (both gate-passed and
 gate-failed drafts) and the E2E stub dispatcher; never a real LLM call and never a
 real send.
+
+### Outreach Planner Product Smoke
+
+For delivery QA of the contact-and-outreach planner, run the browser against a
+disposable seeded database and deterministic stubs. Do not use real contacts,
+real job-board pages, real LLM calls, profile data, browser submission, or any
+email/message transport. The seed should contain one scored job with an
+application-submitted outcome, one imported contact fact, one public-source
+research attempt with proposed candidates, one gate-passed approved draft, one
+gate-failed candidate draft, one user-attested send log, and both due and future
+follow-up schedules.
+
+Verify the product path end to end:
+
+- The job drawer's **Contacts** panel and `/outreach` route both show the same
+  contact without duplicating server state, and every displayed fact has visible
+  provenance (source kind, source reference, capture method, confidence, and
+  user-confirmed state where applicable).
+- Candidate review shows source-attempt outcomes and candidate provenance before
+  confirmation; confirming a candidate creates a stored contact fact while
+  preserving the research provenance.
+- The **Outreach** panel shows draft gate results, claim-to-fact provenance, and
+  generation history. Failed-gate drafts cannot be approved. Revising an approved
+  draft creates a new candidate generation and leaves the last approved draft
+  readable until a replacement is approved.
+- The approved draft exposes copy/export only. There is no send button,
+  transport picker, connected-account send surface, or copy action that bypasses
+  the `ClipboardPort`.
+- The send log is explicitly user-attested, accepts only controlled channel
+  labels, and never asks for or displays a contact value as the channel. Logging
+  a send is separate from approving a draft.
+- Scheduling without a custom date derives the first follow-up from the
+  application-submitted lifecycle; due follow-ups surface in the Follow-ups view
+  as reminders only, with complete/dismiss actions that do not send or act.
+- Debug/audit views, if opened during the smoke, show only ids, controlled labels,
+  timestamps, lifecycle state, provenance metadata, and gate summaries for
+  contact/outreach events; contact names, emails, phone numbers, notes, candidate
+  values, and draft bodies stay out of event payloads and projections.
 
 ### Interview Prep Smoke
 
