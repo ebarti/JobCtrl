@@ -8,6 +8,10 @@
 > checkpoints remain open, so do not treat the move to `implemented/` as proof
 > that the OSS release gate passed.
 >
+> **W0.6 owner pass (2026-07-07):** owner review closed the W0.6 disposition
+> gate as passed. Private concern details remain off-repo; no W0.6 accepted-risk
+> entry remains a release blocker.
+>
 > **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
 > withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
 > non-dry-run default unless the caller passes `--dry-run` / `dryRun: true`.
@@ -164,7 +168,8 @@ PII-clean per §0.2.
 2. **W2.4** — default daily spend-ceiling values per lane (you propose
    defaults; the owner confirms).
 3. **W0.6** — any CONCERNS item you propose to classify as
-   "accepted risk" (the owner must approve each acceptance).
+   "accepted risk" (the owner must approve each acceptance). Closed on
+   2026-07-07 with no accepted-risk entry remaining as a release blocker.
 4. **§5** — the actual repository visibility flip and first release tag are
    owner-only actions; you prepare, you never execute them.
 
@@ -1092,7 +1097,7 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       privacy workflow.
 - [ ] W2.2, W2.3, W2.5 merged; W2.4 and W2.6 merged or explicitly deferred
       by the owner in writing.
-- [ ] W0.6 dispositions closed: every concern fixed, backlogged
+- [x] W0.6 dispositions closed: every concern fixed, backlogged
       (sanitized), or owner-accepted.
 - [ ] Owner has recorded, in the flip PR/issue: acceptance of historical
       blobs remaining reachable (git history kept), and the capability

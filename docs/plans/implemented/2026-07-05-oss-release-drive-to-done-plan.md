@@ -38,6 +38,10 @@
 > W1.1-W1.7 are complete and W1.8 is withdrawn. The W1 apply-safety
 > precondition is now satisfied, but the overall R1 release gate remains
 > **NO-GO** until the non-W1 release/owner checkpoints in §10.4 close.
+>
+> **W0.6 owner pass (2026-07-07):** owner review closed W0.6 as passed. The
+> private disposition table remains off-repo; no private concern text is
+> committed here, and no W0.6 accepted-risk entry remains a release blocker.
 
 ---
 
@@ -466,7 +470,7 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
 | W0.3 add/strengthen release scanner | done | Scanner covers text suffixes (`scripts/release_check.py:25`-`:36`), secret assignments (`:89`-`:96`), strict prompt mode (`:208`-`:215`), and W1 prompt tripwires (`:404`-`:419`). Passing self-tests: synthetic violations (`workers/automation/tests/test_release_check.py:30`-`:80`), clean tree (`:83`-`:110`), and prompt-tripwire strict mode (`:142`-`:158`). Historical merge anchor: #245 / `10125d0`. |
 | W0.4 wire scanner into CI | done | Release Privacy Gate runs on `push` to `main` and all pull requests (`.github/workflows/release-check.yml:3`-`:7`), then runs the scanner and self-test (`:25`-`:29`). Historical merge anchor: #246 / `066e380`. |
 | W0.5 disable publishing while unsafe | done | Publish workflow is manual only, with tag publishing deferred until W2.1 (`.github/workflows/publish.yml:1`-`:5`). Historical merge anchor: #244 / `802f839`. |
-| W0.6 close disposition backlog | partially-done | Public sanitized follow-ups exist in `docs/backlog.md:34`-`:52`. The spec still requires owner closure of all W0.6 dispositions (`docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1122`-`:1123`) and accepted-risk decisions (`:164`-`:165`), which are not verifiable from `main`. Historical merge anchor: #247 / `dca6a76`. |
+| W0.6 close disposition backlog | done | Owner review closed W0.6 as passed on 2026-07-07. Public sanitized follow-ups exist in `docs/backlog.md:34`-`:52`; the private disposition table remains off-repo, and no W0.6 accepted-risk entry remains a release blocker. Historical merge anchor: #247 / `dca6a76`. |
 | W1.1 approval bindings + partial-evidence gate | done | See §9.2 W1.1. |
 | W1.2 dry-run violation fail-closed | not-done | See §9.2 W1.2. |
 | W1.3 reduce Claude permissions / owned MCP tools / env allowlist | not-done | See §9.2 W1.3. |
@@ -534,11 +538,13 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
 
 ### 9.5 Remaining owner-action checklist
 
+W0.6 disposition closure is no longer a remaining owner action: owner review
+closed it as passed on 2026-07-07, with private concern details kept off-repo.
+
 | Owner action | Source |
 | --- | --- |
 | Pick/confirm final distribution name, complete the pre-publication repository/distribution rename path, and re-enable tag publishing. | OSS spec checkpoints `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:160`-`:167`; W2.1 evidence in §9.3. |
 | Confirm W2.4 default per-lane token ceilings and spend defaults. | OSS spec checkpoint `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:162`-`:163`; W2.4 DoD `:1052`-`:1068`. |
-| Close W0.6 dispositions: fix, backlog sanitized, or owner-accept every remaining concern. | OSS spec checkpoints `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:164`-`:165` and `:1122`-`:1123`. |
 | Record historical-blob acceptance and live capability posture before visibility flip. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1124`-`:1127`. |
 | Complete final manual QA and owner-only visibility flip / first release tag. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1128`-`:1132`. |
 | Confirm comparison page row categories, alternative columns, maintenance cadence interval, and final sidebar label/placement; replace all alternative `TODO(owner)` placeholders only after facts are verified. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:503`-`:516`; comparison placeholders `docs/comparison.md:26`-`:35`, `:44`-`:57`. |
@@ -611,9 +617,11 @@ GitHub CI status:
 The W1 apply-safety hard precondition is now satisfied. Overall R1 is still
 **NO-GO** until at least these non-W1 release gates close:
 
+W0.6 is no longer a current blocker: owner review closed it as passed on
+2026-07-07, with private disposition details kept off-repo.
+
 | Gate | Current status | Evidence |
 | --- | --- | --- |
-| W0.6 dispositions / owner acceptance | not complete | §9.5 still lists owner disposition and historical-blob acceptance actions that cannot be proven from code alone. |
 | W2.1 final distribution name and publish re-enable | not complete | PR #257 remains open; `.github/workflows/publish.yml` is still manual-only and `workers/automation/pyproject.toml` still uses the current distribution name. |
 | W2.4 per-lane token ceilings and owner-confirmed defaults | not complete | The base daily spend cap exists, but the spec still requires lane-attributed ceilings, owner-confirmed defaults, doctor visibility, and health-surface breakdown before release. |
 | Final release/visibility owner actions | not complete | §9.5 still requires the owner-only release flip, first tag, and final sign-offs. |
