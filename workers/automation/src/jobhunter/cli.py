@@ -1339,6 +1339,11 @@ def apply(
 
     if gen:
         from jobhunter.apply.launcher import gen_prompt
+        from jobhunter.config import get_apply_max_budget_usd
+        from jobhunter.infrastructure.apply.claude_code_cli import (
+            _ALLOWED_TOOLS,
+            _DISALLOWED_TOOLS,
+        )
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
@@ -1354,16 +1359,9 @@ def apply(
         console.print(
             f"  claude {model_args}-p "
             f"--mcp-config {mcp_path} "
-            f"--allowedTools mcp__playwright__browser_navigate,"
-            f"mcp__playwright__browser_snapshot,"
-            f"mcp__playwright__browser_take_screenshot,"
-            f"mcp__playwright__browser_click,"
-            f"mcp__playwright__browser_fill_form,"
-            f"mcp__playwright__browser_file_upload,"
-            f"mcp__playwright__browser_tabs,"
-            f"mcp__playwright__browser_wait_for,"
-            f"mcp__gmail__search_emails,"
-            f"mcp__gmail__read_email < {prompt_file}"
+            f"--max-budget-usd {get_apply_max_budget_usd():.2f} "
+            f"--allowedTools {_ALLOWED_TOOLS} "
+            f"--disallowedTools {_DISALLOWED_TOOLS} < {prompt_file}"
         )
         return
 
@@ -2379,6 +2377,7 @@ def doctor() -> None:
     )
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.profile import get_profile_repository
+    from jobhunter.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
     from jobhunter.infrastructure.setup_probes import (
         probe_analysis_setup,
         resolve_claude_apply_binary,
@@ -2400,6 +2399,28 @@ def doctor() -> None:
             results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
         else:
             results.append(("candidate profile", ok_mark, f"SQLite source of truth at {DB_PATH}"))
+            attestations = profile.to_dict().get("application_attestations") or {}
+            required_attestations = (
+                "age_18_plus",
+                "background_check_consent",
+                "felony_conviction",
+                "previously_worked_at_employer",
+            )
+            missing_attestations = [
+                key for key in required_attestations if attestations.get(key) is None
+            ]
+            if missing_attestations:
+                results.append((
+                    "application attestations",
+                    warn_mark,
+                    "incomplete; live applies may fail on screening questions",
+                ))
+            else:
+                results.append((
+                    "application attestations",
+                    ok_mark,
+                    "typed screening attestations complete",
+                ))
     except FileNotFoundError:
         results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
     except Exception:  # noqa: BLE001 - doctor should report validation problems instead of crashing
@@ -2516,6 +2537,14 @@ def doctor() -> None:
         claude_bin = resolve_claude_apply_binary()
         if shutil.which(claude_bin) or Path(claude_bin).expanduser().exists():
             results.append(("Claude apply runtime", ok_mark, claude_bin))
+            if _claude_supports_budget_flag(claude_bin):
+                results.append(("Claude apply budget flag", ok_mark, "--max-budget-usd available"))
+            else:
+                results.append((
+                    "Claude apply budget flag",
+                    warn_mark,
+                    "installed Claude runtime does not advertise --max-budget-usd",
+                ))
         else:
             results.append(("Claude apply runtime", fail_mark, "set JOBHUNTER_CLAUDE_BIN or install dependencies"))
     except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
@@ -2546,20 +2575,20 @@ def doctor() -> None:
         results.append((
             "Gmail connector auth",
             warn_mark,
-            f"{gmail_note}; email verification will stop as login_issue",
+            f"{gmail_note}; email verification will stop as login_issue and email applications cannot send",
         ))
 
-    # CapSolver (optional; apply currently fails closed until an owned solver ships)
+    # CapSolver (optional; the owned solve_captcha tool fails closed when absent)
     capsolver = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver:
         results.append((
             "CapSolver API key",
             "[dim]configured[/dim]",
-            "stored, but apply agent fails closed until owned CAPTCHA solving ships",
+            "owned solve_captcha tool can handle supported widgets",
         ))
     else:
         results.append(("CapSolver API key", "[dim]optional[/dim]",
-                        "not required; apply agent fails closed on CAPTCHA"))
+                        "not required; unsupported or unconfigured CAPTCHA flows fail closed"))
 
     # Temporal dev server (workflow engine)
     from jobhunter.infrastructure.temporal import get_temporal_client
@@ -2702,7 +2731,7 @@ def gmail_auth(
     no_browser: bool = typer.Option(False, "--no-browser", help="Print the auth URL without opening a browser."),
     timeout_seconds: int = typer.Option(180, "--timeout-seconds", help="Seconds to wait for the local OAuth callback."),
 ) -> None:
-    """Authenticate the first-party Gmail readonly connector."""
+    """Authenticate the first-party Gmail connector."""
     from jobhunter.infrastructure.gmail.auth import GmailAuthError, authenticate
 
     try:
@@ -2710,7 +2739,7 @@ def gmail_auth(
     except GmailAuthError as exc:
         console.print(f"[red]Gmail auth failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    console.print(f"[green]Gmail readonly token saved:[/green] {token_path}")
+    console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
 if __name__ == "__main__":

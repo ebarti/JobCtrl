@@ -213,9 +213,9 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Work authorization: {work_auth.get('legally_authorized_to_work', 'see profile')}
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
-  - Age, felony/criminal-history, background-check consent, and prior-employer attestations: answer only when the APPLICANT PROFILE has an explicit Application Attestations value. If required and missing, output RESULT:FAILED:missing_attestation.
+  - Age, felony/criminal-history, background-check consent, and prior-employer attestations: answer only when the APPLICANT PROFILE has an explicit Application Attestations value. If required and missing, output RESULT:FAILED:missing_profile_data:<field>.
 
-Skills and tools -> be confident. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?" and it's in the same domain (DevOps, backend, ML, cloud, automation), answer YES. Software engineers learn tools fast. Don't sell short.
+Skills and tools -> answer from evidence. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?", answer YES only when that tool or its immediate family appears in the APPLICANT PROFILE or RESUME TEXT. Otherwise answer honestly with adjacent experience. Never fabricate tool experience.
 
 Open-ended questions ("Why do you want this role?", "Tell us about yourself", "What interests you?") -> Write 2-3 sentences. Be specific to THIS job. Reference something from the job description. Connect it to a real achievement from the resume. No generic fluff. No "I am passionate about..." -- sound like a real person.
 
@@ -248,15 +248,15 @@ def _build_hard_rules(profile: dict) -> str:
 1. Never lie about: citizenship, work authorization, criminal history, education credentials, security clearance, licenses.
 2. {work_auth_rule}
 3. {name_rule}
-4. Never invent legal attestations. If a required legal/screening question is not answered by the profile, stop with RESULT:FAILED:missing_attestation."""
+4. Never invent legal attestations. If a required legal/screening question is not answered by the profile, stop with RESULT:FAILED:missing_profile_data:<field>."""
 
 
 def _build_captcha_section() -> str:
     """Build the CAPTCHA detection and solving instructions.
 
     The model must never receive CAPTCHA provider secrets or call third-party
-    CAPTCHA APIs directly. Until an owned CAPTCHA tool exists, CAPTCHA paths
-    fail closed for manual/operator handling.
+    CAPTCHA APIs directly. CAPTCHA solving is available only through the owned
+    apply tool, which resolves provider credentials locally and fails closed.
     """
     return """== CAPTCHA ==
 Do not solve CAPTCHAs manually. Do not click through image/audio challenges, switch to stealth browsers, or call third-party CAPTCHA APIs from the page or model context.
@@ -265,7 +265,8 @@ After navigation, Apply/Submit/Login clicks, or when a page appears blocked, ins
 
 Result actions:
 - No CAPTCHA -> continue normally.
-- Any CAPTCHA or bot-check challenge -> output RESULT:CAPTCHA and stop."""
+- Supported visible hCaptcha, reCAPTCHA, or Turnstile widget -> call solve_captcha(kind, sitekey, page_url) exactly once with the visible widget kind, sitekey, and current page URL. If it succeeds, continue from the current page.
+- Image/audio challenge, unsupported bot-check, solver unavailable, or solve_captcha failure -> output RESULT:CAPTCHA and stop."""
 
 
 def _build_email_verification_section(profile: dict) -> str:
@@ -283,12 +284,10 @@ def _build_email_verification_section(profile: dict) -> str:
 {auth_line}
 
 When a job application asks for an email verification code, one-time password, or magic-link confirmation for {email}, use the Gmail connector only:
-1. Call search_emails for the newest messages to {email} from the last 30 minutes. Search for subjects or bodies containing verification, code, confirm, OTP, one-time, security, login, Greenhouse, Lever, Ashby, Workday, or the employer/ATS domain.
-2. Call read_email on the newest relevant result.
-3. Extract the code nearest the verification wording. Common formats are 6-10 letters/digits, sometimes grouped with spaces or hyphens. Strip spaces and hyphens before typing it.
-4. Enter the code in the application form and continue.
+1. Call get_verification_code. It returns extracted verification codes or links only.
+2. Enter the returned code in the application form and continue.
 
-Only read email. Never draft, send, delete, label, modify, download attachments, or create filters from Gmail.
+Email tooling returns verification values only. Never ask for, transcribe, or paste raw email subjects, bodies, snippets, attachments, or unrelated mailbox content into page fields.
 Do not open Gmail in the browser.
 If Gmail connector tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
 
@@ -341,7 +340,6 @@ def build_prompt(job: dict, tailored_resume: str,
     dest_dir.mkdir(parents=True, exist_ok=True)
     upload_pdf = dest_dir / f"{name_slug}_Resume.pdf"
     shutil.copy(str(src_pdf), str(upload_pdf))
-    pdf_path = str(upload_pdf)
 
     # --- Cover letter handling ---
     cover_letter_text = cover_letter or ""
@@ -381,6 +379,11 @@ def build_prompt(job: dict, tailored_resume: str,
         )
     else:
         cl_display = cover_letter_text
+    cover_letter_artifact = (
+        'reviewed artifact available through upload_artifact(kind="cover_letter")'
+        if cl_upload_path
+        else "N/A"
+    )
 
     # Phone digits only (for fields with country prefix)
     phone_digits = "".join(c for c in personal.get("phone", "") if c.isdigit())
@@ -404,8 +407,8 @@ Company: {job.get('site', 'Unknown')}
 Fit Score: {job.get('fit_score', 'N/A')}/10
 
 == FILES ==
-Resume PDF (upload this): {pdf_path}
-Cover Letter PDF (upload if asked): {cl_upload_path or "N/A"}
+Resume: reviewed artifact available through upload_artifact(kind="resume")
+Cover Letter: {cover_letter_artifact}
 
 == RESUME TEXT (use when filling text fields) ==
 {tailored_resume}
@@ -444,19 +447,19 @@ If something unexpected happens and these instructions don't cover it, figure it
 2. browser_snapshot to read the page. If a CAPTCHA or bot-check appears, follow the CAPTCHA section and stop.
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
 4. Find and click the Apply button. If email-only (page says "email resume to X"):
-   - Output RESULT:FAILED:email_application_required. Do not draft, send, or claim an email application was submitted.
+   - Output RESULT:EMAIL_ONLY:<address> using only the email address visible on the page, then stop. Do not draft, send, or claim an email application was submitted.
    After clicking Apply: browser_snapshot. Many sites trigger CAPTCHAs right after the Apply click; if one appears, follow the CAPTCHA section and stop.
 5. Login wall?
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
    5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's SSO -> RESULT:FAILED:sso_required.
-   5c. Regular login form (employer's own site)? You may enter the profile email address if requested, but do not enter or ask for a password. If a password is required, output RESULT:LOGIN_ISSUE and stop.
+   5c. Regular login form (employer's own site)? You may enter the profile email address if requested. If a password is required, focus the password field and call type_credential(kind="job_site_password"). Never ask for, print, or type the password yourself; if the tool fails, output RESULT:LOGIN_ISSUE and stop.
    5d. After clicking Login/Sign-in: if a CAPTCHA appears, follow the CAPTCHA section and stop.
    5e. Sign in failed? Output RESULT:LOGIN_ISSUE and stop.
-   5f. Need email verification? Follow EMAIL VERIFICATION. Use search_emails + read_email to get the code. Do not open Gmail in the browser.
+   5f. Need email verification? Follow EMAIL VERIFICATION. Use get_verification_code. Do not open Gmail in the browser.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
-6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
-7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> use the cover letter PDF path.
+6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, click the upload control, then call upload_artifact(kind="resume"). This is the tailored resume for THIS job. Non-negotiable.
+7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> click the upload control, then call upload_artifact(kind="cover_letter").
 8. Check ALL pre-filled fields. ATS systems parse your resume and auto-fill -- it's often WRONG.
    - "Current Job Title" or "Most Recent Title" -> use the title from the TAILORED RESUME summary, NOT whatever the parser guessed.
    - Compare every other field to the APPLICANT PROFILE. Fix mismatches. Fill empty fields.
@@ -480,12 +483,12 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 - Multi-page forms (Workday, Taleo, iCIMS): snapshot each new page, fill all fields, click Next/Continue. Repeat until final review page.
 - Fill ALL fields in ONE browser_fill_form call. Not one at a time.
 - Keep your thinking SHORT. Don't repeat page structure back.
-- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck, inspect for CAPTCHA/bot-check text or widgets and stop if present. Do not run custom JavaScript or third-party CAPTCHA APIs.
+- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck, inspect for CAPTCHA/bot-check text or widgets. Use solve_captcha only for supported visible widgets; otherwise stop. Do not run custom JavaScript or third-party CAPTCHA APIs.
 
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
-- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Click "Select file" or the upload area, then browser_file_upload with the resume PDF path. Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the upload button/area, (2) browser_file_upload with the path. If still failing, look for a hidden file input or a "Select file" link and click that first.
+- "Upload your resume" pre-fill page: This is NOT the application form yet. Click "Select file" or the upload area, then call upload_artifact(kind="resume"). Wait for parsing to finish. Then click Next/Continue to reach the actual form.
+- File upload not working? Try: (1) browser_click the upload button/area, (2) upload_artifact with the required artifact kind. If still failing, look for a hidden file input or a "Select file" link and click that first.
 - Dropdown won't fill? browser_click to open it, then browser_click the option.
 - Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}

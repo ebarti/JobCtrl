@@ -14,7 +14,7 @@ needing to know.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from jobhunter.domain.apply.aggregate import ApplyRun
 from jobhunter.domain.apply.value_objects import (
@@ -33,6 +33,9 @@ __all__ = [
     "AutonomousAgentPort",
     "BrowserPort",
     "BrowserSession",
+    "EmailApplicationCandidate",
+    "EmailApplicationSenderPort",
+    "EmailApplicationSendResult",
 ]
 
 
@@ -58,6 +61,7 @@ class BrowserSession:
     pid: int | None = None
     worker_dir: str | None = None
     handle: Any | None = None
+    dry_run_evidence: Callable[[], Mapping[str, Any]] | None = None
 
     @property
     def cdp_port(self) -> int:
@@ -151,6 +155,35 @@ class AutonomousAgentPort(Protocol):
         the saga routes timeouts to the ``Failed(retryable=True)``
         terminal state via the process manager.
         """
+        ...
+
+
+@dataclass(frozen=True)
+class EmailApplicationCandidate:
+    """Owned email application preview approved before any send."""
+
+    recipient_email: str
+    subject: str
+    body: str
+    attachment_artifact_id: str
+    attachment_name: str
+    attachment_path: str
+
+
+@dataclass(frozen=True)
+class EmailApplicationSendResult:
+    """Provider metadata returned after an owned email application send."""
+
+    provider: str = "gmail"
+    message_id: str = ""
+    thread_id: str = ""
+
+
+class EmailApplicationSenderPort(Protocol):
+    """Driven port: send an approved email application outside the agent."""
+
+    def send_email_application(self, candidate: EmailApplicationCandidate) -> EmailApplicationSendResult:
+        """Send the approved candidate and return provider metadata."""
         ...
 
 

@@ -266,13 +266,10 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
 
     class PathCheckingAgent:
         def submit_application(self, *, prompt, **_kwargs):
-            resume_line = next(
-                line
-                for line in prompt.text.splitlines()
-                if line.startswith("Resume PDF (upload this): ")
-            )
-            upload_path = Path(resume_line.split(": ", 1)[1])
+            upload_path = Path(worker_dir) / "Test_Applicant_Resume.pdf"
             assert upload_path.exists()
+            assert str(upload_path) not in prompt.text
+            assert 'upload_artifact(kind="resume")' in prompt.text
             return AgentResult(
                 submission_result=Applied(
                     applied_at="t9",

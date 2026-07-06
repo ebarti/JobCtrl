@@ -25,6 +25,8 @@ BASE_CDP_PORT = 9222
 # Track Chrome processes per worker for cleanup
 _chrome_procs: dict[int, subprocess.Popen] = {}
 _chrome_lock = threading.Lock()
+_dry_run_guards: dict[int, "_DryRunCdpGuard"] = {}
+_dry_run_guards_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -257,35 +259,127 @@ def launch_chrome(worker_id: int, port: int | None = None,
 _FORM_SUBMIT_GUARD_SOURCE = """
 (() => {
   window.__jobhunter_dryrun_installed = true;
-  const block = (event) => {
+  const bindingName = "jobhunterDryRunBlocked";
+  const absoluteUrl = (url) => {
+    try { return new URL(String(url || window.location.href), window.location.href).toString(); }
+    catch (_) { return String(url || window.location.href); }
+  };
+  const report = (details) => {
+    try {
+      const binding = window[bindingName];
+      if (typeof binding === "function") {
+        binding(JSON.stringify({
+          channel: details.channel || "dom",
+          method: details.method || "POST",
+          url: absoluteUrl(details.url),
+          resourceType: details.resourceType || "Document",
+        }));
+      }
+    } catch (_) {}
+  };
+  const block = (event, details) => {
     window.__jobhunter_dryrun_blocked = true;
+    report(details || {});
     if (event) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
-    throw new Error("JobHunter dry-run blocked browser form submission");
+    throw new Error("JobHunter dry-run blocked browser submission channel");
   };
   const originalSubmit = HTMLFormElement.prototype.submit;
   const originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
-  HTMLFormElement.prototype.submit = function submit() { return block(); };
-  HTMLFormElement.prototype.requestSubmit = function requestSubmit() { return block(); };
+  HTMLFormElement.prototype.submit = function submit() {
+    return block(null, {
+      channel: "form_submit",
+      method: (this.method || "POST").toUpperCase(),
+      url: this.action || window.location.href,
+      resourceType: "Document",
+    });
+  };
+  HTMLFormElement.prototype.requestSubmit = function requestSubmit() {
+    return block(null, {
+      channel: "form_request_submit",
+      method: (this.method || "POST").toUpperCase(),
+      url: this.action || window.location.href,
+      resourceType: "Document",
+    });
+  };
   Object.defineProperty(HTMLFormElement.prototype.submit, "name", { value: originalSubmit.name });
   Object.defineProperty(HTMLFormElement.prototype.requestSubmit, "name", { value: originalRequestSubmit.name });
-  document.addEventListener("submit", block, true);
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    return block(event, {
+      channel: "form_submit",
+      method: ((form && form.method) || "POST").toUpperCase(),
+      url: (form && form.action) || window.location.href,
+      resourceType: "Document",
+    });
+  }, true);
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon = function sendBeacon(url, data) {
+      window.__jobhunter_dryrun_blocked = true;
+      report({
+        channel: "sendBeacon",
+        method: "POST",
+        url,
+        resourceType: "Ping",
+      });
+      return false;
+    };
+  }
+
+  if (window.WebSocket) {
+    const OriginalWebSocket = window.WebSocket;
+    function DryRunWebSocket(url, protocols) {
+      window.__jobhunter_dryrun_blocked = true;
+      report({
+        channel: "WebSocket",
+        method: "WEBSOCKET",
+        url,
+        resourceType: "WebSocket",
+      });
+      throw new Error("JobHunter dry-run blocked WebSocket creation");
+    }
+    DryRunWebSocket.prototype = OriginalWebSocket.prototype;
+    for (const key of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) {
+      try { Object.defineProperty(DryRunWebSocket, key, { value: OriginalWebSocket[key] }); }
+      catch (_) {}
+    }
+    window.WebSocket = DryRunWebSocket;
+  }
 })();
 """
 
 
-def install_dry_run_cdp_guard(port: int) -> None:
+def install_dry_run_cdp_guard(port: int) -> "_DryRunCdpGuard":
     """Install a CDP dry-run guard on Chrome pages for this worker."""
     guard = _DryRunCdpGuard(port)
+    with _dry_run_guards_lock:
+        _dry_run_guards[int(port)] = guard
     guard.start()
+    return guard
+
+
+def get_dry_run_cdp_guard_evidence(port: int) -> dict[str, object]:
+    """Return sanitized dry-run guard evidence collected for ``port``."""
+    with _dry_run_guards_lock:
+        guard = _dry_run_guards.get(int(port))
+    if guard is None:
+        return {
+            "coverage": "full",
+            "blocked_channels": (),
+            "blocked_requests": (),
+        }
+    return guard.evidence()
 
 
 class _DryRunCdpGuard:
     def __init__(self, port: int) -> None:
         self._port = int(port)
         self._seen: set[str] = set()
+        self._blocked: list[dict[str, str]] = []
+        self._blocked_keys: set[tuple[str, str, str, str]] = set()
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -316,11 +410,47 @@ class _DryRunCdpGuard:
                 self._seen.add(target_id)
             thread = threading.Thread(
                 target=_run_dry_run_page_session,
-                args=(ws_url,),
+                args=(ws_url, self),
                 name=f"apply-cdp-page-{target_id[:8]}",
                 daemon=True,
             )
             thread.start()
+
+    def record_blocked_request(
+        self,
+        *,
+        channel: str,
+        method: str,
+        url: str,
+        resource_type: str,
+    ) -> None:
+        request = {
+            "channel": (channel or "network")[:80],
+            "method": (method or "GET").upper()[:16],
+            "url": _sanitize_evidence_url(url),
+            "resource_type": (resource_type or "Other")[:80],
+        }
+        key = (
+            request["channel"],
+            request["method"],
+            request["url"],
+            request["resource_type"],
+        )
+        with self._lock:
+            if key in self._blocked_keys:
+                return
+            self._blocked_keys.add(key)
+            if len(self._blocked) < 100:
+                self._blocked.append(request)
+
+    def evidence(self) -> dict[str, object]:
+        with self._lock:
+            blocked = tuple(dict(item) for item in self._blocked)
+        return {
+            "coverage": _dry_run_coverage(blocked),
+            "blocked_channels": _dry_run_blocked_channels(blocked),
+            "blocked_requests": blocked,
+        }
 
 
 def _cdp_json(port: int, path: str) -> object:
@@ -332,7 +462,7 @@ def _cdp_json(port: int, path: str) -> object:
         return []
 
 
-def _run_dry_run_page_session(ws_url: str) -> None:
+def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
     try:
         import websocket
     except Exception:
@@ -352,7 +482,9 @@ def _run_dry_run_page_session(ws_url: str) -> None:
 
     try:
         send("Page.enable")
+        send("Network.enable")
         send("Runtime.enable")
+        send("Runtime.addBinding", {"name": "jobhunterDryRunBlocked"})
         send("Page.addScriptToEvaluateOnNewDocument", {"source": _FORM_SUBMIT_GUARD_SOURCE})
         send(
             "Fetch.enable",
@@ -372,14 +504,34 @@ def _run_dry_run_page_session(ws_url: str) -> None:
             except websocket.WebSocketTimeoutException:
                 continue
             message = json.loads(raw_message)
-            if message.get("method") != "Fetch.requestPaused":
+            method_name = message.get("method")
+            if method_name == "Runtime.bindingCalled":
+                _record_binding_call(message, guard)
+                continue
+            if method_name == "Network.webSocketCreated":
+                params = message.get("params") or {}
+                guard.record_blocked_request(
+                    channel="WebSocket",
+                    method="WEBSOCKET",
+                    url=str(params.get("url") or ""),
+                    resource_type="WebSocket",
+                )
+                continue
+            if method_name != "Fetch.requestPaused":
                 continue
             params = message.get("params") or {}
             request = params.get("request") or {}
             request_id = params.get("requestId")
             method = str(request.get("method") or "GET").upper()
             url = str(request.get("url") or "")
-            if request_id and method in {"POST", "PUT", "PATCH"} and not _is_local_url(url):
+            resource_type = str(params.get("resourceType") or "Other")
+            if request_id and _should_block_dry_run_request(method):
+                guard.record_blocked_request(
+                    channel="network",
+                    method=method,
+                    url=url,
+                    resource_type=resource_type,
+                )
                 send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
             elif request_id:
                 send("Fetch.continueRequest", {"requestId": request_id})
@@ -392,12 +544,58 @@ def _run_dry_run_page_session(ws_url: str) -> None:
             pass
 
 
-def _is_local_url(url: str) -> bool:
+def _record_binding_call(message: dict, guard: _DryRunCdpGuard) -> None:
+    params = message.get("params") or {}
+    if params.get("name") != "jobhunterDryRunBlocked":
+        return
     try:
-        host = (urlparse(url).hostname or "").lower()
+        payload = json.loads(str(params.get("payload") or "{}"))
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    guard.record_blocked_request(
+        channel=str(payload.get("channel") or "dom"),
+        method=str(payload.get("method") or "POST"),
+        url=str(payload.get("url") or ""),
+        resource_type=str(payload.get("resourceType") or payload.get("resource_type") or "Document"),
+    )
+
+
+def _should_block_dry_run_request(method: str) -> bool:
+    return str(method or "GET").upper() not in {"GET", "HEAD"}
+
+
+def _sanitize_evidence_url(url: str) -> str:
+    try:
+        parsed = urlparse(str(url or ""))
     except Exception:
-        return False
-    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".localhost")
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return str(url or "").split("?", 1)[0].split("#", 1)[0][:500]
+    path = parsed.path or "/"
+    if len(path) > 200:
+        path = path[:200]
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _dry_run_coverage(blocked: tuple[dict[str, str], ...]) -> str:
+    partial_resources = {"Document", "Fetch", "XHR", "WebSocket"}
+    partial_channels = {"form_submit", "form_request_submit", "WebSocket"}
+    for item in blocked:
+        if item.get("resource_type") in partial_resources:
+            return "partial"
+        if item.get("channel") in partial_channels:
+            return "partial"
+    return "full"
+
+
+def _dry_run_blocked_channels(blocked: tuple[dict[str, str], ...]) -> tuple[str, ...]:
+    channels = {
+        f"{item.get('channel') or 'network'}:{item.get('method') or 'GET'}"
+        for item in blocked
+    }
+    return tuple(sorted(channels))
 
 
 def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:

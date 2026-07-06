@@ -1,4 +1,4 @@
-"""Read-only Gmail API client for application verification and feedback."""
+"""Gmail API client for verification, feedback, and approved application sends."""
 
 from __future__ import annotations
 
@@ -6,12 +6,14 @@ import base64
 import re
 import time
 from datetime import datetime
+from email.message import EmailMessage
 from html import unescape
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from jobhunter.infrastructure.gmail.auth import get_access_token
+from jobhunter.infrastructure.gmail.auth import GMAIL_SEND_SCOPE, GmailAuthError, get_access_token, load_token
 
 GMAIL_API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 _HEADERS = ("From", "To", "Subject", "Date")
@@ -29,7 +31,7 @@ _FEEDBACK_TERMS = (
 
 
 class GmailClient:
-    """Small Gmail readonly client backed by the existing httpx dependency."""
+    """Small Gmail client backed by the existing httpx dependency."""
 
     def __init__(self, *, http: httpx.Client | None = None) -> None:
         self._http = http
@@ -81,6 +83,42 @@ class GmailClient:
             "date": headers.get("date", ""),
             "snippet": payload.get("snippet", ""),
             "body_text": _extract_body_text(payload.get("payload", {}))[:12000],
+        }
+
+    def send_email_application(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        body: str,
+        attachment_path: str,
+        attachment_name: str,
+    ) -> dict[str, str]:
+        _ensure_send_scope()
+        message = EmailMessage()
+        message["To"] = to_email
+        message["Subject"] = subject
+        message.set_content(body)
+        attachment = Path(attachment_path)
+        data = attachment.read_bytes()
+        message.add_attachment(
+            data,
+            maintype="application",
+            subtype="pdf",
+            filename=attachment_name or attachment.name,
+        )
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
+        with self._client() as http:
+            response = http.post(
+                f"{GMAIL_API_ROOT}/messages/send",
+                headers=self._headers(),
+                json={"raw": raw},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        return {
+            "id": str(payload.get("id") or ""),
+            "threadId": str(payload.get("threadId") or ""),
         }
 
     def search_feedback_emails(
@@ -179,6 +217,13 @@ def _build_query(*, query: str, to_email: str) -> str:
         terms.append("(" + " OR ".join(hints) + ")")
     terms.append("newer_than:1d")
     return " ".join(terms)
+
+
+def _ensure_send_scope() -> None:
+    token = load_token()
+    scopes = {part.strip() for part in str(token.get("scope") or "").split() if part.strip()}
+    if GMAIL_SEND_SCOPE not in scopes:
+        raise GmailAuthError("Gmail token missing gmail.send scope; run jobhunter gmail-auth to re-consent")
 
 
 def _build_feedback_query(
