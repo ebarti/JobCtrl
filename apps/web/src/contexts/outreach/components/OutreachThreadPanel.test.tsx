@@ -1,11 +1,13 @@
 import { http, HttpResponse } from "msw";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
   makeOutreachDraft,
   makeOutreachThreadDetail,
   makeBlockedCandidateThread,
+  makeCandidateThread,
+  makeOutreachSendLog,
   makeOutreachThreadResponse,
 } from "../../../test/fixtures/outreach.js";
 import { server } from "../../../test/msw/server.js";
@@ -94,6 +96,55 @@ describe("<OutreachThreadPanel>", () => {
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
     await waitFor(() => expect(view.getByText(/No outreach drafts yet/i)).toBeInTheDocument());
     expect(view.getByRole("button", { name: "generate draft" })).toBeInTheDocument();
+  });
+
+  it("shows the send history and a log-a-send control when an approved draft exists (INV-1)", async () => {
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() => expect(view.getByRole("heading", { name: "Sends" })).toBeInTheDocument());
+    // Default thread has an approved draft (draft-2) and no recorded sends yet.
+    expect(view.getByText("No sends recorded yet.")).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "log a send" }));
+    // The recording control is explicit that JobHunter does not send.
+    expect(view.getByText(/JobHunter only records that you sent it/i)).toBeInTheDocument();
+  });
+
+  it("lists a recorded send with its channel and generation", async () => {
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(
+          makeOutreachThreadResponse(
+            makeOutreachThreadDetail({ sendLogs: [makeOutreachSendLog()], isSent: true }),
+          ),
+        ),
+      ),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("list", { name: "Recorded sends" })).toBeInTheDocument(),
+    );
+    const recorded = within(view.getByRole("list", { name: "Recorded sends" }));
+    expect(recorded.getByText("email")).toBeInTheDocument();
+    expect(recorded.getByText("gen 2")).toBeInTheDocument();
+  });
+
+  it("hides the log-a-send control when there is no approved draft", async () => {
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(makeCandidateThread())),
+      ),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() => expect(view.getByRole("heading", { name: "Sends" })).toBeInTheDocument());
+    expect(view.queryByRole("button", { name: "log a send" })).toBeNull();
+  });
+
+  it("renders the follow-up as a surfaced-only reminder that never sends (INV-1)", async () => {
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Follow-up" })).toBeInTheDocument(),
+    );
+    expect(view.getByText(/JobHunter never sends it or acts on it/i)).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "schedule follow-up" })).toBeInTheDocument();
   });
 
   it("disables approval until the truthfulness gates pass", async () => {

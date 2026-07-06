@@ -30,7 +30,7 @@ mid-flight.
 | `JobPipelineState` | `PipelineStateRepository` | `job_stage_states` | `job_stage_states` (existing, largely correct) |
 | `Contact` (Contact & Outreach) | `ContactRepository` | `contacts` + `contact_attributes` | `contacts` + `contact_attributes` (hosted: Postgres, tenant-scoped) |
 | `ContactResearchTask` (Contact & Outreach) | `ContactResearchTaskRepository` | `contact_research_tasks` (+ `source_attempts_json`) + `contact_candidates` | same tables (hosted: Postgres, tenant-scoped) |
-| `OutreachThread` (Contact & Outreach) | `OutreachThreadRepository` | `outreach_threads` + `outreach_drafts` | same tables (hosted: Postgres, tenant-scoped) |
+| `OutreachThread` (Contact & Outreach) | `OutreachThreadRepository` | `outreach_threads` (+ `follow_up_due_at` / `follow_up_basis` / `follow_up_state`) + `outreach_drafts` + `outreach_send_logs` | same tables (hosted: Postgres, tenant-scoped) |
 | Read-model projections | `ReadModelStore` | Computed at read time from `jobs` + `job_stage_states` | `job_list_view` (materialized/denormalized), `dashboard_stats` (materialized) |
 
 ### 7.2 Decoupling Persistence Schema from Domain Types
@@ -98,15 +98,21 @@ This decoupling means:
   events (`entity_kind = 'contact_research'` / `entity_ref = <taskId>`) and the
   `contact_research_task_projections` read model carry only ids, kinds,
   provenance metadata, and outcomes — never a candidate value.
-- **`outreach_threads` + `outreach_drafts`** → `OutreachThread` aggregate (Contact
-  & Outreach, Phase 3). Each draft row keeps the reviewable `body_text`, the
-  persisted `gate_results_json` (the truthfulness-gate outcome approval is gated
-  on — INV-5), and `provenance_json` (claim → fact bindings). Draft-lifecycle
-  events (`entity_kind = 'outreach'` / `entity_ref = <threadId>`; application-linked
-  threads also key on the job's `job_url`) and the `outreach_thread_projections`
-  read model carry only ids, kinds, generation, and timestamps — never the draft
-  body, gate text, or contact PII. There is no `sent` column and no send-log table
-  (INV-1).
+- **`outreach_threads` + `outreach_drafts` + `outreach_send_logs`** →
+  `OutreachThread` aggregate (Contact & Outreach, Phase 3/4). Each draft row keeps
+  the reviewable `body_text`, the persisted `gate_results_json` (the
+  truthfulness-gate outcome approval is gated on — INV-5), and `provenance_json`
+  (claim → fact bindings). `outreach_send_logs` holds the **user-attested** send
+  records (`send_log_id`, `draft_id`, `channel` label, `sent_at`, `logged_at`) —
+  the ONLY path to a "sent" thread; there is no send transport (INV-1). The
+  `outreach_threads` `follow_up_due_at` / `follow_up_basis` / `follow_up_state`
+  columns hold the surfaced-only follow-up schedule, projected into
+  `due_follow_up_projections` (whose "due" flag is computed over schedule + clock at
+  read time). Draft-lifecycle, send-log, and follow-up events
+  (`entity_kind = 'outreach'` / `entity_ref = <threadId>`; application-linked
+  threads also key on the job's `job_url`) and the projections carry only ids, a
+  channel label, kinds, generation, and timestamps — never the draft body, gate
+  text, or contact PII.
 
 ---
 

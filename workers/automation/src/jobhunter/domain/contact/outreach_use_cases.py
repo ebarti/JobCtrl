@@ -21,9 +21,12 @@ from typing import Any, Callable
 
 from jobhunter.domain.contact.aggregate import Contact
 from jobhunter.domain.contact.outreach import (
+    FollowUpBasis,
     OutreachDraft,
     OutreachDraftKind,
     OutreachThread,
+    normalize_outreach_send_channel,
+    suggest_follow_up,
 )
 from jobhunter.domain.contact.outreach_gates import (
     OUTREACH_JUDGE_MIN_SCORE,
@@ -47,6 +50,14 @@ from jobhunter.domain.tenant import TenantId
 
 class OutreachDraftInputError(ValueError):
     """Raised when a caller supplies structurally invalid outreach-draft input."""
+
+
+class OutreachSendLogInputError(ValueError):
+    """Raised when a caller supplies invalid send-log input (INV-1)."""
+
+
+class OutreachFollowUpInputError(ValueError):
+    """Raised when a caller supplies invalid follow-up scheduling input."""
 
 
 OUTREACH_DRAFT_RESPONSE_SCHEMA: dict[str, Any] = {
@@ -411,6 +422,130 @@ class RejectOutreachDraftUseCase:
         return self.repository.save(tenant_id, thread)
 
 
+@dataclass
+class LogOutreachSendUseCase:
+    """Record a user-attested send of an approved draft (INV-1).
+
+    JobHunter never sends: this use case writes the ``OutreachSendLog`` fact the
+    user asserts ("I sent this on <date> via <channel>"). It refuses any draft
+    that is not currently approved — "approve draft" and "log send" are distinct
+    user actions — so a thread can only reach "sent" over a draft the user
+    actually approved. There is no transport of any kind here.
+    """
+
+    repository: OutreachThreadRepository
+    clock: Callable[[], str] = _now
+    new_id: Callable[[], str] = None  # type: ignore[assignment]
+
+    def execute(
+        self,
+        tenant_id: TenantId,
+        *,
+        thread_id: str,
+        draft_id: str,
+        channel: str,
+        sent_at: str,
+    ) -> OutreachThread:
+        channel = (channel or "").strip()
+        sent_at = (sent_at or "").strip()
+        if not channel:
+            raise OutreachSendLogInputError("channel must be a non-empty label")
+        channel = normalize_outreach_send_channel(channel)
+        if not sent_at:
+            raise OutreachSendLogInputError("sent_at must be a non-empty date")
+        thread = self.repository.load(tenant_id, thread_id)
+        if thread is None:
+            raise OutreachSendLogInputError(f"Outreach thread {thread_id!r} not found")
+        thread = thread.log_send(
+            send_log_id=str(self.new_id()),
+            draft_id=draft_id,
+            channel=channel,
+            sent_at=sent_at,
+            logged_at=self.clock(),
+        )
+        return self.repository.save(tenant_id, thread)
+
+
+@dataclass
+class ScheduleFollowUpUseCase:
+    """Schedule (or reset) the suggested next follow-up for a thread (plan §9).
+
+    When ``due_at`` is omitted the date is DERIVED from the application lifecycle
+    (:func:`suggest_follow_up`): 7 days after submission for the first follow-up,
+    14 days for a subsequent nudge with no logged reply. The date is a suggestion
+    the user can edit; it is surfaced as a due follow-up and never auto-acted or
+    sent (INV-1).
+    """
+
+    repository: OutreachThreadRepository
+    clock: Callable[[], str] = _now
+
+    def execute(
+        self,
+        tenant_id: TenantId,
+        *,
+        thread_id: str,
+        due_at: str | None = None,
+        basis: str = "",
+        submitted_at: str | None = None,
+        has_logged_reply: bool = False,
+    ) -> OutreachThread:
+        thread = self.repository.load(tenant_id, thread_id)
+        if thread is None:
+            raise OutreachFollowUpInputError(f"Outreach thread {thread_id!r} not found")
+        resolved_due = (due_at or "").strip()
+        resolved_basis = basis
+        if not resolved_due:
+            suggestion = suggest_follow_up(
+                submitted_at=submitted_at or "",
+                last_follow_up_due_at=thread.follow_up.due_at,
+                has_logged_reply=has_logged_reply,
+            )
+            if suggestion is None:
+                raise OutreachFollowUpInputError(
+                    "cannot suggest a follow-up date: provide an explicit due_at, or a "
+                    "submission date with no logged reply"
+                )
+            resolved_due = suggestion.due_at
+            resolved_basis = resolved_basis or suggestion.basis
+        thread = thread.schedule_follow_up(
+            due_at=resolved_due,
+            basis=resolved_basis or FollowUpBasis.MANUAL,
+            at=self.clock(),
+        )
+        return self.repository.save(tenant_id, thread)
+
+
+@dataclass
+class CompleteFollowUpUseCase:
+    """Mark a thread's scheduled follow-up completed (an explicit user action)."""
+
+    repository: OutreachThreadRepository
+    clock: Callable[[], str] = _now
+
+    def execute(self, tenant_id: TenantId, *, thread_id: str) -> OutreachThread:
+        thread = self.repository.load(tenant_id, thread_id)
+        if thread is None:
+            raise OutreachFollowUpInputError(f"Outreach thread {thread_id!r} not found")
+        thread = thread.complete_follow_up(at=self.clock())
+        return self.repository.save(tenant_id, thread)
+
+
+@dataclass
+class DismissFollowUpUseCase:
+    """Dismiss a thread's scheduled follow-up (an explicit user action)."""
+
+    repository: OutreachThreadRepository
+    clock: Callable[[], str] = _now
+
+    def execute(self, tenant_id: TenantId, *, thread_id: str) -> OutreachThread:
+        thread = self.repository.load(tenant_id, thread_id)
+        if thread is None:
+            raise OutreachFollowUpInputError(f"Outreach thread {thread_id!r} not found")
+        thread = thread.dismiss_follow_up(at=self.clock())
+        return self.repository.save(tenant_id, thread)
+
+
 def _persist_new_draft(
     *,
     repository: OutreachThreadRepository,
@@ -466,10 +601,16 @@ def _persist_new_draft(
 __all__ = [
     "OUTREACH_DRAFT_RESPONSE_SCHEMA",
     "ApproveOutreachDraftUseCase",
+    "CompleteFollowUpUseCase",
+    "DismissFollowUpUseCase",
     "GenerateOutreachDraftUseCase",
+    "LogOutreachSendUseCase",
     "OutreachDraftInputError",
+    "OutreachFollowUpInputError",
+    "OutreachSendLogInputError",
     "RejectOutreachDraftUseCase",
     "ReviseOutreachDraftUseCase",
+    "ScheduleFollowUpUseCase",
     "build_outreach_draft_prompt",
 ]
 

@@ -66,6 +66,16 @@ function withTempApp(generator?: OutreachDraftGenerator) {
       entity_kind  TEXT,
       entity_ref   TEXT
     );
+    CREATE TABLE application_outcomes (
+      tenant_id     TEXT NOT NULL DEFAULT 'local',
+      outcome_id    TEXT NOT NULL,
+      job_key       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      occurred_at   TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, outcome_id)
+    );
   `);
   ensureOutreachTables(db);
   db.close();
@@ -123,6 +133,16 @@ function seedDraft(
     "2026-07-06T00:00:01Z",
     input.approvedAt ?? null,
   );
+  db.close();
+}
+
+function seedSubmittedOutcome(dbPath: string, jobKey: string, occurredAt: string): void {
+  const db = new Database(dbPath);
+  db.prepare(
+    `INSERT INTO application_outcomes (
+     tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
+     ) VALUES ('local', ?, ?, 'applied_confirmation', 'manual', ?, ?)`,
+  ).run(`outcome-${jobKey}`, jobKey, occurredAt, "2026-07-06T00:00:00Z");
   db.close();
 }
 
@@ -446,5 +466,170 @@ describe("outreach API", () => {
       url: "/v1/outreach/threads/thread-s/drafts/draft-s1/send",
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  // --- R6 Phase 4: user-attested send log + follow-ups ----------------------
+
+  it("records a user-attested send over an approved draft and marks the thread sent (INV-1)", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-send", contactId: "contact-send", jobUrl: "https://job/7" });
+    seedDraft(dbPath, {
+      draftId: "draft-send",
+      threadId: "thread-send",
+      generation: 1,
+      status: "approved",
+      gate: PASSING_GATE,
+      approvedAt: "2026-07-06T00:01:00Z",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-send/send-logs",
+      payload: { draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
+    });
+    expect(res.statusCode).toBe(200);
+    const thread = (res.json() as ThreadResponse).thread!;
+    expect(thread.isSent).toBe(true);
+    expect(thread.sendLogs).toHaveLength(1);
+    expect(thread.sendLogs[0]!.channel).toBe("email");
+    expect(thread.sendLogs[0]!.draftId).toBe("draft-send");
+    expect(eventTypes(dbPath)).toContain("OutreachSendLogged");
+    // The send-log event carries only ids, a channel label, and timestamps.
+    const db = new Database(dbPath);
+    const payloads = (
+      db.prepare("SELECT payload_json FROM job_events").all() as Array<{ payload_json: string }>
+    )
+      .map((row) => row.payload_json)
+      .join(" ");
+    db.close();
+    expect(payloads).not.toContain(SECRET_BODY);
+  });
+
+  it("rejects address-shaped send channels before they can enter logs or events", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-channel", contactId: "contact-channel", jobUrl: null });
+    seedDraft(dbPath, {
+      draftId: "draft-channel",
+      threadId: "thread-channel",
+      generation: 1,
+      status: "approved",
+      gate: PASSING_GATE,
+      approvedAt: "2026-07-06T00:01:00Z",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-channel/send-logs",
+      payload: { draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_send_log");
+    expect(eventTypes(dbPath)).not.toContain("OutreachSendLogged");
+    const db = new Database(dbPath);
+    const row = db.prepare("SELECT COUNT(*) AS count FROM outreach_send_logs").get() as { count: number };
+    db.close();
+    expect(Number(row.count)).toBe(0);
+  });
+
+  it("refuses to log a send over a non-approved draft and leaves the thread unsent (INV-1)", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-c", contactId: "contact-c", jobUrl: null });
+    seedDraft(dbPath, { draftId: "draft-c1", threadId: "thread-c", generation: 1, gate: PASSING_GATE });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-c/send-logs",
+      payload: { draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
+    expect(eventTypes(dbPath)).not.toContain("OutreachSendLogged");
+    const read = await app.inject({ method: "GET", url: "/v1/contacts/contact-c/outreach" });
+    expect((read.json() as ThreadResponse).thread!.isSent).toBe(false);
+  });
+
+  it("schedules a follow-up from the canonical application outcome, then completes it", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-f", contactId: "contact-f", jobUrl: "https://job/8" });
+    seedDraft(dbPath, { draftId: "draft-f1", threadId: "thread-f", generation: 1, gate: PASSING_GATE });
+    seedSubmittedOutcome(dbPath, "https://job/8", "2026-07-01T00:00:00+00:00");
+
+    const scheduled = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-f/follow-up/schedule",
+      payload: {},
+    });
+    expect(scheduled.statusCode).toBe(200);
+    const t1 = (scheduled.json() as ThreadResponse).thread!;
+    expect(t1.followUp?.state).toBe("scheduled");
+    expect(t1.followUp?.basis).toBe("application_submitted");
+    expect(new Date(t1.followUp!.dueAt!).toISOString().slice(0, 10)).toBe("2026-07-08");
+    expect(eventTypes(dbPath)).toContain("FollowUpScheduled");
+
+    const completed = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-f/follow-up/complete",
+    });
+    expect(completed.statusCode).toBe(200);
+    expect((completed.json() as ThreadResponse).thread!.followUp?.state).toBe("completed");
+    expect(eventTypes(dbPath)).toContain("FollowUpCompleted");
+  });
+
+  it("surfaces only arrived follow-ups in the due-follow-ups read model", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-due", contactId: "contact-due", jobUrl: "https://job/due" });
+    seedDraft(dbPath, { draftId: "d-due", threadId: "thread-due", generation: 1, gate: PASSING_GATE });
+    seedThread(dbPath, { threadId: "thread-upcoming", contactId: "contact-up", jobUrl: null });
+    seedDraft(dbPath, { draftId: "d-up", threadId: "thread-upcoming", generation: 1, gate: PASSING_GATE });
+
+    await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-due/follow-up/schedule",
+      payload: { dueAt: "2020-01-01T00:00:00+00:00" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-upcoming/follow-up/schedule",
+      payload: { dueAt: "2999-01-01T00:00:00+00:00" },
+    });
+
+    const res = await app.inject({ method: "GET", url: "/v1/outreach/follow-ups/due" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { ok: boolean; followUps: Array<{ threadId: string; isDue: boolean }> };
+    expect(body.followUps.map((f) => f.threadId)).toEqual(["thread-due"]);
+    expect(body.followUps[0]!.isDue).toBe(true);
+  });
+
+  it("dismisses a scheduled follow-up and drops it from the due list", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-dis", contactId: "contact-dis", jobUrl: null });
+    seedDraft(dbPath, { draftId: "d-dis", threadId: "thread-dis", generation: 1, gate: PASSING_GATE });
+    await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-dis/follow-up/schedule",
+      payload: { dueAt: "2020-01-01T00:00:00+00:00" },
+    });
+
+    const dismissed = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-dis/follow-up/dismiss",
+    });
+    expect(dismissed.statusCode).toBe(200);
+    expect((dismissed.json() as ThreadResponse).thread!.followUp?.state).toBe("dismissed");
+    expect(eventTypes(dbPath)).toContain("FollowUpDismissed");
+
+    const due = await app.inject({ method: "GET", url: "/v1/outreach/follow-ups/due" });
+    expect((due.json() as { followUps: unknown[] }).followUps).toHaveLength(0);
+  });
+
+  it("cannot complete or dismiss a follow-up that was never scheduled", async () => {
+    const { app, dbPath } = withTempApp();
+    seedThread(dbPath, { threadId: "thread-ns", contactId: "contact-ns", jobUrl: null });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/outreach/threads/thread-ns/follow-up/complete",
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
   });
 });

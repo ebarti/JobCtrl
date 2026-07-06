@@ -546,10 +546,12 @@ the product never sends.
 - Components: `<ContactRoleBadge>`, `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs drawer).
 - Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
 - Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.
+- Send-log + follow-up hooks (Phase 4): `useDueFollowUpsQuery`; `useLogSendMutation`, `useScheduleFollowUpMutation`, `useCompleteFollowUpMutation`, `useDismissFollowUpMutation` (via `createOptimisticMutation` with real patchers — `markThreadSentInThread` / `setThreadFollowUpInThread` — + settle sets that include `dueFollowUps`).
+- Send-log + follow-up components (Phase 4): the `send-log-form` (records a user-attested send — copy makes clear the user sends externally and this only records the fact), `<OutreachSendLogList>` (send history), `<FollowUpPanel>` (schedule / complete / dismiss), and `<DueFollowUpsPanel>` / `<DueFollowUpsBadge>` (the surfaced due-follow-ups list + count, composed into `<OutreachView>`). There is still no send affordance — logging records a fact (INV-1).
 
 **What it does NOT own:**
 - Job / dashboard / artifact / apply-run projections (those stay in `operations/`).
-- Any send/transport affordance — none exists.
+- Any send/transport affordance — none exists; a thread becomes "sent" only through a user-attested send log the user records (INV-1).
 
 **Audit rendering:** the contact list and detail render provenance for every
 stored fact (INV-2); attribute values reach the UI only through the read DTOs and

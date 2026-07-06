@@ -1688,7 +1688,23 @@ Consequences:
 - later phases (supervised research, outreach drafts, send logging + follow-ups)
   build on this context; the no-auto-send invariant holds for all of them
 
+Delivered (2026-07-06, Phase 4): send logging + follow-ups landed and the
+no-auto-send invariant is held by **four enforcement layers** (plan §8.3): (a) the
+`OutreachThread` aggregate can only reach a "sent" state through a user-attested
+`OutreachSendLog` over an *approved* draft — mirroring the `ApplyRun`
+dry-run/evidence coherence guard — so "approve draft" and "log send" are distinct
+actions; (b) a no-send-transport grep guard over the outreach code on both
+runtimes; (c) an adapter-never-called test asserting the full lifecycle opens no
+transport; (d) a use-case + API gate test that approving records a fact and never
+sends. Follow-ups are **surfaced-only**: a conservative suggested date (7 days
+after submission, 14 for a subsequent no-reply nudge) that is fully user-editable,
+never auto-acted, and never sent; the `due_follow_up_projections` read model
+computes "due" over schedule + clock at read time, and any optional recurring
+reminder defaults OFF (mirroring discovery `scheduling_enabled = false`). No send
+transport, `gmail.send` scope, or dependency on the OSS spec §W1.7 owned-send was
+added.
+
 Cites: plan `docs/plans/2026-07-05-outreach-planner-plan.md` (§1.1 invariants,
-§3 owning context, §16 resolved decisions 1 / 2b / 4); domain model
-`docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
+§3 owning context, §8 no-auto-send, §9 follow-ups, §16 resolved decisions 1 / 2b /
+4 / 5); domain model `docs/architecture/domain-model/` (§3.11, §4.9, §5.9);
 `docs/architecture/read-model.md`; `docs/local-ts-api.md`.

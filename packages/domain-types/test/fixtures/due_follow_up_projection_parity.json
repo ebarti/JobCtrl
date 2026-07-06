@@ -1,0 +1,48 @@
+{
+  "tenantId": "local",
+  "threads": [
+    {
+      "threadId": "thread-due",
+      "contactId": "contact-1",
+      "jobUrl": "https://example.com/job/1",
+      "createdAt": "2026-07-01T00:00:00+00:00",
+      "updatedAt": "2026-07-02T00:00:00+00:00",
+      "followUpDueAt": "2026-07-09T00:00:00+00:00",
+      "followUpBasis": "application_submitted",
+      "followUpState": "scheduled"
+    },
+    {
+      "threadId": "thread-completed",
+      "contactId": "contact-2",
+      "jobUrl": null,
+      "createdAt": "2026-07-01T00:00:00+00:00",
+      "updatedAt": "2026-07-03T00:00:00+00:00",
+      "followUpDueAt": "2026-07-05T00:00:00+00:00",
+      "followUpBasis": "application_submitted",
+      "followUpState": "completed"
+    },
+    {
+      "threadId": "thread-none",
+      "contactId": "contact-3",
+      "jobUrl": null,
+      "createdAt": "2026-07-01T00:00:00+00:00",
+      "updatedAt": "2026-07-01T00:00:00+00:00",
+      "followUpDueAt": null,
+      "followUpBasis": null,
+      "followUpState": "none"
+    }
+  ],
+  "expected": [
+    {
+      "threadId": "thread-due",
+      "contactId": "contact-1",
+      "jobId": "https://example.com/job/1",
+      "dueAt": "2026-07-09T00:00:00+00:00",
+      "basis": "application_submitted",
+      "state": "scheduled",
+      "createdAt": "2026-07-01T00:00:00+00:00",
+      "updatedAt": "2026-07-02T00:00:00+00:00",
+      "lastUpdatedAt": "2026-07-02T00:00:00+00:00"
+    }
+  ]
+}

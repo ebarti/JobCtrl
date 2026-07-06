@@ -37,7 +37,12 @@ supervised step because it can drive browser automation and submit applications.
   history in a local web UI.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
   application, each fact carrying its provenance (where it came from), with CSV
-  import. JobHunter never sends anything to your contacts — records only.
+  import. Draft truthful, reviewable outreach messages under the same
+  anti-fabrication gates as your resumes, then **you** send them yourself and
+  **log the send** (date + channel) — the only way a thread is marked sent.
+  Schedule surfaced-only follow-up reminders (a conservative, editable suggested
+  date). JobHunter never sends anything to your contacts — it drafts, previews,
+  and records only, with no send transport of any kind.
 - Optionally run browser-based apply automation, starting with dry runs.
 
 Auto-apply is powerful and must be treated as an explicit submission tool. Use

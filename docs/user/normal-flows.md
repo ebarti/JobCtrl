@@ -287,8 +287,21 @@ truthful, reviewable message that you send yourself:
   replacement is approved.
 - **Approve** the message once the gates pass, then **copy** it and send it
   yourself through your own channel (your email client, and so on).
+- After you have sent it, **log the send**: record the date you sent it and the
+  channel you used (for example "email"). This is a record you enter — JobHunter
+  never sends the message and has no way to; logging simply marks the thread as
+  sent so your history is honest. A send can only be logged against an approved
+  draft, and approving a draft is a separate action that never sends anything.
+- Optionally **schedule a follow-up**. JobHunter suggests a conservative date —
+  7 days after the application was submitted for the first nudge, 14 days for a
+  later one if you have had no reply — which you can edit freely. Due follow-ups
+  surface in a **Follow-ups** list and a badge so you remember to reach out; you
+  then send the follow-up yourself, exactly like the first message. Follow-ups are
+  reminders only: they are never sent for you, and any optional recurring reminder
+  is off by default.
 
-You send every message yourself. JobHunter drafts and previews; it never sends
-anything to a contact — there is no email, message, or outreach send transport of
-any kind, drafts terminate at copy/export, and contact, research, or draft data
-never affects scoring or apply decisions.
+You send every message yourself. JobHunter drafts, previews, and records; it
+never sends anything to a contact — there is no email, message, or outreach send
+transport of any kind, drafts terminate at copy/export, a thread only becomes
+"sent" through a send you log yourself, and contact, research, draft, send, or
+follow-up data never affects scoring or apply decisions.

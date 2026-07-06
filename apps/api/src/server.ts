@@ -91,6 +91,8 @@ import {
   GenerateOutreachDraftRequestSchema,
   ReviseOutreachDraftRequestSchema,
   RejectOutreachDraftRequestSchema,
+  LogOutreachSendRequestSchema,
+  ScheduleFollowUpRequestSchema,
   OutreachThreadQuerySchema,
 } from "./contracts.js";
 import {
@@ -116,10 +118,15 @@ import {
   OutreachInputError,
   OutreachNotFoundError,
   approveOutreachDraft,
+  completeOutreachFollowUp,
+  dismissOutreachFollowUp,
   findOutreachThreadIdForContact,
+  getDueFollowUps,
   getOutreachThreadDetail,
   getOutreachThreadForContact,
+  logOutreachSend,
   rejectOutreachDraft,
+  scheduleOutreachFollowUp,
 } from "./outreach.js";
 import {
   decideOutcomeSuggestion,
@@ -2523,7 +2530,109 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
+  // Outreach send log + follow-ups (R6 Phase 4). INV-1: NO route sends anything.
+  // `send-logs` RECORDS a user-attested send of an APPROVED draft; the follow-up
+  // routes schedule/complete/dismiss a surfaced-only reminder; the due list is a
+  // derived read over schedule + clock. No transport of any kind is exposed here.
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/outreach/threads/:threadId/send-logs",
+    async (request, reply) => {
+      const body = parseBody(reply, LogOutreachSendRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_outreach_send_log" };
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: logOutreachSend(
+              db,
+              decodeRouteParam(request.params.threadId),
+              body.draftId,
+              body.channel,
+              body.sentAt,
+            ),
+          };
+        } catch (error) {
+          return outreachTransitionError(reply, error);
+        }
+      });
+    },
+  );
+
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/outreach/threads/:threadId/follow-up/schedule",
+    async (request, reply) => {
+      const body = parseBody(reply, ScheduleFollowUpRequestSchema, request.body ?? {});
+      if (!body) {
+        return { ok: false, error: "invalid_follow_up_schedule" };
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: scheduleOutreachFollowUp(db, decodeRouteParam(request.params.threadId), {
+              ...(body.dueAt ? { dueAt: body.dueAt } : {}),
+              ...(body.basis ? { basis: body.basis } : {}),
+              ...(body.hasLoggedReply !== undefined
+                ? { hasLoggedReply: body.hasLoggedReply }
+                : {}),
+            }),
+          };
+        } catch (error) {
+          return outreachTransitionError(reply, error);
+        }
+      });
+    },
+  );
+
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/outreach/threads/:threadId/follow-up/complete",
+    async (request, reply) =>
+      withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: completeOutreachFollowUp(db, decodeRouteParam(request.params.threadId)),
+          };
+        } catch (error) {
+          return outreachTransitionError(reply, error);
+        }
+      }),
+  );
+
+  app.post<{ Params: { threadId: string } }>(
+    "/v1/outreach/threads/:threadId/follow-up/dismiss",
+    async (request, reply) =>
+      withWritableDb(reply, options.dbPath, (db) => {
+        try {
+          return {
+            ok: true,
+            thread: dismissOutreachFollowUp(db, decodeRouteParam(request.params.threadId)),
+          };
+        } catch (error) {
+          return outreachTransitionError(reply, error);
+        }
+      }),
+  );
+
+  app.get("/v1/outreach/follow-ups/due", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => ({ ok: true, followUps: getDueFollowUps(db) })),
+  );
+
   return app;
+}
+
+function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: false; error: string; message: string } {
+  if (error instanceof OutreachNotFoundError) {
+    void reply.code(404);
+    return { ok: false, error: "outreach_thread_not_found", message: error.message };
+  }
+  if (error instanceof OutreachInputError) {
+    void reply.code(400);
+    return { ok: false, error: "invalid_outreach_transition", message: error.message };
+  }
+  throw error;
 }
 
 function decodeRouteParam(value: string): string {

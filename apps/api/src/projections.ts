@@ -62,6 +62,10 @@ const OUTREACH_EVENT_TYPES = new Set([
   "OutreachDraftRevised",
   "OutreachDraftApproved",
   "OutreachDraftRejected",
+  "OutreachSendLogged",
+  "FollowUpScheduled",
+  "FollowUpCompleted",
+  "FollowUpDismissed",
 ]);
 const COMPENSATION_PROJECTION_VERSION = 1;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
@@ -717,6 +721,21 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     );
     CREATE INDEX IF NOT EXISTS idx_outreach_thread_projections_lookup
       ON outreach_thread_projections(tenant_id, contact_id, job_id);
+    CREATE TABLE IF NOT EXISTS due_follow_up_projections (
+      tenant_id           TEXT NOT NULL DEFAULT 'local',
+      thread_id           TEXT NOT NULL,
+      contact_id          TEXT NOT NULL,
+      job_id              TEXT,
+      due_at              TEXT,
+      basis               TEXT,
+      state               TEXT NOT NULL DEFAULT 'scheduled',
+      created_at          TEXT,
+      updated_at          TEXT,
+      last_updated_at     TEXT,
+      PRIMARY KEY (tenant_id, thread_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_due_follow_up_projections_due
+      ON due_follow_up_projections(tenant_id, due_at);
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
@@ -845,6 +864,7 @@ export function refreshContactResearchProjections(db: SqliteDatabase, tenantId =
 export function refreshOutreachProjections(db: SqliteDatabase, tenantId = "local"): void {
   ensureProjectionTables(db);
   rebuildOutreachProjections(db, tenantId);
+  rebuildDueFollowUpProjections(db, tenantId);
 }
 
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
@@ -980,6 +1000,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   }
   if (outreachDirty) {
     rebuildOutreachProjections(db, tenantId);
+    rebuildDueFollowUpProjections(db, tenantId);
   }
 
   for (const jobUrl of dirtyJobs) {
@@ -4336,6 +4357,81 @@ function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void 
   );
   const drop = db.prepare(
     "DELETE FROM outreach_thread_projections WHERE tenant_id = ? AND thread_id = ?",
+  );
+  for (const row of existing) {
+    if (!liveIds.has(String(row.thread_id))) {
+      drop.run(tenantId, String(row.thread_id));
+    }
+  }
+}
+
+/**
+ * Rematerialise one `due_follow_up_projections` row per thread whose follow-up is
+ * SCHEDULED (Contact & Outreach, ninth context). Whether a scheduled follow-up is
+ * *due* is computed at read time (schedule + clock) — a derived signal, never an
+ * action (INV-1). Completed/dismissed/unscheduled threads are dropped. Mirrors the
+ * Python `ProjectionBuilder._rebuild_due_follow_ups` for cross-runtime parity.
+ */
+function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "outreach_threads")) {
+    return;
+  }
+  const threads = allRows<{
+    thread_id: string;
+    contact_id: string;
+    job_url: string | null;
+    follow_up_due_at: string | null;
+    follow_up_basis: string | null;
+    follow_up_state: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+  }>(
+    db,
+    `SELECT thread_id, contact_id, job_url, follow_up_due_at, follow_up_basis,
+            follow_up_state, created_at, updated_at
+     FROM outreach_threads
+     WHERE tenant_id = ? AND follow_up_state = 'scheduled'`,
+    [tenantId],
+  );
+  const liveIds = new Set<string>();
+  const upsert = db.prepare(
+    `INSERT INTO due_follow_up_projections (
+       tenant_id, thread_id, contact_id, job_id, due_at, basis, state,
+       created_at, updated_at, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
+       contact_id      = excluded.contact_id,
+       job_id          = excluded.job_id,
+       due_at          = excluded.due_at,
+       basis           = excluded.basis,
+       state           = excluded.state,
+       created_at      = excluded.created_at,
+       updated_at      = excluded.updated_at,
+       last_updated_at = excluded.last_updated_at`,
+  );
+  for (const thread of threads) {
+    const threadId = String(thread.thread_id);
+    liveIds.add(threadId);
+    upsert.run(
+      tenantId,
+      threadId,
+      String(thread.contact_id),
+      thread.job_url,
+      thread.follow_up_due_at,
+      thread.follow_up_basis ?? "",
+      String(thread.follow_up_state ?? "scheduled"),
+      thread.created_at,
+      thread.updated_at,
+      thread.updated_at,
+    );
+  }
+  const existing = allRows<{ thread_id: string }>(
+    db,
+    "SELECT thread_id FROM due_follow_up_projections WHERE tenant_id = ?",
+    [tenantId],
+  );
+  const drop = db.prepare(
+    "DELETE FROM due_follow_up_projections WHERE tenant_id = ? AND thread_id = ?",
   );
   for (const row of existing) {
     if (!liveIds.has(String(row.thread_id))) {

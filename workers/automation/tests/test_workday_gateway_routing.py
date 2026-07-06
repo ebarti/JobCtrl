@@ -7,9 +7,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from urllib.parse import urlsplit
 
-from jobhunter.database import get_connection
+import pytest
+
+from jobhunter import database
+from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.discovery import workday
 from jobhunter.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobhunter.infrastructure.network.politeness import PolitenessGateway
@@ -178,13 +182,19 @@ def test_parallel_employers_pace_per_host_and_run_concurrently() -> None:
     assert min(server_a.seen_times) < max(server_b.seen_times)
 
 
-def test_parallel_blocked_outcomes_record_on_owning_thread_under_source_id() -> None:
+def test_parallel_blocked_outcomes_record_on_owning_thread_under_source_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Two employers that resolve to the SAME source_id but distinct employer_keys
     # on distinct hosts. Both hosts are hard rate-limited, so each worker records
     # a rate-limited outcome via ITS OWN thread-local connection. Keying the
     # client cache by employer_key (not source_id) is what keeps the second
     # thread from reusing the first thread's connection (a check_same_thread
     # ProgrammingError) -- so future.result() not raising is the assertion.
+    db_path = tmp_path / "workday-gateway-routing.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    init_db(db_path)
+
     run_id = "discovery:workday:p5a-blocked"
     shared_source_id = "workday:shared-tenant"
     limiter = HostRateLimiter()
@@ -215,20 +225,26 @@ def test_parallel_blocked_outcomes_record_on_owning_thread_under_source_id() -> 
         limiter.note_retry_after(urlsplit(emp["base_url"]).netloc, 10**9)
 
     def hit(employer: dict) -> dict:
-        result = workday.workday_search(employer, "Engineer", limit=20, offset=0)
-        get_connection().commit()  # persist this thread's recorded outcome
-        return result
+        try:
+            result = workday.workday_search(employer, "Engineer", limit=20, offset=0)
+            get_connection().commit()  # persist this thread's recorded outcome
+            return result
+        finally:
+            close_connection()
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [f.result() for f in [pool.submit(hit, emp) for emp in employers.values()]]
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [f.result() for f in [pool.submit(hit, emp) for emp in employers.values()]]
 
-    assert results == [{}, {}]  # both blocked, returned gracefully
-    rows = get_connection().execute(
-        """
-        SELECT COUNT(*) AS c FROM operational_attempt_metrics
-        WHERE run_id = ? AND source_id = ? AND failure_category = 'rate_limited'
-          AND is_scrape_failure = 0
-        """,
-        (run_id, shared_source_id),
-    ).fetchone()
-    assert rows["c"] == 2  # one per worker thread, both under the shared source_id
+        assert results == [{}, {}]  # both blocked, returned gracefully
+        rows = get_connection().execute(
+            """
+            SELECT COUNT(*) AS c FROM operational_attempt_metrics
+            WHERE run_id = ? AND source_id = ? AND failure_category = 'rate_limited'
+              AND is_scrape_failure = 0
+            """,
+            (run_id, shared_source_id),
+        ).fetchone()
+        assert rows["c"] == 2  # one per worker thread, both under the shared source_id
+    finally:
+        close_connection(db_path)

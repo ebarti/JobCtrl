@@ -419,4 +419,25 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.rejectOutreachDraft(threadId, draftId, body);
   }
+  logOutreachSend(
+    threadId: string,
+    body: Parameters<JobHunterApiClient["logOutreachSend"]>[1],
+  ) {
+    return this.client.logOutreachSend(threadId, body);
+  }
+  scheduleOutreachFollowUp(
+    threadId: string,
+    body: Parameters<JobHunterApiClient["scheduleOutreachFollowUp"]>[1] = {},
+  ) {
+    return this.client.scheduleOutreachFollowUp(threadId, body);
+  }
+  completeOutreachFollowUp(threadId: string) {
+    return this.client.completeOutreachFollowUp(threadId);
+  }
+  dismissOutreachFollowUp(threadId: string) {
+    return this.client.dismissOutreachFollowUp(threadId);
+  }
+  dueOutreachFollowUps() {
+    return this.client.dueOutreachFollowUps();
+  }
 }

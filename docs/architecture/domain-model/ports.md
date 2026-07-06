@@ -229,9 +229,12 @@ supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
 | **Driving** | `ReviseOutreachDraftUseCase` | Accept a user-edited body as a new generation and RE-RUN the identical gates; the prior approved draft stays readable until this revision is approved |
 | **Driving** | `ApproveOutreachDraftUseCase` | Approve a `candidate` draft — only when its persisted `DraftGateResults` passed (INV-5); supersedes the previously-approved draft |
 | **Driving** | `RejectOutreachDraftUseCase` | Reject a `candidate` draft; never destroys the last approved draft (INV-5) |
+| **Driving** | `LogOutreachSendUseCase` | Record a user-attested send of an *approved* draft (`OutreachSendLog`) — the only path to a "sent" thread; refuses a non-approved draft; no transport (INV-1) |
+| **Driving** | `ScheduleFollowUpUseCase` | Schedule the next follow-up; derives a suggested date (7d after submission, 14d nudge) when none is supplied — surfaced-only, user-editable, never sent (§9) |
+| **Driving** | `CompleteFollowUpUseCase` / `DismissFollowUpUseCase` | Mark a scheduled follow-up done or dismissed — explicit user actions |
 | **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
 | **Driven** | `ContactResearchTaskRepository` | Persist and retrieve the `ContactResearchTask` aggregate (task + candidates + source attempts) |
-| **Driven** | `OutreachThreadRepository` | Persist and retrieve the `OutreachThread` aggregate (thread + generation-versioned drafts, gate results, and claim provenance), tenant-scoped |
+| **Driven** | `OutreachThreadRepository` | Persist and retrieve the `OutreachThread` aggregate (thread + generation-versioned drafts, gate results, claim provenance, user-attested send logs, and the follow-up schedule), tenant-scoped |
 | **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (robots/rate-limit/budget are first-class outcomes) |
 | **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page; outreach draft synthesis and the LLM-as-judge gate |
 | **Driven** | `EventPublisher` | Publish contact, research, and outreach-draft domain events |

@@ -68,6 +68,14 @@ DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
     "schedule_cron": "0 7 * * *",
 }
 
+# Contact & Outreach follow-up reminders (R6 Phase 4). Default-OFF, mirroring
+# discovery ``scheduling_enabled``: any optional recurring reminder is disabled by
+# default (fail-closed). Even when enabled, follow-ups are only SURFACED as due
+# items in the UI — nothing is ever sent (INV-1: no auto-send, no transport).
+DEFAULT_OUTREACH_FOLLOW_UP_CONFIG: dict = {
+    "reminders_enabled": False,
+}
+
 _EUROPE_TARGET_MARKERS = (
     "spain",
     "españa",
@@ -255,6 +263,18 @@ def load_discovery_schedule_settings() -> tuple[bool, str]:
     enabled = _bool_config(search_cfg.get("scheduling_enabled"), False)
     cron = str(search_cfg.get("schedule_cron") or "0 7 * * *").strip() or "0 7 * * *"
     return enabled, cron
+
+
+def outreach_follow_up_reminders_enabled(config: dict | None = None) -> bool:
+    """Whether the optional recurring outreach follow-up reminder is enabled.
+
+    Default-OFF (fail-closed), mirroring discovery ``scheduling_enabled``. Even
+    when enabled it only SURFACES due follow-ups; it never sends (INV-1). The
+    surfaced due-follow-ups read model is always available regardless of this
+    flag — the flag governs only an optional recurring re-notification.
+    """
+    cfg = config if config is not None else DEFAULT_OUTREACH_FOLLOW_UP_CONFIG
+    return _bool_config(cfg.get("reminders_enabled"), False)
 
 
 def _default_discovery_search_config() -> dict:
