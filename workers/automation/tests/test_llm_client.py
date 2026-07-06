@@ -206,9 +206,23 @@ def _client_with_handler(handler) -> LLMClient:
     return client
 
 
-def test_chat_retries_5xx_then_succeeds(monkeypatch) -> None:
+@pytest.fixture
+def llm_retry_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
+    real_time = llm.time
+
+    class TimeProxy:
+        def sleep(self, seconds: float) -> None:
+            sleeps.append(seconds)
+
+        def __getattr__(self, name: str):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(llm, "time", TimeProxy())
+    return sleeps
+
+
+def test_chat_retries_5xx_then_succeeds(llm_retry_sleeps: list[float]) -> None:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -225,12 +239,10 @@ def test_chat_retries_5xx_then_succeeds(monkeypatch) -> None:
 
     assert result == "ok"
     assert calls["n"] == 2
-    assert len(sleeps) == 1
+    assert len(llm_retry_sleeps) == 1
 
 
-def test_chat_retries_connection_error_then_succeeds(monkeypatch) -> None:
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
+def test_chat_retries_connection_error_then_succeeds(llm_retry_sleeps: list[float]) -> None:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -247,14 +259,12 @@ def test_chat_retries_connection_error_then_succeeds(monkeypatch) -> None:
 
     assert result == "ok"
     assert calls["n"] == 2
-    assert len(sleeps) == 1
+    assert len(llm_retry_sleeps) == 1
 
 
-def test_chat_caps_hostile_retry_after_header(monkeypatch) -> None:
+def test_chat_caps_hostile_retry_after_header(llm_retry_sleeps: list[float]) -> None:
     """A 429 with an absurd ``Retry-After`` must not park the call for
     hours — the honored wait is capped at the ceiling."""
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -274,16 +284,14 @@ def test_chat_caps_hostile_retry_after_header(monkeypatch) -> None:
         client.close()
 
     assert result == "ok"
-    assert len(sleeps) == 1
-    assert sleeps[0] <= llm._MAX_RETRY_WAIT
+    assert len(llm_retry_sleeps) == 1
+    assert llm_retry_sleeps[0] <= llm._MAX_RETRY_WAIT
 
 
-def test_chat_retries_on_negative_retry_after(monkeypatch) -> None:
+def test_chat_retries_on_negative_retry_after(llm_retry_sleeps: list[float]) -> None:
     """A negative ``Retry-After`` must not reach ``time.sleep`` (which rejects
     it with ValueError). The honored wait is floored to a finite, non-negative
     value and the request is retried."""
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -304,17 +312,15 @@ def test_chat_retries_on_negative_retry_after(monkeypatch) -> None:
 
     assert result == "ok"
     assert calls["n"] == 2
-    assert len(sleeps) == 1
-    assert math.isfinite(sleeps[0])
-    assert 0 <= sleeps[0] <= llm._MAX_RETRY_WAIT
+    assert len(llm_retry_sleeps) == 1
+    assert math.isfinite(llm_retry_sleeps[0])
+    assert 0 <= llm_retry_sleeps[0] <= llm._MAX_RETRY_WAIT
 
 
-def test_chat_retries_on_nan_retry_after(monkeypatch) -> None:
+def test_chat_retries_on_nan_retry_after(llm_retry_sleeps: list[float]) -> None:
     """A NaN ``Retry-After`` must not reach ``time.sleep`` (which rejects it
     with ValueError). It is treated as an absent header, so the call falls back
     to bounded backoff and retries."""
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -335,14 +341,12 @@ def test_chat_retries_on_nan_retry_after(monkeypatch) -> None:
 
     assert result == "ok"
     assert calls["n"] == 2
-    assert len(sleeps) == 1
-    assert math.isfinite(sleeps[0])
-    assert 0 <= sleeps[0] <= llm._MAX_RETRY_WAIT
+    assert len(llm_retry_sleeps) == 1
+    assert math.isfinite(llm_retry_sleeps[0])
+    assert 0 <= llm_retry_sleeps[0] <= llm._MAX_RETRY_WAIT
 
 
-def test_chat_does_not_retry_client_error(monkeypatch) -> None:
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
+def test_chat_does_not_retry_client_error(llm_retry_sleeps: list[float]) -> None:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -357,12 +361,10 @@ def test_chat_does_not_retry_client_error(monkeypatch) -> None:
         client.close()
 
     assert calls["n"] == 1
-    assert sleeps == []
+    assert llm_retry_sleeps == []
 
 
-def test_chat_bounds_retries_on_persistent_transient_failure(monkeypatch) -> None:
-    sleeps: list[float] = []
-    monkeypatch.setattr(llm, "_sleep", lambda seconds: sleeps.append(seconds))
+def test_chat_bounds_retries_on_persistent_transient_failure(llm_retry_sleeps: list[float]) -> None:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -377,5 +379,5 @@ def test_chat_bounds_retries_on_persistent_transient_failure(monkeypatch) -> Non
         client.close()
 
     assert calls["n"] == llm._MAX_RETRIES
-    assert len(sleeps) == llm._MAX_RETRIES - 1
-    assert all(wait <= llm._MAX_RETRY_WAIT for wait in sleeps)
+    assert len(llm_retry_sleeps) == llm._MAX_RETRIES - 1
+    assert all(wait <= llm._MAX_RETRY_WAIT for wait in llm_retry_sleeps)
