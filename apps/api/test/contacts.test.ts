@@ -208,4 +208,68 @@ describe("contacts API", () => {
       expect(attribute.provenance.sourceRef).toBe("referrals.csv");
     }
   });
+
+  it("preserves imported provenance on unrelated edits (INV-2 regression)", async () => {
+    const { app } = withTempApp();
+    const csvText =
+      "name,email,employer,role\n" + "Bob Manager,bob@globex.example,Globex,hiring_manager\n";
+    const imported = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/contacts/import",
+        payload: { filename: "referrals.csv", csvText },
+      })
+    ).json() as ContactImportResponse;
+    const contactId = imported.contactIds[0]!;
+    const before = (
+      (await app.inject({ method: "GET", url: `/v1/contacts/${contactId}` })).json() as {
+        contact: ContactDetail;
+      }
+    ).contact;
+    const originalByKind = new Map(before.attributes.map((attribute) => [attribute.kind, attribute]));
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/v1/contacts/${contactId}`,
+      payload: {
+        role: "referrer",
+        attributes: [
+          { kind: "name", value: "Bob Manager" },
+          { kind: "email", value: "bob@globex.example" },
+          { kind: "phone", value: "+1 555 0100" },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const after = (res.json() as { contact: ContactDetail }).contact;
+    const afterByKind = new Map(after.attributes.map((attribute) => [attribute.kind, attribute]));
+    for (const kind of ["name", "email"]) {
+      const kept = afterByKind.get(kind)!;
+      const original = originalByKind.get(kind)!;
+      expect(kept.provenance.sourceKind).toBe("user_imported_list");
+      expect(kept.provenance.sourceRef).toBe("referrals.csv");
+      expect(kept.provenance.capturedAt).toBe(original.provenance.capturedAt);
+      expect(kept.attributeId).toBe(original.attributeId);
+    }
+    expect(afterByKind.get("phone")!.provenance.sourceKind).toBe("user_entered");
+
+    const revalued = await app.inject({
+      method: "PATCH",
+      url: `/v1/contacts/${contactId}`,
+      payload: {
+        attributes: [
+          { kind: "name", value: "Bob Manager" },
+          { kind: "email", value: "bob.manager@globex.example" },
+        ],
+      },
+    });
+    const finalByKind = new Map(
+      (revalued.json() as { contact: ContactDetail }).contact.attributes.map((attribute) => [
+        attribute.kind,
+        attribute,
+      ]),
+    );
+    expect(finalByKind.get("name")!.provenance.sourceKind).toBe("user_imported_list");
+    expect(finalByKind.get("email")!.provenance.sourceKind).toBe("user_entered");
+  });
 });

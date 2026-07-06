@@ -168,7 +168,19 @@ class UpdateContactUseCase:
                 confidence=1.0,
                 user_confirmed=True,
             )
-            revised_attributes = _build_attributes(attributes, provenance)
+            built = _build_attributes(attributes, provenance)
+            # A fact whose (kind, value) is unchanged keeps its original
+            # attribute id and provenance (INV-2: editing the contact must not
+            # re-stamp imported/derived facts as user_entered); only new or
+            # value-edited facts are user-entered.
+            remaining: dict[tuple[str, str], list[ContactAttribute]] = {}
+            for current in existing.attributes:
+                remaining.setdefault((current.kind, current.value), []).append(current)
+            preserved: list[ContactAttribute] = []
+            for candidate in built:
+                bucket = remaining.get((candidate.kind, candidate.value))
+                preserved.append(bucket.pop(0) if bucket else candidate)
+            revised_attributes = tuple(preserved)
         contact = existing.revise(
             link=link,
             role=role,
