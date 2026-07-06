@@ -21,18 +21,21 @@ in one hop.
 
 ## Freeze status
 
-> **PROVISIONAL FREEZE — not yet owner-signed.** Verified against `main`
-> @ `4d6d5218` on **2026-07-06**. Every `Current` row's verification pointer
-> resolved at that sha. GATE G1 is satisfied only once the repository owner
-> reviews this ledger, assigns per-claim sign-off owners (§11.7 of the plan),
-> and re-stamps this line with the dated `main` sha at actual freeze time.
-> `main` is advancing quickly while the launch trains merge, so the freeze sha
-> **must be re-recorded at sign-off**; the pointers below are stable handles
-> (`docs/requirements.md` BR/TR ids, architecture docs, source/test paths) that
-> resolve at any recent `main`.
+> **PROVISIONAL FREEZE — not yet owner-signed.** Re-anchored and verified
+> against `main` @ `a4001862` on **2026-07-06**, after the R3 browser-extension
+> and R4 outcome-analytics / artifact-comparison trains merged (this pass added
+> CL-005, CL-027, CL-038, CL-055 for the capabilities those merges put on public
+> surfaces). Every `Current` and `Beta` row's verification pointer resolved at
+> that sha. GATE G1 is satisfied only once the repository owner reviews this
+> ledger, assigns per-claim sign-off owners (§11.7 of the plan), and re-stamps
+> this line with the dated `main` sha at actual freeze time. `main` is advancing
+> quickly while the launch trains merge, so the freeze sha **must be re-recorded
+> at sign-off**; the pointers below are stable handles (`docs/requirements.md`
+> BR/TR ids, architecture docs, source/test paths) that resolve at any recent
+> `main`.
 >
 > Unless a row's `Last verified` says otherwise, every row was last verified in
-> this pass (2026-07-06 @ `4d6d5218`).
+> this pass (2026-07-06 @ `a4001862`).
 
 ## How to read this ledger
 
@@ -74,6 +77,7 @@ path, or test path that resolves on `main`.
 | CL-002 | Discovery removes duplicate postings and retires postings that have closed. | Hero (Profile-Driven Discovery) | Current | repo owner | [pipeline stages](architecture/pipeline/stages.md) (dedupe); [envelope](architecture/pipeline/envelope.md) (CLOSED/NOT_FOUND reconcile) | 2026-07-06 |
 | CL-003 | Scheduled discovery is off by default; a local Temporal Schedule runs on the configured cron only after the user enables it. | README (What It Does); Configuration | Current | repo owner | [pipeline operations](architecture/pipeline/operations.md) ("off by default"); [configuration](user/configuration.md) | 2026-07-06 |
 | CL-004 | Enrichment adds full descriptions, canonical posting URLs, and apply URLs to postings. | README (What It Does) | Current | repo owner | [pipeline stages](architecture/pipeline/stages.md) | 2026-07-06 |
+| CL-005 | The optional local browser extension captures the active job page (URL and visible text) over loopback and feeds it into the existing manual-capture importer, so dedupe, snapshots, quarantine, and source provenance stay identical to other user-mediated captures. It is loaded unpacked in the browser's developer mode. | README (What It Does; Browser Extension Capture And Autofill) | Current | repo owner | `BR-019` (requirements.md); [local TS API](local-ts-api.md) (`POST /v1/extension/captures`); `apps/api/src/server.ts` (route → `manualCaptureImporter`) | 2026-07-06 |
 
 ### Scoring
 
@@ -91,9 +95,10 @@ path, or test path that resolves on `main`.
 | CL-021 | Deterministic fabrication gates block invented facts (no fabricated metric, date, title, employer, or ungrounded named technology); the gate fails closed. | Hero (Audited Materials) | Current | repo owner | [tailoring](architecture/tailoring.md) (Fabrication gate: `fabrication_detector.py`, `claim_grounding.py`) | 2026-07-06 |
 | CL-022 | Keyword coverage is computed against the actual rendered resume text, never inferred from the job keywords alone. | Hero (Audited Materials) | Current | repo owner | [tailoring](architecture/tailoring.md) ("computed against the rendered resume text"); [materials](architecture/materials.md) | 2026-07-06 |
 | CL-023 | Apply Review renders the current HTML/CSS resume from the same source that prints the final PDF, with line selection and in-document audit annotations, and lets the user edit before approval. | README (Review and edit …); Tour (Apply Review) | Current | repo owner | `BR-046` (requirements.md) | 2026-07-06 |
-| CL-024 | Apply Review supports draft edits, named revisions, and comment threads with draft-aware approval; revising never destroys the last accepted artifact. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `BR-052` (requirements.md) | 2026-07-06 |
+| CL-024 | Apply Review supports draft edits, named revisions, and comment threads with draft-aware approval; revising never destroys the last accepted artifact. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `BR-052` (Apply Review interactive revision, 2026-07-04 row — the handle is duplicated on `main`, see [Owner decisions](#owner-decisions-for-this-ledger)) | 2026-07-06 |
 | CL-025 | A failed material refresh (including a template change) preserves the last accepted artifacts instead of destroying them. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `TR-032`, `BR-041` (requirements.md) | 2026-07-06 |
 | CL-026 | Resume PDF style templates are editable in Preferences with a default template and a per-job override, without modifying candidate profile data. | README (Edit resume PDF style templates …) | Current | repo owner | [materials](architecture/materials.md) | 2026-07-06 |
+| CL-027 | Apply Review can compare a freshly rendered resume draft against the last accepted artifact before approval, using the same rendered text and keyword-coverage source the audit uses; the comparison is read-only and does not replace the accepted artifact. | README (Normal Flow, step 6) | Current | repo owner | [materials](architecture/materials.md) (rendered text + coverage source); `apps/web/src/contexts/materials/selectors/compareCoverage.ts` | 2026-07-06 |
 
 ### Apply safety
 
@@ -107,6 +112,7 @@ path, or test path that resolves on `main`.
 | CL-035 | JobHunter never submits applications, runs destructive profile/database actions, or bypasses third-party controls (CAPTCHA, paywall, login, rate-limit, bot-control) without explicit user authorization; the apply agent stops on SSO, declines permission prompts, refuses ID/biometric verification, and never enters payment details. | README (Responsible Use); Security (No Third-Party Bypass; The Apply Agent) | Current | repo owner | `BR-001` (requirements.md); [security](user/security.md) | 2026-07-06 |
 | CL-036 | Application outcomes can be recorded manually without browser automation, and web approval facts do not submit anything by themselves. | Data & Safety (Auto-Apply Safety) | Current | repo owner | [security](user/security.md); `apps/api/src/application-feedback.ts` | 2026-07-06 |
 | CL-037 | The apply agent is a local Claude Code CLI subprocess that reads untrusted job pages; prompt injection is a real exposure that the listed controls limit but do not remove. | Security (The Apply Agent) | Current | repo owner | [security](user/security.md) (`--permission-mode bypassPermissions`, prompt-injection controls) | 2026-07-06 |
+| CL-038 | On supported ATS pages the browser extension offers deterministic, profile-backed field suggestions and shows each value's profile source; the user chooses what to fill, the extension generates no free-text answers, and it has no submission path (it prevents the form's own submit and never submits on the user's behalf). | README (Browser Extension Capture And Autofill); Security (Browser Extension Pairing) | Current | repo owner | `BR-052` (browser-extension autofill, 2026-07-05 row — duplicate handle, see [Owner decisions](#owner-decisions-for-this-ledger)); [local TS API](local-ts-api.md) (`GET /v1/extension/autofill/profile`); `apps/extension/src/content-script.ts` (submit prevented) | 2026-07-06 |
 
 ### LLM spend
 
@@ -121,6 +127,19 @@ path, or test path that resolves on `main`.
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-050 | Every stage runs as a durable Temporal workflow with heartbeats and classified, bounded retries. | Hero (Temporal-Native Pipeline); README (What It Does) | Current | repo owner | `TR-008` (requirements.md); [envelope](architecture/pipeline/envelope.md); [concurrency](architecture/pipeline/concurrency.md) | 2026-07-06 |
 | CL-051 | The Runs page shows every workflow run with status, mode, timing, and a deep link into the Temporal web UI. | README (Track pipeline …); Tour (Runs History) | Current | repo owner | `BR-005` (requirements.md); [read model](architecture/read-model.md); `workflow_run_projections` | 2026-07-06 |
+
+### Outcome analytics
+
+| Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
+| --- | --- | --- | --- | --- | --- | --- |
+| CL-055 | A local Analytics view summarizes recorded application outcomes as a conversion funnel (applied → reply → interview → offer / rejection) broken down by source, score band, fit band, apply mode, accepted resume template, and tailoring policy. Low-sample cells are suppressed and rates are presented descriptively, without causal claims. | README (Track progress … Analytics) | Beta | repo owner | [read model](architecture/read-model.md) (`dashboard_projections` `outcome_conversion_json`); `apps/web/src/views/analytics/SmallSampleNotice.tsx` (small-sample suppression) | 2026-07-06 |
+
+> **Why Beta.** The capability is shipped and pointer-backed, but the honest
+> reading of outcome rates requires a load-bearing qualifier (small samples are
+> suppressed; the rates are descriptive, not causal). That qualifier is carried
+> at the point of claim — in the Analytics view itself (`SmallSampleNotice` plus
+> the non-causal caption) — so the surface stays truthful; the `Beta` label
+> records that the qualifier is load-bearing rather than a mere scope note.
 
 ### Local-first and privacy
 
@@ -177,8 +196,21 @@ Carried from the plan's open owner decisions (§11); resolve at sign-off:
   [How to read this ledger](#how-to-read-this-ledger). Reclassification
   candidates to review: **CL-030/CL-031/CL-032/CL-033/CL-034/CL-037** (live
   apply automation is the highest-risk surface — the owner may choose to present
-  live auto-apply as `Beta` even though each gate is shipped and pointer-backed)
-  and **CL-040** (the spend ceiling's "estimate, not billing truth" and
-  "per-workflow preflight, not mid-call interrupt" qualifiers are load-bearing).
+  live auto-apply as `Beta` even though each gate is shipped and pointer-backed);
+  **CL-040** (the spend ceiling's "estimate, not billing truth" and
+  "per-workflow preflight, not mid-call interrupt" qualifiers are load-bearing);
+  and **CL-005/CL-038** (the browser extension ships but is loaded unpacked in
+  developer mode, not from a browser store — the owner may treat "unpacked
+  developer-mode only" as a maturity qualifier warranting `Beta`). **CL-055** is
+  already classified `Beta` (see its "Why Beta" note); confirm at sign-off.
+- **Requirements-integrity defect (flag, not owned here).** On `main`
+  @ `a4001862` the handle **`BR-052` is duplicated** in
+  [`requirements.md`](requirements.md): a 2026-07-04 row ("Apply Review must
+  support interactive resume revision …", cited by CL-024) and a 2026-07-05 row
+  ("Browser-extension assisted autofill …", cited by CL-038). This ledger cites
+  each with a date/topic disambiguator, but the duplicate breaks the one-hop
+  handle contract. The fix (renumbering the newer row to a free handle) belongs
+  to whoever owns `requirements.md`, not to this launch-artifacts change; it is
+  reported for follow-up.
 - **§11.7 Sign-off owners.** Replace the `repo owner` default in the Owner column
   with named accountable owners, and record who owns the claim-freeze sign-off.
