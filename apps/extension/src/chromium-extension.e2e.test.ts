@@ -1,5 +1,4 @@
-import { chromium, type BrowserContext, type Page, type Request, type Worker } from "@playwright/test";
-import http from "node:http";
+import { chromium, type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,16 +14,22 @@ interface RecordedRequest {
   url: string;
 }
 
+interface FakeLoopbackApi {
+  requests: RecordedRequest[];
+  close(): Promise<void>;
+}
+
 describe("Chromium loaded extension privacy boundary", () => {
   it("sends capture and autofill API requests only to loopback origins", async () => {
-    const api = await startFakeLoopbackApi();
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-extension-e2e-"));
+    let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
     try {
       context = await launchExtensionContext(userDataDir);
       if (!context) {
         return;
       }
+      api = await installFakeLoopbackApi(context);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const extensionId = new URL(worker.url()).host;
       const extensionHttpRequests: string[] = [];
@@ -86,8 +91,8 @@ describe("Chromium loaded extension privacy boundary", () => {
         extensionHttpRequests.every((url) => url.startsWith(`${LOOPBACK_ORIGIN}/`) || url.startsWith("http://localhost:8766/")),
       ).toBe(true);
     } finally {
+      await api?.close();
       await context?.close();
-      await api.close();
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }
   }, 60_000);
@@ -201,44 +206,43 @@ function isExtensionInitiatedHttpRequest(request: Request, extensionId: string):
   }
 }
 
-async function startFakeLoopbackApi(): Promise<{
-  requests: RecordedRequest[];
-  close(): Promise<void>;
-}> {
+async function installFakeLoopbackApi(context: BrowserContext): Promise<FakeLoopbackApi> {
   const requests: RecordedRequest[] = [];
-  const server = http.createServer((request, response) => {
-    const requestUrl = new URL(request.url ?? "/", LOOPBACK_ORIGIN);
+  const headers = {
+    "access-control-allow-headers": "authorization,content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-origin": "*",
+  };
+  const handler = async (route: Route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
     requests.push({
-      method: request.method,
+      method: request.method(),
       path: requestUrl.pathname,
       url: requestUrl.href,
     });
-    const headers = {
-      "access-control-allow-headers": "authorization,content-type",
-      "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-origin": "*",
-    };
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, headers);
-      response.end();
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
       return;
     }
     if (requestUrl.pathname === "/synthetic-capture") {
-      response.writeHead(200, { "content-type": "text/html" });
-      response.end("<!doctype html><title>Synthetic job</title><main>Visible role description</main>");
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: "<!doctype html><title>Synthetic job</title><main>Visible role description</main>",
+      });
       return;
     }
     if (requestUrl.pathname === "/favicon.ico") {
-      response.writeHead(404, headers);
-      response.end();
+      await route.fulfill({ status: 404, headers });
       return;
     }
     if (requestUrl.pathname === "/v1/health") {
-      json(response, { ok: true }, headers);
+      await json(route, { ok: true }, headers);
       return;
     }
     if (requestUrl.pathname === "/v1/extension/captures") {
-      json(response, {
+      await json(route, {
         ok: true,
         itemId: "extension-capture-1",
         jobKey: "synthetic-job",
@@ -253,7 +257,7 @@ async function startFakeLoopbackApi(): Promise<{
       return;
     }
     if (requestUrl.pathname === "/v1/extension/autofill/profile") {
-      json(response, {
+      await json(route, {
         ok: true,
         profileVersion: 1,
         fields: [
@@ -267,25 +271,15 @@ async function startFakeLoopbackApi(): Promise<{
       }, headers);
       return;
     }
-    json(response, { ok: false, error: "not_found" }, headers, 404);
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(8766, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
+    await json(route, { ok: false, error: "not_found" }, headers, 404);
+  };
+  await context.route(`${LOOPBACK_ORIGIN}/**`, handler);
   return {
     requests,
-    close: () =>
-      new Promise((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: () => context.unroute(`${LOOPBACK_ORIGIN}/**`, handler),
   };
 }
 
-function json(response: http.ServerResponse, body: unknown, headers: Record<string, string>, status = 200): void {
-  response.writeHead(status, { ...headers, "content-type": "application/json" });
-  response.end(JSON.stringify(body));
+async function json(route: Route, body: unknown, headers: Record<string, string>, status = 200): Promise<void> {
+  await route.fulfill({ status, headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) });
 }

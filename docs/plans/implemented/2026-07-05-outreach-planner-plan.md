@@ -1,8 +1,11 @@
 # Contact Research And Outreach Planner — Implementation Plan
 
-> **Status:** Proposed. Not yet implemented. This is a working plan record under
-> `docs/plans/`; canonical behaviour is documented in the owning docs only after
-> the work lands (see the [Documentation Updates](#15-documentation-updates) section).
+> **Status:** implemented — delivered as the R6 stacked train: #266 (plan),
+> #325 (P0 contracts), #331 (P1 contacts), #332 (P2 research), #333 (P3
+> drafts), #335 (P4 send logging + follow-ups), and #347 (P5 product QA, docs,
+> regression matrix). Canonical behavior now lives in the owning user,
+> architecture, API, frontend, and QA docs; this file is the historical delivery
+> plan and acceptance record.
 
 > **Anchors verified against `main` @ `a488e4e9853dde292badc74a88c7de24160edc52`.**
 > Every repository path and symbol cited below was checked against that commit in
