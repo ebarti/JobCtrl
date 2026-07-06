@@ -210,11 +210,40 @@ class Manual:
 
 
 @dataclass(frozen=True)
+class EmailOnlyApplication:
+    """Variant: the agent detected an email-only application address."""
+
+    kind: str = field(default="email_only", init=False)
+    recipient_email: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.recipient_email, str) or "@" not in self.recipient_email:
+            raise ValueError("EmailOnlyApplication.recipient_email must be an email address")
+
+
+@dataclass(frozen=True)
 class DryRunComplete:
     """Variant: dry run finished without submitting (per §4.6 invariant)."""
 
     kind: str = field(default="dry_run_complete", init=False)
     navigated_to: str = ""
+    coverage: str = "full"
+    blocked_channels: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.coverage not in {"full", "partial"}:
+            raise ValueError("DryRunComplete.coverage must be 'full' or 'partial'")
+        if isinstance(self.blocked_channels, str):
+            object.__setattr__(self, "blocked_channels", (self.blocked_channels,))
+        elif not isinstance(self.blocked_channels, tuple):
+            object.__setattr__(
+                self,
+                "blocked_channels",
+                tuple(str(channel) for channel in self.blocked_channels),
+            )
+        for channel in self.blocked_channels:
+            if not isinstance(channel, str):
+                raise ValueError("DryRunComplete.blocked_channels must contain strings")
 
 
 SubmissionResult = Union[
@@ -224,6 +253,7 @@ SubmissionResult = Union[
     LoginIssue,
     Expired,
     Manual,
+    EmailOnlyApplication,
     DryRunComplete,
 ]
 
@@ -237,6 +267,7 @@ SUBMISSION_RESULT_TYPES: tuple[type, ...] = (
     LoginIssue,
     Expired,
     Manual,
+    EmailOnlyApplication,
     DryRunComplete,
 )
 
@@ -253,6 +284,7 @@ __all__ = [
     "BrowserWorkerConfig",
     "Captcha",
     "DryRunComplete",
+    "EmailOnlyApplication",
     "Expired",
     "Failed",
     "LoginIssue",

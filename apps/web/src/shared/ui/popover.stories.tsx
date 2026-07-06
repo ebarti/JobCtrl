@@ -3,15 +3,9 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Button } from "./button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.js";
 
-// Radix Popover portal exposes role="dialog" content whose role/ARIA
-// requires inner labelling. Upstream primitive behaviour, deferred.
 const meta = {
   title: "Shared/UI/Popover",
   component: Popover,
-  parameters: {
-    // a11y deferred — Radix Popover portal role/ARIA labelling requirements; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof Popover>;
 
 export default meta;
@@ -23,7 +17,7 @@ export const FilterPicker: Story = {
       <PopoverTrigger asChild>
         <Button variant="outline">Filter options</Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64">
+      <PopoverContent aria-label="Saved filter options" className="w-64">
         <div className="grid gap-2">
           <p className="text-sm font-medium text-popover-foreground">Saved filters</p>
           <ul className="space-y-1 text-sm text-muted-foreground">
@@ -46,7 +40,7 @@ export const OpenByDefault: Story = {
       <PopoverTrigger asChild>
         <Button variant="outline">Help</Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64">
+      <PopoverContent aria-label="Help details" className="w-64">
         <div className="grid gap-2 text-sm">
           <p className="font-medium text-popover-foreground">Open popover</p>
           <p className="text-muted-foreground">

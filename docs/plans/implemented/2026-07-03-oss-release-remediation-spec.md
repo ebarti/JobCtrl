@@ -1,11 +1,17 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
 > **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
-> inventory against current `main`. This is **not** a release-ready outcome:
-> W1.2–W1.8, W2.2 doctor notices, W2.4, W2.6, and owner rename/release
-> checkpoints remain open. The document is preserved as the historical work-item
-> definition source; do not treat the move to `implemented/` as proof that the
-> OSS release gate passed.
+> inventory against current `main`; that first closeout was **not** a
+> release-ready outcome. The 2026-07-06 W1 refresh in
+> `2026-07-05-oss-release-drive-to-done-plan.md` supersedes that W1 snapshot:
+> W1.1-W1.7 are complete and W1.8 is withdrawn. Non-W1 release/owner
+> checkpoints remain open, so do not treat the move to `implemented/` as proof
+> that the OSS release gate passed.
+>
+> **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
+> withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
+> non-dry-run default unless the caller passes `--dry-run` / `dryRun: true`.
+> W1.8 is no longer a release requirement, gate, or acceptance criterion.
 >
 > **Audience:** an external implementing agent (Codex). This document is
 > self-contained and prescriptive: follow it literally. Where it says STOP,
@@ -57,7 +63,6 @@ means: start now, from `main`, in parallel with the temporal run.
 | W0.1–W0.6 | none | Only W0.2's fixture-data swaps touch files P2/P3/P4 also edit — data-only, trivial rebase. |
 | W1.1, W1.2, W1.3→W1.5→W1.6, W1.7 | temporal **P2** | Same files AND same semantics: they extend P2's gate/guard/intent/`needs_verification` substrate. |
 | W1.4 | temporal **P2** (soft — see note) | Semantically independent of P2; only file contention (`packages/contracts`, adapter result parse, apply-review UI). |
-| W1.8 | temporal **P5** | `cli.py` and `pipeline/actions.py` are P5-owned; P5 itself rewrites/deletes the legacy path W1.8 targets. |
 | W2.1, W2.2 (docs), W2.5 | none | Disjoint. (P5 also edits `README.md`/`docs/**` — different sections, trivial.) |
 | W2.3 | PR **#233** (P0) | Same `server.ts`; P2 later touches other regions of it (trivial contention). |
 | W2.4 | temporal **P5** | P5 SHIPS the base spend system (`llm_spend`, `dailyBudgetUsd`, `check_spend_budget` preflight, dual-client recording). W2.4 is a delta on it — see the rewritten §W2.4. |
@@ -74,7 +79,7 @@ now         ──► W0.1→W0.2→W0.5→W0.3→W0.4→W0.6   (first: privacy 
             ──► W2.1, W2.2(docs), W2.5            (fully parallel)
 #233 merged ──► W2.3
 P2 merged   ──► W1.1→W1.2→W1.3→W1.4→W1.5→W1.6→W1.7  (stacked; do NOT wait for P4/P5)
-P5 merged   ──► W1.8, W2.4, W2.6, W2.2(doctor)
+P5 merged   ──► W2.4, W2.6, W2.2(doctor)
 all merged  ──► §5 release flip
 ```
 
@@ -83,19 +88,16 @@ all merged  ──► §5 release flip
   files; the residual contention (P5 adds `dailyBudgetUsd` to
   `packages/contracts` and the settings form) is a trivial rebase for the
   temporal stack as W1 items land on `main`.
-- The critical path to the release flip runs through P5 only via the
-  `cli.py`-owned items (W1.8, W2.6, doctor warnings) and W2.4. If P5
-  stalls, the owner may approve pulling W1.8's CLI default flip forward
-  at the cost of a P5 rebase — owner call (§0.5), not a default.
+- The critical path to the release flip runs through P5 only via W2.4, W2.6,
+  and doctor warnings.
 - **If the entire PR #232 program is already delivered**, every gate is
   satisfied and nothing else changes: W0 first (the privacy CI gate is
-  still wanted under every later PR), then W1.1→W1.8 as one stacked
+  still wanted under every later PR), then W1.1→W1.7 as one stacked
   series with W2 fully parallel, then §5. Optional intra-W1 parallelism
   in that world: lane {W1.1→W1.2→W1.7} (claim/review/recovery) alongside
   lane {W1.3→W1.4→W1.5→W1.6} (adapter/prompt/owned tools), converging on
-  W1.8 — but both lanes touch `launcher.py`/`claude_code_cli.py` in
-  different functions, so prefer the single stacked series unless two
-  implementers actively coordinate.
+  W1.7. Prefer the single stacked series unless two implementers actively
+  coordinate.
 - W2.1 (naming) can start any time; its publish re-enable step is last.
 
 ### 0.2 Non-negotiable ground rules
@@ -420,7 +422,7 @@ line stating dispositions are complete.
 
 ---
 
-## 3. Workstream W1 — Apply and runtime safety (gated on temporal P2; W1.8 alone on P5)
+## 3. Workstream W1 — Apply and runtime safety (gated on temporal P2)
 
 ### W1.0 Substrate check (run before W1.1; STOP if any is missing)
 
@@ -741,7 +743,7 @@ Work items:
    screening questions") — do not block claims on it; the run-time
    failure path is the enforcement.
 6. Flip the W0.3 attestation tripwire from warning to strict for this
-   file once merged (see W0.3 item 8 / W1.8 item 4).
+   file once merged (see W0.3 item 8).
 
 Tests: prompt builder with full/partial/empty attestations; adapter parses
 the new failure reason; UI blocker fixture; `doctor` warning unit test.
@@ -897,47 +899,18 @@ actionable error; UI preview fixture.
 - [ ] All six test classes above pass.
 - [ ] Full sweep (§0.3) passes, including `pnpm qa:test`.
 
-### W1.8 — Fail-closed surface defaults
+### W1.8 — Withdrawn: dry-run-by-default surface defaults
 
-**Objective:** every entry point defaults to dry-run; the only live
-switch is explicit, and the claim gate (P2 + W1.1) remains the real
-enforcement behind it.
+**Owner decision (2026-07-06):** this item is removed from the release plan.
+Do not implement, verify, or gate on dry-run-by-default behavior. Bare
+`jobhunter apply` remains a live/non-dry-run apply path unless the caller passes
+`--dry-run`; RPC/workflow apply starts keep the same default unless the caller
+passes `dryRun: true`.
 
-**Branch:** `feat/w1-8-fail-closed-defaults` ·
-**PR title:** `feat(apply): dry-run-by-default surfaces and legacy live-path deletion`
-
-Work items:
-1. `jobhunter apply` (`workers/automation/src/jobhunter/cli.py`, command
-   ~:892): `dry_run` currently defaults `False` — a bare `jobhunter
-   apply` is a LIVE run today. Flip: default dry-run; add `--submit`
-   (mutually exclusive with `--dry-run`) for live mode. Startup banner
-   states the mode and that live submission additionally requires the
-   recorded approval gate. (This item runs after temporal P5, which owns
-   `cli.py` — verify P5 is merged in your base.)
-2. RPC `apply_action`
-   (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`
-   ~:499–507): `params.get("dryRun", False)` fails open — flip the
-   default to `True` and log when the caller omitted the param. (The TS
-   mapper already defaults true; this makes the Python side match.)
-3. Delete the legacy synchronous action path that hardcodes
-   `dry_run=False` (`workers/automation/src/jobhunter/actions.py` ~:196)
-   after grep-verifying all callers route through RPC/Temporal. If a
-   caller still uses it, STOP and report instead of keeping both paths.
-   Note: temporal P5 rewrites `run_local_action` to start workflows and
-   deletes the in-process execution branches — P5 may already have
-   removed this path. In that case this item reduces to the grep check;
-   verify rather than re-delete.
-4. Flip all remaining W0.3 `--strict-prompt` tripwires to strict in the
-   privacy CI workflow (W1.4/W1.5/W1.6 are merged by now).
-5. `README.md` + `docs/local-reliability-qa.md`: document the new CLI
-   semantics and add the dry-run/live QA checklist entries.
-
-**Definition of Done**
-- [ ] Bare `jobhunter apply` performs a dry run (CLI test).
-- [ ] RPC default fail-closed (test).
-- [ ] Legacy path deleted; grep clean.
-- [ ] Privacy CI runs strict tripwires and is green.
-- [ ] Full sweep (§0.3) passes.
+The safety requirements that remain in force are W1.1-W1.7: approval binding,
+dry-run violation outcomes, apply-agent sandboxing, truthful attestations,
+credential handling, CAPTCHA fail-closed/owned-tool posture, and controlled
+email-application handling.
 
 ---
 
@@ -1113,7 +1086,7 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       `docs/decisions.md` (2026-07-06); plan
       `docs/plans/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
       is merged to `main`.
-- [ ] W1.1–W1.8 merged, each with review gate `Gate: PASS` and QA gate
+- [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
 - [ ] W2.1 name chosen and live; `publish.yml` re-enabled and gated on the
       privacy workflow.

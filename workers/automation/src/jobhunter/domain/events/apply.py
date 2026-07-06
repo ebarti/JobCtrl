@@ -74,6 +74,23 @@ def create_apply_run_event_recorded(tenant_id: TenantId, payload: ApplyRunEventR
 
 
 @dataclass(frozen=True)
+class EmailApplicationCandidateRecordedPayload:
+    run_id: str
+    recipient: str
+    subject: str
+    body: str
+    attachment_artifact_id: str
+    attachment_name: str
+
+
+def create_email_application_candidate_recorded(
+    tenant_id: TenantId,
+    payload: EmailApplicationCandidateRecordedPayload,
+) -> DomainEvent:
+    return create_domain_event("EmailApplicationCandidateRecorded", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
 class ApplicationEmailFeedbackIngestedPayload:
     job_key: str
     evidence_id: str

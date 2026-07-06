@@ -103,6 +103,18 @@ export interface ApplicationDefaults {
   readonly eeoVoluntary: EeoVoluntary;
 }
 
+export interface ApplicationAttestations {
+  readonly age18Plus: boolean | null;
+  readonly backgroundCheckConsent: boolean | null;
+  readonly felonyConviction: boolean | null;
+  readonly previouslyWorkedAtEmployer: boolean | null;
+  readonly additional: Readonly<Record<string, boolean | string | null>>;
+}
+
+export interface ApplicationPreferences {
+  readonly howHeard: string;
+}
+
 // ---------------------------------------------------------------------------
 // Resume baseline + structured entries
 // ---------------------------------------------------------------------------
@@ -207,6 +219,8 @@ export interface Profile {
   readonly compensation: Compensation;
   readonly experienceMetadata: ExperienceMetadata;
   readonly applicationDefaults: ApplicationDefaults;
+  readonly applicationAttestations: ApplicationAttestations;
+  readonly applicationPreferences: ApplicationPreferences;
   readonly resumeBaseline: ResumeBaseline;
   readonly experienceEntries: readonly ExperienceEntry[];
   readonly educationEntries: readonly EducationEntry[];

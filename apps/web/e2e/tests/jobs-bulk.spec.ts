@@ -35,8 +35,11 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
 
   const deletedRowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
   await expect(deletedRowCheckboxes.first()).toBeVisible({ timeout: 30_000 });
+  await expect.poll(async () => deletedRowCheckboxes.count()).toBeGreaterThanOrEqual(rowsToSelect);
 
-  await deletedRowCheckboxes.first().check();
+  for (let i = 0; i < rowsToSelect; i += 1) {
+    await deletedRowCheckboxes.nth(i).check();
+  }
   await page.getByRole("button", { name: /restore selected/i }).click();
   await expect(page.getByText(/select jobs to manage/i)).toBeVisible({ timeout: 15_000 });
 });

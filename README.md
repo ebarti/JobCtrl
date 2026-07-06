@@ -58,15 +58,19 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - Live apply automation can submit real applications to real employers. Keep
   `applyApprovalRequired` on, rehearse with dry runs, and target one job or site
   at a time until you trust the behavior.
-- Email-based application sending, if you enable or build it, is also a live
-  employer submission. The current Gmail connector is read-only; do not grant or
-  wire Gmail `gmail.send` unless you intend JobHunter to send application email
-  from your account.
-- Browser automation can type credentials you provide. Use a unique, dedicated
-  job-site password, not an email, banking, work, or reused personal password.
-- CAPTCHA solving is off unless `CAPSOLVER_API_KEY` is configured. Setting that
-  key sends CAPTCHA site keys and page URLs to a paid third-party solver, and
-  you are responsible for each site's terms and legal constraints.
+- Email-based application sending is also a live employer submission. JobHunter
+  sends only through its owned Gmail connector after a dry-run records the
+  recipient and attachment candidate and Apply Review approves that exact
+  binding; the path requires Gmail `gmail.send` and otherwise fails closed.
+- Browser automation can type non-secret profile fields. For regular job-site
+  password fields, the apply agent can call a local credential tool that reads
+  the stored profile password and types it into the focused field without
+  returning the value to the model; if the tool is unavailable, login fails
+  closed for operator handling.
+- CAPTCHA solving is available only through the owned local solver tool for
+  supported widgets. Image/audio, unsupported, or unconfigured challenges fail
+  closed. Do not solve challenges manually, switch to stealth browsers, or
+  bypass bot controls.
 - Scraping and source access can violate site terms. Default discovery options
   include LinkedIn and Indeed; disable any source you are not allowed to query
   automatically.
@@ -248,16 +252,19 @@ opt-in and configuration-gated:
   cover-letter generation (job text, your profile evidence, and generated
   material text).
 - **The apply agent's model** — the apply prompt during apply or dry-run (your
-  profile summary, the tailored materials, and, only if you configured them, a
-  login password and the CapSolver key).
+  profile summary and the tailored materials). The prompt does not include
+  profile passwords or CAPTCHA-provider keys; password typing uses a local
+  credential tool that never returns the secret to the model.
 - **Job boards, ATS APIs, and posting pages** — discovery and enrichment
   fetches.
-- **Gmail (read-only)** — verification-code and application-outcome lookups, only
-  if you authenticate the connector; it never requests `gmail.send`.
+- **Gmail** — verification-code and application-outcome lookups, plus approved
+  email application sends, only if you authenticate the connector. Raw email
+  bodies stay local; outgoing sends require the `gmail.send` scope.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — site keys and page URLs, only if you set
-  `CAPSOLVER_API_KEY` for a live apply.
+- **CAPTCHA solving** — supported widgets are handled only through the owned
+  local solver tool when configured; no CAPTCHA-provider key or solver token is
+  sent through the model prompt.
 - **Langfuse / OpenTelemetry** — traces, only when you configure it
   (`LANGFUSE_DISABLE=1` opts out even with credentials present).
 
@@ -345,7 +352,7 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |
 | `backup` | Snapshot the SQLite database via `VACUUM INTO` (`--output`). |
 | `migrate-resume-html` | Convert/refresh approved resume PDFs onto the HTML/CSS renderer. |
-| `gmail-auth` | Authenticate the read-only Gmail connector. |
+| `gmail-auth` | Authenticate the Gmail connector for verification, outcome lookup, and approved email application sends. |
 
 ## Configuration
 
