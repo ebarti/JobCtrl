@@ -1777,6 +1777,75 @@ def backup(
     console.print(f"[green]Database backup written:[/green] {destination} ({size:,} bytes)")
 
 
+# Broad job boards whose internal per-board transport is owned by python-jobspy
+# (R10, D3): we cannot robots-gate or count their individual requests, only pace
+# and budget at our invocation boundary. ``doctor`` discloses when they are on.
+_BROAD_BOARDS = frozenset({"indeed", "linkedin", "glassdoor", "zip_recruiter"})
+
+
+def _politeness_blocked_source_ids(conn) -> set[str]:
+    """Distinct source_ids with a recorded robots/rate-limit block (empty on any error)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT source_id FROM operational_attempt_metrics
+            WHERE outcome = 'blocked'
+              AND failure_category IN ('robots_disallowed', 'rate_limited')
+              AND source_id IS NOT NULL
+            """
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - doctor discloses posture; a missing table is not fatal.
+        return set()
+    return {str(row[0]) for row in rows if row[0]}
+
+
+def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, str]]:
+    """Crawl-politeness disclosure rows as ``(check, level, note)``.
+
+    ``level`` is ``"ok"`` or ``"warn"``. Pure and side-effect-free (no printing,
+    no network) so it is unit-testable with an in-memory connection and a
+    search-config dict. ``doctor`` maps the levels to its status marks.
+    """
+    from jobhunter.config import resolve_jobspy_boards
+    from jobhunter.infrastructure.network import resolve_honest_user_agent
+
+    rows: list[tuple[str, str, str]] = []
+
+    user_agent = resolve_honest_user_agent().header_value()
+    rows.append((
+        "crawl user-agent",
+        "ok",
+        f"{user_agent} — review before real crawls; override via "
+        "JOBHUNTER_CRAWL_UA_PRODUCT / JOBHUNTER_CRAWL_UA_CONTACT",
+    ))
+
+    boards = resolve_jobspy_boards(search_cfg, warn=False)
+    active_broad = [board for board in boards if board in _BROAD_BOARDS]
+    if active_broad:
+        rows.append((
+            "broad-board discovery",
+            "warn",
+            f"active: {', '.join(active_broad)} — python-jobspy owns their transport; "
+            "only invocation-boundary budget + pacing apply (D3)",
+        ))
+    else:
+        rows.append(("broad-board discovery", "ok", "no broad boards active"))
+
+    blocked = _politeness_blocked_source_ids(conn)
+    if blocked:
+        preview = ", ".join(sorted(blocked)[:5])
+        extra = "" if len(blocked) <= 5 else f" (+{len(blocked) - 5} more)"
+        rows.append((
+            "robots/rate-limited sources",
+            "warn",
+            f"{len(blocked)} source(s) recently blocked: {preview}{extra}",
+        ))
+    else:
+        rows.append(("robots/rate-limited sources", "ok", "none recently blocked"))
+
+    return rows
+
+
 @app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
@@ -2001,6 +2070,25 @@ def doctor() -> None:
                     ))
             except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
                 results.append(("Langfuse", fail_mark, "unreachable"))
+
+    # --- Crawl politeness disclosure (R10) ---
+    try:
+        from jobhunter.config import load_search_config as _load_search_config
+        from jobhunter.database import get_connection as _get_connection
+
+        try:
+            politeness_cfg = _load_search_config()
+        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+            politeness_cfg = {}
+        try:
+            politeness_conn = _get_connection()
+        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+            politeness_conn = None
+        mark_for = {"ok": ok_mark, "warn": warn_mark}
+        for check, level, note in politeness_doctor_notices(politeness_conn, politeness_cfg):
+            results.append((check, mark_for.get(level, warn_mark), note))
+    except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
+        pass
 
     # --- Render results ---
     console.print()
