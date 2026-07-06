@@ -19,7 +19,7 @@ function thread(queryClient: QueryClient) {
   return data?.thread;
 }
 
-const sendVariables = { draftId: "draft-2", channel: "email", sentAt: "2026-07-07" };
+const sendVariables = { draftId: "draft-2", channel: "email", sentAt: "2026-07-07" } as const;
 
 describe("useLogSendMutation", () => {
   it("optimistically records the send and flips the thread to sent (INV-1)", async () => {

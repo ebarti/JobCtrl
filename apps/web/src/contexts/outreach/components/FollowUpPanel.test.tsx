@@ -14,7 +14,22 @@ describe("<FollowUpPanel>", () => {
     expect(view.getByText(/JobHunter never sends it or acts on it/i)).toBeInTheDocument();
   });
 
-  it("offers a schedule affordance when no follow-up is scheduled and posts the due date", async () => {
+  it("schedules from the server-derived application lifecycle when no custom date is entered", async () => {
+    const scheduleOutreachFollowUp = vi.fn(async () =>
+      makeOutreachThreadResponse(),
+    );
+    const ports = buildTestPorts({ api: { scheduleOutreachFollowUp } });
+    const view = renderWithProviders(
+      <FollowUpPanel threadId="thread-1" contactId="contact-1" followUp={null} />,
+      { ports },
+    );
+    fireEvent.click(view.getByRole("button", { name: "schedule follow-up" }));
+    await waitFor(() =>
+      expect(scheduleOutreachFollowUp).toHaveBeenCalledWith("thread-1", {}),
+    );
+  });
+
+  it("posts a manually edited due date as an override", async () => {
     const scheduleOutreachFollowUp = vi.fn(async () =>
       makeOutreachThreadResponse(),
     );

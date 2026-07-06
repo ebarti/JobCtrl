@@ -285,7 +285,7 @@ export function createOutreachDraftRejected(
 /**
  * A user-attested record that the user sent an approved draft. The ONLY way a
  * thread reaches a "sent" state (INV-1). The system never sends; there is no
- * transport. `channel` is a free-text label of where the user sent it.
+ * transport. `channel` is a controlled label of where the user sent it.
  */
 export interface OutreachSendLoggedPayload {
   readonly threadId: string;

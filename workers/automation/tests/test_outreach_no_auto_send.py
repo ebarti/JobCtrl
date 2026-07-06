@@ -174,6 +174,28 @@ def test_logging_a_send_is_a_separate_explicit_action() -> None:
     assert _event_types(conn).count("OutreachSendLogged") == 1
 
 
+def test_logging_a_send_rejects_contact_data_channel_before_event() -> None:
+    repo, conn = _repo()
+    _seed_candidate_thread(repo)
+    ApproveOutreachDraftUseCase(repository=repo, clock=lambda: "t2").execute(
+        LOCAL_TENANT, thread_id="t1", draft_id="d1"
+    )
+    with pytest.raises(ValueError, match="supported labels"):
+        LogOutreachSendUseCase(
+            repository=repo, clock=lambda: "t3", new_id=lambda: "s1"
+        ).execute(
+            LOCAL_TENANT,
+            thread_id="t1",
+            draft_id="d1",
+            channel="dana.lee@example.test",
+            sent_at="2026-07-07",
+        )
+    reloaded = repo.load(LOCAL_TENANT, "t1")
+    assert reloaded is not None
+    assert reloaded.is_sent is False
+    assert "OutreachSendLogged" not in _event_types(conn)
+
+
 def test_logging_a_send_before_approval_is_refused_and_stays_unsent() -> None:
     repo, conn = _repo()
     _seed_candidate_thread(repo)

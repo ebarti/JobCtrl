@@ -73,6 +73,26 @@ class OutreachDraftKind(str, Enum):
     FOLLOW_UP = "follow_up"
 
 
+OUTREACH_SEND_CHANNELS: frozenset[str] = frozenset(
+    {
+        "email",
+        "personal_email",
+        "work_email",
+        "linkedin_message",
+        "phone_call",
+        "other",
+    }
+)
+
+
+def normalize_outreach_send_channel(channel: str) -> str:
+    """Return a supported send-channel label, rejecting contact data/addresses."""
+    value = (channel or "").strip()
+    if value not in OUTREACH_SEND_CHANNELS:
+        raise ValueError("OutreachSendLog.channel must be one of the supported labels")
+    return value
+
+
 # The draft lifecycle states an ``OutreachDraft`` may hold. A closed subset of
 # ``ArtifactStatus`` — ``suppressed`` is a materials-only policy state and never
 # applies to a draft.
@@ -196,8 +216,8 @@ class OutreachSendLog:
     """A user-attested record that the USER sent an approved draft (INV-1).
 
     This is a RECORDED FACT, not a transport: JobHunter never sends. ``channel``
-    is a free-text *label* of where the user sent the draft (e.g. "email",
-    "linkedin message") — never an address. The presence of a send log is the
+    is a controlled *label* of where the user sent the draft (e.g. "email",
+    "linkedin_message") — never an address. The presence of a send log is the
     ONLY thing that makes a thread "sent". The aggregate guards that the log can
     only reference an approved draft (see :meth:`OutreachThread.log_send` and
     :meth:`OutreachThread.__post_init__`).
@@ -215,6 +235,7 @@ class OutreachSendLog:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"OutreachSendLog.{name} must be a non-empty string")
+        normalize_outreach_send_channel(self.channel)
 
 
 class FollowUpState(str, Enum):
@@ -602,10 +623,12 @@ __all__ = [
     "FollowUpSchedule",
     "FollowUpState",
     "FollowUpSuggestion",
+    "OUTREACH_SEND_CHANNELS",
     "OutreachDraft",
     "OutreachDraftKind",
     "OutreachSendLog",
     "OutreachThread",
     "follow_up_is_due",
+    "normalize_outreach_send_channel",
     "suggest_follow_up",
 ]

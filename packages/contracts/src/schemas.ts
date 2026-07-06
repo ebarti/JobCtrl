@@ -4627,10 +4627,20 @@ export interface OutreachThreadResponse {
 //
 // INV-1: JobHunter NEVER sends. A thread reaches a "sent" state ONLY via a
 // user-attested `OutreachSendLog` over an APPROVED draft — a recorded fact, not a
-// transmission. `channel` is a free-text label ("email", "linkedin message"),
+// transmission. `channel` is a controlled label ("email", "linkedin_message"),
 // never an address. Follow-ups are surfaced-only: a derived suggested date, fully
 // user-editable, never auto-acted and never sent.
 // ---------------------------------------------------------------------------
+
+export const OUTREACH_SEND_CHANNELS = [
+  "email",
+  "personal_email",
+  "work_email",
+  "linkedin_message",
+  "phone_call",
+  "other",
+] as const;
+export type OutreachSendChannel = (typeof OUTREACH_SEND_CHANNELS)[number];
 
 /** A user-attested record that the user sent an approved draft (INV-1). */
 export interface OutreachSendLogDto {
@@ -4679,7 +4689,7 @@ export interface DueFollowUpsResponse {
 export const LogOutreachSendRequestSchema = z
   .object({
     draftId: z.string().trim().min(1).max(200),
-    channel: z.string().trim().min(1).max(120),
+    channel: z.enum(OUTREACH_SEND_CHANNELS),
     sentAt: z.string().trim().min(1).max(40),
   })
   .strict();
@@ -4689,7 +4699,6 @@ export const ScheduleFollowUpRequestSchema = z
   .object({
     dueAt: z.string().trim().min(1).max(40).optional(),
     basis: z.enum(FOLLOW_UP_BASES).optional(),
-    submittedAt: z.string().trim().min(1).max(40).optional(),
     hasLoggedReply: z.boolean().optional(),
   })
   .strict();

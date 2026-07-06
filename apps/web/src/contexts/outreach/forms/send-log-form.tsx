@@ -1,4 +1,8 @@
-import { LogOutreachSendRequestSchema } from "@jobhunter/contracts";
+import {
+  LogOutreachSendRequestSchema,
+  OUTREACH_SEND_CHANNELS,
+  type OutreachSendChannel,
+} from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
 import type { JSX } from "react";
 
@@ -16,10 +20,19 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const SEND_CHANNEL_LABELS: Record<OutreachSendChannel, string> = {
+  email: "Email",
+  personal_email: "Personal email",
+  work_email: "Work email",
+  linkedin_message: "LinkedIn message",
+  phone_call: "Phone call",
+  other: "Other",
+};
+
 // TanStack Form + Zod safeParse (no zod-form-adapter). Records a user-attested
 // send of an APPROVED draft. JobHunter never sends: this only writes down that
 // the user sent it themselves through their own channel (INV-1). `channel` is a
-// free-text label ("email", "linkedin message"), never an address.
+// controlled label, never an address.
 export function SendLogForm({
   threadId,
   contactId,
@@ -30,7 +43,7 @@ export function SendLogForm({
   const mutation = useLogSendMutation(threadId, contactId, jobId);
   const mutationError = mutation.error instanceof Error ? mutation.error.message : "";
   const form = useForm({
-    defaultValues: { channel: "", sentAt: todayIsoDate() },
+    defaultValues: { channel: "email" as OutreachSendChannel, sentAt: todayIsoDate() },
     validators: {
       onSubmit: ({ value }) => {
         const result = LogOutreachSendRequestSchema.safeParse({
@@ -71,12 +84,18 @@ export function SendLogForm({
         {(field) => (
           <label className="field">
             <span>Channel</span>
-            <input
+            <select
+              name={field.name}
               value={field.state.value}
-              placeholder="email, linkedin message, …"
               onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.value)}
-            />
+              onChange={(event) => field.handleChange(event.target.value as OutreachSendChannel)}
+            >
+              {OUTREACH_SEND_CHANNELS.map((channel) => (
+                <option key={channel} value={channel}>
+                  {SEND_CHANNEL_LABELS[channel]}
+                </option>
+              ))}
+            </select>
           </label>
         )}
       </form.Field>

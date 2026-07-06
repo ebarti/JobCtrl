@@ -25,6 +25,7 @@ from jobhunter.domain.contact.outreach import (
     OutreachDraft,
     OutreachDraftKind,
     OutreachThread,
+    normalize_outreach_send_channel,
     suggest_follow_up,
 )
 from jobhunter.domain.contact.outreach_gates import (
@@ -449,6 +450,7 @@ class LogOutreachSendUseCase:
         sent_at = (sent_at or "").strip()
         if not channel:
             raise OutreachSendLogInputError("channel must be a non-empty label")
+        channel = normalize_outreach_send_channel(channel)
         if not sent_at:
             raise OutreachSendLogInputError("sent_at must be a non-empty date")
         thread = self.repository.load(tenant_id, thread_id)

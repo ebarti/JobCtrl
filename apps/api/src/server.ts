@@ -2573,7 +2573,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             thread: scheduleOutreachFollowUp(db, decodeRouteParam(request.params.threadId), {
               ...(body.dueAt ? { dueAt: body.dueAt } : {}),
               ...(body.basis ? { basis: body.basis } : {}),
-              ...(body.submittedAt ? { submittedAt: body.submittedAt } : {}),
               ...(body.hasLoggedReply !== undefined
                 ? { hasLoggedReply: body.hasLoggedReply }
                 : {}),

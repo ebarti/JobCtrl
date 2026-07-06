@@ -13,14 +13,11 @@ export interface FollowUpPanelProps {
   jobId?: string;
 }
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 // Context-owned surface for a thread's follow-up reminder. A follow-up is a plan,
 // never an action: JobHunter surfaces the reminder date but never sends anything
-// and never acts on it (INV-1). When one is scheduled the user can mark it done or
-// dismiss it; otherwise the user can schedule a new reminder date.
+// and never acts on it (INV-1). With no custom date, scheduling asks the API to
+// derive the default from the canonical application lifecycle; entering a date is
+// the explicit user-edited override.
 export function FollowUpPanel({
   threadId,
   contactId,
@@ -30,7 +27,7 @@ export function FollowUpPanel({
   const schedule = useScheduleFollowUpMutation(threadId, contactId, jobId);
   const complete = useCompleteFollowUpMutation(threadId, contactId, jobId);
   const dismiss = useDismissFollowUpMutation(threadId, contactId, jobId);
-  const [dueAt, setDueAt] = useState(followUp?.dueAt?.slice(0, 10) ?? todayIsoDate());
+  const [dueAt, setDueAt] = useState(followUp?.dueAt?.slice(0, 10) ?? "");
 
   const isScheduled = followUp?.state === "scheduled";
   const error =
@@ -87,8 +84,11 @@ export function FollowUpPanel({
             <button
               type="button"
               className="tab on"
-              disabled={schedule.isPending || !dueAt}
-              onClick={() => schedule.mutate({ dueAt })}
+              disabled={schedule.isPending}
+              onClick={() => {
+                const customDueAt = dueAt.trim();
+                schedule.mutate(customDueAt ? { dueAt: customDueAt } : {});
+              }}
             >
               {schedule.isPending ? "scheduling…" : "schedule follow-up"}
             </button>

@@ -11,8 +11,8 @@
  * Approval is HARD-gated on the persisted ``gate_results_json.passed`` (INV-5): a
  * draft whose gate record does not confirm ``passed`` can never be approved. There
  * is NO send transport anywhere in this module (INV-1) — an approved draft is
- * copied out by the browser clipboard, never sent — so no ``outreach_send_logs``
- * write exists here.
+ * copied out by the browser clipboard, and a send log only records a user-attested
+ * fact after the user sends through their own channel.
  */
 
 import { randomUUID } from "node:crypto";
@@ -30,7 +30,11 @@ import type {
   OutreachThreadDetail,
   OutreachThreadSummary,
 } from "./contracts.js";
-import { OUTREACH_DRAFT_KINDS, OUTREACH_DRAFT_STATUSES } from "./contracts.js";
+import {
+  OUTREACH_DRAFT_KINDS,
+  OUTREACH_DRAFT_STATUSES,
+  OUTREACH_SEND_CHANNELS,
+} from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshOutreachProjections, refreshProjections } from "./projections.js";
 
@@ -41,6 +45,7 @@ const FIRST_FOLLOW_UP_DAYS = 7;
 const SUBSEQUENT_NUDGE_DAYS = 14;
 
 const TENANT_ID = "local";
+const OUTREACH_SEND_CHANNEL_SET = new Set<string>(OUTREACH_SEND_CHANNELS);
 
 export class OutreachNotFoundError extends Error {}
 export class OutreachInputError extends Error {}
@@ -284,6 +289,9 @@ export function logOutreachSend(
   if (!trimmedChannel || !trimmedSentAt) {
     throw new OutreachInputError("A send log requires a channel and a sent date");
   }
+  if (!OUTREACH_SEND_CHANNEL_SET.has(trimmedChannel)) {
+    throw new OutreachInputError("A send log channel must be one of the supported labels");
+  }
 
   const now = new Date().toISOString();
   const sendLogId = randomUUID();
@@ -324,7 +332,6 @@ export function scheduleOutreachFollowUp(
   options: {
     dueAt?: string;
     basis?: string;
-    submittedAt?: string;
     hasLoggedReply?: boolean;
   } = {},
 ): OutreachThreadDetail {
@@ -336,14 +343,15 @@ export function scheduleOutreachFollowUp(
   let dueAt = (options.dueAt ?? "").trim();
   let basis = options.basis ?? "";
   if (!dueAt) {
+    const submittedAt = latestApplicationSubmittedAt(db, thread);
     const suggestion = deriveFollowUpDueAt({
-      submittedAt: options.submittedAt ?? "",
+      submittedAt,
       lastDueAt: thread.follow_up_due_at ?? "",
       hasLoggedReply: options.hasLoggedReply ?? false,
     });
     if (!suggestion) {
       throw new OutreachInputError(
-        "Cannot suggest a follow-up date: provide a due date, or a submission date with no logged reply",
+        "Cannot suggest a follow-up date: record an application submission first, or provide a due date",
       );
     }
     dueAt = suggestion.dueAt;
@@ -509,6 +517,42 @@ function deriveFollowUpDueAt(opts: {
     dueAt: addCalendarDays(opts.submittedAt, FIRST_FOLLOW_UP_DAYS),
     basis: "application_submitted",
   };
+}
+
+function latestApplicationSubmittedAt(db: SqliteDatabase, thread: ThreadRow): string {
+  const jobUrl = (thread.job_url ?? "").trim();
+  if (!jobUrl) {
+    return "";
+  }
+  if (tableExists(db, "application_outcomes")) {
+    const outcome = getRow<{ occurred_at: string | null }>(
+      db,
+      `SELECT occurred_at
+       FROM application_outcomes
+       WHERE tenant_id = ? AND job_key = ? AND kind = 'applied_confirmation'
+       ORDER BY occurred_at DESC, recorded_at DESC
+       LIMIT 1`,
+      [TENANT_ID, jobUrl],
+    );
+    if (outcome?.occurred_at) {
+      return outcome.occurred_at;
+    }
+  }
+  if (tableExists(db, "job_events")) {
+    const submitted = getRow<{ occurred_at: string | null }>(
+      db,
+      `SELECT occurred_at
+       FROM job_events
+       WHERE job_url = ? AND event_type = 'ApplicationSubmitted'
+       ORDER BY occurred_at DESC
+       LIMIT 1`,
+      [jobUrl],
+    );
+    if (submitted?.occurred_at) {
+      return submitted.occurred_at;
+    }
+  }
+  return "";
 }
 
 function addCalendarDays(iso: string, days: number): string {
