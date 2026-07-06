@@ -59,11 +59,11 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   employer submission. The current Gmail connector is read-only; do not grant or
   wire Gmail `gmail.send` unless you intend JobHunter to send application email
   from your account.
-- Browser automation can type credentials you provide. Use a unique, dedicated
-  job-site password, not an email, banking, work, or reused personal password.
-- CAPTCHA solving is off unless `CAPSOLVER_API_KEY` is configured. Setting that
-  key sends CAPTCHA site keys and page URLs to a paid third-party solver, and
-  you are responsible for each site's terms and legal constraints.
+- Browser automation can type non-secret profile fields. The apply agent does
+  not receive profile passwords in its prompt; if a password login is required,
+  it stops for operator handling.
+- CAPTCHA challenges fail closed in the apply agent. Do not solve image/audio
+  challenges manually, switch to stealth browsers, or bypass bot controls.
 - Scraping and source access can violate site terms. Default discovery options
   include LinkedIn and Indeed; disable any source you are not allowed to query
   automatically.
@@ -245,16 +245,16 @@ opt-in and configuration-gated:
   cover-letter generation (job text, your profile evidence, and generated
   material text).
 - **The apply agent's model** — the apply prompt during apply or dry-run (your
-  profile summary, the tailored materials, and, only if you configured them, a
-  login password and the CapSolver key).
+  profile summary and the tailored materials). The prompt does not include
+  profile passwords or CAPTCHA-provider keys.
 - **Job boards, ATS APIs, and posting pages** — discovery and enrichment
   fetches.
 - **Gmail (read-only)** — verification-code and application-outcome lookups, only
   if you authenticate the connector; it never requests `gmail.send`.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — site keys and page URLs, only if you set
-  `CAPSOLVER_API_KEY` for a live apply.
+- **CAPTCHA solving** — currently fails closed in the apply agent; no
+  CAPTCHA-provider key is sent through the model prompt.
 - **Langfuse / OpenTelemetry** — traces, only when you configure it
   (`LANGFUSE_DISABLE=1` opts out even with credentials present).
 

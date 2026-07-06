@@ -637,9 +637,9 @@ traffic, no applications, nothing spendful** is run during verification.
   the existing spend-budget system.
 - **No change to what is extracted or to dedup/identity logic** — this is about how
   we fetch, not what we parse.
-- **No apply-submission safety changes** — the at-most-once apply gate and dry-run
-  guard are owned by the OSS spec W1; this plan only requires that apply's browser
-  *navigation* obey the same budgets.
+- **No apply-submission safety changes** — the at-most-once apply gate and
+  explicit dry-run guard for dry-run requests are owned by the OSS spec W1; this
+  plan only requires that apply's browser *navigation* obey the same budgets.
 
 ## Risks
 

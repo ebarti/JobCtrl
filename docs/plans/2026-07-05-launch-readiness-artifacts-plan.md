@@ -234,8 +234,9 @@ process; it does **not** prescribe final copy.
   Services" and link to it; it must not introduce a claim absent from that
   page. Keep the existing safety/back-up guidance.
 - **No capability regressions in text.** Preserve every currently documented
-  capability and safety note (auto-apply approval gate, dry-run guard, backup/
-  restore); this is a re-lead and claim-audit, not a capability removal.
+  capability and safety note (auto-apply approval gate, explicit dry-run mode
+  guard, backup/restore); this is a re-lead and claim-audit, not a capability
+  removal.
 
 **Claim-review process for the README.**
 
@@ -309,7 +310,7 @@ that must have merged first).
 | 4 | Apply-review audit surfaces | `qa-seed.ts` approved materials generation, requirement evidence, `change_annotations` (comments), approval controls | `/apply-review` and its evidence / comments / approval-control sub-surfaces | Evidence, line comments, and explicit approval controls are inspectable before anything is submitted | A (+B for sub-surface captures) | none |
 | 5 | Artifact replacement preserves last accepted on failure | New seed state: an approved generation **plus** a later **failed** refresh that does not supersede the approved artifact | `/apply-review` (or artifact view) before/after a failed re-tailor | A failed refresh never destroys the last accepted artifact; the accepted material stays visible and openable (`BR-041`, `BR-052`, `TR-032`) | B | none (behavior shipped) |
 | 6 | Tailoring gate rejects an unsupported claim | `qa-seed.ts` change annotation with an unsupported/needs-confirmation claim label + `review_blocked` decision; extend to a clearly *fabricated* claim per `docs/architecture/tailoring.md` fabrication gates | `/apply-review` zoomed on the blocked claim + its blocker/repair reason | The gate blocks the unsupported claim and surfaces the blocker and repair instruction — proven from canonical fixture data | B | none (behavior shipped) |
-| 7 | Dry-run apply completes without submission + live-approval gate | `qa-seed.ts` dry-run run (`qa-run-1`), approval card (`applyApprovalRequired` default true), and dry-run blocked-channel evidence (`apply_dryrun_blocked`) | `/apply-review` approval card + `/runs` dry-run run + blocked-channel evidence | A dry run finishes, nothing was submitted, and live submit is gated behind an explicit fresh approval (`BR-054`) | B (approval + run) / C (live blocked-channel evidence) | Approval-binding + blocked-channel evidence: OSS spec **W1.1 / W1.2** for the evidence asset |
+| 7 | Explicit dry-run apply completes without submission + live-approval gate | `qa-seed.ts` dry-run run (`qa-run-1`), approval card (`applyApprovalRequired` default true), and dry-run blocked-channel evidence (`apply_dryrun_blocked`) | `/apply-review` approval card + `/runs` dry-run run + blocked-channel evidence | When dry-run mode is explicitly requested, nothing is submitted, and live submit is gated behind an explicit fresh approval (`BR-054`) | B (approval + run) / C (live blocked-channel evidence) | Approval-binding + blocked-channel evidence: OSS spec **W1.1 / W1.2** for the evidence asset |
 | 8 | Spend-ceiling stop + health surface | New seed state: `llm_spend` at/over `dailyBudgetUsd`; a workflow stopped with the budget error | `GET /v1/health` + web health surface showing over-budget; a run stopped by the ceiling | A daily spend ceiling stops spending work and the over-budget state is visible (`BR-050`) | B (health surface) / C (the stop lifecycle) | Spend system + per-lane visibility: OSS spec **P5 / W2.4** |
 | 9 | Reliability demo — kill worker mid-run, restart, resume | Synthetic discovery run against a stub/fake source (no real crawl/LLM); Temporal history persisted at `.dev/temporal/temporal.db` | Start a synthetic run → kill the worker **by captured PID** → restart worker → `/runs` + Temporal UI show the same run resuming | Durable Temporal execution resumes an in-flight run from workflow history after a worker crash (`TR-008`) | C | none (durability shipped) — but requires a live worker + Temporal to record |
 

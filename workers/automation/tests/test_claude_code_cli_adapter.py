@@ -138,6 +138,44 @@ def test_explicit_model_is_forwarded_to_claude(monkeypatch, tmp_path) -> None:
     assert _FakePopen.calls[0][1:3] == ["--model", "opus"]
 
 
+def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-secret")
+    monkeypatch.setenv("UNRELATED_SECRET_TOKEN", "do-not-forward")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+    _FakePopen.calls.clear()
+    _FakePopen.kwargs.clear()
+
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    result = adapter.submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    cmd = _FakePopen.calls[0]
+    forwarded_env = _FakePopen.kwargs[0]["env"]
+    assert result.submission_result.kind == "dry_run_complete"
+    assert "--permission-mode" not in cmd
+    assert "bypassPermissions" not in cmd
+    assert "--disallowedTools" not in cmd
+    assert "--allowedTools" in cmd
+    allowed_tools = cmd[cmd.index("--allowedTools") + 1]
+    assert "mcp__playwright__browser_navigate" in allowed_tools
+    assert "mcp__gmail__search_emails" in allowed_tools
+    assert "browser_evaluate" not in allowed_tools
+    assert "gmail__draft_email" not in allowed_tools
+    assert forwarded_env["ANTHROPIC_API_KEY"] == "anthropic-key"
+    assert "CAPSOLVER_API_KEY" not in forwarded_env
+    assert "UNRELATED_SECRET_TOKEN" not in forwarded_env
+
+
 def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     calls: list[dict[str, Any]] = []
@@ -166,6 +204,20 @@ def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None
             "model": "opus",
         }
     ]
+
+
+def test_dry_run_applied_result_is_reported_as_violation(tmp_path) -> None:
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+
+    result = adapter._parse_result("RESULT:APPLIED\nconfirmation: submitted", dry_run=True)
+
+    assert result.kind == "failed"
+    assert result.retryable is False
+    assert "dry_run_violation" in result.error
 
 
 def test_claude_subprocess_starts_in_isolated_unix_session(
