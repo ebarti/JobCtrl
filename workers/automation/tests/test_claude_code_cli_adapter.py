@@ -190,6 +190,7 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     disallowed_tools = cmd[cmd.index("--disallowedTools") + 1]
     assert "mcp__playwright__browser_navigate" in allowed_tools
     assert "mcp__gmail__get_verification_code" in allowed_tools
+    assert "mcp__apply_tools__type_credential" in allowed_tools
     assert "mcp__apply_tools__upload_artifact" in allowed_tools
     assert "browser_evaluate" not in allowed_tools
     assert "browser_file_upload" not in allowed_tools
