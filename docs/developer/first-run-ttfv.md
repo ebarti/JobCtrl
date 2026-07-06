@@ -16,20 +16,22 @@ T0 is the instant the wrapper starts the first install command,
 
 TTFV-1 stops when both conditions are true:
 
-- `GET /v1/jobs` returns at least one real job with a numeric `fitScore`
-- `/jobs` renders a fit-score badge matching that score
+- `GET /v1/jobs` returns the measured real job with a numeric `fitScore`
+- `/jobs` renders that same job with a fit-score badge matching that score
 
 TTFV-2 stops when all conditions are true:
 
-- `GET /v1/apply/review-queue` returns an item with a
+- `GET /v1/apply/review-queue` returns the same measured job with a
   `materialsPreview.resumePdfArtifactId`
-- `/apply-review` renders the `open final file` link for that PDF
+- `/apply-review` renders the `open final file` link for that exact PDF
 - the link resolves to `/v1/artifacts/:artifactId/preview.pdf` and returns a
   non-empty PDF byte stream
 
 The measurement record stores hashes, counts, timings, status codes, content
 type, and byte length. It does not store job titles, job URLs, local artifact
 paths, resume contents, provider logs, credentials, or profile data.
+Machine-specific environment fields are intentionally coarse: OS family,
+architecture, CPU count, memory class, and Node major version.
 
 ## Clean Environment
 
@@ -55,11 +57,16 @@ from the first owner baseline.
 ## Owner Command Sequence
 
 Choose a real posting that the owner is willing to score and tailor. Do not
-commit the URL or the generated measurement records.
+commit the URL, the job key, or the generated measurement records. The wrapper
+starts the real job path with `jobhunter job <url> --tailor`; it must not enter
+the live apply path during the TTFV baseline.
 
 ```bash
 export JOBHUNTER_TTFV_RUN=run-1
 export JOBHUNTER_TTFV_JOB_URL="https://example.com/real-job-posting"
+export JOBHUNTER_TTFV_JOB_KEY="$JOBHUNTER_TTFV_JOB_URL"
+# If the read API jobKey is not the posting URL, replace
+# JOBHUNTER_TTFV_JOB_KEY with that canonical read-model key.
 
 git clone https://github.com/ebarti/JobHunter.git "JobHunter-ttfv-${JOBHUNTER_TTFV_RUN}"
 cd "JobHunter-ttfv-${JOBHUNTER_TTFV_RUN}"
@@ -67,6 +74,7 @@ git checkout main
 
 node scripts/ttfv-real.mjs run \
   --job-url "$JOBHUNTER_TTFV_JOB_URL" \
+  --expected-job-key "$JOBHUNTER_TTFV_JOB_KEY" \
   --output "$HOME/.jobhunter/measurements/ttfv-real-${JOBHUNTER_TTFV_RUN}.json"
 ```
 
@@ -80,17 +88,26 @@ node scripts/ttfv-real.mjs summarize \
   --output "$HOME/.jobhunter/measurements/ttfv-real-summary.json"
 ```
 
+The summary command passes only when all inputs are gateable full-run records:
+default install/init/stack commands, T0 captured on
+`corepack pnpm install:interactive`, default tailor-only job command, same-job
+proof for both stop conditions, non-CI execution, and successful API/UI/PDF
+evidence. Probe-only records, skipped phases, custom commands, and timing-only
+records are rejected and listed in `rejectedRecords`.
+
 For an already-running stack that already contains real pipeline output, probe
 without starting install, setup, or a new job:
 
 ```bash
 node scripts/ttfv-real.mjs probe \
+  --expected-job-key "$JOBHUNTER_TTFV_JOB_KEY" \
   --output "$HOME/.jobhunter/measurements/ttfv-probe.json"
 ```
 
 Probe-only records are useful for validating selectors and API expectations.
-They are not clean-environment TTFV measurements unless the T0 timestamp was
-captured by the full `run` command.
+They are never gateable clean-environment TTFV measurements because the clean
+install T0 and phase evidence are absent; use the full `run` command for
+gateable baseline evidence.
 
 ## Interpreting Results
 

@@ -14,6 +14,10 @@ const DEFAULT_TTFV_2_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_WORST_MULTIPLIER = 1.5;
 const DEFAULT_TIMEOUT_MS = DEFAULT_TTFV_2_THRESHOLD_MS * DEFAULT_WORST_MULTIPLIER;
 const DEFAULT_POLL_MS = 5_000;
+const DEFAULT_INSTALL_COMMAND = "corepack pnpm install:interactive";
+const DEFAULT_INIT_COMMAND = "uv --project workers/automation run jobhunter init";
+const DEFAULT_STACK_COMMAND = "corepack pnpm dev";
+const DEFAULT_WORK_COMMAND_LABEL = "uv --project workers/automation run jobhunter job <redacted-real-job-url> --tailor";
 
 const command = process.argv[2] && !process.argv[2].startsWith("-") ? process.argv[2] : "help";
 const argv = command === "help" ? process.argv.slice(2) : process.argv.slice(3);
@@ -43,10 +47,10 @@ Real-path measurement only. Do not run with synthetic data, fixtures, or CI.
 
 Run options:
   --job-url <url>              Real job posting URL passed to "jobhunter job".
-  --work-command <command>     Custom real pipeline command. Stored redacted.
-  --install-command <command>  Default: corepack pnpm install:interactive
-  --init-command <command>     Default: uv --project workers/automation run jobhunter init
-  --stack-command <command>    Default: corepack pnpm dev
+  --expected-job-key <key>     Optional canonical job key. Stored as a hash only.
+  --install-command <command>  Default: ${DEFAULT_INSTALL_COMMAND}
+  --init-command <command>     Default: ${DEFAULT_INIT_COMMAND}
+  --stack-command <command>    Default: ${DEFAULT_STACK_COMMAND}
   --output <path>              Measurement record path.
   --skip-install               Do not run the install phase.
   --skip-init                  Do not run the init phase.
@@ -55,6 +59,7 @@ Run options:
   --keep-stack                 Leave the spawned dev stack running.
 
 Probe options:
+  --expected-job-key <key>     Optional canonical job key. Stored as a hash only.
   --api-base-url <url>         Default: ${DEFAULT_API_BASE_URL}
   --web-base-url <url>         Default: ${DEFAULT_WEB_BASE_URL}
   --timeout-ms <ms>            Default: ${DEFAULT_TIMEOUT_MS}
@@ -97,14 +102,15 @@ async function runMeasurement(options) {
   const apiBaseUrl = stringOption(options.apiBaseUrl, DEFAULT_API_BASE_URL);
   const webBaseUrl = stringOption(options.webBaseUrl, DEFAULT_WEB_BASE_URL);
   const output = stringOption(options.output, defaultOutputPath("ttfv-real"));
-  const installCommand = stringOption(options.installCommand, "corepack pnpm install:interactive");
-  const initCommand = stringOption(options.initCommand, "uv --project workers/automation run jobhunter init");
-  const stackCommand = stringOption(options.stackCommand, "corepack pnpm dev");
+  const installCommand = stringOption(options.installCommand, DEFAULT_INSTALL_COMMAND);
+  const initCommand = stringOption(options.initCommand, DEFAULT_INIT_COMMAND);
+  const stackCommand = stringOption(options.stackCommand, DEFAULT_STACK_COMMAND);
   const workCommand = resolveWorkCommand(options);
 
   const record = baseRecord("run", options, { apiBaseUrl, webBaseUrl });
+  applyRunGateMetadata(record, options, { installCommand, initCommand, stackCommand, workCommand });
   record.t0 = {
-    command: options.skipInstall ? "skipped install phase" : redactCommand(installCommand),
+    command: options.skipInstall ? "skipped install phase" : recordCommandLabel("install", installCommand, DEFAULT_INSTALL_COMMAND),
     startedAt: nowIso(),
   };
 
@@ -112,13 +118,13 @@ async function runMeasurement(options) {
   let work = null;
   try {
     if (!options.skipInstall) {
-      await runShellPhase(record, "install", installCommand);
+      await runShellPhase(record, "install", installCommand, recordCommandLabel("install", installCommand, DEFAULT_INSTALL_COMMAND));
     }
     if (!options.skipInit) {
-      await runShellPhase(record, "workspace_init", initCommand);
+      await runShellPhase(record, "workspace_init", initCommand, recordCommandLabel("workspace init", initCommand, DEFAULT_INIT_COMMAND));
     }
     if (!options.skipStack) {
-      stack = startLongRunningPhase(record, "stack_start", stackCommand);
+      stack = startLongRunningPhase(record, "stack_start", stackCommand, recordCommandLabel("stack start", stackCommand, DEFAULT_STACK_COMMAND));
       await waitForHealth(apiBaseUrl, numberOption(options.timeoutMs, DEFAULT_TIMEOUT_MS), numberOption(options.pollMs, DEFAULT_POLL_MS));
       finishLongRunningPhase(record, "stack_start", "healthy");
     }
@@ -161,6 +167,7 @@ async function runProbeOnly(options) {
   const webBaseUrl = stringOption(options.webBaseUrl, DEFAULT_WEB_BASE_URL);
   const output = stringOption(options.output, defaultOutputPath("ttfv-probe"));
   const record = baseRecord("probe", options, { apiBaseUrl, webBaseUrl });
+  applyProbeMetadata(record, options);
   record.t0 = {
     command: stringOption(options.t0Command, "probe-only; install command not captured"),
     startedAt: stringOption(options.t0, nowIso()),
@@ -179,6 +186,7 @@ async function runProbeOnly(options) {
 }
 
 function summarizeRecords(options) {
+  refuseCi();
   const files = options._;
   if (!files.length) {
     throw new Error("summarize requires at least one measurement record path.");
@@ -186,16 +194,25 @@ function summarizeRecords(options) {
   const thresholdTtfv1Ms = numberOption(options.thresholdTtfv1Ms, DEFAULT_TTFV_1_THRESHOLD_MS);
   const thresholdTtfv2Ms = numberOption(options.thresholdTtfv2Ms, DEFAULT_TTFV_2_THRESHOLD_MS);
   const worstMultiplier = numberOption(options.worstMultiplier, DEFAULT_WORST_MULTIPLIER);
-  const records = files.map((file) => JSON.parse(fs.readFileSync(file, "utf8")));
-  const successful = records.filter((record) => record.status === "passed");
-  const ttfv1Durations = successful.map((record) => record.probes?.ttfv1?.durationMs).filter(Number.isFinite);
-  const ttfv2Durations = successful.map((record) => record.probes?.ttfv2?.durationMs).filter(Number.isFinite);
+  const records = files.map((file) => ({ file, record: JSON.parse(fs.readFileSync(file, "utf8")) }));
+  const evaluations = records.map(({ file, record }) => ({
+    file: path.basename(file),
+    reasons: gateableRecordRejectionReasons(record),
+    record,
+  }));
+  const accepted = evaluations.filter((evaluation) => evaluation.reasons.length === 0).map((evaluation) => evaluation.record);
+  const rejected = evaluations
+    .filter((evaluation) => evaluation.reasons.length > 0)
+    .map((evaluation) => ({ file: evaluation.file, reasons: evaluation.reasons }));
+  const ttfv1Durations = accepted.map((record) => record.probes?.ttfv1?.durationMs).filter(Number.isFinite);
+  const ttfv2Durations = accepted.map((record) => record.probes?.ttfv2?.durationMs).filter(Number.isFinite);
   const summary = {
     schemaVersion: SCHEMA_VERSION,
     kind: "jobhunter.realPathTtfvMeasurementSummary",
     generatedAt: nowIso(),
     inputRecords: files.length,
-    successfulRecords: successful.length,
+    acceptedRecords: accepted.length,
+    rejectedRecords: rejected,
     requiredRuns: 3,
     thresholds: {
       ttfv1Ms: thresholdTtfv1Ms,
@@ -206,7 +223,7 @@ function summarizeRecords(options) {
     ttfv2: summarizeMetric(ttfv2Durations, thresholdTtfv2Ms, worstMultiplier),
   };
   summary.status =
-    successful.length >= 3 && summary.ttfv1.passed && summary.ttfv2.passed ? "passed" : "failed";
+    accepted.length >= 3 && rejected.length === 0 && summary.ttfv1.passed && summary.ttfv2.passed ? "passed" : "failed";
   const payload = `${JSON.stringify(summary, null, 2)}\n`;
   if (options.output) {
     writeText(String(options.output), payload);
@@ -238,6 +255,58 @@ function summarizeMetric(values, thresholdMs, worstMultiplier) {
   };
 }
 
+function gateableRecordRejectionReasons(record) {
+  const reasons = [];
+  if (!record || typeof record !== "object") return ["record is not an object"];
+  if (record.schemaVersion !== SCHEMA_VERSION) reasons.push("schema version mismatch");
+  if (record.kind !== "jobhunter.realPathTtfvMeasurement") reasons.push("record kind mismatch");
+  if (record.mode !== "run") reasons.push("record is not a run-mode measurement");
+  if (record.status !== "passed") reasons.push("record status is not passed");
+  if (record.gateable !== true) reasons.push(record.gateableReason || "record is not gateable");
+  if (record.policy?.realPathOnly !== true) reasons.push("real-path policy missing");
+  if (record.policy?.syntheticDataAllowed !== false) reasons.push("synthetic-data policy missing");
+  if (record.policy?.ciAllowed !== false) reasons.push("CI policy missing");
+  if (!record.expected?.jobHash) reasons.push("expected job hash missing");
+  if (!record.t0?.startedAt || record.t0?.command !== DEFAULT_INSTALL_COMMAND) {
+    reasons.push("T0 was not captured on the default install command");
+  }
+  if (!phaseSucceeded(record, "install", DEFAULT_INSTALL_COMMAND)) reasons.push("default install phase did not succeed");
+  if (!phaseSucceeded(record, "workspace_init", DEFAULT_INIT_COMMAND)) reasons.push("default workspace init phase did not succeed");
+  if (!phaseHealthy(record, "stack_start", DEFAULT_STACK_COMMAND)) reasons.push("default stack phase was not healthy");
+  if (!phaseSucceeded(record, "real_job_pipeline", DEFAULT_WORK_COMMAND_LABEL)) reasons.push("tailor-only real job command did not succeed");
+  if (!probeHasExpectedJob(record.probes?.ttfv1, record.expected?.jobHash)) {
+    reasons.push("TTFV-1 probe is not bound to the expected job");
+  }
+  if (!probeHasExpectedJob(record.probes?.ttfv2, record.expected?.jobHash)) {
+    reasons.push("TTFV-2 probe is not bound to the expected job");
+  }
+  if (record.probes?.ttfv1?.ui?.badgeMatched !== true) reasons.push("TTFV-1 UI badge proof missing");
+  if (record.probes?.ttfv2?.ui?.linkMatchedSelectedArtifact !== true) reasons.push("TTFV-2 UI link proof missing");
+  if (!record.probes?.ttfv2?.api?.selectedArtifactHash) reasons.push("TTFV-2 artifact hash missing");
+  if (record.probes?.ttfv2?.artifact?.status !== 200) reasons.push("TTFV-2 artifact HTTP proof missing");
+  if (!(Number(record.probes?.ttfv2?.artifact?.byteLength) > 0)) reasons.push("TTFV-2 artifact byte length missing");
+  if (record.probes?.ttfv2?.artifact?.magicBytes !== "25504446") reasons.push("TTFV-2 PDF magic-byte proof missing");
+  return reasons;
+}
+
+function phaseSucceeded(record, name, commandLabel) {
+  const phase = (record.phases ?? []).find((entry) => entry?.name === name);
+  return phase?.command === commandLabel && phase.exitCode === 0;
+}
+
+function phaseHealthy(record, name, commandLabel) {
+  const phase = (record.phases ?? []).find((entry) => entry?.name === name);
+  return phase?.command === commandLabel && phase.status === "healthy";
+}
+
+function probeHasExpectedJob(probe, expectedJobHash) {
+  return (
+    probe?.status === "passed" &&
+    Number.isFinite(probe.durationMs) &&
+    probe.api?.selectedJobHash === expectedJobHash
+  );
+}
+
 function median(sortedValues) {
   const middle = Math.floor(sortedValues.length / 2);
   if (sortedValues.length % 2 === 1) return sortedValues[middle];
@@ -255,10 +324,10 @@ async function runProbeLoop(record, urls, options) {
   try {
     while (Date.now() <= deadlineMs) {
       if (record.probes.ttfv1.status !== "passed") {
-        await tryProbe(record, "ttfv1", () => probeTtfv1(page, urls));
+        await tryProbe(record, "ttfv1", () => probeTtfv1(page, urls, record.expected?.jobHash ?? null));
       }
       if (record.probes.ttfv2.status !== "passed") {
-        await tryProbe(record, "ttfv2", () => probeTtfv2(page, urls));
+        await tryProbe(record, "ttfv2", () => probeTtfv2(page, urls, record.expected?.jobHash ?? null));
       }
       if (record.probes.ttfv1.status === "passed" && record.probes.ttfv2.status === "passed") {
         return;
@@ -297,15 +366,26 @@ async function tryProbe(record, name, probe) {
   }
 }
 
-async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }) {
+async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
   const jobs = await requestJson(apiBaseUrl, "/v1/jobs?page=1&pageSize=100&sort=fit_score&dir=desc");
   const items = Array.isArray(jobs.items) ? jobs.items : [];
   const scored = items.filter((item) => Number.isFinite(item.fitScore));
-  const candidate = scored[0];
+  const candidate = expectedJobHash
+    ? scored.find((item) => stableHash(item.jobKey) === expectedJobHash)
+    : scored[0];
   if (!candidate) {
-    return { ok: false, message: "No scored job is queryable through /v1/jobs." };
+    return {
+      ok: false,
+      message: expectedJobHash
+        ? "The expected job is not queryable through /v1/jobs with a numeric fit score."
+        : "No scored job is queryable through /v1/jobs.",
+    };
   }
-  await page.goto(joinUrl(webBaseUrl, "/jobs"), { waitUntil: "domcontentloaded" });
+  const jobsUrl = new URL(joinUrl(webBaseUrl, "/jobs"));
+  jobsUrl.searchParams.set("q", candidate.jobKey);
+  jobsUrl.searchParams.set("sort", "fit_score");
+  jobsUrl.searchParams.set("dir", "desc");
+  await page.goto(jobsUrl.href, { waitUntil: "domcontentloaded" });
   await page.locator("table.jobs-data-grid-table .fit").first().waitFor({ timeout: 5_000 });
   const badgeTexts = await page.locator("table.jobs-data-grid-table .fit").allTextContents();
   const scoreText = String(candidate.fitScore);
@@ -322,7 +402,7 @@ async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }) {
         selectedFitScore: candidate.fitScore,
       },
       ui: {
-        path: "/jobs",
+        routePattern: "/jobs?q=<expected-job-key>&sort=fit_score&dir=desc",
         selector: "table.jobs-data-grid-table .fit",
         badgeMatched: true,
       },
@@ -330,23 +410,38 @@ async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }) {
   };
 }
 
-async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }) {
+async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
   const queue = await requestJson(apiBaseUrl, "/v1/apply/review-queue");
   const items = Array.isArray(queue.items) ? queue.items : [];
-  const candidate = items.find((item) => typeof item.materialsPreview?.resumePdfArtifactId === "string");
+  const candidateIndex = items.findIndex((item) => {
+    if (typeof item.materialsPreview?.resumePdfArtifactId !== "string") return false;
+    return expectedJobHash ? stableHash(item.jobKey) === expectedJobHash : true;
+  });
+  const candidate = candidateIndex >= 0 ? items[candidateIndex] : null;
   if (!candidate) {
-    return { ok: false, message: "No Apply Review queue item exposes a tailored resume PDF artifact." };
+    return {
+      ok: false,
+      message: expectedJobHash
+        ? "The expected job is not present in Apply Review with a tailored resume PDF artifact."
+        : "No Apply Review queue item exposes a tailored resume PDF artifact.",
+    };
   }
   const artifactId = candidate.materialsPreview.resumePdfArtifactId;
-  await page.goto(joinUrl(webBaseUrl, "/apply-review"), { waitUntil: "domcontentloaded" });
+  const reviewUrl = new URL(joinUrl(webBaseUrl, "/apply-review"));
+  reviewUrl.searchParams.set("jobKey", candidate.jobKey);
+  await page.goto(reviewUrl.href, { waitUntil: "domcontentloaded" });
+  const queueItems = page.locator(".apply-review-queue-item");
+  if ((await queueItems.count()) > candidateIndex) {
+    await queueItems.nth(candidateIndex).click();
+  }
   await page.getByRole("link", { name: "open final file" }).first().waitFor({ timeout: 5_000 });
   const links = await page.getByRole("link", { name: "open final file" }).evaluateAll((anchors) =>
     anchors.map((anchor) => anchor.getAttribute("href")).filter(Boolean),
   );
   const encodedArtifactId = encodeURIComponent(artifactId);
-  const href = links.find((value) => value.includes(`/v1/artifacts/${encodedArtifactId}/preview.pdf`)) ?? links[0];
+  const href = links.find((value) => value.includes(`/v1/artifacts/${encodedArtifactId}/preview.pdf`));
   if (!href) {
-    return { ok: false, message: "Apply Review rendered without an open-final-file link." };
+    return { ok: false, message: "Apply Review did not render the expected artifact's open-final-file link." };
   }
   const pdfUrl = new URL(href, webBaseUrl).href;
   const pdf = await requestBytes(pdfUrl);
@@ -366,9 +461,9 @@ async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }) {
         selectedArtifactHash: stableHash(artifactId),
       },
       ui: {
-        path: "/apply-review",
+        routePattern: "/apply-review?jobKey=<expected-job-key>",
         linkName: "open final file",
-        linkMatchedSelectedArtifact: href.includes(`/v1/artifacts/${encodedArtifactId}/preview.pdf`),
+        linkMatchedSelectedArtifact: true,
       },
       artifact: {
         routePattern: "/v1/artifacts/:artifactId/preview.pdf",
@@ -415,8 +510,8 @@ async function waitForHealth(apiBaseUrl, timeoutMs, pollMs) {
   throw new Error(`Timed out waiting for ${apiBaseUrl}/v1/health worker.status=healthy.`);
 }
 
-async function runShellPhase(record, name, commandText) {
-  const phase = startPhase(record, name, redactCommand(commandText));
+async function runShellPhase(record, name, commandText, commandLabel) {
+  const phase = startPhase(record, name, commandLabel);
   const exit = await spawnShell(commandText);
   phase.endedAt = nowIso();
   phase.durationMs = Date.parse(phase.endedAt) - Date.parse(phase.startedAt);
@@ -432,8 +527,8 @@ async function runShellPhase(record, name, commandText) {
   }
 }
 
-function startLongRunningPhase(record, name, commandText) {
-  startPhase(record, name, redactCommand(commandText));
+function startLongRunningPhase(record, name, commandText, commandLabel) {
+  startPhase(record, name, commandLabel);
   return {
     child: spawn(commandText, {
       shell: true,
@@ -522,20 +617,45 @@ async function stopLongRunningProcess(child) {
 
 function resolveWorkCommand(options) {
   if (options.skipWork) {
-    return { command: "", recordCommand: "skipped real job command" };
+    return { command: "", recordCommand: "skipped real job command", expectedJobKey: null, gateable: false };
   }
   if (options.workCommand) {
-    const commandText = String(options.workCommand);
-    return { command: commandText, recordCommand: redactCommand(commandText) };
+    throw new Error("--work-command is not supported for real-path TTFV; use --job-url so the wrapper can scope probes without recording sensitive command text.");
   }
   if (!options.jobUrl) {
-    throw new Error("run requires --job-url, --work-command, or --skip-work.");
+    throw new Error("run requires --job-url or --skip-work.");
   }
-  const commandText = `uv --project workers/automation run jobhunter job ${shellQuote(String(options.jobUrl))}`;
+  const commandText = `uv --project workers/automation run jobhunter job ${shellQuote(String(options.jobUrl))} --tailor`;
   return {
     command: commandText,
-    recordCommand: "uv --project workers/automation run jobhunter job <redacted-real-job-url>",
+    recordCommand: DEFAULT_WORK_COMMAND_LABEL,
+    expectedJobKey: stringOption(options.expectedJobKey, String(options.jobUrl)),
+    gateable: true,
   };
+}
+
+function applyRunGateMetadata(record, options, { installCommand, initCommand, stackCommand, workCommand }) {
+  const expectedJobKey = stringOption(options.expectedJobKey, workCommand.expectedJobKey ?? "");
+  record.expected = expectedJobKey ? { jobHash: stableHash(expectedJobKey) } : null;
+  const blockers = [];
+  if (options.skipInstall) blockers.push("install phase skipped");
+  if (options.skipInit) blockers.push("workspace init phase skipped");
+  if (options.skipStack) blockers.push("stack start phase skipped");
+  if (options.skipWork) blockers.push("real job command skipped");
+  if (installCommand !== DEFAULT_INSTALL_COMMAND) blockers.push("custom install command");
+  if (initCommand !== DEFAULT_INIT_COMMAND) blockers.push("custom init command");
+  if (stackCommand !== DEFAULT_STACK_COMMAND) blockers.push("custom stack command");
+  if (!workCommand.gateable) blockers.push("non-default real job command");
+  if (!record.expected?.jobHash) blockers.push("expected job hash missing");
+  record.gateable = blockers.length === 0;
+  record.gateableReason = blockers.length ? blockers.join("; ") : null;
+}
+
+function applyProbeMetadata(record, options) {
+  const expectedJobKey = stringOption(options.expectedJobKey, "");
+  record.expected = expectedJobKey ? { jobHash: stableHash(expectedJobKey) } : null;
+  record.gateable = false;
+  record.gateableReason = "probe-only record; clean install T0 was not captured";
 }
 
 function baseRecord(mode, options, urls) {
@@ -544,6 +664,9 @@ function baseRecord(mode, options, urls) {
     kind: "jobhunter.realPathTtfvMeasurement",
     mode,
     generatedAt: null,
+    gateable: false,
+    gateableReason: "not evaluated",
+    expected: null,
     status: "running",
     thresholds: {
       ttfv1Ms: numberOption(options.thresholdTtfv1Ms, DEFAULT_TTFV_1_THRESHOLD_MS),
@@ -600,15 +723,12 @@ function git(args) {
 }
 
 function environmentSnapshot() {
-  const cpu = os.cpus()[0];
   return {
     platform: os.platform(),
-    release: os.release(),
     arch: os.arch(),
     cpuCount: os.cpus().length,
-    cpuModel: cpu?.model ?? null,
-    totalMemoryBytes: os.totalmem(),
-    nodeVersion: process.version,
+    memoryClass: memoryClass(os.totalmem()),
+    nodeMajor: process.versions.node.split(".")[0] ?? null,
   };
 }
 
@@ -618,8 +738,8 @@ function loadChromium() {
   return playwright.chromium;
 }
 
-function refuseCi(options) {
-  if (process.env.CI && !options.allowCi) {
+function refuseCi() {
+  if (process.env.CI) {
     throw new Error("Real-path TTFV measurement is owner-run only and must not run in CI.");
   }
 }
@@ -628,10 +748,17 @@ function stableHash(value) {
   return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 }
 
-function redactCommand(commandText) {
-  return String(commandText)
-    .replace(/https?:\/\/[^\s'"]+/gi, "<redacted-url>")
-    .replace(/(api[_-]?key|token|secret|password)=([^\s]+)/gi, "$1=<redacted>");
+function recordCommandLabel(label, commandText, defaultCommand) {
+  return commandText === defaultCommand ? defaultCommand : `custom ${label} command (not recorded)`;
+}
+
+function memoryClass(totalBytes) {
+  const gib = totalBytes / (1024 ** 3);
+  if (gib < 8) return "<8GiB";
+  if (gib < 16) return "8-15GiB";
+  if (gib < 32) return "16-31GiB";
+  if (gib < 64) return "32-63GiB";
+  return "64GiB+";
 }
 
 function shellQuote(value) {

@@ -1734,8 +1734,8 @@ Measured inputs required before the owner records a verdict:
 
 | Input | Evidence source | Current state |
 | --- | --- | --- |
-| TTFV-1, clean environment to first scored job | three owner-run records from `scripts/ttfv-real.mjs run`, summarized by `scripts/ttfv-real.mjs summarize` | pending owner baseline |
-| TTFV-2, clean environment to first reviewable tailored resume PDF | same measurement records and summary | pending owner baseline |
+| TTFV-1, clean environment to first scored job | three gateable owner-run records from `scripts/ttfv-real.mjs run`, summarized by `scripts/ttfv-real.mjs summarize` | pending owner baseline |
+| TTFV-2, clean environment to first reviewable tailored resume PDF | same gateable measurement records and summary | pending owner baseline |
 | Friction map by phase | `install`, `workspace_init`, `stack_start`, `real_job_pipeline`, and probe timings in each measurement record | pending owner baseline |
 | Platform matrix | owner's Apple-silicon macOS run is the gate; Linux is optional owner sanity data | pending owner baseline |
 | Auth scenario | owner notes `warm-auth` or `cold-auth` for each run outside committed records | pending owner baseline |

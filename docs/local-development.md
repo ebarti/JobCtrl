@@ -143,14 +143,17 @@ real vendor auth, a real job posting, and real LLM spend. The wrapper lives at
 `scripts/ttfv-real.mjs` and is exposed through:
 
 ```bash
-pnpm ttfv:real -- --job-url "$JOBHUNTER_TTFV_JOB_URL"
-pnpm ttfv:probe
+pnpm ttfv:real -- --job-url "$JOBHUNTER_TTFV_JOB_URL" --expected-job-key "$JOBHUNTER_TTFV_JOB_KEY"
+pnpm ttfv:probe -- --expected-job-key "$JOBHUNTER_TTFV_JOB_KEY"
 pnpm ttfv:summary -- "$HOME/.jobhunter/measurements/ttfv-real-run-"*.json
 ```
 
 Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
 dependencies are installed; the wrapper records T0 immediately before it starts
-`corepack pnpm install:interactive`. See
+`corepack pnpm install:interactive` and starts the real job path with the
+tailor-only default command `jobhunter job <url> --tailor`. The summary gate
+accepts only full clean-run records with same-job API/UI/PDF proof; probe-only
+and timing-only records are rejected. See
 [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md) for the clean-run
 protocol, stop conditions, record privacy rules, and three-run summary command.
 
