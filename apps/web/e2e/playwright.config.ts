@@ -31,6 +31,11 @@ export default defineConfig({
   reporter: process.env["CI"] ? "github" : "list",
   globalSetup: "./fixtures/global-setup.ts",
   globalTeardown: "./fixtures/global-teardown.ts",
+  expect: {
+    toHaveScreenshot: {
+      pathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{-projectName}{ext}",
+    },
+  },
   use: {
     baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "retain-on-failure",
