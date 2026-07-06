@@ -13,6 +13,7 @@ Regression fixtures that prove the exact invariants:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from jobhunter.domain.contact.outreach_use_cases import (
     ApproveOutreachDraftUseCase,
     GenerateOutreachDraftUseCase,
     OutreachDraftInputError,
+    RejectOutreachDraftUseCase,
     ReviseOutreachDraftUseCase,
 )
 from jobhunter.domain.materials.value_objects import ArtifactStatus
@@ -376,6 +378,50 @@ def test_redraft_preserves_last_approved_until_replacement_approved(tmp_path: Pa
     )
     assert approved.approved_draft.draft_id == second.draft_id
     assert approved.draft(first_id).status is ArtifactStatus.SUPERSEDED
+
+
+def test_reject_reason_stays_canonical_and_out_of_events(tmp_path: Path) -> None:
+    conn, contact_repo, thread_repo, contact = _setup(tmp_path)
+    thread = GenerateOutreachDraftUseCase(
+        repository=thread_repo,
+        contact_repository=contact_repo,
+        llm=_FakeLlm(body=_CLEAN_BODY),
+        new_id=_counter(),
+    ).execute(
+        LOCAL_TENANT,
+        thread_id="thread-1",
+        contact_id=str(contact.contact_id),
+        job_id="https://job/1",
+        profile=_profile(),
+    )
+    draft_id = thread.latest_draft.draft_id
+    reason = "off tone, references dana.lee@example.test"
+
+    RejectOutreachDraftUseCase(
+        repository=thread_repo,
+        clock=lambda: "2026-07-06T00:02:00Z",
+    ).execute(LOCAL_TENANT, thread_id="thread-1", draft_id=draft_id, reason=reason)
+
+    row = conn.execute(
+        "SELECT reason FROM outreach_drafts WHERE tenant_id = ? AND draft_id = ?",
+        (LOCAL_TENANT, draft_id),
+    ).fetchone()
+    assert row["reason"] == reason
+
+    event_rows = conn.execute(
+        "SELECT event_type, payload_json FROM job_events WHERE entity_kind = 'outreach'"
+    ).fetchall()
+    payloads = [str(event["payload_json"] or "") for event in event_rows]
+    assert payloads
+    assert all(reason not in payload for payload in payloads)
+
+    rejected_payload = next(
+        json.loads(str(event["payload_json"]))
+        for event in event_rows
+        if event["event_type"] == "OutreachDraftRejected"
+    )
+    assert "reason" not in rejected_payload
+    assert rejected_payload["rejectedAt"] == "2026-07-06T00:02:00Z"
 
 
 def test_revise_rejects_empty_body(tmp_path: Path) -> None:
