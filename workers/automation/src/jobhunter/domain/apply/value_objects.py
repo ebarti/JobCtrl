@@ -215,6 +215,23 @@ class DryRunComplete:
 
     kind: str = field(default="dry_run_complete", init=False)
     navigated_to: str = ""
+    coverage: str = "full"
+    blocked_channels: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.coverage not in {"full", "partial"}:
+            raise ValueError("DryRunComplete.coverage must be 'full' or 'partial'")
+        if isinstance(self.blocked_channels, str):
+            object.__setattr__(self, "blocked_channels", (self.blocked_channels,))
+        elif not isinstance(self.blocked_channels, tuple):
+            object.__setattr__(
+                self,
+                "blocked_channels",
+                tuple(str(channel) for channel in self.blocked_channels),
+            )
+        for channel in self.blocked_channels:
+            if not isinstance(channel, str):
+                raise ValueError("DryRunComplete.blocked_channels must contain strings")
 
 
 SubmissionResult = Union[

@@ -11,11 +11,15 @@ existing ``artifact_list_projections`` projector picks up.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jobhunter import config
-from jobhunter.apply.launcher import mark_result
+from jobhunter.apply.launcher import SqliteApplyRunRepository, mark_result
 from jobhunter.database import close_connection, get_connection, init_db
+from jobhunter.domain.apply import ApplyRun, ApplyRunId, DryRunComplete
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, set_stage_state
 
@@ -182,6 +186,90 @@ def test_mark_result_dry_run_registers_apply_log_artifact(
         ).fetchone()
         assert row is not None
         assert row["path"] == str(log_dir / "worker-0.log")
+    finally:
+        close_connection(db_path)
+
+
+def test_repository_persists_dry_run_blocked_channel_artifact(
+    tmp_path, monkeypatch
+):
+    """Blocked browser channels are durable local evidence for the dry-run gate."""
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_running_apply_job(conn)
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setattr(config, "LOG_DIR", log_dir)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection",
+            lambda: get_connection(db_path),
+        )
+        run = ApplyRun.start(
+            tenant_id=LOCAL_TENANT,
+            run_id=ApplyRunId("run-dry-blocked"),
+            job_id=JobId("https://example.com/job"),
+            started_at="2026-07-06T10:00:00+00:00",
+            worker_id=1,
+            model="haiku",
+            dry_run=True,
+        )
+        run = run.record_event(
+            event_type="DryRunBlockedChannels",
+            occurred_at="2026-07-06T10:00:01+00:00",
+            level="warn",
+            payload={
+                "coverage": "partial",
+                "blocked_channels": ["network:POST"],
+                "blocked_requests": [
+                    {
+                        "channel": "network",
+                        "method": "POST",
+                        "url": "https://example.com/apply",
+                        "resource_type": "Fetch",
+                    }
+                ],
+            },
+        )
+        run = run.complete(
+            result=DryRunComplete(
+                navigated_to="https://example.com/job",
+                coverage="partial",
+                blocked_channels=("network:POST",),
+            ),
+            finished_at="2026-07-06T10:00:02+00:00",
+        )
+
+        SqliteApplyRunRepository().save(run)
+
+        row = conn.execute(
+            "SELECT path, metadata_json FROM job_artifacts "
+            "WHERE job_url = ? AND artifact_type = 'apply_dryrun_blocked'",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert row is not None
+        artifact_path = Path(row["path"])
+        assert artifact_path.exists()
+        assert json.loads(row["metadata_json"]) == {
+            "run_id": "run-dry-blocked",
+            "coverage": "partial",
+            "blocked_count": 1,
+        }
+        assert json.loads(artifact_path.read_text(encoding="utf-8")) == {
+            "run_id": "run-dry-blocked",
+            "coverage": "partial",
+            "blocked_channels": ["network:POST"],
+            "blocked_requests": [
+                {
+                    "channel": "network",
+                    "method": "POST",
+                    "url": "https://example.com/apply",
+                    "resource_type": "Fetch",
+                }
+            ],
+        }
     finally:
         close_connection(db_path)
 
