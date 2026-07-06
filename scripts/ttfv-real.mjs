@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8766";
@@ -17,37 +18,48 @@ const DEFAULT_POLL_MS = 5_000;
 const DEFAULT_INSTALL_COMMAND = "corepack pnpm install:interactive";
 const DEFAULT_INIT_COMMAND = "uv --project workers/automation run jobhunter init";
 const DEFAULT_STACK_COMMAND = "corepack pnpm dev";
-const DEFAULT_WORK_COMMAND_LABEL = "uv --project workers/automation run jobhunter job <redacted-real-job-url> --tailor";
+const DEFAULT_DISCOVERY_LIMIT = 1;
+const DEFAULT_WORKERS = 1;
+const DEFAULT_WORK_COMMAND_LABEL =
+  "uv --project workers/automation run jobhunter run discover score tailor --limit 1 --workers 1";
+const ALL_JOB_VISIBILITY_FILTER = "all";
 
-const command = process.argv[2] && !process.argv[2].startsWith("-") ? process.argv[2] : "help";
-const argv = command === "help" ? process.argv.slice(2) : process.argv.slice(3);
+if (isMainModule()) {
+  const command = process.argv[2] && !process.argv[2].startsWith("-") ? process.argv[2] : "help";
+  const argv = command === "help" ? process.argv.slice(2) : process.argv.slice(3);
 
-try {
-  if (command === "run") {
-    await runMeasurement(parseArgs(argv));
-  } else if (command === "probe") {
-    await runProbeOnly(parseArgs(argv));
-  } else if (command === "summarize") {
-    summarizeRecords(parseArgs(argv));
-  } else {
-    printHelp();
+  try {
+    if (command === "run") {
+      await runMeasurement(parseArgs(argv));
+    } else if (command === "probe") {
+      await runProbeOnly(parseArgs(argv));
+    } else if (command === "summarize") {
+      summarizeRecords(parseArgs(argv));
+    } else {
+      printHelp();
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+}
+
+function isMainModule() {
+  return process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
 }
 
 function printHelp() {
   console.log(`Usage:
-  node scripts/ttfv-real.mjs run --job-url <real-job-posting-url> [options]
+  node scripts/ttfv-real.mjs run [options]
   node scripts/ttfv-real.mjs probe [options]
   node scripts/ttfv-real.mjs summarize <record...> [--output <summary.json>]
 
 Real-path measurement only. Do not run with synthetic data, fixtures, or CI.
 
 Run options:
-  --job-url <url>              Real job posting URL passed to "jobhunter job".
-  --expected-job-key <key>     Optional canonical job key. Stored as a hash only.
+  --discovery-limit <n>        Default: ${DEFAULT_DISCOVERY_LIMIT}
+  --workers <n>                Default: ${DEFAULT_WORKERS}
+  --expected-job-key <key>     Optional probe binding key. Stored as a hash only.
   --install-command <command>  Default: ${DEFAULT_INSTALL_COMMAND}
   --init-command <command>     Default: ${DEFAULT_INIT_COMMAND}
   --stack-command <command>    Default: ${DEFAULT_STACK_COMMAND}
@@ -116,6 +128,7 @@ async function runMeasurement(options) {
 
   let stack = null;
   let work = null;
+  let workExit = null;
   try {
     if (!options.skipInstall) {
       await runShellPhase(record, "install", installCommand, recordCommandLabel("install", installCommand, DEFAULT_INSTALL_COMMAND));
@@ -129,16 +142,24 @@ async function runMeasurement(options) {
       finishLongRunningPhase(record, "stack_start", "healthy");
     }
     if (!options.skipWork) {
+      await captureBaselineJobs(record, apiBaseUrl);
+    }
+    if (!options.skipWork) {
       work = startChildPhase(record, "real_job_pipeline", workCommand.command, workCommand.recordCommand);
       work.done.then((exit) => {
+        workExit = exit;
         finishChildPhase(record, "real_job_pipeline", exit);
       });
     }
 
-    await runProbeLoop(record, { apiBaseUrl, webBaseUrl }, options);
+    await runProbeLoop(record, { apiBaseUrl, webBaseUrl }, options, () => {
+      if (!workExit || workExit.exitCode === 0) return null;
+      return `Real job command exited with ${workExit.exitCode} before both stop conditions passed.`;
+    });
 
     if (work) {
       const exit = await work.done;
+      workExit = exit;
       finishChildPhase(record, "real_job_pipeline", exit);
       if (exit.exitCode !== 0) {
         record.errors.push({
@@ -147,6 +168,13 @@ async function runMeasurement(options) {
         });
       }
     }
+  } catch (error) {
+    const message = errorMessage(error);
+    record.errors.push({
+      code: "measurement_failed",
+      message,
+    });
+    failPendingProbes(record, message);
   } finally {
     if (stack && !options.keepStack) {
       await stopLongRunningProcess(stack.child);
@@ -255,7 +283,7 @@ function summarizeMetric(values, thresholdMs, worstMultiplier) {
   };
 }
 
-function gateableRecordRejectionReasons(record) {
+export function gateableRecordRejectionReasons(record) {
   const reasons = [];
   if (!record || typeof record !== "object") return ["record is not an object"];
   if (record.schemaVersion !== SCHEMA_VERSION) reasons.push("schema version mismatch");
@@ -266,20 +294,50 @@ function gateableRecordRejectionReasons(record) {
   if (record.policy?.realPathOnly !== true) reasons.push("real-path policy missing");
   if (record.policy?.syntheticDataAllowed !== false) reasons.push("synthetic-data policy missing");
   if (record.policy?.ciAllowed !== false) reasons.push("CI policy missing");
-  if (!record.expected?.jobHash) reasons.push("expected job hash missing");
+  const measurementJobHash = measuredJobHash(record);
+  if (!measurementJobHash) reasons.push("measurement job hash missing");
+  if (!record.baseline?.capturedAt) reasons.push("pre-work discovery baseline missing");
+  if (record.baseline?.visibilityFilter !== ALL_JOB_VISIBILITY_FILTER) {
+    reasons.push("pre-work discovery baseline did not include all job visibility states");
+  }
+  if (!Array.isArray(record.baseline?.jobHashes)) {
+    reasons.push("pre-work discovery baseline hashes missing");
+  } else if (record.baseline.jobHashes.includes(measurementJobHash)) {
+    reasons.push("measurement job was already present in the pre-work baseline");
+  }
   if (!record.t0?.startedAt || record.t0?.command !== DEFAULT_INSTALL_COMMAND) {
     reasons.push("T0 was not captured on the default install command");
   }
   if (!phaseSucceeded(record, "install", DEFAULT_INSTALL_COMMAND)) reasons.push("default install phase did not succeed");
   if (!phaseSucceeded(record, "workspace_init", DEFAULT_INIT_COMMAND)) reasons.push("default workspace init phase did not succeed");
   if (!phaseHealthy(record, "stack_start", DEFAULT_STACK_COMMAND)) reasons.push("default stack phase was not healthy");
-  if (!phaseSucceeded(record, "real_job_pipeline", DEFAULT_WORK_COMMAND_LABEL)) reasons.push("tailor-only real job command did not succeed");
-  if (!probeHasExpectedJob(record.probes?.ttfv1, record.expected?.jobHash)) {
-    reasons.push("TTFV-1 probe is not bound to the expected job");
+  if (!phaseSucceeded(record, "real_job_pipeline", DEFAULT_WORK_COMMAND_LABEL)) {
+    reasons.push("discovery-inclusive real job command did not succeed");
   }
-  if (!probeHasExpectedJob(record.probes?.ttfv2, record.expected?.jobHash)) {
-    reasons.push("TTFV-2 probe is not bound to the expected job");
+  if (record.probes?.ttfv1?.api?.discoveredAfterT0 !== true) {
+    reasons.push("TTFV-1 job was not proven to be discovered after T0");
   }
+  const selectedDiscoveredAt = record.probes?.ttfv1?.api?.selectedDiscoveredAt;
+  if (!isTimestampAtOrAfter(selectedDiscoveredAt, record.t0?.startedAt)) {
+    reasons.push("TTFV-1 selected job discoveredAt is missing or before T0");
+  }
+  if (record.probes?.ttfv1?.api?.realDiscoverySource !== true) {
+    reasons.push("TTFV-1 real discovery source proof missing");
+  }
+  if (
+    !record.probes?.ttfv1?.api?.selectedDiscoverySourceHash &&
+    !record.probes?.ttfv1?.api?.selectedSourceHash &&
+    !record.probes?.ttfv1?.api?.selectedPostingSourceHash
+  ) {
+    reasons.push("TTFV-1 discovery source hash missing");
+  }
+  if (!probeHasMeasurementJob(record.probes?.ttfv1, measurementJobHash)) {
+    reasons.push("TTFV-1 probe is not bound to the measurement job");
+  }
+  if (!probeHasMeasurementJob(record.probes?.ttfv2, measurementJobHash)) {
+    reasons.push("TTFV-2 probe is not bound to the measurement job");
+  }
+  if (record.probes?.ttfv1?.ui?.selectedJobRendered !== true) reasons.push("TTFV-1 selected-job UI proof missing");
   if (record.probes?.ttfv1?.ui?.badgeMatched !== true) reasons.push("TTFV-1 UI badge proof missing");
   if (record.probes?.ttfv2?.ui?.linkMatchedSelectedArtifact !== true) reasons.push("TTFV-2 UI link proof missing");
   if (!record.probes?.ttfv2?.api?.selectedArtifactHash) reasons.push("TTFV-2 artifact hash missing");
@@ -299,11 +357,15 @@ function phaseHealthy(record, name, commandLabel) {
   return phase?.command === commandLabel && phase.status === "healthy";
 }
 
-function probeHasExpectedJob(probe, expectedJobHash) {
+function measuredJobHash(record) {
+  return record.expected?.jobHash ?? record.probes?.ttfv1?.api?.selectedJobHash ?? null;
+}
+
+function probeHasMeasurementJob(probe, jobHash) {
   return (
     probe?.status === "passed" &&
     Number.isFinite(probe.durationMs) &&
-    probe.api?.selectedJobHash === expectedJobHash
+    probe.api?.selectedJobHash === jobHash
   );
 }
 
@@ -313,7 +375,7 @@ function median(sortedValues) {
   return (sortedValues[middle - 1] + sortedValues[middle]) / 2;
 }
 
-async function runProbeLoop(record, urls, options) {
+async function runProbeLoop(record, urls, options, shouldAbort = null) {
   const t0Ms = Date.parse(record.t0.startedAt);
   const timeoutMs = numberOption(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const pollMs = numberOption(options.pollMs, DEFAULT_POLL_MS);
@@ -322,26 +384,56 @@ async function runProbeLoop(record, urls, options) {
   const browser = await chromium.launch({ headless: !options.headed });
   const page = await browser.newPage();
   try {
-    while (Date.now() <= deadlineMs) {
+    let attempted = false;
+    while (!attempted || Date.now() <= deadlineMs) {
+      attempted = true;
+      const abortMessage = typeof shouldAbort === "function" ? shouldAbort() : null;
+      if (abortMessage) {
+        failPendingProbes(record, abortMessage);
+        return;
+      }
+      const t0StartedAt = record.t0.startedAt;
+      const expectedJobHash = record.expected?.jobHash ?? null;
+      const ttfv1JobHash = record.probes.ttfv1.api?.selectedJobHash ?? null;
+      const ttfv2JobHash = expectedJobHash ?? ttfv1JobHash;
       if (record.probes.ttfv1.status !== "passed") {
-        await tryProbe(record, "ttfv1", () => probeTtfv1(page, urls, record.expected?.jobHash ?? null));
+        await tryProbe(record, "ttfv1", () => probeTtfv1(page, urls, expectedJobHash, baselineHashSet(record), t0StartedAt));
       }
       if (record.probes.ttfv2.status !== "passed") {
-        await tryProbe(record, "ttfv2", () => probeTtfv2(page, urls, record.expected?.jobHash ?? null));
+        if (ttfv2JobHash) {
+          await tryProbe(record, "ttfv2", () => probeTtfv2(page, urls, ttfv2JobHash));
+        } else {
+          record.probes.ttfv2.lastError = "Waiting for TTFV-1 to bind the discovered measurement job.";
+        }
       }
       if (record.probes.ttfv1.status === "passed" && record.probes.ttfv2.status === "passed") {
         return;
+      }
+      if (Date.now() > deadlineMs) {
+        break;
       }
       await sleep(pollMs);
     }
     for (const name of ["ttfv1", "ttfv2"]) {
       if (record.probes[name].status !== "passed") {
         record.probes[name].status = "timeout";
-        record.probes[name].lastError = `Timed out after ${timeoutMs}ms from T0.`;
+        const previous = record.probes[name].lastError;
+        record.probes[name].lastError = previous
+          ? `Timed out after ${timeoutMs}ms from T0. Last observed failure: ${previous}`
+          : `Timed out after ${timeoutMs}ms from T0.`;
       }
     }
   } finally {
     await browser.close();
+  }
+}
+
+function failPendingProbes(record, message) {
+  for (const name of ["ttfv1", "ttfv2"]) {
+    if (record.probes[name].status !== "passed") {
+      record.probes[name].status = "failed";
+      record.probes[name].lastError = message;
+    }
   }
 }
 
@@ -366,28 +458,51 @@ async function tryProbe(record, name, probe) {
   }
 }
 
-async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
-  const jobs = await requestJson(apiBaseUrl, "/v1/jobs?page=1&pageSize=100&sort=fit_score&dir=desc");
-  const items = Array.isArray(jobs.items) ? jobs.items : [];
+async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }, expectedJobHash, baselineHashes, t0StartedAt) {
+  const items = await requestAllJobs(apiBaseUrl, "fit_score", "desc");
   const scored = items.filter((item) => Number.isFinite(item.fitScore));
   const candidate = expectedJobHash
     ? scored.find((item) => stableHash(item.jobKey) === expectedJobHash)
-    : scored[0];
+    : scored.find(
+        (item) =>
+          !baselineHashes.has(stableHash(item.jobKey)) &&
+          isTimestampAtOrAfter(item.discoveredAt, t0StartedAt) &&
+          discoveryProvenance(item).realDiscoverySource,
+      );
   if (!candidate) {
     return {
       ok: false,
       message: expectedJobHash
-        ? "The expected job is not queryable through /v1/jobs with a numeric fit score."
-        : "No scored job is queryable through /v1/jobs.",
+        ? "The measurement job is not queryable through /v1/jobs with a numeric fit score."
+        : "No post-T0 real-discovery scored job is queryable through /v1/jobs.",
     };
   }
+  const provenance = discoveryProvenance(candidate);
+  const discoveredAfterT0 = isTimestampAtOrAfter(candidate.discoveredAt, t0StartedAt);
+  if (baselineHashes.has(stableHash(candidate.jobKey))) {
+    return { ok: false, message: "The selected scored job was already present in the pre-work baseline." };
+  }
+  if (!discoveredAfterT0) {
+    return { ok: false, message: "The selected scored job does not have a discoveredAt timestamp after T0." };
+  }
+  if (!provenance.realDiscoverySource) {
+    return { ok: false, message: "The selected scored job does not expose real discovery source provenance." };
+  }
   const jobsUrl = new URL(joinUrl(webBaseUrl, "/jobs"));
-  jobsUrl.searchParams.set("q", candidate.jobKey);
+  jobsUrl.searchParams.set("q", candidate.url || candidate.title || candidate.company || candidate.jobKey);
   jobsUrl.searchParams.set("sort", "fit_score");
   jobsUrl.searchParams.set("dir", "desc");
   await page.goto(jobsUrl.href, { waitUntil: "domcontentloaded" });
-  await page.locator("table.jobs-data-grid-table .fit").first().waitFor({ timeout: 5_000 });
-  const badgeTexts = await page.locator("table.jobs-data-grid-table .fit").allTextContents();
+  const table = page.locator("table.jobs-data-grid-table");
+  await table.locator(".fit").first().waitFor({ timeout: 5_000 });
+  const tableText = normalizeText(await table.innerText());
+  const rowMatched =
+    textMatchesIfPresent(tableText, candidate.title) &&
+    textMatchesIfPresent(tableText, candidate.company);
+  if (!rowMatched) {
+    return { ok: false, message: "A scored job is queryable, but the selected job did not render on /jobs." };
+  }
+  const badgeTexts = await table.locator(".fit").allTextContents();
   const scoreText = String(candidate.fitScore);
   const rendered = badgeTexts.some((text) => text.trim() === scoreText);
   if (!rendered) {
@@ -397,17 +512,32 @@ async function probeTtfv1(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
     ok: true,
     details: {
       api: {
-        scoredJobsOnFirstPage: scored.length,
+        scoredJobsQueryable: scored.length,
         selectedJobHash: stableHash(candidate.jobKey),
         selectedFitScore: candidate.fitScore,
+        selectedDiscoveredAt: candidate.discoveredAt,
+        selectedDiscoverySourceHash: provenance.discoverySourceHash,
+        selectedSourceHash: provenance.sourceHash,
+        selectedPostingSourceHash: provenance.postingSourceHash,
+        realDiscoverySource: provenance.realDiscoverySource,
+        discoveredAfterT0,
       },
       ui: {
-        routePattern: "/jobs?q=<expected-job-key>&sort=fit_score&dir=desc",
+        routePattern: "/jobs?q=<measurement-job-search-token>&sort=fit_score&dir=desc",
         selector: "table.jobs-data-grid-table .fit",
+        selectedJobRendered: true,
         badgeMatched: true,
       },
     },
   };
+}
+
+function textMatchesIfPresent(haystack, needle) {
+  return !needle || haystack.includes(normalizeText(String(needle)));
+}
+
+function normalizeText(value) {
+  return String(value).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
@@ -422,7 +552,7 @@ async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
     return {
       ok: false,
       message: expectedJobHash
-        ? "The expected job is not present in Apply Review with a tailored resume PDF artifact."
+        ? "The measurement job is not present in Apply Review with a tailored resume PDF artifact."
         : "No Apply Review queue item exposes a tailored resume PDF artifact.",
     };
   }
@@ -461,7 +591,7 @@ async function probeTtfv2(page, { apiBaseUrl, webBaseUrl }, expectedJobHash) {
         selectedArtifactHash: stableHash(artifactId),
       },
       ui: {
-        routePattern: "/apply-review?jobKey=<expected-job-key>",
+        routePattern: "/apply-review?jobKey=<measurement-job-key>",
         linkName: "open final file",
         linkMatchedSelectedArtifact: true,
       },
@@ -482,6 +612,38 @@ async function requestJson(baseUrl, pathname) {
     throw new Error(`${pathname} returned HTTP ${response.status}`);
   }
   return response.json();
+}
+
+async function requestAllJobs(apiBaseUrl, sort, dir, filters = {}) {
+  const pageSize = 200;
+  const first = await requestJobsPage(apiBaseUrl, { page: 1, pageSize, sort, dir, ...filters });
+  const items = Array.isArray(first.items) ? [...first.items] : [];
+  const pages = Number(first.pagination?.pages ?? 1);
+  for (let page = 2; page <= pages; page += 1) {
+    const next = await requestJobsPage(apiBaseUrl, { page, pageSize, sort, dir, ...filters });
+    if (Array.isArray(next.items)) items.push(...next.items);
+  }
+  return items;
+}
+
+async function requestJobsPage(apiBaseUrl, params) {
+  const url = new URL(joinUrl(apiBaseUrl, "/v1/jobs"));
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return requestJson(url.origin, `${url.pathname}${url.search}`);
+}
+
+async function captureBaselineJobs(record, apiBaseUrl) {
+  const jobs = await requestAllJobs(apiBaseUrl, "discovered_at", "desc", { deleted: ALL_JOB_VISIBILITY_FILTER });
+  record.baseline = {
+    capturedAt: nowIso(),
+    visibilityFilter: ALL_JOB_VISIBILITY_FILTER,
+    jobCount: jobs.length,
+    jobHashes: jobs.map((job) => stableHash(job.jobKey)).sort(),
+  };
 }
 
 async function requestBytes(url) {
@@ -620,16 +782,27 @@ function resolveWorkCommand(options) {
     return { command: "", recordCommand: "skipped real job command", expectedJobKey: null, gateable: false };
   }
   if (options.workCommand) {
-    throw new Error("--work-command is not supported for real-path TTFV; use --job-url so the wrapper can scope probes without recording sensitive command text.");
+    throw new Error(
+      "--work-command is not supported for gateable TTFV; use the default discovery-inclusive command and configure one real discovery role/source.",
+    );
   }
-  if (!options.jobUrl) {
-    throw new Error("run requires --job-url or --skip-work.");
+  if (options.jobUrl) {
+    throw new Error("--job-url is not supported for gateable TTFV; configure one real discovery role/source and let discovery select the measured job.");
   }
-  const commandText = `uv --project workers/automation run jobhunter job ${shellQuote(String(options.jobUrl))} --tailor`;
+  const discoveryLimit = numberOption(options.discoveryLimit, DEFAULT_DISCOVERY_LIMIT);
+  const workers = numberOption(options.workers, DEFAULT_WORKERS);
+  if (discoveryLimit !== DEFAULT_DISCOVERY_LIMIT || workers !== DEFAULT_WORKERS) {
+    return {
+      command: `uv --project workers/automation run jobhunter run discover score tailor --limit ${shellQuote(String(discoveryLimit))} --workers ${shellQuote(String(workers))}`,
+      recordCommand: "custom discovery-inclusive real job command (not recorded)",
+      expectedJobKey: stringOption(options.expectedJobKey, ""),
+      gateable: false,
+    };
+  }
   return {
-    command: commandText,
+    command: DEFAULT_WORK_COMMAND_LABEL,
     recordCommand: DEFAULT_WORK_COMMAND_LABEL,
-    expectedJobKey: stringOption(options.expectedJobKey, String(options.jobUrl)),
+    expectedJobKey: stringOption(options.expectedJobKey, ""),
     gateable: true,
   };
 }
@@ -646,7 +819,6 @@ function applyRunGateMetadata(record, options, { installCommand, initCommand, st
   if (initCommand !== DEFAULT_INIT_COMMAND) blockers.push("custom init command");
   if (stackCommand !== DEFAULT_STACK_COMMAND) blockers.push("custom stack command");
   if (!workCommand.gateable) blockers.push("non-default real job command");
-  if (!record.expected?.jobHash) blockers.push("expected job hash missing");
   record.gateable = blockers.length === 0;
   record.gateableReason = blockers.length ? blockers.join("; ") : null;
 }
@@ -667,6 +839,12 @@ function baseRecord(mode, options, urls) {
     gateable: false,
     gateableReason: "not evaluated",
     expected: null,
+    baseline: {
+      capturedAt: null,
+      visibilityFilter: null,
+      jobCount: null,
+      jobHashes: [],
+    },
     status: "running",
     thresholds: {
       ttfv1Ms: numberOption(options.thresholdTtfv1Ms, DEFAULT_TTFV_1_THRESHOLD_MS),
@@ -746,6 +924,47 @@ function refuseCi() {
 
 function stableHash(value) {
   return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
+}
+
+function baselineHashSet(record) {
+  return new Set(Array.isArray(record.baseline?.jobHashes) ? record.baseline.jobHashes : []);
+}
+
+export function discoveryProvenance(job) {
+  const discoverySource = cleanSource(job.discoverySource);
+  const source = cleanSource(job.source);
+  const postingSource = cleanSource(job.postingSource);
+  const values = [discoverySource, source, postingSource].filter(Boolean);
+  const realDiscoverySource = values.length > 0 && values.every((value) => !looksNonRealDiscoverySource(value));
+  return {
+    discoverySourceHash: discoverySource ? stableHash(discoverySource) : null,
+    sourceHash: source ? stableHash(source) : null,
+    postingSourceHash: postingSource ? stableHash(postingSource) : null,
+    realDiscoverySource,
+  };
+}
+
+function cleanSource(value) {
+  const cleaned = String(value ?? "").trim();
+  return cleaned || null;
+}
+
+function looksNonRealDiscoverySource(value) {
+  const normalized = value.trim().toLowerCase();
+  if (["unknown", "n/a", "na", "none", "null", "undefined"].includes(normalized)) {
+    return true;
+  }
+  return /(?:synthetic|fixture|sample|seed|test|qa|manual)/i.test(value);
+}
+
+function isTimestampAtOrAfter(value, reference) {
+  const valueMs = Date.parse(String(value ?? ""));
+  const referenceMs = Date.parse(String(reference ?? ""));
+  return Number.isFinite(valueMs) && Number.isFinite(referenceMs) && valueMs >= referenceMs;
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function recordCommandLabel(label, commandText, defaultCommand) {

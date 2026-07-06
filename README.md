@@ -435,6 +435,7 @@ pnpm web:check
 pnpm web:build
 pnpm web:test
 pnpm web:e2e
+pnpm scripts:test
 pnpm extension:check
 pnpm extension:test
 pnpm extension:e2e

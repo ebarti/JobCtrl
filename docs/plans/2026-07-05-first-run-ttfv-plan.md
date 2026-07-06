@@ -1,9 +1,9 @@
-# First-Run Time-to-Value: Measurement Discipline and Synthetic Sample Data
+# First-Run Time-to-Value: Real-Path Measurement Discipline
 
 - **Date:** 2026-07-05
-- **Status:** Proposed — plan only, nothing implemented.
+- **Status:** Amended 2026-07-06 — Goal B withdrawn; implementation now targets real-path measurement only.
 - **Anchors verified against main @ a488e4e9.** Every path, symbol, command, and fixture cited below was checked against this worktree's HEAD. Per repo practice, machine-re-verify every anchor against the implementation base ref before handing any phase to an implementer. Content attributed to PR #254 is cited by PR number only; that plan is not yet on `main`.
-- **Owner-facing goal:** make the first ten and thirty minutes of a fresh JobCtl install *provably* valuable, measure that value on clean environments as a recurring regression discipline, ship a safe synthetic sample experience that demonstrates the product before any real data or auth, and define — with evidence, not guesswork — when a packaged desktop install becomes worth building.
+- **Owner-facing goal:** make the first ten and thirty minutes of a fresh JobCtl install *provably* valuable on the real product path, measure that value on clean environments as an owner-run regression discipline, and define — with evidence, not guesswork — when a packaged desktop install becomes worth building.
 
 ---
 
@@ -45,7 +45,7 @@ Today JobCtl installs from source. `docs/user/getting-started.md:9` states plain
 |---|---|
 | A measured definition of first-run *value* and wall-clock budgets for reaching it | The mechanics of installing and authenticating the stack |
 | The clean-environment measurement protocol and its recurring entry in the QA matrix | `doctor`/`setup` per-leg auth truthfulness |
-| A safe synthetic *sample dataset* surfaced in-product on first run, with a never-mix guarantee | The dependency sync, toolchain, and vendor-binary bundling stance |
+| Real-path measurement records and stop-condition probes | The dependency sync, toolchain, and vendor-binary bundling stance |
 | The evidence-based decision framework for whether to build a packaged desktop install | The documented platform coverage and the Linux wheel-gap remediation (an *input* to this plan's packaging decision) |
 
 Non-negotiable inheritances from PR #254 that constrain this plan: **no vendor binaries are redistributed in any JobCtl artifact** (the Claude Code CLI is proprietary/no-redistribution; the Codex and Antigravity binaries arrive only as pinned PyPI wheels). This directly bounds what any future package (§3) may contain.
@@ -65,18 +65,17 @@ Three goals follow, each with objectives, invariants, explicit acceptance gates,
 | **TTFV-1** | Clean environment → **first scored job observable** | **≤ 10 minutes** | The triage half of the product works: a job carries a fit score with auditable evidence and renders in the read model. |
 | **TTFV-2** | Clean environment → **first reviewed tailored resume PDF** | **≤ 30 minutes** | The materials half works: a tailored resume PDF is viewable and reviewable in Apply Review. |
 
-Synthetic data is explicitly permitted for both (the workstream brief allows it, and it is what makes the budgets both achievable and deterministic). The sample dataset in Goal B is the vehicle: once loaded, it already satisfies both stop conditions without any LLM spend, job-source crawl, or model latency — so TTFV under the synthetic path measures *install + provisioning + navigation to value*, which is exactly the friction a new user feels.
-
-**Two measurement modes, both defined, only one gated in routine CI:**
-
-- **Synthetic-path TTFV (the regression gate).** Deterministic, no LLM spend, no external network beyond package downloads, no job-source crawl. This is the recurring check that enters the QA matrix. It exercises the real install, real dependency sync, real workspace init, the real read model and UI, and the sample-data load — everything except the non-deterministic real model/crawl steps.
-- **Real-path TTFV (observational, owner-run, never in routine CI).** One genuine first scored job and one genuine tailored resume PDF from real auth on a clean machine, recorded occasionally (for example at release checkpoints). This is the honesty check that the synthetic path is not hiding real latency or auth friction. It is spendful and must not run unattended; it is a recorded owner activity, not an automated gate.
+Synthetic data is not permitted for either metric. The only gateable
+measurement mode is the owner-run real path: real vendor auth, one real
+discovery target, a real job discovered after T0, real model scoring, and a real
+tailored resume PDF. The wrapper and probes may be dry-validated without spend,
+but dry/probe records are not gateable TTFV evidence.
 
 ### 1.2 Start and stop timestamps (must be machine-checkable, not subjective)
 
 - **T0 (start), both metrics:** the instant the first documented install command runs in a clean environment (the first command of the install path — today `pnpm install:interactive`, under PR #254 the `scripts/install.sh` bootstrap). Captured by the measurement wrapper, not by a human stopwatch.
-- **Stop, TTFV-1:** a scored job is simultaneously (a) queryable through the read API and (b) rendered on `/jobs` with a fit-score badge (the badge whose numeric-color contract is already guarded — `docs/local-reliability-qa.md:140`). The probe asserts both; UI-only or API-only is insufficient.
-- **Stop, TTFV-2:** a tailored resume PDF is viewable in Apply Review (`/apply-review`), meaning the resume surface renders and its final-file PDF link resolves to a real artifact byte stream. The seeded greenhouse "Director of Platform Engineering" job in `apps/api/test/qa-seed.ts` already carries an approved `resume_pdf` artifact and appears in the Apply Review queue, so the stop condition is reachable from synthetic data alone.
+- **Stop, TTFV-1:** a scored job discovered after T0 is simultaneously (a) queryable through the read API and (b) rendered on `/jobs` with a fit-score badge (the badge whose numeric-color contract is already guarded — `docs/local-reliability-qa.md:140`). The probe asserts all-state pre-work baseline absence, `discoveredAt >= T0`, hashed real discovery-source provenance, and matching UI evidence; UI-only or API-only is insufficient.
+- **Stop, TTFV-2:** a tailored resume PDF for the same measured job is viewable in Apply Review (`/apply-review`), meaning the resume surface renders and its final-file PDF link resolves to a real artifact byte stream.
 
 Each stop condition must be encoded as an automated probe (a read-model query plus a rendered-surface assertion) so the measurement is reproducible and the "value" is proven, not asserted.
 
@@ -86,32 +85,39 @@ The number is meaningless without a defined environment. The protocol must speci
 
 - **Environment.** A fresh VM image or ephemeral container with none of the JobCtl toolchain pre-installed and no repository checkout present. Record OS, architecture, CPU class, RAM, and a coarse network-bandwidth class in the measurement record.
 - **Cold caches (enumerated, must all be empty at T0).** The pnpm store; the uv/pip cache; the Playwright browser cache (`~/Library/Caches/ms-playwright` on macOS, the platform equivalent elsewhere — the shared-cache GC hazard is already documented at `README.md:90-97`); any existing Python virtualenv under `workers/automation`; any `node_modules`; the vendor SDK wheels; and the local workspace `~/.jobctl` (or the `JOBCTL_DIR` in use). A warm cache invalidates the run.
-- **Allowed vs disallowed network.** Package/tool/browser downloads are allowed (they are the setup cost being measured). For the synthetic path, LLM provider calls and job-source crawling are disallowed — the sample data supplies value without them. For the real path, exactly one scored job and one tailored resume may use real providers, with spend bounded and recorded.
-- **Auth precondition, stated per scenario.** Because PR #254 makes setup *reuse existing* vendor auth, "clean" must declare whether vendor credential stores are present or absent. Define at least two scenarios: **cold-auth** (no vendor logins/keys present — the true worst case) and **warm-auth** (existing logins present, PR #254's zero-prompt path). The synthetic-path gate runs cold-auth because it needs no real auth; the real-path observation records both.
-- **Timestamping and phase breakdown.** The wrapper records T0, the stop timestamps, and a per-phase breakdown so a regression localizes to a phase rather than to an opaque total. Minimum phases: toolchain install; dependency sync; browser install; workspace init (`jobctl init`); sample-data load; stack start (`pnpm dev` to worker-healthy per `GET /v1/health` — `docs/local-reliability-qa.md:45-50`); navigation-to-value (per stop probe).
-- **Statistics and reference class.** Run each scenario N times (N defined in the harness, small but > 1). The gate asserts against an agreed statistic on a named reference-machine class — for example median under budget with a defined worst-case ceiling — so one slow cold download does not flake the gate. Both the statistic and the reference class are recorded in the doc.
-- **Platform coverage, honestly recorded.** Measure on every platform that resolves today (macOS arm64/x86_64, Windows, musllinux). Record glibc-Linux as a known non-passing platform until PR #254's S5 wheel-gap remediation lands, rather than silently omitting it. Platform coverage is also a direct input to Goal C.
+- **Allowed vs disallowed network.** Package/tool/browser downloads are allowed because they are part of the setup cost. Real job-source crawling and real LLM provider calls are allowed only for the owner-run measurement and must be bounded to the one configured discovery target and the one measured job. Auto-apply, browser submission, mailbox scans, seeded data, fixtures, and CI are disallowed.
+- **Auth precondition, stated per scenario.** Because setup can reuse existing vendor auth, "clean" must declare whether vendor credential stores are present or absent. The owner records **cold-auth** or **warm-auth** notes outside committed artifacts; the measurement record itself must not contain credentials or provider logs.
+- **Timestamping and phase breakdown.** The wrapper records T0, the stop timestamps, and a per-phase breakdown so a regression localizes to a phase rather than to an opaque total. Minimum phases: toolchain install; workspace init (`jobctl init`); stack start (`pnpm dev` to worker-healthy per `GET /v1/health` — `docs/local-reliability-qa.md:45-50`); real discovery/scoring/tailoring (`jobctl run discover score tailor --limit 1 --workers 1`); navigation-to-value (per stop probe).
+- **Statistics and reference class.** The gate is the owner's Apple-silicon macOS reference machine, median of three clean runs under threshold with the worst run under 1.5× threshold, pre-release cadence only.
+- **Platform coverage, honestly recorded.** The owner macOS run is the gate. Other platform runs are optional sanity data for Goal C and must be labeled as non-gating if recorded.
 
 ### 1.4 The measurement record (source of truth for Goals A and C)
 
-The harness emits one machine-readable record per run (JSON), containing: environment metadata, auth scenario, per-phase durations, the two totals, pass/fail against each threshold, and the harness/commit identity. These records are the **source of truth** for the TTFV metrics and the primary evidence feeding the packaging decision (§3). The plan does not prescribe the harness's internal structure; it requires that (a) the record schema is stable and documented, (b) records are reproducible from the protocol, and (c) records never contain real profile, resume, credential, or job data (synthetic-only, consistent with `docs/user/data-and-safety.md:114-123`).
+The harness emits one machine-readable record per run (JSON), containing:
+environment metadata, per-phase durations, the two totals, pass/fail against
+each threshold, and the harness/commit identity. These records are the **source
+of truth** for the TTFV metrics and the primary evidence feeding the packaging
+decision (§3). The record stores hashes, counts, coarse environment facts,
+timestamps, status codes, content type, and byte length; it never contains real
+profile, resume, credential, provider-log, local-path, job-title, or job-URL
+data.
 
 ### 1.5 Entry into the reliability QA matrix
 
 Add first-run TTFV to `docs/local-reliability-qa.md` as recurring regression checks with explicit thresholds:
 
-- A new risk row (or a short dedicated subsection) pairing the risk — *"First-run time-to-value regresses beyond budget: first scored job > 10 min or first reviewed tailored resume PDF > 30 min on the clean reference environment (synthetic path, cold-auth)"* — with its automated coverage (the synthetic-path harness) and the explicit thresholds.
-- **Cadence, split by cost.** The deterministic sub-phases that need no clean VM (dependency sync + init + sample-data load + stack start + navigation-to-value against a seeded workspace) are cheap enough to run routinely and belong in the standard suites. The full clean-VM wall-clock run is heavier; schedule it as a recurring check (for example pre-release and/or on a fixed schedule) with results recorded in the measurement record and referenced from the matrix. State both cadences in the doc.
-- **Phase-level budgets.** Beyond the two top-line thresholds, require per-phase budgets whose sum stays within the top line, so a regression report says *which* phase blew the budget. The plan mandates that phase budgets exist and are enforced; it does not fix their exact values (implementers set them from the first clean baseline and record them).
-- **No spendful work in the gate.** The routine gate must not run auto-apply, browser submission, mailbox scans, real crawling, or real LLM calls — consistent with every existing QA gate note in `docs/local-reliability-qa.md`.
+- A new risk row (or a short dedicated subsection) pairing the risk — *"First-run time-to-value is claimed from incomplete evidence or regresses beyond budget"* — with the owner-run real-path harness and the explicit thresholds.
+- **Cadence, split by cost.** Probe logic and summary-gate tests run routinely without spend. Full clean-environment real-path runs are owner-run only, pre-release only, and never CI.
+- **Phase-level budgets.** Beyond the two top-line thresholds, record per-phase durations so a regression report says *which* phase consumed the time. Initial budgets come from the first honest owner baseline.
+- **No unattended spendful work.** The real gate spends only when the owner runs it intentionally; no CI or agent should run it unattended.
 
 ### 1.6 Goal A acceptance gates
 
 - [ ] TTFV-1 and TTFV-2 are defined with machine-checkable start/stop probes (read-model query + rendered-surface assertion), not human timing.
 - [ ] The clean-environment protocol enumerates cold caches, network policy, and both auth scenarios; the harness enforces/records them.
-- [ ] The synthetic-path harness produces a documented, reproducible, synthetic-only measurement record with a per-phase breakdown.
-- [ ] `docs/local-reliability-qa.md` carries the TTFV regression entry with explicit thresholds, phase budgets, and a stated cadence for the cheap sub-phases vs. the full clean-VM run.
-- [ ] Platform coverage (incl. the glibc-Linux gap) is recorded honestly.
+- [ ] The real-path wrapper produces a documented, reproducible measurement record with all-state baseline hashes, post-T0 discovered-job proof, same-job API/UI/PDF evidence, and a per-phase breakdown.
+- [ ] `docs/local-reliability-qa.md` carries the TTFV regression entry with explicit thresholds and the owner-run pre-release cadence.
+- [ ] Optional platform evidence is recorded honestly as non-gating unless the owner changes the reference class.
 
 ---
 
@@ -239,56 +245,48 @@ The decision weighs measured evidence, not intuition:
 
 This is a docs-only PR; the plan changes no code. The commands below are the acceptance surface for the *implementation* work this plan describes, drawn from the CLAUDE.md matrix and `docs/local-reliability-qa.md:18-36`.
 
-For the sample-data experience and read-model behavior (Goal B):
+For the real-path TTFV wrapper, summary gate, and docs:
 
 ```bash
-pnpm api:check
-pnpm api:test
-pnpm web:check
-pnpm web:build
-pnpm web:test
-pnpm web:test-d
-pnpm qa:seed -- /tmp/jobctl-ttfv-qa   # baseline disposable synthetic workspace
-pnpm qa:test                              # destructive-UI QA against a seeded workspace
+node --test scripts/ttfv-real.test.mjs
+pnpm docs:build
+pnpm check
 ```
 
-For the Python worker surfaces touched by sample-data load/clear or `init`/first-run affordances:
+For the Python worker and product surfaces that the real path depends on:
 
 ```bash
+pnpm test
+pnpm --filter @jobctl/web test
 uv --project workers/automation run --extra dev pytest -q
 uv --project workers/automation run --extra dev ruff check .
 ```
 
-For the first-run/sample-data product path and TTFV navigation probes (Playwright, seeded synthetic workspace, deterministic dispatch stub per `apps/web/e2e/playwright.config.ts:56-60`):
-
-```bash
-pnpm web:e2e
-```
-
-For the synthetic-path TTFV measurement harness (new; deterministic, synthetic-only, no spend) and the full clean-environment run — invoked per the documented cadence, emitting the §1.4 measurement record.
+For the full clean-environment run, the owner runs the protocol in
+`docs/developer/first-run-ttfv.md`. It emits the §1.4 measurement record and is
+never automated, never CI, and never run without the owner present.
 
 Full suite and hygiene:
 
 ```bash
-pnpm check
-pnpm test
 git diff --check
 ```
 
 For this documentation PR specifically: confirm the plan renders and its references resolve (paths are given in backticks precisely so they are not treated as site links; PR #254 is referenced by number, not as an in-repo link).
 
-**Prohibited during all TTFV/sample-data verification:** auto-apply, browser submission, mailbox scans, real crawling, real LLM calls, and any write to a real `~/.jobctl` workspace — consistent with every existing QA gate note.
+**Prohibited during automated verification:** auto-apply, browser submission,
+mailbox scans, synthetic/sample TTFV records, seeded jobs, and real LLM or crawl
+spend. Real crawling and LLM calls occur only in the owner-run clean baseline.
 
 ---
 
 ## 5. Definition of Done (for the implementation this plan authorizes)
 
 1. TTFV-1 and TTFV-2 are defined with automated start/stop probes; the clean-environment protocol (caches, network, auth scenarios, statistics, reference class) is documented and enforced by the harness.
-2. The synthetic-path TTFV check is a recurring regression entry in `docs/local-reliability-qa.md` with explicit thresholds and phase budgets, plus a stated cadence for the cheap sub-phases vs. the full clean-VM run; the full clean-VM run is recorded across supported platforms with the glibc-Linux gap noted.
-3. A curated synthetic sample dataset (D1 resolved) surfaces on fresh-workspace first run, renders through the real read model, is unmistakably labeled, loads and clears by explicit user action, and satisfies both TTFV stop conditions with zero spend.
-4. The never-mix guarantee (D2 resolved) is implemented and proven by regression fixtures — including live-apply refusal for sample jobs and residue-free clearing — with no redaction sentinels ever surfacing in product responses.
-5. The packaging decision framework is documented; when both C-preconditions hold, an ADR records the go/defer/no-go verdict with measured evidence and a re-evaluation trigger.
-6. All touched-surface commands in §4 pass; the review gate returns `Gate: PASS` and the QA gate returns `Gate: PASS`; no Blocker/High findings remain.
+2. The real-path TTFV check is a recurring owner-run entry in `docs/local-reliability-qa.md` with explicit thresholds and pre-release cadence; no synthetic/sample/fake record is accepted.
+3. The wrapper records all-state baseline hashes, post-T0 discovered-job proof, hashed real discovery-source provenance, same-job TTFV-1/TTFV-2 binding, and PDF byte-stream proof without storing sensitive job/profile/artifact contents.
+4. The packaging decision framework is documented; when both C-preconditions hold, an ADR records the go/defer/no-go verdict with measured evidence and a re-evaluation trigger.
+5. All touched-surface commands in §4 pass; the review gate returns `Gate: PASS` and the QA gate returns `Gate: PASS`; no Blocker/High findings remain.
 
 ---
 
@@ -296,14 +294,14 @@ For this documentation PR specifically: confirm the plan renders and its referen
 
 - **Not re-specifying PR #254.** Install mechanics, ensemble auth detection/enrollment, `doctor`/`setup` ensemble checks, and the Linux wheel-gap remediation belong to PR #254; this plan consumes them.
 - **Not building a package.** Goal C decides *whether*; it does not design or ship one.
-- **Not changing ensemble/pipeline semantics.** No changes to scoring, tailoring, retry, spend, or apply behavior; this is a measurement + onboarding-demonstration layer.
-- **Not shipping real data anywhere.** All fixtures, screenshots, and measurement records stay synthetic (`docs/user/data-and-safety.md:114-123`).
+- **Not changing ensemble/pipeline semantics.** No changes to scoring, tailoring, retry, spend, or apply behavior; this is a measurement layer.
+- **Not shipping real data anywhere.** Measurement records store timings, hashes, counts, coarse environment data, and byte-stream proof only; no real profile, resume, credential, provider-log, local-path, job-title, or job-URL data is committed.
 - **No marketing framing or comparisons to other products.** Neutral product language only.
 
 ## 7. Risks and mitigations
 
-- **Synthetic-path TTFV hides real latency/auth cost.** Mitigation: the real-path observational measurement (§1.1) at recorded checkpoints, plus the cold-auth scenario in the protocol.
-- **Sample data mixing into real records or reaching an employer (safety).** Mitigation: the never-mix guarantee (§2.6) with fixtures proving marker integrity and live-apply refusal; the separate-workspace option (D2 Option 1) as the lowest-risk fallback.
+- **Synthetic or seeded evidence accidentally accepted as TTFV.** Mitigation: the wrapper rejects synthetic/sample/fake paths, records all-state pre-work baseline hashes, requires post-T0 `discoveredAt`, and rejects missing real discovery-source proof in the summary gate.
+- **Real-path TTFV spends unexpectedly.** Mitigation: the full clean run is owner-run only, pre-release only, never CI, and documented as spendful; automated checks exercise only no-spend parser/probe/gate logic.
 - **Test-fixture sentinels leaking into a demo.** Mitigation: D1 forces an explicit source decision; if the test fixture is reused, sentinels must be stripped and that stripping is tested.
 - **Clean-VM measurement is heavy/flaky.** Mitigation: split cadence (cheap sub-phases routine; full clean-VM scheduled), statistic-based thresholds, and a defined reference-machine class.
 - **Platform gap distorts the picture.** Mitigation: record glibc-Linux honestly as non-passing until PR #254 S5 lands; treat it as a Goal C input, not a hidden failure.
