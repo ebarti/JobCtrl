@@ -1577,6 +1577,7 @@ def run_discovery_enrichment_stage(
     cancel_event: threading.Event | None = None,
     progress_completed: int = 0,
     progress_total: int = 0,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     emit_progress = progress_total > 0
     if emit_progress:
@@ -1602,6 +1603,7 @@ def run_discovery_enrichment_stage(
         workers=max(1, workers),
         limit=limit,
         cancel_event=cancel_event,
+        on_job_enriched=on_job_enriched,
     )
     final = result or {"status": "ok", "passes": 0, "pending": 0}
 
@@ -2203,6 +2205,7 @@ def _run_enrich(
     limit: int = 0,
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2213,6 +2216,7 @@ def _run_enrich(
             limit=limit,
             workers=workers,
             reset_linkedin_candidates=reset_linkedin_candidates,
+            on_job_enriched=on_job_enriched,
         )
     else:
         stats = run_enrichment(
@@ -2220,6 +2224,7 @@ def _run_enrich(
             workers=workers,
             cancel_event=cancel_event,
             reset_linkedin_candidates=reset_linkedin_candidates,
+            on_job_enriched=on_job_enriched,
         )
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled")
@@ -2560,6 +2565,7 @@ def _run_discovery_enrichment_until_idle(
     workers: int,
     limit: int,
     cancel_event: threading.Event | None = None,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs.
 
@@ -2596,6 +2602,7 @@ def _run_discovery_enrichment_until_idle(
                 limit=limit,
                 cancel_event=cancel_event,
                 reset_linkedin_candidates=(passes == 0),
+                on_job_enriched=on_job_enriched,
             )
             passes += 1
             pass_site_errors = enrichment_result.get("site_errors") or {}

@@ -77,11 +77,26 @@ Two knobs that look like Temporal concurrency but are not:
   Runs bar stays monotonic on the family + terminal spine — see
   [Operations & Events](operations.md#discovery-run-progress). Repeated fan-out
   is idempotent: the deterministic `prep-{idempotency_key}` id plus
-  `USE_EXISTING` means N invocations start exactly one workflow per job. The
-  first fan-out sweeps pre-existing `pending_tailor` stragglers once
-  (`include_pending_tailor=True`); every later pass is score-only, so a fresh
-  job crossing `pending_score` → `pending_tailor` mid-tailor is never
-  double-fanned.
+  `USE_EXISTING` means N invocations start exactly one workflow per job. A
+  one-time straggler sweep (`include_pending_tailor=True`) runs **before** the
+  family loop — the only moment `pending_tailor` holds only pre-existing
+  scored-but-not-tailored work and cannot race a fresh job's in-flight SCORE_JOB
+  workflow. Every family + terminal fan-out is score-only, so a fresh job
+  crossing `pending_score` -> `pending_tailor` mid-tailor is never double-fanned.
+- **Per-job handoff (R9 Phase 2).** Streaming enrichment passes run with
+  `per_job_handoff=True`: as each job is individually enriched (committed to
+  `pending_score`), the enrichment worker starts that job's `SCORE_JOB`
+  preparation workflow **immediately**, before its siblings in the same family
+  are even scraped, tightening Time To First Score to per-job granularity. This
+  is a side effect **inside** the enrichment activity (`on_job_enriched`
+  callback threaded to `enrichment/detail.py`), so `DiscoverWorkflow`'s command
+  history is unchanged (determinism/replay safe). Starts use the same
+  deterministic `prep-{idempotency_key}` id as the fan-out, so the per-job
+  handoff and the reconciling fan-outs converge on exactly one execution per job
+  (`USE_EXISTING`). Per-job starts are serialized by a lock because
+  `_run_detail_scraper` may enrich sites in parallel threads, and the handoff is
+  best-effort (a start failure is logged and left for the fan-out backstop,
+  never mistaken for an enrichment failure).
 - **JobPipelineWorkflow** executes the selected stages in pipeline order and
   delegates `discover` and `apply` to child workflows, so the risky surfaces
   keep their own workflow identity, history, and retry policy.

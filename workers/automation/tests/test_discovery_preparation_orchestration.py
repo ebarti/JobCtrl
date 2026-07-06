@@ -182,6 +182,51 @@ def test_streaming_fanout_dedups_repeated_passes_via_deterministic_ids(
     assert stats_pass2["queued"] == {"job_preparation": 2}
 
 
+def test_per_job_handoff_id_converges_with_fanout_and_forks_on_reenrichment(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 Phase 2 idempotence (I1) at per-job granularity: the per-job handoff
+    starts the SAME deterministic id a SCORE_JOB fan-out would derive for the
+    job, so `USE_EXISTING` collapses the handoff + reconciling fan-out into one
+    execution. A re-enrichment that changes ``source_event_id`` — a genuine
+    material change — legitimately forks a new prep workflow."""
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_a, **_k: 4)
+    monkeypatch.setattr(preparation, "_latest_source_event_id", lambda _conn, _url: "event-A")
+
+    requested: list[str] = []
+
+    async def fake_starter(spec):
+        requested.append(spec.workflow_id)
+        return SimpleNamespace(id=spec.workflow_id)
+
+    job_url = "https://example.com/job/x"
+    preparation.start_job_preparation_workflow(job_url, workflow_starter=fake_starter)
+    handoff_id = requested[-1]
+
+    # Identical to what a SCORE_JOB fan-out derive produces for the same job.
+    fanout_spec = preparation.build_preparation_workflow_spec(
+        tenant_id=LOCAL_TENANT,
+        job_url=job_url,
+        steps=["score", "tailor", "cover", "pdf"],
+        kind=PreparationWorkItemKind.SCORE_JOB,
+        target_version=4,
+        source_event_id="event-A",
+    )
+    assert handoff_id == fanout_spec.workflow_id
+    assert handoff_id.startswith("prep-preparation:")
+
+    # A benign repeated handoff for the same source event reuses the id (dedup).
+    preparation.start_job_preparation_workflow(job_url, workflow_starter=fake_starter)
+    assert requested[-1] == handoff_id
+
+    # Re-enrichment producing a new source event forks a new id (material change).
+    monkeypatch.setattr(preparation, "_latest_source_event_id", lambda _conn, _url: "event-B")
+    preparation.start_job_preparation_workflow(job_url, workflow_starter=fake_starter)
+    assert requested[-1] != handoff_id
+
+
 def test_preparation_fan_out_starts_batches_of_at_most_25(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

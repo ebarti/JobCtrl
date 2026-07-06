@@ -1353,11 +1353,29 @@ resolve the streaming plan's open decisions:
    idempotency key includes `kind`, a fresh job that crosses
    `pending_score` → `pending_tailor` mid-tailor would otherwise be re-derived as
    a second `TAILOR_RESUME` workflow racing its own in-flight `SCORE_JOB`
-   workflow. To prevent that double-tailor, the fan-out gains an
-   `include_pending_tailor` flag: the **first** fan-out sweeps pre-existing
-   `pending_tailor` stragglers once (the only moment when `pending_tailor` cannot
-   contain a job already owned by a this-run `SCORE_JOB` workflow); every later
-   pass is score-only.
+   workflow (Phase 2's per-job handoff scores jobs the instant they are
+   enriched, so this is reachable well before end-of-run). To prevent that
+   double-tailor, the fan-out gains an `include_pending_tailor` flag and a
+   one-time straggler sweep (`include_pending_tailor=True`) runs **before the
+   family loop** — the only moment `pending_tailor` holds only pre-existing
+   scored-but-not-tailored work and cannot contain a fresh job already owned by
+   a this-run `SCORE_JOB` workflow. Every family + terminal fan-out is
+   score-only. (Running the sweep up front, rather than on the first completed
+   family, is also what keeps it correct when families run concurrently in
+   Phase 3.)
+4. **Phase 2 handoff mechanism (Temporal-native, event-driven).** A job's
+   preparation starts the moment it is individually enriched, not after its whole
+   family. The mechanism is event-driven from **inside** the enrichment activity
+   (an `on_job_enriched` callback threaded to `enrichment/detail.py`, fired per
+   job after its commit), chosen over ad-hoc polling. Because the start is a side
+   effect inside the activity, `DiscoverWorkflow`'s command history is unchanged
+   (determinism/replay safe). The per-job start uses the same deterministic
+   `SCORE_JOB` id as the fan-out, so the handoff and the reconciling fan-outs
+   converge on exactly one execution per job (`USE_EXISTING`); a re-enrichment
+   that changes `source_event_id` legitimately forks a new workflow. Per-job
+   starts are serialized by a lock (site enrichment can run in parallel threads)
+   and are best-effort (a start failure is logged and left for the fan-out
+   backstop, never mistaken for an enrichment failure).
 
 Rationale:
 
@@ -1377,6 +1395,11 @@ Consequences:
   `True` preserves the pre-streaming full derive).
 - Fan-out and enrichment activities now run per completed family plus once at the
   terminal reconcile; repeated invocation is safe by construction (I1).
+- Phase 2 adds a `per_job_handoff` flag + prep params on the enrichment activity,
+  a `start_job_preparation_workflow` single-job starter, and an opaque
+  `on_job_enriched` callback threaded from the activity to `enrichment/detail.py`
+  (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
+  `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
 - Parallel source families remain **out of scope** here — that is R9 Phase 3,
   gated behind an explicit browser-concurrency bound.
 

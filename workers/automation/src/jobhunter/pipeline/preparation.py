@@ -135,6 +135,50 @@ def start_discovery_preparation_workflows(
     }
 
 
+def start_job_preparation_workflow(
+    job_url: str,
+    *,
+    min_score: int = 7,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    workflow_starter: WorkflowStarter | None = None,
+) -> bool:
+    """Start ONE job's ``SCORE_JOB`` preparation workflow (R9 Phase 2 handoff).
+
+    Called as each job crosses ``pending_score`` during enrichment so its
+    preparation begins immediately, before its siblings are even enriched. The
+    workflow id is the same deterministic ``prep-{idempotency_key}`` a
+    ``pending_score`` job would get from the per-family / terminal fan-out
+    (kind=SCORE_JOB, steps score→tailor→cover→pdf, current scoring policy
+    version, latest source event), so `USE_EXISTING` makes the per-job handoff
+    and the reconciling fan-outs converge on exactly one execution per job (I1).
+    """
+    conn = get_connection()
+    target_version = current_scoring_policy_version(conn, tenant_id)
+    spec = build_preparation_workflow_spec(
+        tenant_id=tenant_id,
+        job_url=job_url,
+        steps=["score", "tailor", "cover", "pdf"],
+        kind=PreparationWorkItemKind.SCORE_JOB,
+        target_version=target_version,
+        min_score=min_score,
+        workers=workers,
+        validation_mode=validation_mode,
+        llm_model=llm_model,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+    )
+    starter = workflow_starter or default_workflow_starter
+    _run_start_batch([spec], starter)
+    return True
+
+
 def build_preparation_workflow_spec(
     *,
     tenant_id: TenantId,
@@ -406,4 +450,5 @@ __all__ = [
     "derive_preparation_targets",
     "latest_source_event_id",
     "start_discovery_preparation_workflows",
+    "start_job_preparation_workflow",
 ]

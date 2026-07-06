@@ -166,16 +166,19 @@ activity call sites.
 
 A few catalog details worth calling out:
 
-- **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1).** After each
+- **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** After each
   family completes it drains that family's jobs (`discovery_enrichment`) and fans
   out their preparation (`discovery_preparation_fanout`) immediately, so early
-  jobs are scored while later families still crawl. A terminal reconcile
-  enrichment + fan-out runs last and stays authoritative for the
-  tolerated-partial-failure folding (succeed if ≥1 family completed; fail as
-  `discovery_source_failed` only if every family failed) and progress
-  finalization. Repeated fan-out is deduped by the deterministic
-  `prep-{idempotency_key}` id + `USE_EXISTING`; the first fan-out sweeps
-  `pending_tailor` stragglers once and later passes are score-only. See
+  jobs are scored while later families still crawl. Phase 2 tightens this to
+  per-job: the streaming enrichment passes run with `per_job_handoff=True`, so a
+  job starts its `SCORE_JOB` preparation the moment it is individually enriched
+  (a side effect inside the enrichment activity — the workflow command history is
+  unchanged). A terminal reconcile enrichment + fan-out runs last and stays
+  authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
+  completed; fail as `discovery_source_failed` only if every family failed) and
+  progress finalization. Repeated starts are deduped by the deterministic
+  `prep-{idempotency_key}` id + `USE_EXISTING`; a one-time straggler sweep runs
+  before the family loop and every family/terminal fan-out is score-only. See
   [Concurrency & Fan-out](concurrency.md#where-fan-out-happens-and-why).
 - **`JobPipelineWorkflow` is the serial batch driver.** It runs the requested
   stages in canonical order as activities, but hands `discover` and `apply` to

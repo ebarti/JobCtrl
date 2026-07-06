@@ -60,9 +60,11 @@ pass `progress_total=0`, which suppresses progress emission
 (`emit_progress = progress_total > 0`), so the bar advances only on the family +
 terminal spine and can never oscillate or shrink. Scores still appear
 incrementally in the Jobs view because that path is independent of the progress
-bar: `JobScored` events → projection builders → `GET /v1/events/stream`. No new
-`discovery_runs` progress columns are added, so both projection builders stay in
-parity.
+bar: `JobScored` events → projection builders → `GET /v1/events/stream`. Under
+R9 Phase 2 (per-job handoff) those scores arrive at per-job granularity — a job
+is scored the moment it is individually enriched — but the progress payload is
+unchanged. No new `discovery_runs` progress columns are added, so both
+projection builders stay in parity.
 
 ## Persistence Map
 
