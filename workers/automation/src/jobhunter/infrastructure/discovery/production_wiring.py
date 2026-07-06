@@ -997,6 +997,12 @@ def import_manual_capture_item(
         "captured_at": now,
         "future_manual_action_required": capture.future_manual_action_required,
     }
+    capture_client = retry_context.get("capture_client")
+    if isinstance(capture_client, str) and capture_client.strip():
+        retry_context["manual_capture_provenance"]["capture_client"] = capture_client.strip()
+    extension_version = retry_context.get("extension_version")
+    if isinstance(extension_version, str) and extension_version.strip():
+        retry_context["manual_capture_provenance"]["extension_version"] = extension_version.strip()
 
     use_case = DiscoverJobsUseCase(
         repository=SqliteJobRepository(conn),

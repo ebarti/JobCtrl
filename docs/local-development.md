@@ -18,7 +18,9 @@ pnpm install:interactive
 checks for Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler,
 offers Homebrew installs for missing machine-level tools when available, then
 runs the repository dependency setup: frozen pnpm install, uv sync, and
-Playwright Chromium installs for both the web package and the Python worker.
+Playwright Chromium installs for both the web package and the Python worker. It
+then runs `jobhunter setup` to detect Claude/Codex/Antigravity auth, persist
+enabled analysis legs, and finish with `jobhunter doctor`.
 
 `pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
 `--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
@@ -35,6 +37,14 @@ pnpm dev:setup
 Python worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
 the Python dev tools used by local checks. It does not install Temporal,
 Chrome/Chromium, Poppler, or Playwright browser binaries.
+
+Run the Python setup command directly when you only need to refresh vendor auth
+or analysis-leg configuration:
+
+```bash
+uv --project workers/automation run jobhunter setup
+uv --project workers/automation run jobhunter setup --non-interactive --json --skip-dependencies --skip-browsers
+```
 
 ## Run
 
@@ -117,6 +127,10 @@ pnpm api:test
 pnpm web:check
 pnpm web:build
 pnpm qa:test
+pnpm extension:check
+pnpm extension:test
+pnpm extension:build
+pnpm extension:e2e
 ```
 
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
@@ -177,6 +191,25 @@ pnpm web:storybook:test
 `web:storybook:test` runs the Storybook test runner over the static build,
 which executes the per-story `play()` interactions and the
 `@storybook/addon-a11y` axe checks (critical+serious violations fail).
+
+## Browser Extension
+
+The Manifest V3 browser extension lives under `apps/extension`. It is a local
+capture client for the TypeScript API, not a hosted/browser-store package.
+
+```bash
+pnpm extension:check
+pnpm extension:test
+pnpm extension:build
+pnpm extension:e2e
+```
+
+`pnpm extension:build` writes the unpacked extension bundle to
+`dist/extension/`; load that directory in Chrome/Chromium developer mode for
+manual QA. The extension uses `activeTab`, `scripting`, and `storage`, and its
+manifest network permissions are limited to `http://127.0.0.1:8766/*` and
+`http://localhost:8766/*`. `pnpm extension:e2e` builds the bundle and scans the
+built manifest/assets for the localhost-only invariant.
 
 ## Docs Site
 

@@ -9,7 +9,7 @@ or how domain events become the read model behind every list and detail view.
 ```mermaid
 flowchart LR
     W["Workflows + activities"] -->|append| EV[("job_events")]
-    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list")]
+    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list / evidence_usage")]
     PT --> API["TypeScript API reads"]
     EV --> SSE["GET /v1/events/stream (SSE)"]
     SSE --> IR["Invalidation router"]
@@ -57,7 +57,9 @@ API. `apps/api/src/application-feedback.ts` owns idempotent SQLite table
 creation and read/write helpers for:
 
 - `application_review_decisions`: append-only user decisions for apply review.
-- `application_outcomes`: reviewed manual or suggestion-derived outcomes.
+- `application_outcomes`: reviewed manual or suggestion-derived outcomes. Manual
+  interview reflections may carry a nullable `interview_prep_generation` link to
+  the stored prep generation they followed.
 - `application_email_evidence`: linked Gmail evidence, including body storage
   and body hash columns for confidently linked messages.
 - `application_outcome_suggestions`: pending and decided classifier
@@ -72,7 +74,8 @@ on, no API or RPC dispatch path can submit without a committed
 (`applyApprovalRequired`, default on); a caller-supplied override can disable
 it for a run, which is why the Preferences form shows a persistent warning
 when it is off. Dry-run claims bypass this approval gate. Manual
-outcome notes are stored only in the local outcome table.
+outcome notes are stored only in the local outcome table; job events store
+presence flags and nullable prep-generation links, not the note text.
 
 ::: warning Live submission requires an explicit approval
 Live apply is blocked until an `approve_submit` decision exists for the job
@@ -123,10 +126,11 @@ tables that back every read-model endpoint:
 
 | Table                        | What it stores                                                    |
 |------------------------------|-------------------------------------------------------------------|
-| `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, materials presence, apply status. |
-| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source and score band, from `application_outcomes`). |
-| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
+| `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, canonical fit band when recorded, materials presence, apply status, apply mode, accepted resume template, and tailoring policy version. |
+| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source, score band, fit band, apply mode, accepted resume template, and tailoring policy, plus response-minute samples and suggestion decision counts from canonical rows). |
+| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, employer/requirement audit JSON, latest accepted interview prep, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
+| `evidence_usage_projections` | Career evidence map rows that invert profile achievement/skill evidence into resume-bullet usage, requirement-fit usage, generation-time skill coverage, and missing/blocked/transferable gaps. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
 | `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
@@ -140,13 +144,35 @@ same transaction. Both processes write to the same tables; SQLite handles the
 concurrent advances. Request paths read precomputed projections instead of
 assembling stage state with per-request joins.
 
+The evidence-usage projection is read-only and derives from existing canonical
+profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does
+not create a new generation pipeline: resume usage still comes from the
+Materials provenance/audit tables, and requirement gaps still come from the
+Scoring requirement-fit rows. Older local databases that lack newer optional
+profile metadata columns project conservative defaults instead of failing
+unrelated read paths.
+
 The outcome-conversion projection materialises integer funnel counts only (both
 builders must agree — the cross-runtime parity fixture asserts the
 `outcome_conversion_json` column). The dashboard read model derives the
 conversion rates (reply/interview/offer/rejection over applied) from those
 counts so there is no cross-runtime float drift; `costPerInterview` stays `null`
-until per-run apply cost is projected. This surface is read-only — it never
-feeds scoring, ranking, thresholds, or apply eligibility.
+until per-run apply cost is projected. `GET /v1/analytics/outcomes` reads the
+same integer-count projection and exposes an analytics-specific contract with
+`n`, `minSample`, `bySource`, `byScoreBand`, `byFitBand`, `byApplyMode`,
+`byTemplate`, `byPolicy`, `timeToResponse`, and `suggestionAccuracy`.
+`byScoreBand` keeps the existing parity-guarded score vocabulary
+(`perfect/strong/moderate/weak/poor/unscored`); `byFitBand` is a separate
+canonical requirement-fit vocabulary
+(`excellent/strong/plausible/stretch/poor/unreported`). Template and policy
+groups come from the accepted material artifact metadata projected onto
+`job_list_projections`. `timeToResponse.medianMinutes` is read-time derived from
+`applied_at` to the earliest response-kind `application_outcomes.occurred_at`;
+`suggestionAccuracy` counts decided `application_outcome_suggestions` rows. The
+read model uses the single `MIN_CONVERSION_SAMPLE` threshold for every rate and
+median, so sub-threshold buckets keep counts but return `null` rates or medians.
+This surface is read-only — it stays outside scoring, ranking, thresholds, and
+apply eligibility.
 
 Job detail audit history is assembled at read time from allow-listed lifecycle
 events and append-only apply review/outcome records. It is a user-facing audit

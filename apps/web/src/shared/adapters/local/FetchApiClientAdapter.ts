@@ -14,6 +14,15 @@ export class FetchApiClientAdapter implements ApiClientPort {
   dashboardSummary() {
     return this.client.dashboardSummary();
   }
+  outcomeAnalytics() {
+    return this.client.outcomeAnalytics();
+  }
+  digest() {
+    return this.client.digest();
+  }
+  acknowledgeDigest(body?: Parameters<JobHunterApiClient["acknowledgeDigest"]>[0]) {
+    return this.client.acknowledgeDigest(body);
+  }
   activity(query: Parameters<JobHunterApiClient["activity"]>[0] = {}) {
     return this.client.activity(query);
   }
@@ -185,6 +194,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   job(jobKey: string) {
     return this.client.job(jobKey);
   }
+  evidenceMap() {
+    return this.client.evidenceMap();
+  }
   deleteJob(jobKey: string, body: Parameters<JobHunterApiClient["deleteJob"]>[1] = {}) {
     return this.client.deleteJob(jobKey, body);
   }
@@ -292,6 +304,12 @@ export class FetchApiClientAdapter implements ApiClientPort {
   updateSettings(body: Parameters<JobHunterApiClient["updateSettings"]>[0]) {
     return this.client.updateSettings(body);
   }
+  extensionCapabilityToken() {
+    return this.client.extensionCapabilityToken();
+  }
+  rotateExtensionCapabilityToken() {
+    return this.client.rotateExtensionCapabilityToken();
+  }
   runPipelineStages(body: Parameters<JobHunterApiClient["runPipelineStages"]>[0]) {
     return this.client.runPipelineStages(body);
   }
@@ -315,6 +333,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   generateMaterials(jobKey: string, body: Parameters<JobHunterApiClient["generateMaterials"]>[1] = {}) {
     return this.client.generateMaterials(jobKey, body);
+  }
+  generateInterviewPrep(jobKey: string, body: Parameters<JobHunterApiClient["generateInterviewPrep"]>[1] = {}) {
+    return this.client.generateInterviewPrep(jobKey, body);
   }
   applyJob(jobKey: string, body: Parameters<JobHunterApiClient["applyJob"]>[1] = {}) {
     return this.client.applyJob(jobKey, body);

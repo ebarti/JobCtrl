@@ -901,6 +901,7 @@ def scrape_site_batch(
     *,
     gateway: PolitenessGateway | None = None,
     run_budget: RunBudgetCounter | None = None,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -915,6 +916,12 @@ def scrape_site_batch(
     process-wide host limiter; a standalone caller lets them self-provision. The
     fixed per-site ``SITE_DELAYS`` sleep is gone — the host-keyed limiter paces
     each host (per-host min-interval + concurrency across threads).
+
+    ``on_job_enriched`` is an opaque per-job notification fired (after commit)
+    for each job that reaches ``pending_score`` — i.e. a successful enrich with a
+    non-empty description. R9 Phase 2 uses it to start that job's preparation
+    workflow immediately; the callback is treated as best-effort and never
+    interrupts enrichment.
     """
     stats: dict = {
         "processed": 0,
@@ -1327,6 +1334,22 @@ def scrape_site_batch(
                         )
 
                     conn.commit()
+                    # R9 Phase 2 — per-job handoff. The job is now durably
+                    # ``pending_score`` (committed, ok/partial with a
+                    # description), so hand it off for preparation immediately.
+                    # Best-effort and isolated: a handoff error must never be
+                    # mistaken for an enrichment failure below.
+                    if (
+                        on_job_enriched is not None
+                        and status in ("ok", "partial")
+                        and desc_len > 0
+                    ):
+                        try:
+                            on_job_enriched(url)
+                        except Exception:  # noqa: BLE001 - handoff is best-effort
+                            log.warning(
+                                "Per-job preparation handoff failed for %s", url, exc_info=True
+                            )
                 except TransientNetworkError:
                     raise
                 except Exception as exc:
@@ -1966,6 +1989,7 @@ def _run_detail_scraper(
     job_urls: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -2074,8 +2098,13 @@ def _run_detail_scraper(
             log.info("%s -- %d jobs", site, len(jobs))
             if cancel_event is None:
                 stats = scrape_site_batch(
-                    None, site, jobs, max_jobs=max_per_site,
-                    gateway=gateway, run_budget=run_budget,
+                    None,
+                    site,
+                    jobs,
+                    max_jobs=max_per_site,
+                    gateway=gateway,
+                    run_budget=run_budget,
+                    on_job_enriched=on_job_enriched,
                 )
             else:
                 stats = scrape_site_batch(
@@ -2086,6 +2115,7 @@ def _run_detail_scraper(
                     cancel_event=cancel_event,
                     gateway=gateway,
                     run_budget=run_budget,
+                    on_job_enriched=on_job_enriched,
                 )
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
@@ -2123,8 +2153,13 @@ def _run_detail_scraper(
             try:
                 if cancel_event is None:
                     stats = scrape_site_batch(
-                        conn, site, jobs, max_jobs=max_per_site,
-                        gateway=gateway, run_budget=run_budget,
+                        conn,
+                        site,
+                        jobs,
+                        max_jobs=max_per_site,
+                        gateway=gateway,
+                        run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
                     )
                 else:
                     stats = scrape_site_batch(
@@ -2135,6 +2170,7 @@ def _run_detail_scraper(
                         cancel_event=cancel_event,
                         gateway=gateway,
                         run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
                     )
             except TransientNetworkError:
                 raise
@@ -2281,6 +2317,7 @@ def run_enrichment(
     workers: int = 1,
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
+    on_job_enriched: Callable[[str], None] | None = None,
 ) -> dict:
     """Main entry point for detail page enrichment.
 
@@ -2324,6 +2361,7 @@ def run_enrichment(
         workers=workers,
         cancel_event=cancel_event,
         reset_linkedin_candidates=reset_linkedin_candidates,
+        on_job_enriched=on_job_enriched,
     )
 
 
