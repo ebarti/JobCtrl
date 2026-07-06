@@ -1324,13 +1324,46 @@ def _persist_agent_artifacts(
     event_type: str,
     payload: dict[str, Any],
 ) -> None:
+    safe_run = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in run_id)
+    artifact_dir = config.LOG_DIR / "apply-artifacts"
+    if event_type == "DryRunBlockedChannels":
+        blocked_requests = payload.get("blocked_requests")
+        if not isinstance(blocked_requests, list) or not blocked_requests:
+            return
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        blocked_path = artifact_dir / f"{safe_run}-dry-run-blocked.json"
+        blocked_path.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "coverage": payload.get("coverage") or "partial",
+                    "blocked_channels": payload.get("blocked_channels") or [],
+                    "blocked_requests": blocked_requests,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        record_job_artifact(
+            conn,
+            job_url,
+            "apply",
+            "apply_dryrun_blocked",
+            blocked_path,
+            status="active",
+            metadata={
+                "run_id": run_id,
+                "coverage": payload.get("coverage") or "partial",
+                "blocked_count": len(blocked_requests),
+            },
+        )
+        return
     if event_type != "AgentResult":
         return
     raw_output = str(payload.get("raw_output") or "")
     if not raw_output:
         return
-    safe_run = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in run_id)
-    artifact_dir = config.LOG_DIR / "apply-artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     output_path = artifact_dir / f"{safe_run}-agent-output.txt"
     output_path.write_text(raw_output, encoding="utf-8")

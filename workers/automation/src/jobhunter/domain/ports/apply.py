@@ -14,7 +14,7 @@ needing to know.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from jobhunter.domain.apply.aggregate import ApplyRun
 from jobhunter.domain.apply.value_objects import (
@@ -58,6 +58,7 @@ class BrowserSession:
     pid: int | None = None
     worker_dir: str | None = None
     handle: Any | None = None
+    dry_run_evidence: Callable[[], Mapping[str, Any]] | None = None
 
     @property
     def cdp_port(self) -> int:

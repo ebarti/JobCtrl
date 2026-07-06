@@ -434,6 +434,8 @@ def _result_to_dict(result: SubmissionResult) -> dict[str, Any]:
         payload["reason"] = result.reason
     elif isinstance(result, DryRunComplete):
         payload["navigated_to"] = result.navigated_to
+        payload["coverage"] = result.coverage
+        payload["blocked_channels"] = list(result.blocked_channels)
     elif isinstance(result, Expired):
         pass  # No additional fields.
     return payload
@@ -461,5 +463,14 @@ def submission_result_from_dict(data: Mapping[str, Any]) -> SubmissionResult:
     if kind == "manual":
         return Manual(reason=str(data.get("reason", "")))
     if kind == "dry_run_complete":
-        return DryRunComplete(navigated_to=str(data.get("navigated_to", "")))
+        blocked_channels = data.get("blocked_channels") or ()
+        if isinstance(blocked_channels, list):
+            blocked_channels = tuple(str(channel) for channel in blocked_channels)
+        elif not isinstance(blocked_channels, tuple):
+            blocked_channels = (str(blocked_channels),) if blocked_channels else ()
+        return DryRunComplete(
+            navigated_to=str(data.get("navigated_to", "")),
+            coverage=str(data.get("coverage") or "full"),
+            blocked_channels=blocked_channels,
+        )
     raise ValueError(f"Unknown SubmissionResult kind: {kind!r}")

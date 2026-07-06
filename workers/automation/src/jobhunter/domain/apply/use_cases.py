@@ -234,6 +234,9 @@ class SubmitApplicationUseCase:
             prompt=prompt,
             model=model,
             material_version=str(job.get("materials_generation") or ""),
+            materials_generation=job.get("materials_generation"),
+            application_url=str(job.get("application_url") or job.get("url") or ""),
+            profile_version=getattr(snapshot, "version", None),
         )
 
         # 6. Publish per-event records + final result
@@ -343,9 +346,18 @@ def _result_payload(result: SubmissionResult) -> dict[str, Any]:
     if isinstance(result, Failed):
         return {"error": result.error, "retryable": result.retryable}
     payload: dict[str, Any] = {}
-    for attr in ("details", "reason", "navigated_to", "applied_at", "verification_confidence"):
+    for attr in (
+        "details",
+        "reason",
+        "navigated_to",
+        "coverage",
+        "blocked_channels",
+        "applied_at",
+        "verification_confidence",
+    ):
         if hasattr(result, attr):
-            payload[attr] = getattr(result, attr)
+            value = getattr(result, attr)
+            payload[attr] = list(value) if isinstance(value, tuple) else value
     return payload
 
 

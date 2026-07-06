@@ -52,16 +52,22 @@ class _InMemoryApplyRunRepository:
 
 
 class _FakeBrowser:
-    def __init__(self, *, raise_on_launch: bool = False):
+    def __init__(self, *, raise_on_launch: bool = False, dry_run_evidence=None):
         self.launches = 0
         self.cleanups = 0
         self.raise_on_launch = raise_on_launch
+        self.dry_run_evidence = dry_run_evidence
 
     def launch(self, config):
         self.launches += 1
         if self.raise_on_launch:
             raise RuntimeError("chrome failed to start")
-        return BrowserSession(config=config, pid=42, worker_dir="/tmp/w")
+        return BrowserSession(
+            config=config,
+            pid=42,
+            worker_dir="/tmp/w",
+            dry_run_evidence=self.dry_run_evidence,
+        )
 
     def cleanup(self, session):
         self.cleanups += 1
@@ -78,6 +84,12 @@ class _FakeAgent:
             raise TimeoutError("agent timed out")
         if self.behaviour == "crash":
             raise RuntimeError("agent crashed")
+        if self.behaviour == "dry_run_violation":
+            return AgentResult(
+                submission_result=Failed(error="dry_run_violation: RESULT:APPLIED", retryable=False),
+                duration_ms=1000,
+                raw_output="RESULT:APPLIED",
+            )
         if kwargs.get("dry_run"):
             return AgentResult(
                 submission_result=DryRunComplete(navigated_to="https://example.com/job"),
@@ -224,6 +236,111 @@ def test_dry_run_saga_does_not_record_submit_intent(repo):
         model="sonnet",
     )
     assert "ApplySubmitIntended" not in [event.event_type for event in outcome.apply_run.events]
+
+
+def test_dry_run_saga_records_guard_evidence_for_approval_gate(repo):
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    browser = _FakeBrowser(
+        dry_run_evidence=lambda: {
+            "coverage": "partial",
+            "blocked_channels": ("network:POST", "form_submit:POST"),
+            "blocked_requests": (
+                {
+                    "channel": "network",
+                    "method": "POST",
+                    "url": "https://example.com/apply",
+                    "resource_type": "Fetch",
+                },
+            ),
+        }
+    )
+    saga = ApplySaga(browser_port=browser, agent_port=_FakeAgent(), repository=repo)
+    outcome = saga.run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+        material_version="12",
+        materials_generation=12,
+        application_url="https://example.com/job",
+        profile_version=3,
+    )
+
+    result = outcome.apply_run.submission_result
+    assert isinstance(result, DryRunComplete)
+    assert result.coverage == "partial"
+    assert result.blocked_channels == ("network:POST", "form_submit:POST")
+
+    dry_run_completed = next(
+        event for event in outcome.apply_run.events if event.event_type == "DryRunCompleted"
+    )
+    assert dry_run_completed.payload == {
+        "run_id": str(outcome.apply_run.run_id),
+        "result": "dry_run_complete",
+        "finished_at": dry_run_completed.payload["finished_at"],
+        "duration_ms": 1000,
+        "worker_id": 1,
+        "model": "sonnet",
+        "dry_run": True,
+        "coverage": "partial",
+        "blocked_channels": ["network:POST", "form_submit:POST"],
+        "materials_generation": 12,
+        "application_url": "https://example.com/job",
+        "profile_version": 3,
+    }
+    blocked = next(
+        event for event in outcome.apply_run.events if event.event_type == "DryRunBlockedChannels"
+    )
+    assert blocked.payload["blocked_requests"] == [
+        {
+            "channel": "network",
+            "method": "POST",
+            "url": "https://example.com/apply",
+            "resource_type": "Fetch",
+        }
+    ]
+
+
+def test_dry_run_violation_does_not_record_completion_evidence(repo):
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(
+            dry_run_evidence=lambda: {
+                "coverage": "partial",
+                "blocked_channels": ("network:POST",),
+                "blocked_requests": (),
+            }
+        ),
+        agent_port=_FakeAgent(behaviour="dry_run_violation"),
+        repository=repo,
+    )
+    outcome = saga.run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+
+    assert outcome.apply_run.is_failed
+    assert "DryRunCompleted" not in [
+        event.event_type for event in outcome.apply_run.events
+    ]
 
 
 def test_lifecycle_state_coverage_exercises_each_terminal_status(repo):

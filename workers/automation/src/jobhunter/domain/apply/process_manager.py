@@ -45,10 +45,13 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any, Mapping
+
 from jobhunter.domain.apply.aggregate import ApplyRun
 from jobhunter.domain.apply.value_objects import (
     ApplyPrompt,
     BrowserWorkerConfig,
+    DryRunComplete,
     Failed,
     SubmissionResult,
 )
@@ -137,6 +140,9 @@ class ApplySaga:
         prompt: ApplyPrompt,
         model: str,
         material_version: str = "",
+        materials_generation: int | str | None = None,
+        application_url: str | None = None,
+        profile_version: int | str | None = None,
     ) -> SagaOutcome:
         """Run the saga end-to-end.
 
@@ -299,20 +305,70 @@ class ApplySaga:
                 if agent_result.duration_ms is not None
                 else int((time.time() - start) * 1000)
             )
+            submission_result = agent_result.submission_result
+            dry_run_evidence = _empty_dry_run_evidence()
+            if run.dry_run and isinstance(submission_result, DryRunComplete):
+                dry_run_evidence = _collect_dry_run_evidence(session)
+                submission_result = DryRunComplete(
+                    navigated_to=submission_result.navigated_to,
+                    coverage=str(dry_run_evidence["coverage"]),
+                    blocked_channels=tuple(dry_run_evidence["blocked_channels"]),
+                )
             run = run.record_event(
                 event_type="AgentResult",
                 occurred_at=_utc_now(),
                 level="info",
-                message=f"agent returned {_describe_result(agent_result.submission_result)}",
+                message=f"agent returned {_describe_result(submission_result)}",
                 payload={
-                    "kind": agent_result.submission_result.kind,
+                    "kind": submission_result.kind,
                     "duration_ms": duration_ms,
                     "raw_output": agent_result.raw_output,
                 },
             )
+            if run.dry_run and isinstance(submission_result, DryRunComplete):
+                blocked_requests = tuple(dry_run_evidence["blocked_requests"])
+                if blocked_requests:
+                    run = run.record_event(
+                        event_type="DryRunBlockedChannels",
+                        occurred_at=_utc_now(),
+                        level="warn",
+                        message="dry-run guard blocked browser submission channels",
+                        payload={
+                            "coverage": submission_result.coverage,
+                            "blocked_channels": list(submission_result.blocked_channels),
+                            "blocked_requests": list(blocked_requests),
+                        },
+                    )
+                finished_at = _utc_now()
+                run = run.record_event(
+                    event_type="DryRunCompleted",
+                    occurred_at=finished_at,
+                    level="info",
+                    message="Dry run completed without submitting",
+                    payload={
+                        "run_id": str(run.run_id),
+                        "result": "dry_run_complete",
+                        "finished_at": finished_at,
+                        "duration_ms": duration_ms,
+                        "worker_id": run.worker_id,
+                        "model": model,
+                        "dry_run": True,
+                        "coverage": submission_result.coverage,
+                        "blocked_channels": list(submission_result.blocked_channels),
+                        "materials_generation": _coerce_optional_int(
+                            materials_generation
+                            if materials_generation is not None
+                            else material_version
+                        ),
+                        "application_url": application_url or str(run.job_id),
+                        "profile_version": _coerce_optional_int(profile_version),
+                    },
+                )
+            else:
+                finished_at = _utc_now()
             run = run.complete(
-                result=agent_result.submission_result,
-                finished_at=_utc_now(),
+                result=submission_result,
+                finished_at=finished_at,
                 token_usage=agent_result.token_usage,
                 duration_ms=duration_ms,
             )
@@ -367,6 +423,54 @@ class ApplySaga:
 def _describe_result(result: SubmissionResult) -> str:
     """Compact human-readable description of a submission result."""
     return result.kind
+
+
+def _empty_dry_run_evidence() -> dict[str, object]:
+    return {
+        "coverage": "full",
+        "blocked_channels": (),
+        "blocked_requests": (),
+    }
+
+
+def _collect_dry_run_evidence(session: BrowserSession | None) -> dict[str, object]:
+    if session is None or session.dry_run_evidence is None:
+        return _empty_dry_run_evidence()
+    try:
+        raw = dict(session.dry_run_evidence() or {})
+    except Exception:  # noqa: BLE001 — evidence must not turn a completed dry run into a crash
+        log.exception("ApplySaga: failed to collect dry-run guard evidence")
+        return _empty_dry_run_evidence()
+    return _normalise_dry_run_evidence(raw)
+
+
+def _normalise_dry_run_evidence(raw: Mapping[str, Any]) -> dict[str, object]:
+    coverage = str(raw.get("coverage") or "full")
+    if coverage not in {"full", "partial"}:
+        coverage = "partial"
+    raw_channels = raw.get("blocked_channels") or ()
+    if isinstance(raw_channels, str):
+        raw_channels = (raw_channels,)
+    blocked_channels = tuple(str(channel) for channel in raw_channels if str(channel).strip())
+    blocked_requests = tuple(
+        dict(item)
+        for item in (raw.get("blocked_requests") or ())
+        if isinstance(item, Mapping)
+    )
+    return {
+        "coverage": coverage,
+        "blocked_channels": blocked_channels,
+        "blocked_requests": blocked_requests,
+    }
+
+
+def _coerce_optional_int(value: int | str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = [
