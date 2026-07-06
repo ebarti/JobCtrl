@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
 import {
   CancelRunParamsSchema,
   CancelRunResultSchema,
+  DEFAULT_PIPELINE_LLM_MODEL,
+  GenerateInterviewPrepRequestSchema,
+  GenerateInterviewPrepParamsSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -71,6 +74,7 @@ describe("preparation RPC contracts", () => {
     expect(RpcMethods.RetailorJob).toBe("retailor_job");
     expect(RpcMethods.RetailorCurrentPolicy).toBe("retailor_current_policy");
     expect(RpcMethods.RefreshCompensation).toBe("refresh_compensation");
+    expect(RpcMethods.GenerateInterviewPrep).toBe("generate_interview_prep");
   });
 
   it("parses and defaults rescore_job request payloads", () => {
@@ -150,6 +154,44 @@ describe("preparation RPC contracts", () => {
       postedFactsRefreshed: 2,
       estimatesRefreshed: 2,
     });
+  });
+
+  it("parses and rejects stored interview prep generation payloads", () => {
+    const parsed = GenerateInterviewPrepParamsSchema.parse({
+      jobUrl: "https://example.test/job/interview",
+      expectedAppDir: "/tmp/jobhunter",
+      expectedDbPath: "/tmp/jobhunter/jobhunter.db",
+    });
+
+    expect(parsed).toEqual({
+      tenantId: "local",
+      expectedAppDir: "/tmp/jobhunter",
+      expectedDbPath: "/tmp/jobhunter/jobhunter.db",
+      jobUrl: "https://example.test/job/interview",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+    });
+    expect(() => GenerateInterviewPrepParamsSchema.parse({})).toThrow();
+    expect(() => GenerateInterviewPrepParamsSchema.parse({ jobUrl: "" })).toThrow();
+  });
+
+  it("parses the REST generate-interview-prep request body", () => {
+    expect(GenerateInterviewPrepRequestSchema.parse({})).toEqual({});
+    expect(GenerateInterviewPrepRequestSchema.parse({ llmModel: "gpt-test" })).toEqual({
+      llmModel: "gpt-test",
+    });
+    expect(() => GenerateInterviewPrepRequestSchema.parse({ llmModel: "" })).toThrow();
+  });
+
+  it("keeps interview prep off live-assistance contract names", () => {
+    const exposedNames = [
+      RpcMethods.GenerateInterviewPrep,
+      "generate_interview_prep",
+      "/v1/jobs/:jobKey/actions/generate-interview-prep",
+      ...Object.keys(GenerateInterviewPrepParamsSchema.shape),
+      ...Object.keys(GenerateInterviewPrepRequestSchema.shape),
+    ];
+    const forbidden = /(live|in[_-]?session|stream|transcript|microphone|websocket|real[_-]?time)/i;
+    expect(exposedNames.filter((name) => forbidden.test(name))).toEqual([]);
   });
 
   it("rejects invalid rescore_job request payloads", () => {

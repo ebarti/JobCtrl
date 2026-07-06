@@ -16,6 +16,7 @@ let options: BuildAppOptions;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
+const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -495,6 +496,231 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("issues and rotates a local extension capability token from loopback settings callers", async () => {
+    const app = buildApp(options);
+    try {
+      const first = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      expect(first.headers["cache-control"]).toBe("no-store");
+      const firstBody = first.json() as { token: string; tokenPath: string; created: boolean };
+      expect(firstBody.token).toHaveLength(43);
+      expect(firstBody.tokenPath).toBe(path.join(tempDir, "extension-capability-token"));
+      expect(fs.readFileSync(firstBody.tokenPath, "utf8").trim()).toBe(firstBody.token);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(firstBody.tokenPath).mode & 0o777).toBe(0o600);
+      }
+
+      const extensionRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(extensionRead.statusCode, extensionRead.body).toBe(403);
+      expect(extensionRead.headers["access-control-allow-origin"]).toBeUndefined();
+
+      const rotated = await app.inject({
+        method: "POST",
+        url: "/v1/extension/pairing-token/rotate",
+        headers: { origin: "http://127.0.0.1:5173" },
+      });
+      expect(rotated.statusCode, rotated.body).toBe(200);
+      const rotatedBody = rotated.json() as { token: string; tokenPath: string };
+      expect(rotatedBody.tokenPath).toBe(firstBody.tokenPath);
+      expect(rotatedBody.token).not.toBe(firstBody.token);
+      expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows CORS preflight only for authenticated extension API routes", async () => {
+    const app = buildApp(options);
+    try {
+      const extensionPreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(extensionPreflight.statusCode, extensionPreflight.body).toBe(204);
+      expect(extensionPreflight.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("authorization");
+      expect(String(extensionPreflight.headers["access-control-allow-headers"])).toContain("content-type");
+
+      const profilePreflight = await app.inject({
+        method: "OPTIONS",
+        url: "/v1/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          "access-control-request-method": "PATCH",
+          "access-control-request-headers": "authorization, content-type",
+        },
+      });
+      expect(profilePreflight.statusCode, profilePreflight.body).toBe(204);
+      expect(profilePreflight.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("trusts valid extension bearer tokens only on extension API routes without weakening CSRF", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+
+      const missingTokenRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/auth/status",
+        headers: { origin: CHROME_EXTENSION_ORIGIN },
+      });
+      expect(missingTokenRead.statusCode, missingTokenRead.body).toBe(401);
+      expect(missingTokenRead.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(missingTokenRead.json()).toMatchObject({ ok: false, error: "invalid_extension_capability_token" });
+
+      const extensionStatus = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(extensionStatus.statusCode, extensionStatus.body).toBe(200);
+      expect(extensionStatus.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      expect(extensionStatus.json()).toMatchObject({
+        ok: true,
+        authenticated: true,
+        capabilities: ["capture", "autofill_read"],
+      });
+
+      const invalidToken = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: "Bearer not-the-local-token",
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(invalidToken.statusCode, invalidToken.body).toBe(403);
+      expect(invalidToken.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const foreignOrigin = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          origin: "https://example.com",
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(foreignOrigin.statusCode, foreignOrigin.body).toBe(403);
+      expect(foreignOrigin.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+      const nonExtensionRoute = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+        payload: { reason: "must stay blocked" },
+      });
+      expect(nonExtensionRoute.statusCode, nonExtensionRoute.body).toBe(403);
+      expect(nonExtensionRoute.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+
+      const db = new Database(options.dbPath);
+      const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
+        apply_status: string | null;
+        applied_at: string | null;
+      };
+      db.close();
+      expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves a token-gated autofill profile without sensitive profile fields", async () => {
+    const app = buildApp(options);
+    try {
+      const profile = {
+        ...validProfileFixture("Jordan Candidate"),
+        personal: {
+          full_name: "Jordan Candidate",
+          email: "jordan@example.com",
+          phone: "+1 555 0100",
+          linkedin_url: "https://linkedin.com/in/jordan",
+          password: "must-not-leave-profile",
+        },
+        work_authorization: {
+          legally_authorized_to_work: "Yes",
+          require_sponsorship: "No",
+          work_permit_type: "Citizen",
+        },
+        availability: {
+          earliest_start_date: "2026-08-01",
+          available_for_full_time: "Yes",
+          available_for_contract: "No",
+        },
+        compensation: {
+          salary_expectation: "150000",
+          salary_currency: "USD",
+        },
+      };
+      const save = await app.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        headers: {
+          origin: "http://127.0.0.1:5173",
+          "sec-fetch-site": "same-site",
+        },
+        payload: { profile },
+      });
+      expect(save.statusCode, save.body).toBe(200);
+
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/extension/autofill/profile",
+        headers: {
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
+      const body = response.json() as { profileVersion: number; fields: Array<{ path: string; value: string }> };
+      expect(body.profileVersion).toBeGreaterThan(0);
+      expect(body.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "personal.email", value: "jordan@example.com" }),
+          expect.objectContaining({ path: "personal.phone", value: "+1 555 0100" }),
+          expect.objectContaining({ path: "work_authorization.legally_authorized_to_work", value: "Yes" }),
+          expect.objectContaining({ path: "compensation.salary_expectation", value: "150000" }),
+        ]),
+      );
+      expect(JSON.stringify(body)).not.toContain("must-not-leave-profile");
+      expect(body.fields.some((field) => field.path === "personal.password")).toBe(false);
+      expect(body.fields.some((field) => field.path.startsWith("resume."))).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
     const dispatch = vi.fn(
       async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({ status: "queued" }),
@@ -576,6 +802,88 @@ describe("local TypeScript API", () => {
     expect(row).toMatchObject({ apply_status: null, applied_at: null });
 
     await app.close();
+  });
+
+  it.each([
+    {
+      name: "cross-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "cross-site metadata" },
+      headers: { "sec-fetch-site": "cross-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "same-site browser metadata without loopback origin",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-site metadata" },
+      headers: { "sec-fetch-site": "same-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
+      name: "loopback same-site browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "loopback same-site metadata" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-site" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "same-origin browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "same-origin browser" },
+      headers: { origin: "http://127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
+    },
+    {
+      name: "browser navigation metadata",
+      jobUrl: "https://example.com/jobs/blocked-tailor",
+      action: "mark-skipped",
+      payload: { reason: "browser navigation" },
+      headers: { "sec-fetch-site": "none" },
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+    {
+      name: "headerless curl-style mutation",
+      jobUrl: "https://example.com/jobs/failed-score",
+      action: "mark-skipped",
+      payload: { reason: "CLI" },
+      headers: {},
+      expectedStatus: 200,
+      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+    },
+  ])("enforces the unsafe mutation CSRF matrix for $name", async (testCase) => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(testCase.jobUrl)}/actions/${testCase.action}`,
+        headers: testCase.headers,
+        payload: testCase.payload,
+      });
+
+      expect(response.statusCode, response.body).toBe(testCase.expectedStatus);
+      expect(response.json()).toMatchObject(testCase.expectedBody);
+
+      if (testCase.expectedStatus === 403) {
+        const db = new Database(options.dbPath);
+        const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get(testCase.jobUrl) as {
+          apply_status: string | null;
+          applied_at: string | null;
+        };
+        db.close();
+        expect(row).toMatchObject({ apply_status: null, applied_at: null });
+      }
+    } finally {
+      await app.close();
+    }
   });
 
   it("allows loopback browser and no-origin mutation callers", async () => {
@@ -665,6 +973,28 @@ describe("local TypeScript API", () => {
         .get("https://example.com/jobs/ready") as { apply_status: string | null; applied_at: string | null };
       db.close();
       expect(row).toMatchObject({ apply_status: null, applied_at: null });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps the Host gate mandatory for valid extension bearer tokens", async () => {
+    const app = buildApp(options);
+    try {
+      const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+      const token = (tokenResponse.json() as { token: string }).token;
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/extension/auth/status",
+        headers: {
+          host: "evil.example.com",
+          origin: CHROME_EXTENSION_ORIGIN,
+          authorization: `Bearer ${token}`,
+          "sec-fetch-site": "cross-site",
+        },
+      });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "forbidden_host" });
     } finally {
       await app.close();
     }
@@ -6062,6 +6392,61 @@ describe("local TypeScript API", () => {
       }),
       expect.anything(),
     );
+
+    await app.close();
+  });
+
+  it("dispatches explicit interview prep generation without running pipeline stages", async () => {
+    const dispatch = vi.fn(async (_command: unknown, _context: unknown) => ({
+      status: "queued",
+      actionId: "act-prep",
+      runId: "run-prep",
+      workflowId: "workflow-prep",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: { llmModel: "gpt-test" },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "generate_interview_prep",
+      status: "queued",
+      jobKey: "https://example.com/jobs/ready",
+      workflowId: "workflow-prep",
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "generate_interview_prep",
+        jobKey: "https://example.com/jobs/ready",
+        llmModel: "gpt-test",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch.mock.calls[0]?.[0]).not.toMatchObject({ action: "run_stage" });
+
+    await app.close();
+  });
+
+  it("rejects interview prep generation for missing jobs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/missing");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-interview-prep`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "job_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
 
     await app.close();
   });

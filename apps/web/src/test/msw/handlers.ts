@@ -2,18 +2,26 @@ import { http, HttpResponse } from "msw";
 
 import {
   makeArtifactDetail,
+  makeArtifactTailoringExplanation,
   makeActivityPage,
   sampleApplicationOutcomes,
   sampleApplyReviewQueue,
+  sampleAcceptedResumeArtifact,
+  sampleDraftResumeArtifact,
+  makeCoverageAudit,
   makeArtifactsPage,
   makeJobDetail,
   makeJobsPage,
   makeWorkflowRunsPage,
   makeWorkflowRunDetail,
   sampleCredentialsResponse,
+  sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
+  sampleExtensionCapabilityTokenResponse,
+  sampleEvidenceMapResponse,
   sampleHealthResponse,
+  sampleOutcomeAnalyticsSummary,
   sampleProfileResponse,
   sampleResumeTemplateListResponse,
   sampleSettingsResponse,
@@ -147,9 +155,63 @@ const sampleCompensationSourcePolicy = {
   ],
 };
 
+function makeStoryArtifactDetail(artifactId: string) {
+  if (artifactId === sampleAcceptedResumeArtifact.artifactId) {
+    return makeArtifactDetail(
+      sampleAcceptedResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["platform reliability", "typescript"],
+          declared: ["terraform", "gcp"],
+          missing: ["incident response", "kubernetes"],
+        }),
+      ),
+    );
+  }
+  if (artifactId === sampleDraftResumeArtifact.artifactId) {
+    return makeArtifactDetail(
+      sampleDraftResumeArtifact,
+      makeArtifactTailoringExplanation(
+        makeCoverageAudit({
+          covered: ["platform reliability", "incident response", "terraform"],
+          declared: ["kubernetes", "gcp"],
+          missing: ["typescript"],
+        }),
+        {
+          quality: {
+            passed: true,
+            errors: [],
+            warnings: ["Residual wording warning recorded on the rendered draft."],
+            notes: [],
+            metricClaims: [],
+            repeatedKeywords: [],
+          },
+        },
+      ),
+    );
+  }
+  return makeArtifactDetail({
+    ...makeArtifactsPage().items[0]!,
+    artifactId,
+  });
+}
+
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),
+  http.get("*/v1/digest", () => HttpResponse.json(sampleDailyDigest)),
+  http.post("*/v1/digest/acknowledge", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { acknowledgedAt?: string };
+    return HttpResponse.json({
+      ok: true,
+      state: {
+        lastAcknowledgedAt: body.acknowledgedAt ?? sampleDailyDigest.generatedAt,
+        updatedAt: sampleDailyDigest.generatedAt,
+      },
+    });
+  }),
+  http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),
@@ -413,6 +475,7 @@ export const handlers = [
       kind: string;
       occurredAt?: string;
       note?: string;
+      interviewPrepGeneration?: number;
     };
     return HttpResponse.json({
       ok: true,
@@ -426,6 +489,7 @@ export const handlers = [
         recordedAt: "2026-05-06T08:35:00Z",
         suggestionId: null,
         evidenceId: null,
+        interviewPrepGeneration: body.interviewPrepGeneration ?? null,
       },
     });
   }),
@@ -560,6 +624,9 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/actions/generate-materials", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_materials")),
   ),
+  http.post("*/v1/jobs/:jobKey/actions/generate-interview-prep", ({ params }) =>
+    HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_interview_prep")),
+  ),
   http.post("*/v1/jobs/:jobKey/actions/tailor", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "tailor_job")),
   ),
@@ -612,14 +679,11 @@ export const handlers = [
     }),
   ),
 
-  http.get("*/v1/artifacts", () => HttpResponse.json(makeArtifactsPage())),
+  http.get("*/v1/artifacts", () =>
+    HttpResponse.json(makeArtifactsPage([sampleDraftResumeArtifact, sampleAcceptedResumeArtifact])),
+  ),
   http.get("*/v1/artifacts/:artifactId", ({ params }) =>
-    HttpResponse.json(
-      makeArtifactDetail({
-        ...makeArtifactsPage().items[0]!,
-        artifactId: String(params["artifactId"]),
-      }),
-    ),
+    HttpResponse.json(makeStoryArtifactDetail(String(params["artifactId"]))),
   ),
   http.post("*/v1/artifacts/:artifactId/open", ({ params }) =>
     HttpResponse.json({
@@ -706,6 +770,16 @@ export const handlers = [
 
   http.get("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
   http.patch("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
+  http.get("*/v1/extension/pairing-token", () =>
+    HttpResponse.json(sampleExtensionCapabilityTokenResponse),
+  ),
+  http.post("*/v1/extension/pairing-token/rotate", () =>
+    HttpResponse.json({
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
+    }),
+  ),
 
   http.get("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
