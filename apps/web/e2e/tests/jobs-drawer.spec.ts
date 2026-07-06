@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 const FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PLATFORM_JOB_TITLE = "Director of Platform Engineering";
@@ -295,6 +295,20 @@ function seedSyntheticCompensationData(): void {
   }
 }
 
+async function expectRegionBefore(
+  before: Locator,
+  after: Locator,
+  label: string,
+): Promise<void> {
+  await expect(before, `${label} first region`).toBeVisible();
+  await expect(after, `${label} second region`).toBeVisible();
+  const beforeBox = await before.boundingBox();
+  const afterBox = await after.boundingBox();
+  expect(beforeBox, `${label} first region box`).not.toBeNull();
+  expect(afterBox, `${label} second region box`).not.toBeNull();
+  expect(beforeBox!.y, `${label} vertical order`).toBeLessThan(afterBox!.y);
+}
+
 test("Jobs compensation source-conflict evidence stays product-visible without unsafe actions", async ({
   page,
 }) => {
@@ -337,23 +351,12 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
-  const orderedSections = await drawer
-    .locator("section")
-    .evaluateAll((sections) =>
-      sections
-        .map((section) => {
-          const text = section.textContent ?? "";
-          if (text.includes("Why this job is here")) return "triage";
-          if (section.getAttribute("aria-label") === "Compensation evidence") return "compensation";
-          if (text.includes("Description")) return "description";
-          return null;
-        })
-        .filter(Boolean),
-    );
-  expect(orderedSections.indexOf("triage")).toBeLessThan(orderedSections.indexOf("compensation"));
-  expect(orderedSections.indexOf("compensation")).toBeLessThan(orderedSections.indexOf("description"));
-
   const compensation = drawer.getByRole("region", { name: "Compensation evidence" });
+  const triage = drawer.getByRole("region", { name: "Job audit triage" });
+  const description = drawer.locator("section.job-detail-description");
+  await expectRegionBefore(triage, compensation, "triage before compensation");
+  await expectRegionBefore(compensation, description, "compensation before description");
+
   await expect(compensation.getByRole("heading", { name: "Compensation" })).toBeVisible();
   await expect(compensation.getByText("EUR 55000/year").first()).toBeVisible();
   await expect(compensation.getByText("EUR 112000-142000/year").first()).toBeVisible();
@@ -370,7 +373,6 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(compensation.getByText("Glassdoor").first()).toBeVisible();
   await expect(compensation.getByText("Confidence factors")).toBeVisible();
 
-  const triage = drawer.getByRole("region", { name: "Why this job is here" });
   await expect(triage.getByText("reported_compensation_sample")).toHaveCount(0);
   await expect(triage.getByText("source_conflict_with_posted_salary")).toHaveCount(0);
   await expect(triage.getByText("Reported compensation diverges materially from the posted salary.")).toHaveCount(0);

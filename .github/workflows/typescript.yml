@@ -55,6 +55,12 @@ jobs:
       - name: Test
         run: pnpm --filter @jobhunter/api test
 
+      - name: Test web
+        run: pnpm --filter @jobhunter/web test
+
+      - name: Test web types
+        run: pnpm --filter @jobhunter/web test-d
+
       - name: Build web
         run: pnpm --filter @jobhunter/web build
 
@@ -63,6 +69,9 @@ jobs:
 
       - name: Install Playwright Chromium
         run: pnpm --filter @jobhunter/web exec playwright install --with-deps chromium
+
+      - name: Test web e2e
+        run: pnpm --filter @jobhunter/web e2e
 
       - name: Test web storybook
         run: pnpm --filter @jobhunter/web storybook:test
