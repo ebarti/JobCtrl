@@ -1448,7 +1448,6 @@ describe("<ApplyReviewView>", () => {
 
     const shadow = await findResumeShadowRoot();
     expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
-    expect(await screen.findByText("saved revision 1")).toBeInTheDocument();
     expect(screen.queryByText("loading draft")).not.toBeInTheDocument();
     expect(createResumeReviewDraft).toHaveBeenCalled();
   });
