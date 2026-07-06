@@ -9,6 +9,9 @@ const meta = {
     jobId: "job-1",
     currentStage: "tailor",
   },
+  parameters: {
+    withRouter: true,
+  },
 } satisfies Meta<typeof JobActions>;
 
 export default meta;

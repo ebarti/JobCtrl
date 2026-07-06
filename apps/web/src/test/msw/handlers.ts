@@ -19,6 +19,7 @@ import {
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
   sampleExtensionCapabilityTokenResponse,
+  sampleEvidenceMapResponse,
   sampleHealthResponse,
   sampleOutcomeAnalyticsSummary,
   sampleProfileResponse,
@@ -210,6 +211,7 @@ export const handlers = [
       },
     });
   }),
+  http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),

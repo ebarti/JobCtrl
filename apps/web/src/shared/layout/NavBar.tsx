@@ -11,6 +11,7 @@ const NAV_ITEMS: ReadonlyArray<{
     | "/discovery"
     | "/runs"
     | "/debug"
+    | "/evidence-map"
     | "/artifacts"
     | "/profile"
     | "/preferences"
@@ -24,6 +25,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { label: "Discovery", to: "/discovery" },
   { label: "Runs", to: "/runs" },
   { label: "Debug", to: "/debug" },
+  { label: "Evidence", to: "/evidence-map" },
   { label: "Artifacts", to: "/artifacts" },
   { label: "Profile", to: "/profile" },
   { label: "Preferences", to: "/preferences" },
