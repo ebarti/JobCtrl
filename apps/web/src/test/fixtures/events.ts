@@ -13,6 +13,7 @@ import {
   createDiscoveryRunCompleted,
   createDiscoveryRunFailed,
   createDiscoveryRunStarted,
+  createDigestReviewed,
   createDuplicateJobLinked,
   createDuplicateJobLinkRejected,
   createEnrichmentFailed,
@@ -29,6 +30,8 @@ import {
   createJobUpdated,
   createBulletProvenanceRecorded,
   createEmployerAnalyzed,
+  createInterviewPrepFailed,
+  createInterviewPrepGenerated,
   createMaterialsExhausted,
   createPdfRendered,
   createPreparationWorkItemCompleted,
@@ -250,6 +253,11 @@ export const eventByType = {
     marketEstimateState: "estimated_range",
     updatedAt: NOW,
   }),
+  DigestReviewed: createDigestReviewed(LOCAL_TENANT, {
+    acknowledgedAt: NOW,
+    reviewedAt: NOW,
+    previousAcknowledgedAt: "2026-05-05T08:00:00Z",
+  }),
   JobScored: createJobScored(LOCAL_TENANT, {
     jobId: JOB_ID,
     fitScore: 8,
@@ -316,6 +324,18 @@ export const eventByType = {
     generation: 1,
     bulletCount: 7,
     recordedAt: NOW,
+  }),
+  InterviewPrepGenerated: createInterviewPrepGenerated(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    generation: 1,
+    itemCount: 4,
+    generatedAt: NOW,
+  }),
+  InterviewPrepFailed: createInterviewPrepFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    generation: 2,
+    failedAt: NOW,
+    reasonCount: 1,
   }),
   TailoringPolicyUpdated: createTailoringPolicyUpdated(LOCAL_TENANT, {
     policyId: "tailoring:default",

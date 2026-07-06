@@ -393,6 +393,7 @@ def test_run_detail_scraper_skips_legacy_stage_succeeded_without_aggregate(
         *,
         delay: float = 2.0,
         max_jobs: int | None = None,
+        on_job_enriched=None,
     ) -> dict:
         batches.append(jobs[: max_jobs or None])
         return {"processed": len(jobs), "ok": 0, "partial": 0, "error": 0, "tiers": {}}

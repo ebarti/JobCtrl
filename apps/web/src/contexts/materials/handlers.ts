@@ -2,6 +2,8 @@ import type {
   BulletProvenanceRecorded,
   CoverLetterGenerated,
   EmployerAnalyzed,
+  InterviewPrepFailed,
+  InterviewPrepGenerated,
   MaterialsExhausted,
   PdfRendered,
   ResumeApproved,
@@ -78,6 +80,22 @@ export const bulletProvenanceRecordedHandler = (
   invalidate(artifactsKeys.detail(event.tenantId, event.payload.artifactId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
+export const interviewPrepGeneratedHandler = (
+  event: InterviewPrepGenerated,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const interviewPrepFailedHandler = (
+  event: InterviewPrepFailed,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
 export const tailorRetailorRequestedHandler = (
