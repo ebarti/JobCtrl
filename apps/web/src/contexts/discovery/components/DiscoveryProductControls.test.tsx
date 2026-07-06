@@ -6,6 +6,14 @@ import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { DiscoveryProductControls } from "./DiscoveryProductControls.js";
 
+const NO_POLITENESS = {
+  robotsDisallowedCount: 0,
+  rateLimitedCount: 0,
+  budgetExhaustedCount: 0,
+  lastBlockedReason: null,
+  lastBlockedAt: null,
+} as const;
+
 describe("DiscoveryProductControls", () => {
   it("renders source health, quarantine review, and manual capture queues", async () => {
     renderWithProviders(<DiscoveryProductControls />);
@@ -16,6 +24,8 @@ describe("DiscoveryProductControls", () => {
     expect(
       screen.getByText("https://example.com/protected/job"),
     ).toBeInTheDocument();
+    // The Access column surfaces the source's recorded politeness outcomes.
+    expect(screen.getByText("rate limited")).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(
@@ -50,6 +60,7 @@ describe("DiscoveryProductControls", () => {
                 activeVerificationRate: 0.8,
                 fullDescriptionSuccessRate: 0.7,
                 applyUrlSuccessRate: 0.6,
+                politeness: NO_POLITENESS,
                 qualityTrend: "flat" as const,
               },
             ],
@@ -130,6 +141,7 @@ describe("DiscoveryProductControls", () => {
                 activeVerificationRate: null,
                 fullDescriptionSuccessRate: null,
                 applyUrlSuccessRate: null,
+                politeness: NO_POLITENESS,
                 qualityTrend: "unknown" as const,
               },
               {
@@ -151,6 +163,7 @@ describe("DiscoveryProductControls", () => {
                 activeVerificationRate: null,
                 fullDescriptionSuccessRate: null,
                 applyUrlSuccessRate: null,
+                politeness: NO_POLITENESS,
                 qualityTrend: "unknown" as const,
               },
               {
@@ -172,6 +185,7 @@ describe("DiscoveryProductControls", () => {
                 activeVerificationRate: null,
                 fullDescriptionSuccessRate: null,
                 applyUrlSuccessRate: null,
+                politeness: NO_POLITENESS,
                 qualityTrend: "unknown" as const,
               },
             ],
@@ -259,6 +273,7 @@ describe("DiscoveryProductControls", () => {
         activeVerificationRate: null,
         fullDescriptionSuccessRate: null,
         applyUrlSuccessRate: null,
+        politeness: NO_POLITENESS,
         qualityTrend: "unknown" as const,
       },
       decidedAt: "2026-05-12T10:00:00+00:00",

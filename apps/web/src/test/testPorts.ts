@@ -46,6 +46,13 @@ const sampleDiscoverySourceRegistry = {
       activeVerificationRate: null,
       fullDescriptionSuccessRate: null,
       applyUrlSuccessRate: null,
+      politeness: {
+        robotsDisallowedCount: 0,
+        rateLimitedCount: 3,
+        budgetExhaustedCount: 0,
+        lastBlockedReason: "rate_limited" as const,
+        lastBlockedAt: "2026-05-16T10:00:00+00:00",
+      },
       qualityTrend: "unknown" as const,
     },
   ],
