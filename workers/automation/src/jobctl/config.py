@@ -50,33 +50,95 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
     return [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()]
 
 
+_JOB_LIFECYCLE_TABLES = {
+    "deleted_jobs": {
+        "current": "jobctl_deleted_jobs",
+        "create_sql": """
+            CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+                job_url TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT
+            )
+        """,
+        "additive_columns": {
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "reason": "TEXT",
+            "restored_at": "TEXT",
+        },
+    },
+    "hidden_jobs": {
+        "current": "jobctl_hidden_jobs",
+        "create_sql": """
+            CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
+                job_url TEXT PRIMARY KEY,
+                hidden_at TEXT NOT NULL,
+                reason TEXT,
+                unhidden_at TEXT
+            )
+        """,
+        "additive_columns": {
+            "hidden_at": "TEXT NOT NULL DEFAULT ''",
+            "reason": "TEXT",
+            "unhidden_at": "TEXT",
+        },
+    },
+}
+
+
+def _ensure_job_lifecycle_table_schema(conn: sqlite3.Connection, suffix: str) -> bool:
+    spec = _JOB_LIFECYCLE_TABLES[suffix]
+    current = str(spec["current"])
+    changed = not _table_exists(conn, current)
+    conn.execute(str(spec["create_sql"]))
+    existing_columns = set(_table_columns(conn, current))
+    for column, definition in dict(spec["additive_columns"]).items():
+        if column in existing_columns:
+            continue
+        conn.execute(f'ALTER TABLE "{current}" ADD COLUMN "{column}" {definition}')
+        existing_columns.add(column)
+        changed = True
+    return changed
+
+
 def migrate_legacy_job_tables(conn: sqlite3.Connection) -> list[str]:
-    """Rename legacy tombstone tables to the JobCtl schema names.
+    """Move legacy tombstone rows to the JobCtl schema names.
 
     The owner migration is intentionally one-way: if both names exist, rows are
     merged into the new table and the legacy table is dropped so new code has a
-    single schema surface.
+    single schema surface. Legacy-only tables are copied into a freshly created
+    current table instead of renamed, because older schemas can be missing
+    lifecycle columns used by the read model.
     """
     renamed: list[str] = []
-    for suffix in ("deleted_jobs", "hidden_jobs"):
+    changed = False
+    for suffix, spec in _JOB_LIFECYCLE_TABLES.items():
         legacy = f"{_LEGACY_TOKEN}_{suffix}"
-        current = f"jobctl_{suffix}"
+        current = str(spec["current"])
         legacy_exists = _table_exists(conn, legacy)
         current_exists = _table_exists(conn, current)
-        if not legacy_exists:
+        if not legacy_exists and not current_exists:
             continue
-        if current_exists:
-            current_columns = _table_columns(conn, current)
-            common_columns = [column for column in _table_columns(conn, legacy) if column in current_columns]
+
+        legacy_columns = _table_columns(conn, legacy) if legacy_exists else []
+        if legacy_exists:
+            known_columns = {"job_url", *dict(spec["additive_columns"]).keys()}
+            common_columns = [column for column in legacy_columns if column in known_columns]
             if not common_columns:
                 raise WorkspaceMigrationError(f"cannot migrate legacy table {legacy}: no shared columns with {current}")
-            columns = ", ".join(f'"{column}"' for column in common_columns)
-            conn.execute(f"INSERT OR IGNORE INTO {current} ({columns}) SELECT {columns} FROM {legacy}")
-            conn.execute(f"DROP TABLE {legacy}")
-        else:
-            conn.execute(f"ALTER TABLE {legacy} RENAME TO {current}")
+
+        changed = _ensure_job_lifecycle_table_schema(conn, suffix) or changed
+        if not legacy_exists:
+            continue
+
+        current_columns = _table_columns(conn, current)
+        common_columns = [column for column in legacy_columns if column in current_columns]
+        columns = ", ".join(f'"{column}"' for column in common_columns)
+        conn.execute(f'INSERT OR IGNORE INTO "{current}" ({columns}) SELECT {columns} FROM "{legacy}"')
+        conn.execute(f'DROP TABLE "{legacy}"')
+        changed = True
         renamed.append(current)
-    if renamed:
+    if changed:
         conn.commit()
     return renamed
 

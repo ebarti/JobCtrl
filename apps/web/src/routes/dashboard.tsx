@@ -7,18 +7,18 @@ import { DashboardView } from "../views/dashboard/DashboardView.js";
 
 export const Route = createFileRoute("/dashboard")({
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData({
+    await context.queryClient.prefetchQuery({
       queryKey: dashboardKeys.summary(context.tenantId),
       queryFn: () => context.ports.api.dashboardSummary(),
     });
     await context.queryClient
-      .ensureQueryData({
+      .prefetchQuery({
         queryKey: outcomesKeys.list(context.tenantId),
         queryFn: () => context.ports.api.applicationOutcomes(),
       })
       .catch(() => undefined);
     await context.queryClient
-      .ensureQueryData({
+      .prefetchQuery({
         queryKey: digestKeys.summary(context.tenantId),
         queryFn: () => context.ports.api.digest(),
       })

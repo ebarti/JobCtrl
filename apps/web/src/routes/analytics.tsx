@@ -8,7 +8,7 @@ export const Route = createFileRoute("/analytics")({
   validateSearch: (search) => analyticsSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.prefetchQuery({
       queryKey: analyticsKeys.outcomes(context.tenantId, deps.search),
       queryFn: () => context.ports.api.outcomeAnalytics(),
     }),

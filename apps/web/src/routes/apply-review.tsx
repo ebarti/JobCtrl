@@ -7,7 +7,7 @@ import { applyReviewSearchSchema, type ApplyReviewSearch } from "./-apply-review
 export const Route = createFileRoute("/apply-review")({
   validateSearch: (search) => applyReviewSearchSchema.parse(search),
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData({
+    await context.queryClient.prefetchQuery({
       queryKey: applyReviewKeys.queue(context.tenantId),
       queryFn: () => context.ports.api.applyReviewQueue(),
     });

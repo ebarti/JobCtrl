@@ -20,7 +20,7 @@ export const Route = createFileRoute("/artifacts")({
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) => {
     const input = artifactsListInput(deps.search);
-    return context.queryClient.ensureQueryData({
+    return context.queryClient.prefetchQuery({
       queryKey: artifactsKeys.list(context.tenantId, input),
       queryFn: () => context.ports.api.artifacts(input),
     });

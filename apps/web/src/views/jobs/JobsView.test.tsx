@@ -13,6 +13,7 @@ import type {
   JobSummary,
   Stage,
 } from "@jobctl/contracts";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -29,6 +30,7 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
+import { routeTree } from "../../routeTree.gen.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
   JOBS_TABLE_ID,
@@ -111,6 +113,34 @@ function rowForTitle(title: string): HTMLElement {
   }
   return row;
 }
+
+describe("<JobsRoute> loader reliability", () => {
+  it("renders the jobs surface instead of the route error boundary when prefetch fails", async () => {
+    const ports = buildTestPorts({
+      api: {
+        jobs: vi.fn(async () => {
+          throw new Error("api offline");
+        }),
+      },
+    });
+    const harness = buildProviderHarness({ ports, withEventStream: true });
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: [`/jobs${SEARCH}`] }),
+      context: {
+        ports,
+        queryClient: harness.queryClient,
+        tenantId: LOCAL_TENANT,
+      },
+    });
+
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    expect(await screen.findByText("api offline")).toBeInTheDocument();
+    expect(screen.getByText("Jobs table")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong!")).not.toBeInTheDocument();
+  });
+});
 
 describe("<JobsView> compensation source-conflict visibility", () => {
   it("shows salary min/max, market, and warning scan columns with every data column sortable", async () => {
@@ -490,7 +520,7 @@ describe("<JobsView> bulk delete integration", () => {
     );
   });
 
-  it("continues all matching pending preparation when the jobs page opens on eligible pending work", async () => {
+  it("does not continue pending preparation just because the jobs page opens", async () => {
     const pendingTailor: JobSummary = {
       ...sampleJob,
       jobKey: "job-pending-tailor",
@@ -529,21 +559,14 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
-    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
-    expect(runPendingPreparation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        allMatching: true,
-        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
-        jobKeys: [],
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal",
-        dryRun: false,
-      }),
-    );
+    expect(
+      screen.getByRole("button", { name: /continue pending prep/i }),
+    ).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runPendingPreparation).not.toHaveBeenCalled();
   });
 
-  it("does not clear selected rows after background pending preparation pickup", async () => {
+  it("keeps selected rows stable when pending work is visible", async () => {
     const user = userEvent.setup();
     const pendingTailor: JobSummary = {
       ...sampleJob,
@@ -581,7 +604,6 @@ describe("<JobsView> bulk delete integration", () => {
     });
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
-    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
 
     const rowCheckboxes = Array.from(
       container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
@@ -598,9 +620,10 @@ describe("<JobsView> bulk delete integration", () => {
     expect(
       screen.getByRole("button", { name: /delete selected/i }),
     ).not.toBeDisabled();
+    expect(runPendingPreparation).not.toHaveBeenCalled();
   });
 
-  it("continues pending preparation even when no visible row is frontend-eligible", async () => {
+  it("does not continue pending preparation when no visible row is frontend-eligible", async () => {
     const activeJob: JobSummary = {
       ...sampleJob,
       jobKey: "job-active-visible",
@@ -627,17 +650,11 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Active Visible Job")).toBeInTheDocument();
-    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
-    expect(runPendingPreparation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        allMatching: true,
-        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
-        jobKeys: [],
-      }),
-    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runPendingPreparation).not.toHaveBeenCalled();
   });
 
-  it("starts at most one automatic pending-preparation drain per unchanged server filter", async () => {
+  it("keeps pending preparation passive when the server filter is unchanged", async () => {
     const firstTailor: JobSummary = {
       ...sampleJob,
       jobKey: "job-pending-tailor-a",
@@ -677,16 +694,8 @@ describe("<JobsView> bulk delete integration", () => {
 
     expect(await screen.findByText("Pending Tailor A")).toBeInTheDocument();
     expect(await screen.findByText("Pending Tailor B")).toBeInTheDocument();
-    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(runPendingPreparation).toHaveBeenCalledTimes(1);
-    expect(runPendingPreparation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        allMatching: true,
-        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
-        jobKeys: [],
-      }),
-    );
+    expect(runPendingPreparation).not.toHaveBeenCalled();
   });
 
   it("moves product filters into the table header and keeps them URL-backed", async () => {
@@ -1345,8 +1354,8 @@ describe("<JobsView> bulk delete integration", () => {
         timeout: 5_000,
       },
     );
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
-    calls.length = 0;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /continue pending prep/i }));
 
     await waitFor(() => expect(calls.length).toBe(1));

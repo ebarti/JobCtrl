@@ -6,11 +6,11 @@ import { profileKeys } from "../contexts/profile/queryKeys.js";
 export const Route = createFileRoute("/preferences")({
   loader: ({ context }) =>
     Promise.all([
-      context.queryClient.ensureQueryData({
+      context.queryClient.prefetchQuery({
         queryKey: profileKeys.profile(context.tenantId),
         queryFn: () => context.ports.api.profile(),
       }),
-      context.queryClient.ensureQueryData({
+      context.queryClient.prefetchQuery({
         queryKey: profileKeys.settings(context.tenantId),
         queryFn: () => context.ports.api.settings(),
       }),
