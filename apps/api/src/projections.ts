@@ -967,6 +967,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   for (const jobUrl of staleArtifactMetadataProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobUrl);
   }
+  for (const jobUrl of staleStageProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobUrl);
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -2601,6 +2604,39 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
           p.artifact_id IS NULL
           OR p.metadata_json IS NULL
           OR TRIM(p.metadata_json) != TRIM(a.metadata_json)
+        )`,
+    [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
+function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  if (!tableExists(db, "jobs") || !tableExists(db, "job_stage_states") || !tableExists(db, "job_list_projections")) {
+    return [];
+  }
+
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT DISTINCT s.job_url AS job_id
+       FROM job_stage_states s
+       JOIN jobs j
+         ON j.url = s.job_url
+       LEFT JOIN job_list_projections p
+         ON p.tenant_id = ?
+        AND p.job_id = s.job_url
+      WHERE s.job_url IS NOT NULL
+        AND TRIM(s.job_url) != ''
+        AND (
+          p.job_id IS NULL
+          OR (
+            s.updated_at IS NOT NULL
+            AND TRIM(s.updated_at) != ''
+            AND (
+              p.last_updated_at IS NULL
+              OR TRIM(p.last_updated_at) = ''
+              OR julianday(s.updated_at) > COALESCE(julianday(p.last_updated_at), -1)
+            )
+          )
         )`,
     [tenantId],
   );

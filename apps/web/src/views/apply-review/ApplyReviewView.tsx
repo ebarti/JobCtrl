@@ -50,6 +50,7 @@ type MaterialStatus = {
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
+type ApplyReviewShippedFit = NonNullable<ApplyReviewRequirementLedAudit["shippedFit"]>;
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
 type ArtifactComparisonDraftTarget = {
   readonly acceptedArtifactId: string | null;
@@ -704,6 +705,17 @@ function AuditTagGroup({
   );
 }
 
+function shippedFitFindingsLabel(shippedFit: ApplyReviewShippedFit): string {
+  const lifecycle = shippedFit.lifecycle ?? "";
+  if (lifecycle === "post_voice_shipped") {
+    return shippedFit.passed ? "Post-voice shipped findings" : "Post-voice gate findings";
+  }
+  if (lifecycle.includes("accept")) {
+    return "Post-acceptance audit findings";
+  }
+  return shippedFit.passed ? "Shipped material findings" : "Gate failure findings";
+}
+
 function BulletOverflowAudit({
   overflows,
 }: {
@@ -767,7 +779,7 @@ function RevisionAudit({
             {shippedFit.passed ? "meets revision gate" : "below revision gate"}
           </span>
           <AuditTagGroup
-            label="Post-acceptance audit findings"
+            label={shippedFitFindingsLabel(shippedFit)}
             values={shippedFit.warnings}
             tone="warn"
             formatValue={formatAuditMessage}

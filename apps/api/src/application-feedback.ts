@@ -2023,17 +2023,69 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     };
   }
 
+  const failedAudit = failedRequirementLedAuditForJob(db, jobKey);
   return {
-    materialsGeneration: pdfCandidates[0]?.generation ?? null,
+    materialsGeneration: failedAudit?.generation ?? pdfCandidates[0]?.generation ?? null,
     resumeText: null,
     resumeTextArtifactId: null,
     resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,
     resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
       ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
       : [],
-    requirementLedAudit: pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobKey, pdfCandidates[0]) : null,
+    requirementLedAudit: failedAudit?.audit ?? (pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobKey, pdfCandidates[0]) : null),
     resumeTemplate: resumeTemplateStateForJob(db, jobKey),
   };
+}
+
+function failedRequirementLedAuditForJob(
+  db: SqliteDatabase,
+  jobKey: string,
+): { generation: number | null; audit: ApplyReviewRequirementLedAudit } | null {
+  if (!tableExists(db, "job_materials_artifacts")) {
+    return null;
+  }
+  const artifactTypes = [...RESUME_TEXT_ARTIFACT_TYPES, ...RESUME_PDF_ARTIFACT_TYPES];
+  const placeholders = artifactTypes.map(() => "?").join(", ");
+  const columns = tableColumnSet(db, "job_materials_artifacts");
+  const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
+  const rows = allRows<{
+    artifact_id: string | null;
+    created_at: string | null;
+    generation: number | null;
+    metadata_json: string | null;
+    path: string | null;
+  }>(
+    db,
+    `SELECT artifact_id, path, generation, created_at, ${metadataSelect}
+       FROM job_materials_artifacts
+      WHERE job_url = ?
+        AND artifact_type IN (${placeholders})
+        AND status = 'rejected'
+        AND metadata_json IS NOT NULL
+        AND metadata_json != ''
+      ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
+      LIMIT 8`,
+    [jobKey, ...artifactTypes],
+  );
+  for (const [index, row] of rows.entries()) {
+    const audit = parseRequirementLedAuditMetadata(row.metadata_json);
+    if (!audit) continue;
+    const candidate: MaterialArtifactCandidate = {
+      artifactId: row.artifact_id ? String(row.artifact_id) : null,
+      createdAt: String(row.created_at ?? ""),
+      generation: nullableNumber(row.generation),
+      metadataJson: row.metadata_json,
+      path: String(row.path ?? ""),
+      reviewRequired: false,
+      rowRank: index,
+      sourceRank: 1,
+    };
+    return {
+      generation: candidate.generation,
+      audit: reconcileRequirementLedAuditWithProvenance(db, jobKey, candidate, audit),
+    };
+  }
+  return null;
 }
 
 function requirementLedAuditForCandidates(

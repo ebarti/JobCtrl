@@ -13,7 +13,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootComponent() {
   const showDevtools =
-    import.meta.env.DEV && import.meta.env.VITE_JOBCTRL_HIDE_DEVTOOLS !== "1";
+    import.meta.env.DEV &&
+    import.meta.env.VITE_JOBCTRL_SHOW_DEVTOOLS === "1" &&
+    import.meta.env.VITE_JOBCTRL_HIDE_DEVTOOLS !== "1";
 
   return (
     <>

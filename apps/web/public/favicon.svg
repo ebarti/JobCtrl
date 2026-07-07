@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="JobCtrl">
+  <rect width="64" height="64" rx="14" fill="#111827" />
+  <path d="M17 19h30v7H17zM17 30h20v7H17zM17 41h30v7H17z" fill="#f9fafb" />
+  <path d="M43 30h4v7h-4z" fill="#22c55e" />
+</svg>
