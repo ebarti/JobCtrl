@@ -2,7 +2,7 @@
  * Job aggregate + discovery value objects — TypeScript mirror.
  *
  * See docs/architecture/domain-model/tactical.md §4.1. The Python ``Job`` aggregate
- * (``workers/automation/src/jobctl/domain/discovery/aggregate.py``) is
+ * (``workers/automation/src/jobctrl/domain/discovery/aggregate.py``) is
  * the source of truth; both languages must stay structurally compatible.
  *
  * Wire format invariants enforced here at the type level:

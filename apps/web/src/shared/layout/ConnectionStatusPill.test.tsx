@@ -60,7 +60,7 @@ describe("<ConnectionStatusPill>", () => {
         worker: {
           ...sampleHealthResponse.worker,
           status: "missing",
-          message: "No JobCtl automation worker heartbeat has been written to the API database.",
+          message: "No JobCtrl automation worker heartbeat has been written to the API database.",
           heartbeat: null,
         },
       },
@@ -70,7 +70,7 @@ describe("<ConnectionStatusPill>", () => {
     expect(pill).toHaveAttribute("data-status", "lost");
     const alert = screen.getByRole("alert");
     expect(alert).toHaveAttribute("aria-live", "assertive");
-    expect(alert).toHaveTextContent("No JobCtl automation worker heartbeat has been written to the API database.");
+    expect(alert).toHaveTextContent("No JobCtrl automation worker heartbeat has been written to the API database.");
   });
 
   it("surfaces long event-stream disconnections as a status banner", async () => {

@@ -39,7 +39,7 @@ Definition of Done before the next begins.
 
 ### Discovery orchestration is end-loaded
 
-`workers/automation/src/jobctl/discovery/workflow.py`, `DiscoverWorkflow._execute`:
+`workers/automation/src/jobctrl/discovery/workflow.py`, `DiscoverWorkflow._execute`:
 
 - **Families run sequentially.** `for index, family in enumerate(plan.families):`
   (line ~167) awaits one `discovery_source_family_activity` at a time
@@ -68,7 +68,7 @@ the global enrichment pass before its `JobScored` event exists.
 ### What already streams (verify before building on it)
 
 - **Per-job preparation is already a durable, independent workflow.**
-  `JobPreparationWorkflow` (`workers/automation/src/jobctl/preparation/workflow.py`)
+  `JobPreparationWorkflow` (`workers/automation/src/jobctrl/preparation/workflow.py`)
   runs steps in fixed order `PREPARATION_STEP_ORDER = ("score","tailor","cover","pdf")`
   (line ~38). It runs its **own** spend preflight when a step spends
   (`_preparation_spends` → `_check_spend`, lines ~91–92, ~225–235), and the
@@ -76,7 +76,7 @@ the global enrichment pass before its `JobScored` event exists.
   `tailor_job_activity` / `cover_letter_activity`, lines ~185, ~206).
 - **Fan-out already starts root workflows with deterministic, deduped ids.**
   `start_discovery_preparation_workflows`
-  (`workers/automation/src/jobctl/pipeline/preparation.py`, line ~74) derives
+  (`workers/automation/src/jobctrl/pipeline/preparation.py`, line ~74) derives
   targets from the DB (`derive_preparation_targets` → `get_jobs_by_stage`
   `pending_score` / `pending_tailor`), builds one `WorkflowStartSpec` per job with
   `workflow_id = preparation_workflow_id(idempotency_key)` = `prep-{idempotency_key}`
@@ -85,12 +85,12 @@ the global enrichment pass before its `JobScored` event exists.
   `PREPARATION_CHILD_BATCH_SIZE = 25` (line ~43).
 - **The idempotency key is a pure function.**
   `make_preparation_idempotency_key`
-  (`workers/automation/src/jobctl/domain/preparation/work_items.py`, line ~116)
+  (`workers/automation/src/jobctrl/domain/preparation/work_items.py`, line ~116)
   is `"preparation:" + sha256({tenant_id, job_id, kind, target_version, source_event_id})`.
   `source_event_id` is the latest relevant `job_events` row for the job
   (`_latest_source_event_id`, `pipeline/preparation.py` line ~310).
 - **`USE_EXISTING` dedupe lives at the client layer.** `default_workflow_starter`
-  (`workers/automation/src/jobctl/infrastructure/rpc/workflow_starter.py`)
+  (`workers/automation/src/jobctrl/infrastructure/rpc/workflow_starter.py`)
   applies `USE_EXISTING` so a double-start of a deterministic id returns the
   already-running handle. **Note:** today's fan-out returns `started` = number of
   specs it attempted and `queued` = total specs; these counts are **not** a
@@ -106,7 +106,7 @@ the global enrichment pass before its `JobScored` event exists.
 ### Concurrency model (constrains Phase 3)
 
 Per `docs/architecture/pipeline/concurrency.md`: a **single** worker process
-executes every activity; capacity is `JOBCTL_MAX_CONCURRENT_ACTIVITIES`
+executes every activity; capacity is `JOBCTRL_MAX_CONCURRENT_ACTIVITIES`
 (default `4`) activity slots plus a `slots + 2` `ThreadPoolExecutor`, both fixed
 at worker startup. Families run sequentially today **for isolation, not
 throughput**. Parallelising source families is not a filed backlog item; the
@@ -202,7 +202,7 @@ Under streaming:
 ### I4 — Spend ceiling holds under streaming (bounded cost per discovered job)
 
 Per `docs/architecture/pipeline/operations.md`: `check_spend_budget`
-(`workers/automation/src/jobctl/llm.py`, line ~143) is a **preflight**;
+(`workers/automation/src/jobctrl/llm.py`, line ~143) is a **preflight**;
 `daily_budget_usd` defaults to `$25`, `0` means unlimited, and an exceeded budget
 raises non-retryable `BudgetExceededError`.
 
@@ -263,7 +263,7 @@ in a run** to the **first score visible in the read model / UI for that run**.
   `job_list_projections` / `job_detail_projections` and what the SSE poller
   surfaces). `JobScored` is the canonical event on both runtimes
   (`packages/domain-types/src/events/scoring.ts`;
-  `workers/automation/src/jobctl/domain/events/scoring.py`).
+  `workers/automation/src/jobctrl/domain/events/scoring.py`).
 - **Structural proxy (checkable in CI):** the ORDER invariant that a family's
   enrichment + fan-out occurs **before** the next family completes. This is what
   the phase regression fixtures assert deterministically; the wall-clock number
@@ -448,7 +448,7 @@ an explicit bound and a worker-capacity analysis.
 
 ### Why it is gated — browser/resource contention is first-class
 
-- The worker is single-process with `JOBCTL_MAX_CONCURRENT_ACTIVITIES`
+- The worker is single-process with `JOBCTRL_MAX_CONCURRENT_ACTIVITIES`
   (default `4`) activity slots and a `slots + 2` executor
   (`docs/architecture/pipeline/concurrency.md`). Running families in parallel
   means multiple `discovery_source_family` activities in flight at once, **each**
@@ -490,7 +490,7 @@ an explicit bound and a worker-capacity analysis.
 - **UI surface:** Runs view (concurrent per-family progress) and Dashboard/Jobs
   (scores continue to stream). No new user action.
 - **Approving user action:** none for running; the concurrency bound is
-  process/env configuration (like `JOBCTL_MAX_CONCURRENT_ACTIVITIES`), not a
+  process/env configuration (like `JOBCTRL_MAX_CONCURRENT_ACTIVITIES`), not a
   runtime toggle — document the restart requirement as with existing capacity
   knobs.
 - **Synthetic regression fixtures (required):**
@@ -577,8 +577,8 @@ history wipe → reconciler).
 CI cannot spend LLM budget, so wall-clock TTFS is measured by the owner (or in a
 supervised QA session), never by an unattended agent:
 
-1. Seed a **disposable** workspace (e.g. `pnpm qa:seed -- /tmp/jobctl-ttfs`)
-   and point a full local stack at it via `JOBCTL_DIR` / isolated ports; confirm
+1. Seed a **disposable** workspace (e.g. `pnpm qa:seed -- /tmp/jobctrl-ttfs`)
+   and point a full local stack at it via `JOBCTRL_DIR` / isolated ports; confirm
    `GET /v1/health` reports `worker.status: "healthy"` first.
 2. Start a small discovery over ≥2 families with a low `limit`.
 3. From `job_events` (durable, canonical), compute TTFS = first `JobScored`
@@ -668,10 +668,10 @@ wall-clock number is the owner acceptance signal per phase.
    item.
 5. **Phase 3 concurrency bound + browser pool sizing.** The exact
    max-parallel-families and browser-instance cap, and whether the browser pool is
-   a new env knob alongside `JOBCTL_MAX_CONCURRENT_ACTIVITIES`. Requires the
+   a new env knob alongside `JOBCTRL_MAX_CONCURRENT_ACTIVITIES`. Requires the
    worker-capacity analysis. **Blocks Phase 3.**
    **Resolved (2026-07-06, #311):** the bound is the env knob
-   `JOBCTL_MAX_PARALLEL_DISCOVERY_FAMILIES`, default `1` (byte-equivalent
+   `JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES`, default `1` (byte-equivalent
    sequential ordering; the knob is read only inside the activity, keeping
    workflow replay safe). No separate browser-pool knob was added — browser use
    stays bounded by the existing activity slots. Raising the cap above 1 is
@@ -683,14 +683,14 @@ wall-clock number is the owner acceptance signal per phase.
 
 | Anchor | Location |
 | --- | --- |
-| Sequential family loop; single global enrichment; end-of-run fan-out; failure folding | `workers/automation/src/jobctl/discovery/workflow.py` (`_execute`, lines ~152–276; loop ~167; enrichment ~202; `_start_preparation_workflows` ~229/~279; fold ~239) |
+| Sequential family loop; single global enrichment; end-of-run fan-out; failure folding | `workers/automation/src/jobctrl/discovery/workflow.py` (`_execute`, lines ~152–276; loop ~167; enrichment ~202; `_start_preparation_workflows` ~229/~279; fold ~239) |
 | Run-level spend preflight | same file, `_check_spend` call ~99, def ~309 |
-| Root-workflow fan-out via `USE_EXISTING` | `workers/automation/src/jobctl/discovery/activities.py`, `discovery_preparation_fanout_activity` ~218 (dedup note ~226–228) |
-| Deterministic id + `USE_EXISTING`; batch size 25; target derivation | `workers/automation/src/jobctl/pipeline/preparation.py` (`start_discovery_preparation_workflows` ~74; ids ~177/~285; `USE_EXISTING` ~178/~286; `PREPARATION_CHILD_BATCH_SIZE` ~43; `derive_preparation_targets` ~61/~88) |
-| Pure idempotency key | `workers/automation/src/jobctl/domain/preparation/work_items.py`, `make_preparation_idempotency_key` ~116 |
-| Per-job step order, per-job preflight, `min_score` gate | `workers/automation/src/jobctl/preparation/workflow.py` (`PREPARATION_STEP_ORDER` ~38; `_preparation_spends`/`_check_spend` ~91/~225; tailor/cover `min_score` ~185/~206) |
-| Spend ceiling preflight + defaults | `workers/automation/src/jobctl/llm.py` (`check_spend_budget` ~143; `read_spend_budget_status` default `$25` ~124–129) |
-| `JobScored` event (TTFS score signal) | `packages/domain-types/src/events/scoring.ts`; `workers/automation/src/jobctl/domain/events/scoring.py` |
+| Root-workflow fan-out via `USE_EXISTING` | `workers/automation/src/jobctrl/discovery/activities.py`, `discovery_preparation_fanout_activity` ~218 (dedup note ~226–228) |
+| Deterministic id + `USE_EXISTING`; batch size 25; target derivation | `workers/automation/src/jobctrl/pipeline/preparation.py` (`start_discovery_preparation_workflows` ~74; ids ~177/~285; `USE_EXISTING` ~178/~286; `PREPARATION_CHILD_BATCH_SIZE` ~43; `derive_preparation_targets` ~61/~88) |
+| Pure idempotency key | `workers/automation/src/jobctrl/domain/preparation/work_items.py`, `make_preparation_idempotency_key` ~116 |
+| Per-job step order, per-job preflight, `min_score` gate | `workers/automation/src/jobctrl/preparation/workflow.py` (`PREPARATION_STEP_ORDER` ~38; `_preparation_spends`/`_check_spend` ~91/~225; tailor/cover `min_score` ~185/~206) |
+| Spend ceiling preflight + defaults | `workers/automation/src/jobctrl/llm.py` (`check_spend_budget` ~143; `read_spend_budget_status` default `$25` ~124–129) |
+| `JobScored` event (TTFS score signal) | `packages/domain-types/src/events/scoring.ts`; `workers/automation/src/jobctrl/domain/events/scoring.py` |
 | Worker capacity + sequential-for-isolation rationale | `docs/architecture/pipeline/concurrency.md` |
 | Spend ceiling, progress payload, SSE read path | `docs/architecture/pipeline/operations.md`; `pipeline/runner.py` `_discovery_progress_payload` ~190 |
 | Existing discovery workflow tests (extend, do not replace) | `workers/automation/tests/test_workflow_discovery.py`; `test_discovery_preparation_orchestration.py`; `test_workflow_job_preparation.py`; `test_discover_reliability.py`; `test_p1b_error_inversion.py`; `test_llm_spend_budget.py` |

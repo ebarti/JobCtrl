@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from temporalio.contrib.opentelemetry import TracingInterceptor
 
-from jobctl.infrastructure.temporal import get_temporal_client
+from jobctrl.infrastructure.temporal import get_temporal_client
 
 
 def _assert_connect_call(connect_mock, *, address: str, namespace: str) -> None:
@@ -24,7 +24,7 @@ async def test_get_temporal_client_uses_default_address_and_namespace(monkeypatc
 
     sentinel = object()
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(return_value=sentinel),
     ) as connect_mock:
         client = await get_temporal_client()
@@ -36,14 +36,14 @@ async def test_get_temporal_client_uses_default_address_and_namespace(monkeypatc
 @pytest.mark.asyncio
 async def test_get_temporal_client_honours_environment(monkeypatch):
     monkeypatch.setenv("TEMPORAL_ADDRESS", "temporal.example:7777")
-    monkeypatch.setenv("TEMPORAL_NAMESPACE", "jobctl")
+    monkeypatch.setenv("TEMPORAL_NAMESPACE", "jobctrl")
 
     sentinel = object()
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(return_value=sentinel),
     ) as connect_mock:
         client = await get_temporal_client()
 
     assert client is sentinel
-    _assert_connect_call(connect_mock, address="temporal.example:7777", namespace="jobctl")
+    _assert_connect_call(connect_mock, address="temporal.example:7777", namespace="jobctrl")

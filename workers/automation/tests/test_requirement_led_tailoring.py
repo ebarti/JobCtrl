@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -13,18 +13,18 @@ from jobctl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctl.domain.materials.policy import (
+from jobctrl.domain.materials.policy import (
     DEFAULT_REQUIREMENT_LED_REVISION_GATES,
     REQUIREMENT_LED_TAILORING_POLICY_VERSION,
     RevisionGatePolicy,
     adapt_requirement_led_controls,
 )
-from jobctl.domain.materials.claim_grounding import (
+from jobctrl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     ground_claim_mappings,
 )
-from jobctl.domain.materials.quality import build_tailoring_plan
-from jobctl.domain.materials.requirement_coverage import (
+from jobctrl.domain.materials.quality import build_tailoring_plan
+from jobctrl.domain.materials.requirement_coverage import (
     AchievementNode,
     CoverageEdge,
     CoverageGraph,
@@ -47,8 +47,8 @@ from jobctl.domain.materials.requirement_coverage import (
     validate_pinned_content_preserved,
     validate_prohibited_claims,
 )
-from jobctl.domain.materials.use_cases import _claim_mapping_validation_errors
-from jobctl.domain.scoring import (
+from jobctrl.domain.materials.use_cases import _claim_mapping_validation_errors
+from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -57,7 +57,7 @@ from jobctl.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 def _employer_analysis(*keywords: str) -> EmployerAnalysis:

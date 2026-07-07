@@ -10,8 +10,8 @@
 // operational failure counts — they are aggregated here at read time and merged
 // into the source-health and source-registry read models.
 
-import { POLITENESS_OUTCOME_REASONS, type PolitenessOutcomeReason } from "@jobctl/contracts";
-import type { SourcePolitenessOutcomes } from "@jobctl/contracts";
+import { POLITENESS_OUTCOME_REASONS, type PolitenessOutcomeReason } from "@jobctrl/contracts";
+import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 
 import { allRows, tableExists, type SqliteDatabase } from "./db.js";
 

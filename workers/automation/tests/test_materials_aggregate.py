@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -21,8 +21,8 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.materials.aggregate import MaterialsLifecycle
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.materials.aggregate import MaterialsLifecycle
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

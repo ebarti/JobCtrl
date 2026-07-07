@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from jobctl import config
-from jobctl.infrastructure.discovery.location_filter import (
+from jobctrl import config
+from jobctrl.infrastructure.discovery.location_filter import (
     configured_local_location_accepts,
     configured_location_filters,
     location_matches_target,
 )
-from jobctl.infrastructure.discovery.production_wiring import _ats_query_specs, _location_values
-from jobctl.discovery.target_queries import build_target_role_queries, query_applies_to_source, title_matches_any_query
+from jobctrl.infrastructure.discovery.production_wiring import _ats_query_specs, _location_values
+from jobctrl.discovery.target_queries import build_target_role_queries, query_applies_to_source, title_matches_any_query
 
 
 def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
@@ -273,7 +273,7 @@ def test_profile_target_search_preserves_larger_configured_lookback() -> None:
 
 
 def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """
@@ -331,7 +331,7 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
 
 
 def test_load_search_config_prefers_database_discovery_settings(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """
@@ -449,7 +449,7 @@ def test_source_registry_filters_america_only_sources_for_europe_target(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctl.db")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctrl.db")
 
     registry = config.load_source_registry(
         search_cfg={"target_region": "europe", "boards": ["linkedin"]},
@@ -488,7 +488,7 @@ def test_source_registry_filters_america_only_sources_for_europe_target(
 
 
 def test_local_source_registry_row_preserves_search_site_type(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """

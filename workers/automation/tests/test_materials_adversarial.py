@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobctl.domain.materials.adversarial import (
+from jobctrl.domain.materials.adversarial import (
     AdversarialReviewResult,
     normalized_job_fit_score,
     should_run_adversarial_review,

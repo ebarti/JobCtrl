@@ -1,5 +1,5 @@
 {
-  "name": "@jobctl/api-client",
+  "name": "@jobctrl/api-client",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -12,10 +12,10 @@
     "check": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
-    "@jobctl/contracts": "workspace:*"
+    "@jobctrl/contracts": "workspace:*"
   },
   "devDependencies": {
-    "@jobctl/tsconfig": "workspace:*",
+    "@jobctrl/tsconfig": "workspace:*",
     "typescript": "^6.0.3"
   }
 }

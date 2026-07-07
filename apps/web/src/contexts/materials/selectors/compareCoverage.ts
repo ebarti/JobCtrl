@@ -5,7 +5,7 @@ import type {
   ArtifactDetail,
   BulletCoverageAudit,
   CoverageDelta,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 export interface ArtifactComparisonOptions {
   readonly leftLabel?: string;

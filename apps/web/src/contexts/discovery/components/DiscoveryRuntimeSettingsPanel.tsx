@@ -2,7 +2,7 @@ import {
   DiscoverySettingsUpdateRequestSchema,
   type DiscoverySettings,
   type DiscoverySettingsUpdateRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 

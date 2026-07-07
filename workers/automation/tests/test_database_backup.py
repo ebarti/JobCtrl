@@ -1,6 +1,6 @@
 """Schema-version guard + VACUUM INTO backup for the local SQLite database.
 
-These pin the two data-durability invariants added alongside ``jobctl
+These pin the two data-durability invariants added alongside ``jobctrl
 backup``: every database carries a stamped ``PRAGMA user_version`` (adopted
 cleanly for pre-guard files, never silently downgraded), and a backup is a
 readable standalone SQLite file holding the same tables and rows as the source.
@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     IncompatibleSchemaVersionError,
     SCHEMA_VERSION,
     backup_database,
@@ -30,7 +30,7 @@ def _user_version(db_path) -> int:
 
 
 def test_fresh_db_is_stamped_with_schema_version(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
     close_connection(db_path)
 
@@ -38,7 +38,7 @@ def test_fresh_db_is_stamped_with_schema_version(tmp_path) -> None:
 
 
 def test_schema_version_persists_across_reopen(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
     close_connection(db_path)
     assert _user_version(db_path) == SCHEMA_VERSION
@@ -50,7 +50,7 @@ def test_schema_version_persists_across_reopen(tmp_path) -> None:
 
 
 def test_legacy_version_zero_db_is_adopted_without_data_loss(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     conn.execute("INSERT INTO jobs (url, title) VALUES (?, ?)", ("https://ex/legacy", "Engineer"))
     conn.commit()
@@ -75,7 +75,7 @@ def test_legacy_version_zero_db_is_adopted_without_data_loss(tmp_path) -> None:
 
 
 def test_newer_schema_version_fails_closed_before_migrations(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     # A database stamped newer than this build, before any schema exists.
     raw = sqlite3.connect(db_path)
     raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
@@ -101,7 +101,7 @@ def test_newer_schema_version_fails_closed_before_migrations(tmp_path) -> None:
 
 
 def test_newer_schema_version_on_populated_db_fails_closed_without_data_loss(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     conn.execute("INSERT INTO jobs (url, title) VALUES (?, ?)", ("https://ex/keep", "Engineer"))
     conn.commit()
@@ -128,7 +128,7 @@ def test_newer_schema_version_on_populated_db_fails_closed_without_data_loss(tmp
 
 
 def test_backup_copies_tables_and_rows_into_readable_sqlite(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     conn.execute(
         "INSERT INTO jobs (url, title, company) VALUES (?, ?, ?)",
@@ -167,13 +167,13 @@ def test_backup_copies_tables_and_rows_into_readable_sqlite(tmp_path) -> None:
 
 
 def test_backup_default_path_is_timestamped_under_source_backups_dir(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
 
     destination = backup_database(db_path=db_path)
 
     assert destination.parent == tmp_path / "backups"
-    assert destination.name.startswith("jobctl-")
+    assert destination.name.startswith("jobctrl-")
     assert destination.suffix == ".db"
     assert destination.exists()
     readback = sqlite3.connect(destination)
@@ -184,7 +184,7 @@ def test_backup_default_path_is_timestamped_under_source_backups_dir(tmp_path) -
 
 
 def test_backup_into_existing_directory_generates_timestamped_file(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
     out_dir = tmp_path / "manual-backups"
     out_dir.mkdir()
@@ -192,7 +192,7 @@ def test_backup_into_existing_directory_generates_timestamped_file(tmp_path) -> 
     destination = backup_database(out_dir, db_path=db_path)
 
     assert destination.parent == out_dir
-    assert destination.name.startswith("jobctl-")
+    assert destination.name.startswith("jobctrl-")
     assert destination.suffix == ".db"
     assert destination.exists()
 
@@ -203,7 +203,7 @@ def test_backup_missing_source_raises(tmp_path) -> None:
 
 
 def test_backup_refuses_existing_destination(tmp_path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
     destination = tmp_path / "already-there.db"
     destination.write_bytes(b"")

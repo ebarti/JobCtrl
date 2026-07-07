@@ -1,4 +1,4 @@
-import type { ArtifactDetail } from "@jobctl/contracts";
+import type { ArtifactDetail } from "@jobctrl/contracts";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { expectTypeOf, test } from "vitest";
 

@@ -115,7 +115,7 @@ Part of the [Domain Model](index.md) reference.
    and `HtmlResumePdfAdapter` is the default renderer. Layout-map persistence
    and Apply Review layout-box consumption are in place for new artifacts; the
    remaining compatibility policy is how long to retain explicit
-   `JOBCTL_RESUME_RENDERER=latex_pdf` support for custom
+   `JOBCTRL_RESUME_RENDERER=latex_pdf` support for custom
    templates.
 
 4. **Event streaming to the frontend.** The backlog calls for "event streaming or

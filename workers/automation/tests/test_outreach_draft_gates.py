@@ -19,35 +19,35 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.contact import (
+from jobctrl.database import init_db
+from jobctrl.domain.contact import (
     AttributeInput,
     ContactLink,
     ContactRole,
     CreateContactUseCase,
 )
-from jobctl.domain.contact.outreach_gates import (
+from jobctrl.domain.contact.outreach_gates import (
     build_outreach_evidence_corpus,
     compute_outreach_claim_provenance,
     parse_outreach_judge_response,
     scan_outreach_draft,
     validate_outreach_draft,
 )
-from jobctl.domain.contact.outreach_use_cases import (
+from jobctrl.domain.contact.outreach_use_cases import (
     ApproveOutreachDraftUseCase,
     GenerateOutreachDraftUseCase,
     OutreachDraftInputError,
     RejectOutreachDraftUseCase,
     ReviseOutreachDraftUseCase,
 )
-from jobctl.domain.materials.value_objects import ArtifactStatus
-from jobctl.domain.ports.llm import LlmPort
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.contact import (
+from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.llm import LlmPort
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.contact import (
     SqliteContactRepository,
     SqliteOutreachThreadRepository,
 )
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 
 _CLEAN_BODY = (
     "Hi Dana Lee,\n\n"
@@ -144,7 +144,7 @@ def _counter():
 
 
 def _setup(tmp_path: Path):
-    conn = init_db(tmp_path / "jobctl.db")
+    conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     bus = InProcessEventBus()
     contact_repo = SqliteContactRepository(conn, publisher=bus)

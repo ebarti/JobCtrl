@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.pipeline.use_cases import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.pipeline.use_cases import (
     CancelStageUseCase,
     RetryStageUseCase,
     StageNotFoundError,
 )
-from jobctl.domain.pipeline_types import (
+from jobctrl.domain.pipeline_types import (
     Canceled,
     Exhausted,
     Failed,
@@ -25,9 +25,9 @@ from jobctl.domain.pipeline_types import (
     Running,
     Stage,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
-from jobctl.state import ensure_job_stage_rows
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
+from jobctrl.state import ensure_job_stage_rows
 
 
 def _insert_job(conn, url: str = "https://example.com/job") -> None:

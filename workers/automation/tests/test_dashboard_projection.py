@@ -9,9 +9,9 @@ from typing import Iterator
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.state import record_job_event, set_stage_state, utc_now
+from jobctrl.database import close_connection, init_db
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.state import record_job_event, set_stage_state, utc_now
 
 
 @pytest.fixture
@@ -575,7 +575,7 @@ def _record_suggestion(conn: sqlite3.Connection, index: int, status: str) -> Non
 
 
 def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) -> None:
-    from jobctl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+    from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
 
     ensure_application_feedback_tables(conn)
     _apply_job(conn, "https://example.com/li-a", site="linkedin", fit_score=8)
@@ -622,7 +622,7 @@ def test_outcome_conversion_counts_by_source_and_band(conn: sqlite3.Connection) 
 
 
 def test_outcome_conversion_counts_by_fit_band_and_apply_mode(conn: sqlite3.Connection) -> None:
-    from jobctl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+    from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
 
     ensure_application_feedback_tables(conn)
     for idx in range(1, 6):
@@ -670,7 +670,7 @@ def test_outcome_conversion_counts_by_fit_band_and_apply_mode(conn: sqlite3.Conn
 
 
 def test_outcome_conversion_counts_by_material_and_feedback_rows(conn: sqlite3.Connection) -> None:
-    from jobctl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+    from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
 
     ensure_application_feedback_tables(conn)
     applied_at = "2026-06-01T12:00:00+00:00"
@@ -772,7 +772,7 @@ def test_outcome_conversion_counts_by_material_and_feedback_rows(conn: sqlite3.C
 def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table(
     conn: sqlite3.Connection,
 ) -> None:
-    from jobctl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+    from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
 
     ensure_application_feedback_tables(conn)
     for idx in range(1, 6):
@@ -839,7 +839,7 @@ def test_outcome_conversion_keeps_raw_counts_for_small_sample(
     counts so a single application with a single reply stays inspectable and the
     counts match the TypeScript builder byte-for-byte.
     """
-    from jobctl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+    from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
 
     ensure_application_feedback_tables(conn)
     _apply_job(conn, "https://example.com/solo", site="linkedin", fit_score=8)

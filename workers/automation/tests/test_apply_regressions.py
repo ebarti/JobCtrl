@@ -1,4 +1,4 @@
-"""PR 4 regressions for ``jobctl.apply.launcher``.
+"""PR 4 regressions for ``jobctrl.apply.launcher``.
 
 The bespoke ``apply_runs`` table is gone; the canonical lock now lives
 on ``job_stage_states.apply.state`` and the lifecycle is observable via
@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.apply import launcher as launcher_module
-from jobctl.apply.launcher import (
+from jobctrl.apply import launcher as launcher_module
+from jobctrl.apply.launcher import (
     _kill_claude_processes_for_interrupt,
     acquire_job,
     mark_result,
@@ -26,11 +26,11 @@ from jobctl.apply.launcher import (
     release_lock,
     worker_loop,
 )
-from jobctl.apply.dashboard import get_recent_events
-from jobctl.database import close_connection, get_connection, init_db
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
-from jobctl.workflow_specs import StartedWorkflowResult
+from jobctrl.apply.dashboard import get_recent_events
+from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
+from jobctrl.workflow_specs import StartedWorkflowResult
 
 
 def _insert_ready_job(
@@ -242,7 +242,7 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(
             target_url="https://example.com/job",
@@ -299,7 +299,7 @@ def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch)
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         prior_event_count = len(get_recent_events())
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
@@ -329,7 +329,7 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         monkeypatch.setattr(launcher_module, "run_job", fail_run_job)
 
@@ -357,7 +357,7 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(
             target_url="https://example.com/job",
@@ -402,7 +402,7 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
         _insert_review_decision(
@@ -434,7 +434,7 @@ def test_apply_approval_gate_requires_matching_full_dry_run(tmp_path, monkeypatc
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         prior_event_count = len(get_recent_events())
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
@@ -454,7 +454,7 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         run_ctx: dict = {"dry_run": True}
         dry_run_job = acquire_job(
@@ -524,7 +524,7 @@ def test_apply_approval_gate_rejects_stale_bindings(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         worker_id = {
             "approval_stale_materials": 11,
@@ -556,7 +556,7 @@ def test_apply_approval_gate_accepts_partial_override_bound_to_run(tmp_path, mon
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
     finally:
@@ -606,7 +606,7 @@ def test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         worker_id = 21 if coverage == "full" else 22
         assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
@@ -667,7 +667,7 @@ def test_apply_approval_gate_rejects_invalid_partial_override(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         worker_id = 23 if seed_stale_run else 24
         assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
@@ -691,7 +691,7 @@ def test_acquire_job_accepts_posting_url_when_direct_apply_url_missing(tmp_path,
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(worker_id=1, approval_required=False)
         assert job is not None
@@ -737,14 +737,14 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
         marked["status"] = status
         marked["duration_ms"] = kwargs.get("duration_ms")
 
-    monkeypatch.setattr("jobctl.apply.launcher.acquire_job", fake_acquire_job)
+    monkeypatch.setattr("jobctrl.apply.launcher.acquire_job", fake_acquire_job)
     monkeypatch.setattr(
-        "jobctl.apply.launcher.launch_chrome",
+        "jobctrl.apply.launcher.launch_chrome",
         forbidden_outer_launch,
         raising=False,
     )
-    monkeypatch.setattr("jobctl.apply.launcher.run_job", fake_run_job)
-    monkeypatch.setattr("jobctl.apply.launcher.mark_result", fake_mark_result)
+    monkeypatch.setattr("jobctrl.apply.launcher.run_job", fake_run_job)
+    monkeypatch.setattr("jobctrl.apply.launcher.mark_result", fake_mark_result)
 
     applied, failed = worker_loop(worker_id=0, limit=1, dry_run=True, snapshot=object())
 
@@ -759,7 +759,7 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
 def test_interrupt_cleanup_calls_adapter_claude_registry(monkeypatch):
     called: list[str] = []
     monkeypatch.setattr(
-        "jobctl.infrastructure.apply.claude_code_cli.kill_active_claude_processes",
+        "jobctrl.infrastructure.apply.claude_code_cli.kill_active_claude_processes",
         lambda: called.append("adapter"),
     )
     with launcher_module._claude_lock:
@@ -784,7 +784,7 @@ def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatc
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(min_score=7, worker_id=1, approval_required=False)
         assert job is not None
@@ -801,7 +801,7 @@ def test_acquire_job_excludes_closed_candidates(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         assert acquire_job(min_score=7, worker_id=1, approval_required=False) is None
         assert acquire_job(
@@ -821,7 +821,7 @@ def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         assert acquire_job(
             target_url="https://example.com/blocked",
@@ -833,8 +833,8 @@ def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
 
 
 def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
-    import jobctl.config as config_module
-    import jobctl.pipeline.runner as runner_module
+    import jobctrl.config as config_module
+    import jobctrl.pipeline.runner as runner_module
 
     app_dir = Path(tmp_path) / "app"
     db_path = Path(tmp_path) / "jobs.db"
@@ -854,7 +854,7 @@ def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
             result={"status": "succeeded", "stages_completed": ["enrich", "score", "tailor", "cover"]},
         )
 
-    monkeypatch.setattr("jobctl.workflow_specs.start_workflow_spec_and_wait_sync", fake_start)
+    monkeypatch.setattr("jobctrl.workflow_specs.start_workflow_spec_and_wait_sync", fake_start)
 
     result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
 
@@ -910,7 +910,7 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(
             target_url="https://example.com/job",
@@ -929,15 +929,15 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
     """``acquire_job`` must find jobs whose ``application_url`` lives
     only in ``job_enrichments`` (the new write path leaves
     ``jobs.application_url`` NULL)."""
-    from jobctl.domain.enrichment import (
+    from jobctrl.domain.enrichment import (
         ApplicationUrl,
         ExtractionTier,
         FullDescription,
         JobEnrichment,
     )
-    from jobctl.domain.identifiers import JobId
-    from jobctl.domain.tenant import LOCAL_TENANT
-    from jobctl.infrastructure.enrichment import SqliteEnrichmentRepository
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
@@ -969,7 +969,7 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         job = acquire_job(target_url=url, worker_id=1, approval_required=False)
         assert job is not None
@@ -991,7 +991,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         mark_result(
             "https://example.com/job",
@@ -1046,7 +1046,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         run_ctx: dict = {}
         job = acquire_job(
@@ -1106,7 +1106,7 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         run_ctx: dict = {}
         job = acquire_job(
@@ -1143,7 +1143,7 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         # 1. Acquire (writes ApplyRunStarted with the canonical run_id +
         #    flips stage to running).
@@ -1174,7 +1174,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
         run_ctx: dict = {"workflow_id": "apply-local-https://example.com/job"}
         job = acquire_job(
@@ -1253,7 +1253,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
         # ``get_connection`` helper is already thread-local, so the
         # monkeypatch points each thread to the same DB path.
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
 
         results: list[dict | None] = []
@@ -1319,7 +1319,7 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(
     projection refresh fires once, the ``apply_run_projections`` row is
     fresh.
     """
-    from jobctl.infrastructure.events import (
+    from jobctrl.infrastructure.events import (
         get_default_publisher,
         reset_default_publisher,
     )
@@ -1397,7 +1397,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
     """
     import time as _time
 
-    from jobctl.infrastructure.events import (
+    from jobctrl.infrastructure.events import (
         get_default_publisher,
         reset_default_publisher,
     )
@@ -1497,15 +1497,15 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
     ``apply_run_projections.events_json`` reflects the complete
     timeline.
     """
-    from jobctl.apply.launcher import SqliteApplyRunRepository
-    from jobctl.domain.apply.aggregate import ApplyRun
-    from jobctl.domain.apply.value_objects import (
+    from jobctrl.apply.launcher import SqliteApplyRunRepository
+    from jobctrl.domain.apply.aggregate import ApplyRun
+    from jobctrl.domain.apply.value_objects import (
         Applied,
         ApplyRunId,
         TokenUsage,
     )
-    from jobctl.domain.identifiers import JobId
-    from jobctl.domain.tenant import LOCAL_TENANT
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.tenant import LOCAL_TENANT
 
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
@@ -1513,7 +1513,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
 
     try:
         monkeypatch.setattr(
-            "jobctl.apply.launcher.get_connection", lambda: get_connection(db_path)
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
         )
 
         # Seed the launcher-emitted ApplyRunStarted (acquire_job's job).
@@ -1657,11 +1657,11 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
 
-    # ``jobctl_deleted_jobs`` is created on demand by the discovery
+    # ``jobctrl_deleted_jobs`` is created on demand by the discovery
     # repository.  Create it here so the test seeds a tombstone.
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
             job_url TEXT PRIMARY KEY,
             deleted_at TEXT NOT NULL,
             reason TEXT,
@@ -1711,7 +1711,7 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
 
         # Soft-delete the second job.
         conn.execute(
-            "INSERT INTO jobctl_deleted_jobs (job_url, deleted_at) "
+            "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) "
             "VALUES (?, ?)",
             ("https://example.com/job-deleted", "2026-05-04T13:05:00+00:00"),
         )

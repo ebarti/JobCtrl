@@ -1,7 +1,7 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { makeJobDetail, makeJobsPage, sampleJob } from "../../../test/fixtures/projections.js";
 import { renderHookWithProviders } from "../../../test/render.js";

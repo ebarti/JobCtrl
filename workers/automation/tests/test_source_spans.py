@@ -26,7 +26,7 @@ def in_memory_exporter(monkeypatch):
 
 
 def test_source_validation_span_records_source_metadata_without_content(in_memory_exporter) -> None:
-    from jobctl.infrastructure.observability.source_spans import source_validation_span
+    from jobctrl.infrastructure.observability.source_spans import source_validation_span
 
     with source_validation_span(
         tenant_id="local",
@@ -53,7 +53,7 @@ def test_source_validation_span_records_source_metadata_without_content(in_memor
 
 
 def test_locator_span_records_decision_without_candidate_url(in_memory_exporter) -> None:
-    from jobctl.infrastructure.observability.source_spans import locator_span
+    from jobctrl.infrastructure.observability.source_spans import locator_span
 
     with locator_span(
         tenant_id="local",

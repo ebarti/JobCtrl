@@ -19,24 +19,24 @@ from temporalio.exceptions import ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.apply.activities import apply_activity
-from jobctl.apply.workflow import ApplyWorkflow
-from jobctl.discovery.activities import (
+from jobctrl.apply.activities import apply_activity
+from jobctrl.apply.workflow import ApplyWorkflow
+from jobctrl.discovery.activities import (
     DiscoveryEnrichmentActivityOutput,
     DiscoveryPreparationFanoutOutput,
     PlanDiscoverySourcesOutput,
 )
-from jobctl.discovery.workflow import DiscoverWorkflow
-from jobctl.enrichment.activities import enrich_activity
-from jobctl.infrastructure.temporal.finalize import (
+from jobctrl.discovery.workflow import DiscoverWorkflow
+from jobctrl.enrichment.activities import enrich_activity
+from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
-from jobctl.materials.activities import (
+from jobctrl.materials.activities import (
     cover_activity,
     tailor_activity,
 )
-from jobctl.pipeline.workflow import (
+from jobctrl.pipeline.workflow import (
     _COVER_RETRY,
     _ENRICH_RETRY,
     _SCORE_RETRY,
@@ -44,8 +44,8 @@ from jobctl.pipeline.workflow import (
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
 )
-from jobctl.scoring.activities import score_activity
-from jobctl.llm import SpendBudgetStatus
+from jobctrl.scoring.activities import score_activity
+from jobctrl.llm import SpendBudgetStatus
 
 
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
@@ -112,7 +112,7 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
     queue = f"pipeline-{uuid.uuid4()}"
 
     with patch(
-        "jobctl.pipeline.runner._run_stage_observed",
+        "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -177,7 +177,7 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
     queue = f"pipeline-apply-{uuid.uuid4()}"
     workflow_id = f"pipeline-apply-wf-{uuid.uuid4()}"
 
-    with patch("jobctl.apply.launcher.main", return_value=(1, 0)) as apply_mock:
+    with patch("jobctrl.apply.launcher.main", return_value=(1, 0)) as apply_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -227,7 +227,7 @@ async def test_pipeline_workflow_records_failed_stage_and_stops():
             raise RuntimeError("boom")
         return _OK_OBSERVED
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_runner):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_runner):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -271,7 +271,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
             )
         return _OK_OBSERVED
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_runner) as observed_mock:
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_runner) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -303,7 +303,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
 async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
     queue = f"pipeline-apply-output-fail-{uuid.uuid4()}"
 
-    with patch("jobctl.apply.launcher.main", return_value=(0, 1)) as apply_mock:
+    with patch("jobctrl.apply.launcher.main", return_value=(0, 1)) as apply_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -334,7 +334,7 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
     queue = f"pipeline-validation-{uuid.uuid4()}"
 
     with patch(
-        "jobctl.pipeline.runner._run_stage_observed",
+        "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -379,8 +379,8 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
         return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
-        patch("jobctl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobctl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
+        patch("jobctrl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
+        patch("jobctrl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -430,14 +430,14 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
-        patch("jobctl.database.get_connection", return_value=object()),
+        patch("jobctrl.database.get_connection", return_value=object()),
         # This test mocks the DB layer wholesale (get_connection returns a
         # dummy), so stub the finalize writer — the finalize wiring itself is
         # covered by test_workflow_finalize.py.
-        patch("jobctl.infrastructure.temporal.finalize._emit"),
-        patch("jobctl.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
-        patch("jobctl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobctl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
+        patch("jobctrl.infrastructure.temporal.finalize._emit"),
+        patch("jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
+        patch("jobctrl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
+        patch("jobctrl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -471,7 +471,7 @@ async def test_pipeline_workflow_preserves_stage_options():
     queue = f"pipeline-options-{uuid.uuid4()}"
 
     with patch(
-        "jobctl.pipeline.runner._run_stage_observed",
+        "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

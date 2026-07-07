@@ -1,4 +1,4 @@
-"""Tests for the OTel bootstrap that wires JobCtl into Langfuse."""
+"""Tests for the OTel bootstrap that wires JobCtrl into Langfuse."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def reset_otel_state(monkeypatch):
     from opentelemetry import trace as trace_api
     from opentelemetry.util._once import Once
 
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     monkeypatch.setattr(otel_mod, "_initialized", False)
     monkeypatch.setattr(otel_mod, "_provider", None)
@@ -46,7 +46,7 @@ def _header(exporter, name: str) -> str | None:
 
 def test_init_otel_with_full_creds_configures_provider(monkeypatch):
     _set_creds(monkeypatch)
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
 
@@ -65,7 +65,7 @@ def test_init_otel_with_full_creds_configures_provider(monkeypatch):
 def test_init_otel_honors_export_timeout_env(monkeypatch):
     _set_creds(monkeypatch)
     monkeypatch.setenv("LANGFUSE_OTEL_TIMEOUT_SECONDS", "1.5")
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
 
@@ -75,7 +75,7 @@ def test_init_otel_honors_export_timeout_env(monkeypatch):
 
 def test_init_otel_is_idempotent(monkeypatch):
     _set_creds(monkeypatch)
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
     first_provider = otel_mod._provider
@@ -87,7 +87,7 @@ def test_init_otel_with_missing_creds_does_not_configure(monkeypatch, caplog):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     with caplog.at_level("WARNING"):
         otel_mod.init_otel()
@@ -101,7 +101,7 @@ def test_init_otel_with_missing_creds_does_not_configure(monkeypatch, caplog):
 def test_init_otel_disabled_when_disable_env_set(monkeypatch, caplog):
     _set_creds(monkeypatch)
     monkeypatch.setenv("LANGFUSE_DISABLE", "1")
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     with caplog.at_level("INFO"):
         otel_mod.init_otel()
@@ -112,7 +112,7 @@ def test_init_otel_disabled_when_disable_env_set(monkeypatch, caplog):
 
 def test_init_otel_warns_about_payload_export(monkeypatch, caplog):
     _set_creds(monkeypatch)
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     with caplog.at_level("WARNING"):
         otel_mod.init_otel()
@@ -126,7 +126,7 @@ def test_init_otel_warns_about_payload_export(monkeypatch, caplog):
 
 def test_shutdown_otel_resets_state(monkeypatch):
     _set_creds(monkeypatch)
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
     assert otel_mod._provider is not None
@@ -138,23 +138,23 @@ def test_shutdown_otel_resets_state(monkeypatch):
 def test_init_otel_sets_resource_attributes(monkeypatch):
     """The TracerProvider's Resource must carry the service identity Langfuse keys on."""
     _set_creds(monkeypatch)
-    monkeypatch.setenv("JOBCTL_ENV", "test")
+    monkeypatch.setenv("JOBCTRL_ENV", "test")
 
-    from jobctl import __version__ as JOBCTL_VERSION
-    from jobctl.infrastructure.observability import otel as otel_mod
+    from jobctrl import __version__ as JOBCTRL_VERSION
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
 
     provider = otel_mod._provider
     assert provider is not None
     attrs = dict(provider.resource.attributes)
-    assert attrs["service.name"] == "jobctl"
-    assert attrs["service.version"] == JOBCTL_VERSION
+    assert attrs["service.name"] == "jobctrl"
+    assert attrs["service.version"] == JOBCTRL_VERSION
     assert attrs["deployment.environment"] == "test"
 
-    # Reset and re-init without JOBCTL_ENV — defaults to "local".
+    # Reset and re-init without JOBCTRL_ENV — defaults to "local".
     otel_mod.shutdown_otel()
-    monkeypatch.delenv("JOBCTL_ENV", raising=False)
+    monkeypatch.delenv("JOBCTRL_ENV", raising=False)
     # Allow set_tracer_provider to succeed again.
     from opentelemetry import trace as trace_api
     from opentelemetry.util._once import Once

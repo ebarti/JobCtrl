@@ -1,4 +1,4 @@
-import type { OutreachFollowUp } from "@jobctl/contracts";
+import type { OutreachFollowUp } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
@@ -14,7 +14,7 @@ export interface FollowUpPanelProps {
 }
 
 // Context-owned surface for a thread's follow-up reminder. A follow-up is a plan,
-// never an action: JobCtl surfaces the reminder date but never sends anything
+// never an action: JobCtrl surfaces the reminder date but never sends anything
 // and never acts on it (INV-1). With no custom date, scheduling asks the API to
 // derive the default from the canonical application lifecycle; entering a date is
 // the explicit user-edited override.
@@ -39,7 +39,7 @@ export function FollowUpPanel({
     <div className="outreach-follow-up" aria-label="Follow-up">
       <h4>Follow-up</h4>
       <p className="muted">
-        A follow-up is a reminder surfaced for you. JobCtl never sends it or acts on it.
+        A follow-up is a reminder surfaced for you. JobCtrl never sends it or acts on it.
       </p>
       {error ? <div className="banner inline">{error}</div> : null}
       {isScheduled && followUp ? (

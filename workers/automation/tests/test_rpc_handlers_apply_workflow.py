@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from jobctl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
-from jobctl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
-from jobctl.infrastructure.rpc.handlers import apply_action, register_default_handlers
-from jobctl.infrastructure.rpc.server import JsonRpcServer
+from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctrl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
+from jobctrl.infrastructure.rpc.handlers import apply_action, register_default_handlers
+from jobctrl.infrastructure.rpc.server import JsonRpcServer
 
 
 class _FakeHandle:
@@ -22,8 +22,8 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
     spec = apply_action(
         {
             "tenantId": "local",
-            "expectedAppDir": "/tmp/jobctl",
-            "expectedDbPath": "/tmp/jobctl/jobctl.db",
+            "expectedAppDir": "/tmp/jobctrl",
+            "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
             "jobUrl": "https://example.com/job/1",
             "limit": 2,
             "model": "sonnet",
@@ -40,8 +40,8 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
     assert isinstance(payload, ApplyWorkflowInput)
     assert payload == ApplyWorkflowInput(
         tenant_id="local",
-        expected_app_dir="/tmp/jobctl",
-        expected_db_path="/tmp/jobctl/jobctl.db",
+        expected_app_dir="/tmp/jobctrl",
+        expected_db_path="/tmp/jobctrl/jobctrl.db",
         job_url="https://example.com/job/1",
         dry_run=True,
         headless=True,

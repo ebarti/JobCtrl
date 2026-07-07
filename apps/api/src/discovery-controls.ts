@@ -47,7 +47,7 @@ import {
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
-import type { SourcePolitenessOutcomes } from "@jobctl/contracts";
+import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError } from "./write-model.js";
 
@@ -954,7 +954,7 @@ function dismissedExtensionManualCaptureResponse(
     jobKey: null,
     status: "dismissed",
     dismissedAt: optionalText(row.dismissed_at),
-    message: "Capture was already dismissed in JobCtl.",
+    message: "Capture was already dismissed in JobCtrl.",
   };
 }
 

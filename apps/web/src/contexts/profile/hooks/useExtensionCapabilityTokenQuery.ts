@@ -1,4 +1,4 @@
-import type { ExtensionCapabilityTokenResponse } from "@jobctl/contracts";
+import type { ExtensionCapabilityTokenResponse } from "@jobctrl/contracts";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

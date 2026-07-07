@@ -1,8 +1,8 @@
 import pytest
 
-from jobctl.domain.materials.use_cases import CoverLetterOutcome
-from jobctl.scoring import cover_letter
-from jobctl.scoring.cover_letter import _get_resume_text_for_job
+from jobctrl.domain.materials.use_cases import CoverLetterOutcome
+from jobctrl.scoring import cover_letter
+from jobctrl.scoring.cover_letter import _get_resume_text_for_job
 
 
 def test_cover_generation_requires_tailored_resume():

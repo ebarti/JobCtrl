@@ -24,15 +24,15 @@ from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.database import get_connection
-from jobctl.domain.errors import ConfigurationError, TransientNetworkError
-from jobctl.infrastructure.temporal.finalize import (
+from jobctrl.database import get_connection
+from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
-from jobctl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
-from jobctl.scoring.activities import score_activity
-from jobctl.llm import SpendBudgetStatus
+from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
+from jobctrl.scoring.activities import score_activity
+from jobctrl.llm import SpendBudgetStatus
 
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
@@ -75,7 +75,7 @@ async def test_finalize_records_succeeded_on_normal_completion() -> None:
     queue = f"finalize-ok-{uuid.uuid4()}"
     workflow_id = f"run-{uuid.uuid4().hex}"
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", return_value=_OK_OBSERVED):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", return_value=_OK_OBSERVED):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -105,7 +105,7 @@ async def test_finalize_records_failed_on_stage_failure() -> None:
     workflow_id = f"run-{uuid.uuid4().hex}"
 
     failing = ({"status": "failed", "error": "llm exploded"}, 0.1, "failed")
-    with patch("jobctl.pipeline.runner._run_stage_observed", return_value=failing):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", return_value=failing):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -137,7 +137,7 @@ async def test_configuration_error_records_non_retryable_error_code_on_attempt_o
         attempts += 1
         raise ConfigurationError("missing scoring config")
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -173,7 +173,7 @@ async def test_transient_error_retries_then_records_succeeded() -> None:
             raise TransientNetworkError("temporary network outage")
         return _OK_OBSERVED
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_raise_twice):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_twice):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -214,7 +214,7 @@ async def test_workflow_cancel_records_canceled_projection_row() -> None:
             time.sleep(0.01)
         return _OK_OBSERVED
 
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_blocking_runner):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_blocking_runner):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,

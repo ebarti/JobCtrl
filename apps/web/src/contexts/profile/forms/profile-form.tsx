@@ -3,7 +3,7 @@ import {
   SettingsUpdateRequestSchema,
   type ProfileShape,
   type ProfileUpdateRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";

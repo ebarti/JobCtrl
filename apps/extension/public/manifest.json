@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "JobCtl",
-  "description": "Save job postings from the browser into the local JobCtl app.",
+  "name": "JobCtrl",
+  "description": "Save job postings from the browser into the local JobCtrl app.",
   "version": "0.3.0",
   "action": {
     "default_popup": "popup.html"

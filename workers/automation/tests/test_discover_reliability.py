@@ -16,18 +16,18 @@ from pathlib import Path
 import pytest
 from temporalio.exceptions import ApplicationError
 
-from jobctl.database import close_connection, init_db
-from jobctl.discovery import activities
-from jobctl.discovery.activities import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.discovery import activities
+from jobctrl.discovery.activities import (
     DiscoveryEnrichmentActivityInput,
     DiscoveryPreparationFanoutInput,
     DiscoverySourceActivityInput,
     _is_success_status,
     _stage_failure_error,
 )
-from jobctl.domain.errors import ConfigurationError, TransientNetworkError
-from jobctl.enrichment import detail
-from jobctl.pipeline import runner
+from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.enrichment import detail
+from jobctrl.pipeline import runner
 
 from .politeness_helpers import offline_gateway
 
@@ -142,7 +142,7 @@ async def test_discovery_enrichment_activity_raises_real_cause_not_failed_failed
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
 
@@ -150,11 +150,11 @@ async def test_discovery_enrichment_activity_raises_real_cause_not_failed_failed
         return fn()
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
     monkeypatch.setattr(
-        "jobctl.pipeline.runner.run_discovery_enrichment_stage",
+        "jobctrl.pipeline.runner.run_discovery_enrichment_stage",
         lambda **_kwargs: {
             "status": "failed",
             "error_class": "Error",
@@ -163,7 +163,7 @@ async def test_discovery_enrichment_activity_raises_real_cause_not_failed_failed
             "retryable": False,
         },
     )
-    monkeypatch.setattr("jobctl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
     monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
 
     with pytest.raises(ApplicationError) as excinfo:
@@ -183,7 +183,7 @@ async def test_discovery_enrichment_activity_reports_partial_with_site_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
 
@@ -191,11 +191,11 @@ async def test_discovery_enrichment_activity_reports_partial_with_site_errors(
         return fn()
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
     monkeypatch.setattr(
-        "jobctl.pipeline.runner.run_discovery_enrichment_stage",
+        "jobctrl.pipeline.runner.run_discovery_enrichment_stage",
         lambda **_kwargs: {
             "status": "partial",
             "passes": 2,
@@ -203,7 +203,7 @@ async def test_discovery_enrichment_activity_reports_partial_with_site_errors(
             "site_errors": {"linkedin": {"error_class": "Error", "error_message": "boom"}},
         },
     )
-    monkeypatch.setattr("jobctl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
     monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
 
     result = await activities.discovery_enrichment_activity(
@@ -219,7 +219,7 @@ async def test_discovery_source_family_activity_treats_skipped_limit_as_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
 
@@ -227,11 +227,11 @@ async def test_discovery_source_family_activity_treats_skipped_limit_as_success(
         return fn()
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
     monkeypatch.setattr(
-        "jobctl.pipeline.runner.run_discovery_source_family",
+        "jobctrl.pipeline.runner.run_discovery_source_family",
         lambda *_a, **_k: {
             "family": "ats_api",
             "status": "skipped_limit",
@@ -853,11 +853,11 @@ def _fanout_activity_env(monkeypatch: pytest.MonkeyPatch, *, fail: bool) -> list
         return fn()
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
 
@@ -867,7 +867,7 @@ def _fanout_activity_env(monkeypatch: pytest.MonkeyPatch, *, fail: bool) -> list
         return {"started": {"job_preparation": 1}, "queued": {}, "targets": 1}
 
     monkeypatch.setattr(
-        "jobctl.pipeline.preparation.start_discovery_preparation_workflows",
+        "jobctrl.pipeline.preparation.start_discovery_preparation_workflows",
         fake_start_fanout,
     )
 

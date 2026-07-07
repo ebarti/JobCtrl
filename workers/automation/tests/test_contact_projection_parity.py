@@ -16,11 +16,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from jobctl.database import init_db
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.infrastructure.projections.sqlite_projection_store import (
+from jobctrl.database import init_db
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.infrastructure.projections.sqlite_projection_store import (
     SqliteProjectionStore,
 )
 
@@ -93,7 +93,7 @@ def _normalize(row: sqlite3.Row) -> dict[str, Any]:
 
 def test_contact_projection_parity(tmp_path: Path) -> None:
     fixture = json.loads(_FIXTURE.read_text())
-    conn = init_db(tmp_path / "jobctl.db")
+    conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     _seed_canonical(conn, fixture)
 

@@ -1,4 +1,4 @@
-import type { ContactAttributeDto } from "@jobctl/contracts";
+import type { ContactAttributeDto } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";

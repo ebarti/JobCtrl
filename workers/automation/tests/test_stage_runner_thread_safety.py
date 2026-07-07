@@ -24,20 +24,20 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import get_connection, init_db
-from jobctl.infrastructure.materials import SqliteMaterialsRepository
-from jobctl.infrastructure.profile import factory as profile_factory
-from jobctl.state import set_stage_state, ensure_job_stage_rows
+from jobctrl.database import get_connection, init_db
+from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.infrastructure.profile import factory as profile_factory
+from jobctrl.state import set_stage_state, ensure_job_stage_rows
 
 
 @pytest.fixture()
 def db(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     init_db(db_path)
     # Force ``get_connection()`` to use the temp DB path so worker threads
     # build their own thread-local connection against the same DB the
     # test fixture initialised.
-    monkeypatch.setenv("JOBCTL_DIR", str(tmp_path))
+    monkeypatch.setenv("JOBCTRL_DIR", str(tmp_path))
     return get_connection()
 
 
@@ -79,7 +79,7 @@ def test_profile_repository_cache_is_thread_local(tmp_path: Path, monkeypatch) -
     reused safely inside the activity worker thread.
     """
 
-    monkeypatch.setattr(profile_factory.config, "DB_PATH", tmp_path / "jobctl.db")
+    monkeypatch.setattr(profile_factory.config, "DB_PATH", tmp_path / "jobctrl.db")
     profile_factory.reset_profile_repository()
 
     main_repo = profile_factory.get_profile_repository()

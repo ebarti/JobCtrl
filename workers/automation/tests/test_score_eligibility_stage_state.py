@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.state import (
+from jobctrl.database import init_db
+from jobctrl.state import (
     SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE,
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
@@ -16,7 +16,7 @@ from jobctl.state import (
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 def _seed_scored_job(conn: sqlite3.Connection, url: str) -> None:

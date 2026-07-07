@@ -11,7 +11,7 @@ describe("e2e dispatch stubs", () => {
         importProfile: true,
         importStyle: true,
       },
-      { appDir: "/tmp/jobctl-e2e", dbPath: "/tmp/jobctl-e2e/jobctl.db" },
+      { appDir: "/tmp/jobctrl-e2e", dbPath: "/tmp/jobctrl-e2e/jobctrl.db" },
     );
 
     expect(result).toMatchObject({
@@ -22,9 +22,9 @@ describe("e2e dispatch stubs", () => {
   });
 
   it("enables e2e stubs only for explicit truthy environment values", () => {
-    expect(isE2eStubDispatchEnabled({ JOBCTL_E2E_STUB_DISPATCH: "1" })).toBe(true);
-    expect(isE2eStubDispatchEnabled({ JOBCTL_E2E_STUB_DISPATCH: "true" })).toBe(true);
-    expect(isE2eStubDispatchEnabled({ JOBCTL_E2E_STUB_DISPATCH: "0" })).toBe(false);
+    expect(isE2eStubDispatchEnabled({ JOBCTRL_E2E_STUB_DISPATCH: "1" })).toBe(true);
+    expect(isE2eStubDispatchEnabled({ JOBCTRL_E2E_STUB_DISPATCH: "true" })).toBe(true);
+    expect(isE2eStubDispatchEnabled({ JOBCTRL_E2E_STUB_DISPATCH: "0" })).toBe(false);
     expect(isE2eStubDispatchEnabled({})).toBe(false);
   });
 });

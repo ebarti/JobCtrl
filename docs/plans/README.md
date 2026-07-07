@@ -16,7 +16,7 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Historical Spec Ledger
 
-The full inventory of every plan or spec that has shaped JobCtl — both the
+The full inventory of every plan or spec that has shaped JobCtrl — both the
 plans tracked in this repository and the private planning corpus that was
 untracked before the open-source release. Dates are each plan's authored/landed
 date (the filename convention). Delivery detail also lives in each plan's status
@@ -41,7 +41,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-05-07 | [Temporal + Worker Reliability Stack](implemented/2026-05-07-temporal-and-worker-reliability-stack.md) | Implemented — #34–#42; ADR 2026-05-07 |
 | 2026-05-10 | [Job Scoring Intelligence](implemented/2026-05-10-job-scoring-intelligence.md) | Implemented — #46 (plan), #47, #48, #55, #60 |
 | 2026-05-12 | [Ideal Job Search Discovery (RFC)](implemented/2026-05-12-job-search-discovery-rfc.md) | Implemented — #50 (plan), #51–#61 |
-| 2026-05-17 | [Add Root-Level Web Test Aliases](implemented/2026-05-17-jobctl-backlog-item-add-root.md) | Implemented — #70 |
+| 2026-05-17 | [Add Root-Level Web Test Aliases](implemented/2026-05-17-jobctrl-backlog-item-add-root.md) | Implemented — #70 |
 | 2026-05-19 | [Calibrated Scoring Policy (RFC)](implemented/2026-05-19-calibrated-scoring-policy-rfc.md) | Implemented — #76 (plan), #77–#81 |
 | 2026-05-24 | [Target Search Recall](implemented/2026-05-24-target-search-recall.md) | Implemented — #95, #97 |
 | 2026-05-26 | [Single Discovery Preparation Stage](implemented/2026-05-26-single-discovery-preparation-stage.md) | Implemented — #101 (plan), #102–#107 |
@@ -55,7 +55,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
 | 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety precondition satisfied; overall R1 remains no-go pending W2.1, W2.4, and final owner/release checkpoints |
 | 2026-07-05 | [Contact Research And Outreach Planner](implemented/2026-07-05-outreach-planner-plan.md) | Implemented — #266 (plan), #325, #331, #332, #333, #335, #347; ADR 2026-07-06 |
-| 2026-07-05 | [Product Rename to JobCtl](implemented/2026-07-05-rename-jobctl-plan.md) | Implemented — #261 (plan), #349; hardening #350; repository renamed to `ebarti/JobCtl` on 2026-07-07 |
+| 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

@@ -1,4 +1,4 @@
-"""Tests for the Gmail connector auth row in ``jobctl doctor``."""
+"""Tests for the Gmail connector auth row in ``jobctrl doctor``."""
 
 from __future__ import annotations
 
@@ -6,21 +6,21 @@ from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
-from jobctl.cli import app
-from jobctl.domain.profile.aggregate import Profile
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.cli import app
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.tenant import LOCAL_TENANT
 from tests.test_profile_aggregate import _valid_profile_dict
 
 
 def test_doctor_reports_gmail_mcp_auth_warning(monkeypatch) -> None:
-    monkeypatch.setattr("jobctl.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
     monkeypatch.setattr(
-        "jobctl.config.gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth client at /tmp/.jobctl/gmail/oauth-client.json"),
+        "jobctrl.config.gmail_mcp_auth_status",
+        lambda: (False, "missing OAuth client at /tmp/.jobctrl/gmail/oauth-client.json"),
     )
 
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -33,14 +33,14 @@ def test_doctor_reports_gmail_mcp_auth_warning(monkeypatch) -> None:
 
 def test_doctor_reports_gmail_mcp_authenticated(monkeypatch, tmp_path) -> None:
     credentials = tmp_path / "credentials.json"
-    monkeypatch.setattr("jobctl.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
     monkeypatch.setattr(
-        "jobctl.config.gmail_mcp_auth_status",
+        "jobctrl.config.gmail_mcp_auth_status",
         lambda: (True, f"authenticated with {credentials}"),
     )
 
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -64,11 +64,11 @@ def test_doctor_warns_when_application_attestations_are_incomplete(monkeypatch) 
         def load(self, _tenant_id):
             return profile
 
-    monkeypatch.setattr("jobctl.config.load_env", lambda: None)
-    monkeypatch.setattr("jobctl.infrastructure.profile.get_profile_repository", lambda: Repo())
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctrl.infrastructure.profile.get_profile_repository", lambda: Repo())
 
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -81,11 +81,11 @@ def test_doctor_warns_when_application_attestations_are_incomplete(monkeypatch) 
 
 
 def test_doctor_reports_owned_captcha_solver_when_configured(monkeypatch) -> None:
-    monkeypatch.setattr("jobctl.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
     monkeypatch.setenv("CAPSOLVER_API_KEY", "test-capsolver-key")
 
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])

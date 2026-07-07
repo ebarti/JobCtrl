@@ -34,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     close_connection,
     ensure_bullet_provenance_tables,
     ensure_employer_analysis_tables,
@@ -42,7 +42,7 @@ from jobctl.database import (
     ensure_materials_tables,
     init_db,
 )
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE_PATH = (
@@ -323,7 +323,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     # dashboardAggregateJobs notes for the two divergences they cover.
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
+        CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
             job_url TEXT PRIMARY KEY,
             hidden_at TEXT NOT NULL,
             reason TEXT,
@@ -395,7 +395,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         if agg["hidden"]:
             conn.execute(
                 """
-                INSERT INTO jobctl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+                INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
                 VALUES (?, ?, 'parity', NULL)
                 """,
                 (agg["url"], agg["discoveredAt"]),

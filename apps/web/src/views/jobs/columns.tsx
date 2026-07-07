@@ -1,6 +1,6 @@
 import { type ChangeEvent, type MouseEvent, useRef } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { STAGE_STATES } from "@jobctl/contracts";
+import { STAGE_STATES } from "@jobctrl/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";

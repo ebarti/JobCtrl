@@ -2,9 +2,9 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from jobctl.cli import app
-from jobctl.database import close_connection, get_connection, init_db
-from jobctl.state import (
+from jobctrl.cli import app
+from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.state import (
     ensure_job_stage_rows,
     get_job_stage_states,
     reconcile_dependency_blockers,
@@ -70,7 +70,7 @@ def test_explicit_stage_state_read_from_db(tmp_path):
             "failed",
             error_code="LLM_ERROR",
             error_message="score failed",
-            next_action=f"jobctl retry score {job['url']}",
+            next_action=f"jobctrl retry score {job['url']}",
         )
         conn.commit()
 
@@ -130,9 +130,9 @@ def test_retry_command_resets_stage_state(tmp_path, monkeypatch):
     _insert_job(conn, detail_error="timeout")
 
     try:
-        monkeypatch.setattr("jobctl.cli.get_connection", lambda: get_connection(db_path), raising=False)
-        monkeypatch.setattr("jobctl.database.DB_PATH", db_path)
-        monkeypatch.setattr("jobctl.config.DB_PATH", db_path)
+        monkeypatch.setattr("jobctrl.cli.get_connection", lambda: get_connection(db_path), raising=False)
+        monkeypatch.setattr("jobctrl.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobctrl.config.DB_PATH", db_path)
 
         result = CliRunner().invoke(app, ["retry", "enrich", "https://example.com/job"])
 

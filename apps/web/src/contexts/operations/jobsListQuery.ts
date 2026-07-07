@@ -5,7 +5,7 @@ import type {
   PaginatedResponse,
   Stage,
   StageState,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../../shared/ports/ApiClientPort.js";
 import type { JobsListInput } from "./types.js";

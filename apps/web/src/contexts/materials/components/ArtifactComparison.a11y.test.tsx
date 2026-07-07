@@ -1,4 +1,4 @@
-import type { ArtifactDetail } from "@jobctl/contracts";
+import type { ArtifactDetail } from "@jobctrl/contracts";
 import { axe } from "jest-axe";
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";

@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import get_jobs_by_stage, get_stats, init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.database import get_jobs_by_stage, get_stats, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactType,
     JudgeVerdict,
@@ -26,8 +26,8 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 
 
 @pytest.fixture()
@@ -349,8 +349,8 @@ def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     url_text_only = _seed_job(conn, "https://example.com/text-only")
     url_with_pdf = _seed_job(conn, "https://example.com/with-pdf")
@@ -407,13 +407,13 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
         )
     )
     # Need a score row so the score-side filter is satisfied for both jobs.
-    from jobctl.domain.scoring import (
+    from jobctrl.domain.scoring import (
         FitScore,
         JobScore,
         MatchedKeywords,
         ScoreBreakdown,
     )
-    from jobctl.infrastructure.scoring import SqliteScoreRepository
+    from jobctrl.infrastructure.scoring import SqliteScoreRepository
 
     score_repo = SqliteScoreRepository(conn)
     for url in (url_tailored, url_pending):
@@ -435,7 +435,7 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
 def test_get_stats_tailor_exhausted_reads_stage_state(conn: sqlite3.Connection) -> None:
     """``tailor_exhausted`` honours the new ``job_stage_states.state``."""
     url = _seed_job(conn, "https://example.com/job")
-    from jobctl.state import ensure_job_stage_rows, set_stage_state
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
     ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
     # Walk the state machine: pending → running → failed → exhausted.
@@ -465,7 +465,7 @@ def test_pending_tailor_excludes_exhausted_jobs_via_stage_state(
     """A job whose ``job_stage_states.state == 'exhausted'`` for tailor
     must NOT appear in the pending_tailor selector."""
     url = _seed_job(conn, "https://example.com/exhausted")
-    from jobctl.state import ensure_job_stage_rows, set_stage_state
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
     ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
     # Walk the state machine: pending → running → failed → exhausted.
@@ -491,7 +491,7 @@ def test_pending_tailor_excludes_jobs_with_high_attempt_count(
     must NOT appear in pending_tailor — even when ``state`` isn't yet
     'exhausted'."""
     url = _seed_job(conn, "https://example.com/many-attempts")
-    from jobctl.state import ensure_job_stage_rows, set_stage_state
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
     ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
     set_stage_state(conn, url, "tailor", "running", started_at="2024-01-02T00:00:00+00:00")
@@ -517,7 +517,7 @@ def test_reset_tailor_clears_rejected_attempt_artifacts(
     conn: sqlite3.Connection,
 ) -> None:
     """After a failed tailor reset, rejected artifacts are cleared for retry."""
-    from jobctl.state import ensure_job_stage_rows, reset_job_stage
+    from jobctrl.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/job")
     repo = SqliteMaterialsRepository(conn)
@@ -552,7 +552,7 @@ def test_reset_tailor_preserves_approved_materials_until_replacement(
     conn: sqlite3.Connection,
 ) -> None:
     """Retry reset must not hide the last accepted tailored resume."""
-    from jobctl.state import ensure_job_stage_rows, reset_job_stage
+    from jobctrl.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/approved-job")
     repo = SqliteMaterialsRepository(conn)
@@ -583,7 +583,7 @@ def test_reset_tailor_preserves_approved_materials_until_replacement(
 
 def test_reset_cover_clears_only_failed_cover_artifacts(conn: sqlite3.Connection) -> None:
     """``reset_job_stage(stage='cover')`` keeps the approved tailored resume."""
-    from jobctl.state import ensure_job_stage_rows, reset_job_stage
+    from jobctrl.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/job")
     repo = SqliteMaterialsRepository(conn)
@@ -619,7 +619,7 @@ def test_reset_cover_preserves_approved_cover_until_replacement(
     conn: sqlite3.Connection,
 ) -> None:
     """Retry reset must not hide the last accepted cover letter."""
-    from jobctl.state import ensure_job_stage_rows, reset_job_stage
+    from jobctrl.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/approved-cover")
     repo = SqliteMaterialsRepository(conn)
@@ -659,15 +659,15 @@ def test_reset_cover_preserves_approved_cover_until_replacement(
 def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
     """``acquire_job`` must find a job whose tailored resume lives ONLY in
     ``job_materials_artifacts`` (no legacy ``jobs.tailored_resume_path``)."""
-    from jobctl.apply.launcher import acquire_job
-    from jobctl.database import close_connection, get_connection
-    from jobctl.domain.scoring import (
+    from jobctrl.apply.launcher import acquire_job
+    from jobctrl.database import close_connection, get_connection
+    from jobctrl.domain.scoring import (
         FitScore,
         JobScore,
         MatchedKeywords,
         ScoreBreakdown,
     )
-    from jobctl.infrastructure.scoring import SqliteScoreRepository
+    from jobctrl.infrastructure.scoring import SqliteScoreRepository
 
     db_path = tmp_path / "apply.db"
     conn = init_db(db_path)
@@ -719,7 +719,7 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
         assert legacy_path is None  # confirm no legacy write happened
 
         # Patch the launcher's connection to point at our tmp DB.
-        import jobctl.apply.launcher as launcher_mod
+        import jobctrl.apply.launcher as launcher_mod
 
         original = launcher_mod.get_connection
         launcher_mod.get_connection = lambda: get_connection(db_path)
@@ -735,15 +735,15 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
 
 
 def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -> None:
-    from jobctl.apply.launcher import acquire_job
-    from jobctl.database import close_connection, get_connection
-    from jobctl.domain.scoring import (
+    from jobctrl.apply.launcher import acquire_job
+    from jobctrl.database import close_connection, get_connection
+    from jobctrl.domain.scoring import (
         FitScore,
         JobScore,
         MatchedKeywords,
         ScoreBreakdown,
     )
-    from jobctl.infrastructure.scoring import SqliteScoreRepository
+    from jobctrl.infrastructure.scoring import SqliteScoreRepository
 
     db_path = tmp_path / "apply.db"
     conn = init_db(db_path)
@@ -785,7 +785,7 @@ def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -
             )
         )
 
-        import jobctl.apply.launcher as launcher_mod
+        import jobctrl.apply.launcher as launcher_mod
 
         original = launcher_mod.get_connection
         launcher_mod.get_connection = lambda: get_connection(db_path)

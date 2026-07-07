@@ -2,7 +2,7 @@ import {
   LogOutreachSendRequestSchema,
   OUTREACH_SEND_CHANNELS,
   type OutreachSendChannel,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import type { JSX } from "react";
 
@@ -30,7 +30,7 @@ const SEND_CHANNEL_LABELS: Record<OutreachSendChannel, string> = {
 };
 
 // TanStack Form + Zod safeParse (no zod-form-adapter). Records a user-attested
-// send of an APPROVED draft. JobCtl never sends: this only writes down that
+// send of an APPROVED draft. JobCtrl never sends: this only writes down that
 // the user sent it themselves through their own channel (INV-1). `channel` is a
 // controlled label, never an address.
 export function SendLogForm({
@@ -78,7 +78,7 @@ export function SendLogForm({
       }}
     >
       <p className="muted send-log-note">
-        You send this yourself through your own channel; JobCtl only records that you sent it.
+        You send this yourself through your own channel; JobCtrl only records that you sent it.
       </p>
       <form.Field name="channel">
         {(field) => (

@@ -5,7 +5,7 @@ See ddd-target.md §4.6.
 
 import pytest
 
-from jobctl.domain.apply import (
+from jobctrl.domain.apply import (
     Applied,
     ApplyRun,
     ApplyRunEvent,
@@ -19,8 +19,8 @@ from jobctl.domain.apply import (
     TokenUsage,
     new_apply_run_id,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 def _start(*, dry_run: bool = False, headless: bool = False) -> ApplyRun:

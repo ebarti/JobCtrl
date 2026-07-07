@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.domain.profile.aggregate import Profile
-from jobctl.domain.profile.ports import ProfileImportResult
-from jobctl.domain.profile.snapshot import ProfileSnapshot
-from jobctl.domain.profile.use_cases import (
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.ports import ProfileImportResult
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.profile.use_cases import (
     GetProfileUseCase,
     ImportProfileUseCase,
     UpdateProfileUseCase,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
-from jobctl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 
 def _valid_profile() -> dict:
@@ -44,7 +44,7 @@ def _valid_profile() -> dict:
 
 
 def _repo(tmp_path: Path) -> SqliteProfileRepository:
-    conn = sqlite3.connect(tmp_path / "jobctl.db")
+    conn = sqlite3.connect(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     return SqliteProfileRepository(
         conn,
@@ -82,7 +82,7 @@ def test_update_profile_use_case_rejects_invalid_input(tmp_path):
     bad = _valid_profile()
     bad["resume"]["experience_entries"] = []
 
-    from jobctl.domain.profile.aggregate import InvalidProfileError
+    from jobctrl.domain.profile.aggregate import InvalidProfileError
 
     with pytest.raises(InvalidProfileError):
         use_case(bad)

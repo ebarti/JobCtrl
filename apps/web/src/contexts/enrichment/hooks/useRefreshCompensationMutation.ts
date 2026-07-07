@@ -1,7 +1,7 @@
 import type {
   ActionRunResponse,
   RefreshCompensationRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import {
   useMutation,
   useQueryClient,

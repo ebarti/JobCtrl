@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.scoring import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.scoring import (
     EligibilityAssessment,
     FitScore,
     JobScore,
@@ -27,8 +27,8 @@ from jobctl.domain.scoring import (
     ScoreCorrection,
     ScoringCriteria,
 )
-from jobctl.domain.scoring.services import EligibilityChecker, ScoreParser
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.scoring.services import EligibilityChecker, ScoreParser
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

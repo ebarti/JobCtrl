@@ -494,7 +494,7 @@ context; it owns a person/relationship concept that none of the other eight own.
 > CSV import, soft-delete, provenance), supervised contact *research* (Phase 2),
 > and truthful, reviewable outreach *drafting* (Phase 3). Send *logging* and
 > follow-up scheduling are later phases. One invariant holds for the whole context
-> from day one: **JobCtl never sends** — there is no send transport of any kind,
+> from day one: **JobCtrl never sends** — there is no send transport of any kind,
 > and outreach drafts terminate at copy/export (see below).
 
 **Ubiquitous Language:**

@@ -1,4 +1,4 @@
-import type { ArtifactTailoringExplanation } from "@jobctl/contracts";
+import type { ArtifactTailoringExplanation } from "@jobctrl/contracts";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

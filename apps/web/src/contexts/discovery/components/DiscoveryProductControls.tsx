@@ -7,7 +7,7 @@ import type {
   RoleMatchFeedbackListResponse,
   SourceLocatorListResponse,
   SourceRegistryEntrySummary,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
   IconBan,

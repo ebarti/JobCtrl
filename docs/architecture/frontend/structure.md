@@ -75,7 +75,7 @@ apps/web/
 │   │   │   ├── queryKeys.ts              # registry: re-exports the local + per-context read-key factories (incl. outreachKeys)
 │   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / digestKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
 │   │   │   ├── invalidation-router.ts    # event → invalidations (invalidate, patchApplyRunEvent, useInvalidationRouter)
-│   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobctl/contracts)
+│   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobctrl/contracts)
 │   │   │   ├── providers/EventStreamProvider.tsx   # SSE subscription lifecycle + useEventStreamStatus
 │   │   │   ├── components/JobAuditHistory.tsx
 │   │   │   ├── hooks/                    # ~19 read hooks: dashboard, digest, jobs (list/detail), artifacts (list/detail),

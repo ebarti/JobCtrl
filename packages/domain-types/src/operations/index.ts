@@ -2,7 +2,7 @@
  * Operations / Read-Side projection types — TypeScript mirror.
  *
  * See docs/architecture/domain-model/ §4.8 / §6.6 and the Python source of truth at
- * ``workers/automation/src/jobctl/domain/operations/projections.py``.
+ * ``workers/automation/src/jobctrl/domain/operations/projections.py``.
  *
  * Pure data shapes — no I/O.
  */

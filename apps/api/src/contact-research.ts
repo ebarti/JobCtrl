@@ -30,7 +30,7 @@ import type {
   ContactRole,
   ResearchTaskStatus,
 } from "./contracts.js";
-import { CONTACT_ROLES } from "@jobctl/domain-types";
+import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { ensureContactTables, getContactDetail } from "./contacts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshContactResearchProjections, refreshProjections } from "./projections.js";

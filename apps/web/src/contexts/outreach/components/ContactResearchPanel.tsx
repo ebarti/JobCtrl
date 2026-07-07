@@ -1,4 +1,4 @@
-import type { ContactResearchTaskSummary } from "@jobctl/contracts";
+import type { ContactResearchTaskSummary } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";

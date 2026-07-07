@@ -7,15 +7,15 @@ from typing import Iterator
 
 import pytest
 
-from jobctl import config
-from jobctl.database import close_connection, init_db
-from jobctl.discovery import workday
-from jobctl.discovery.workday import store_results
+from jobctrl import config
+from jobctrl.database import close_connection, init_db
+from jobctrl.discovery import workday
+from jobctrl.discovery.workday import store_results
 
 
 @pytest.fixture
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     connection = init_db(db_path)
     yield connection

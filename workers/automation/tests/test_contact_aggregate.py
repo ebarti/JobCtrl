@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.contact.aggregate import Contact
-from jobctl.domain.contact.value_objects import (
+from jobctrl.domain.contact.aggregate import Contact
+from jobctrl.domain.contact.value_objects import (
     ContactAttribute,
     ContactFactProvenance,
     ContactLink,
     ContactRole,
 )
-from jobctl.domain.identifiers import ContactId
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.identifiers import ContactId
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 def _provenance() -> ContactFactProvenance:

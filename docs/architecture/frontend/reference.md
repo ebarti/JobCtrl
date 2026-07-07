@@ -89,7 +89,7 @@ cause the loader to return a stale snapshot.
 ### R5. `exactOptionalPropertyTypes` adoption surfaces latent bugs
 
 Adopting `exactOptionalPropertyTypes: true` (§2.5) turns `{ x: undefined }`
-and `{}` into distinct types. Existing code in `@jobctl/contracts`
+and `{}` into distinct types. Existing code in `@jobctrl/contracts`
 consumers may rely on the conflated form and break.
 
 **Mitigations:**
@@ -105,7 +105,7 @@ consumers may rely on the conflated form and break.
 ### R6. `window.dispatchEvent` deletion regression risk
 
 The current `App.tsx` uses untyped custom events
-(`jobctl:set-jobs-filter`) for cross-component coordination. The
+(`jobctrl:set-jobs-filter`) for cross-component coordination. The
 target deletes these in favor of URL navigation, Zustand stores, and
 the query cache. A missed callsite means a button silently no-ops.
 
@@ -118,10 +118,10 @@ the query cache. A missed callsite means a button silently no-ops.
   jobs-filter-prefill flow that the custom event powered; deletion regression is
   caught in E2E.
 
-### R7. Drift between `@jobctl/domain-types` events and SSE payloads
+### R7. Drift between `@jobctrl/domain-types` events and SSE payloads
 
 The backend writes `payload_json`; the frontend consumes it against the
-`@jobctl/domain-types` event union. That union is **plain TypeScript,
+`@jobctrl/domain-types` event union. That union is **plain TypeScript,
 not Zod** (§7.2): `parseDomainEvent` only checks that `eventType` is in
 `DOMAIN_EVENT_TYPES` and that the payload parses to an object — it does
 **not** validate the payload *shape*. So an out-of-shape or under-populated
@@ -231,7 +231,7 @@ client still accepts `jobKey: string` for compatibility:
 - A `JobId` value is brand-typed (`string & { __brand: "JobId" }`) so
   passing a raw string fails TypeScript at the boundary — the developer
   must explicitly construct via `createJobId(...)` from
-  `@jobctl/domain-types`.
+  `@jobctrl/domain-types`.
 
 ### R14. Materials-set generation invalidation under concurrent re-tailoring
 
@@ -256,7 +256,7 @@ first's reconciliation.
 | Term | Context | Definition |
 |---|---|---|
 | **ACL (Frontend)** | Architecture | The thin Anti-Corruption Layer in `contexts/operations/types.ts` that re-exports backend projection types into frontend code. Provides a single point to refine or override types as the frontend evolves. |
-| **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctl/api-client`; hosted adapter adds JWT injection. |
+| **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctrl/api-client`; hosted adapter adds JWT injection. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
 | **ApplyRunBadge** | Frontend (Apply context) | Status pill rendered in the dashboard / drawer that summarizes an `ApplyRun`'s current `SubmissionResult`. |
 | **ApplyRunTimeline** | Frontend (Apply context) | Live-updating timeline of `ApplyRunEvent` rows; updates via SSE `setQueryData` (not `invalidate`) for high-frequency events. |
@@ -267,10 +267,10 @@ first's reconciliation.
 | **CommandPalette** | Frontend (Shared) | A `cmd-k` style palette rendered above all routes, backed by a Zustand store; named-not-built (deferred until needed). |
 | **Composer (View)** | Frontend (Pattern) | A view component (e.g., `JobDetailDrawer`) that imports rendering components from multiple contexts. Composers own layout, never data fetching across contexts (except read hooks from Operations). Lives under `views/`, not under `contexts/`. |
 | **CopyableCommand** | Frontend (Shared UI) | `<CopyableCommand command={...} />` primitive in `shared/ui/`. Renders a CLI command with a copy-to-clipboard affordance. Preserves the "copyable commands stay" behavior from `docs/decisions.md` (2026-05-03) — buttons call structured mutations, but the CLI string remains visible for transparency / debugging. |
-| **DashboardProjection** | Operations (Frontend mirror) | The shape of the dashboard summary returned by `apiClient.dashboardSummary()`; defined in `@jobctl/domain-types` (`operations/`) and re-exported through `@jobctl/contracts`. |
+| **DashboardProjection** | Operations (Frontend mirror) | The shape of the dashboard summary returned by `apiClient.dashboardSummary()`; defined in `@jobctrl/domain-types` (`operations/`) and re-exported through `@jobctrl/contracts`. |
 | **Density** | Frontend (UI Preferences) | Row-spacing preference: `compact | regular | comfy`. Persisted to `localStorage` via Zustand. |
 | **Discovery (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Discovery. Owns job-lifecycle mutations (delete / hide / restore / permanent-delete + `useImportJobMutation`), discovery-source administration (settings, source registry, quarantine, manual capture, feedback), the `<DiscoveryProductControls>` UI, and 17 discovery-event invalidation handlers. |
-| **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobctl/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion` (68 arms today; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, `DOMAIN_EVENT_TYPES` the runtime array). No Zod. |
+| **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobctrl/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion` (68 arms today; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, `DOMAIN_EVENT_TYPES` the runtime array). No Zod. |
 | **Drawer Route** | Frontend (Routing) | A child route (e.g., `routes/jobs.$jobId.tsx`) that opens a side panel layered over its parent's content. The URL preserves the underlying view. |
 | **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns `useEnrichmentRetryMutation`, the compensation-refresh mutations, the compensation-evidence components, and the enrichment/compensation invalidation handlers. |
 | **Event-Handler Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates the `DomainEventType` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEventType, InvalidationHandler>` typing (the CI-enforced half, via `pnpm -r check`); web Vitest is not yet CI-gated (CI gating tracked in `docs/backlog.md`). Mirrors backend `scripts/check-domain-type-parity.py`. |
@@ -281,7 +281,7 @@ first's reconciliation.
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |
 | **JobActions** | Frontend (Pipeline composer) | Toolbar component composing per-stage / per-action buttons (`<RetryStageButton />`, `<GenerateMaterialsButton />`, `<ApplyButton />`, `<MarkAppliedButton />`, etc.). |
 | **JobDetailDrawer** | Frontend (Jobs view) | The right-side sheet (in `views/jobs/`) that opens when a job is selected. Composes overview, score, stages, artifacts, apply history, and actions from the contexts that own each. |
-| **JobId** | Domain (shared) | The system-generated stable identifier for a job per backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md). Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobctl/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary ([§6.5](../domain-model/integration.md)). |
+| **JobId** | Domain (shared) | The system-generated stable identifier for a job per backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md). Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobctrl/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary ([§6.5](../domain-model/integration.md)). |
 | **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
 | **KPI** | Frontend (Dashboard) | A top-line metric tile on the dashboard. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |
@@ -339,7 +339,7 @@ called out in the briefing (§6) with the resolution location:
 | 7 | Profile preview pattern | **Plate editor fed by `/v1/profile/preview.html` keyed on a `cacheKey` derived from the profile mutation count** | §4.4.4 |
 | 8 | Resume import wizard: TanStack Form / Zustand wizard / nested route | **Nested route** for steps; **Zustand+persist** for draft state | §4.4.4 |
 | 9 | SSE consumer: `setQueryData` vs `invalidateQueries` | **Hybrid:** `invalidateQueries` by default; `setQueryData` only for high-frequency `ApplyRunEventRecorded` | §7.5 |
-| 10 | Tenant-scoping in query keys | **Always tenant-first** (`["tenant", tenantId, ...]`); use `LOCAL_TENANT` from `@jobctl/domain-types` in local mode | §4.1 |
+| 10 | Tenant-scoping in query keys | **Always tenant-first** (`["tenant", tenantId, ...]`); use `LOCAL_TENANT` from `@jobctrl/domain-types` in local mode | §4.1 |
 | 11 | Error handling: global vs per-query | **Three layers:** global `QueryCache.onError` → toast; per-mutation `onError`; route error boundaries | §4.11 |
 | 12 | Bundle splitting | **Per-route via TanStack Router file-based** (free with the Vite plugin) | §4.3 |
 | 13 | TypeScript strictness for routes | **Strict mode +** `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess` + **route-level Zod schemas** | §2.5 / §4.3 |

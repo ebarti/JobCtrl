@@ -79,11 +79,11 @@ interface GoogleMapsApi {
 type GoogleMapsWindow = Window &
   typeof globalThis & {
     google?: GoogleMapsApi;
-    __jobctlGoogleMapsReady?: () => void;
+    __jobctrlGoogleMapsReady?: () => void;
   };
 
-const GOOGLE_MAPS_SCRIPT_ID = "jobctl-google-maps-places";
-const GOOGLE_MAPS_CALLBACK = "__jobctlGoogleMapsReady";
+const GOOGLE_MAPS_SCRIPT_ID = "jobctrl-google-maps-places";
+const GOOGLE_MAPS_CALLBACK = "__jobctrlGoogleMapsReady";
 const ADDRESS_INPUT_ID = "profile-address-search";
 const ADDRESS_STATUS_ID = "profile-address-validation-status";
 const ADDRESS_RESULTS_ID = "profile-address-search-results";

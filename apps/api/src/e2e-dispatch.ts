@@ -8,10 +8,10 @@ import type { ActionDispatcher, ProfileImporter } from "./local-actions.js";
  * The Playwright harness runs the real dev API (no in-test `actionDispatcher`
  * override) so it exercises the live route, worker-readiness gate, and HTTP
  * response shape. It does NOT run a worker subprocess or an LLM, so the real
- * `SubprocessJsonRpcAdapter` cannot be used — it would spawn `uv run jobctl
+ * `SubprocessJsonRpcAdapter` cannot be used — it would spawn `uv run jobctrl
  * rpc` and attempt a real generation.
  *
- * When `JOBCTL_E2E_STUB_DISPATCH` is set the API uses this deterministic
+ * When `JOBCTRL_E2E_STUB_DISPATCH` is set the API uses this deterministic
  * dispatcher instead: it acknowledges the action as `queued` (so the route
  * returns 202 exactly as production does) without any side effect. The E2E spec
  * then injects the terminal `ResumeApproved` event into SQLite to drive the SSE
@@ -21,7 +21,7 @@ import type { ActionDispatcher, ProfileImporter } from "./local-actions.js";
  * enabled in normal local or production runs.
  */
 export function isE2eStubDispatchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return ["1", "true", "yes"].includes((env.JOBCTL_E2E_STUB_DISPATCH ?? "").toLowerCase());
+  return ["1", "true", "yes"].includes((env.JOBCTRL_E2E_STUB_DISPATCH ?? "").toLowerCase());
 }
 
 export const e2eStubActionDispatcher: ActionDispatcher = async () => ({

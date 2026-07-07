@@ -50,7 +50,7 @@ graph TB
   on `state.kind`.
 - **Selectors** — pure functions that derive presentation shape from
   projections (e.g., `groupArtifactsByJob`, `summarizeFunnel`).
-- **Contracts Zod schemas** — round-trip the `@jobctl/contracts`
+- **Contracts Zod schemas** — round-trip the `@jobctrl/contracts`
   request / search-param schemas (parse → typed → serialize). The SSE
   `DomainEvent` union is plain TypeScript, not Zod, so it is not among
   these (§7.2).
@@ -146,7 +146,7 @@ existing stories.
 
 Beyond the workspace typecheck, the frontend runs **9 `*.test-d.ts`** files
 under `apps/web/test/types` via Vitest's `typecheck` mode (separate config
-`vitest.types.config.ts`, invoked by `pnpm --filter @jobctl/web test-d`).
+`vitest.types.config.ts`, invoked by `pnpm --filter @jobctrl/web test-d`).
 There is no `tsd` dependency; assertions use Vitest `expectTypeOf`.
 
 - **Type assertions on hook return shapes** catch accidental widening of the
@@ -183,10 +183,10 @@ runs, in order:
 1. `pnpm -r check` (workspace typecheck, including `apps/web`). The
    compile-time guards (`Record<DomainEventType, InvalidationHandler>`
    exhaustiveness, etc.) fire here — this is the CI-enforced parity guard.
-2. `pnpm --filter @jobctl/api test` (the API Vitest suite; API only).
-3. `pnpm --filter @jobctl/web build` (Vite production build).
-4. `pnpm --filter @jobctl/web storybook:build` (static Storybook build).
-5. `pnpm --filter @jobctl/web storybook:test` (Storybook test runner —
+2. `pnpm --filter @jobctrl/api test` (the API Vitest suite; API only).
+3. `pnpm --filter @jobctrl/web build` (Vite production build).
+4. `pnpm --filter @jobctrl/web storybook:build` (static Storybook build).
+5. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
    play functions + `@storybook/addon-a11y` axe checks — after installing
    Playwright Chromium).
 

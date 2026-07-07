@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, init_db
+from jobctrl.database import close_connection, init_db
 
 
 def _table_exists(conn, name: str) -> bool:

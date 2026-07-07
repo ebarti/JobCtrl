@@ -5,7 +5,7 @@ export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
 
 // Mirror of the Python worker's ``SCHEMA_VERSION``
-// (workers/automation/src/jobctl/database.py). The worker is the single
+// (workers/automation/src/jobctrl/database.py). The worker is the single
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
@@ -14,10 +14,10 @@ export const SUPPORTED_SCHEMA_VERSION = 2;
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
     super(
-      `JobCtl database schema version ${current} is newer than this API build `
+      `JobCtrl database schema version ${current} is newer than this API build `
         + `supports (max ${SUPPORTED_SCHEMA_VERSION}); it was created by a newer `
-        + `JobCtl build. Upgrade JobCtl or restore a compatible backup `
-        + `('jobctl backup').`,
+        + `JobCtrl build. Upgrade JobCtrl or restore a compatible backup `
+        + `('jobctrl backup').`,
     );
     this.name = "IncompatibleSchemaVersionError";
   }
@@ -70,7 +70,7 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
   return row?.name === tableName;
 }
 
-const legacyProductToken = "job" + "hunter";
+const legacyProductTokens = ["job" + "ctl", "job" + "hunter"] as const;
 
 type JobLifecycleTableSpec = {
   suffix: "deleted_jobs" | "hidden_jobs";
@@ -82,8 +82,8 @@ type JobLifecycleTableSpec = {
 const jobLifecycleTableSpecs: JobLifecycleTableSpec[] = [
   {
     suffix: "deleted_jobs",
-    currentTable: "jobctl_deleted_jobs",
-    createSql: `CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+    currentTable: "jobctrl_deleted_jobs",
+    createSql: `CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
       job_url TEXT PRIMARY KEY,
       deleted_at TEXT NOT NULL,
       reason TEXT,
@@ -97,8 +97,8 @@ const jobLifecycleTableSpecs: JobLifecycleTableSpec[] = [
   },
   {
     suffix: "hidden_jobs",
-    currentTable: "jobctl_hidden_jobs",
-    createSql: `CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
+    currentTable: "jobctrl_hidden_jobs",
+    createSql: `CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
       reason TEXT,
@@ -113,39 +113,46 @@ const jobLifecycleTableSpecs: JobLifecycleTableSpec[] = [
 ];
 
 export function migrateLegacyJobTables(db: SqliteDatabase): string[] {
-  const migrated: string[] = [];
-  for (const spec of jobLifecycleTableSpecs) {
-    const suffix = spec.suffix;
-    const legacyTable = `${legacyProductToken}_${suffix}`;
-    const currentTable = spec.currentTable;
-    const legacyExists = tableExists(db, legacyTable);
-    const currentExists = tableExists(db, currentTable);
-    if (!legacyExists && !currentExists) continue;
+  return db.transaction(() => {
+    const migrated = new Set<string>();
+    for (const spec of jobLifecycleTableSpecs) {
+      const suffix = spec.suffix;
+      const currentTable = spec.currentTable;
+      const existingLegacyTables = legacyProductTokens
+        .map((token) => `${token}_${suffix}`)
+        .filter((legacyTable) => tableExists(db, legacyTable));
+      const currentExists = tableExists(db, currentTable);
+      if (existingLegacyTables.length === 0 && !currentExists) continue;
 
-    const legacyColumns = legacyExists ? tableColumns(db, legacyTable) : [];
-    if (legacyExists) {
-      const knownColumns = new Set(["job_url", ...spec.additiveColumns.map((column) => column.name)]);
-      const commonColumns = legacyColumns.filter((column) => knownColumns.has(column));
-      if (commonColumns.length === 0) {
-        throw new Error(`Cannot migrate legacy table ${legacyTable}: no shared columns with ${currentTable}`);
+      for (const legacyTable of existingLegacyTables) {
+        const legacyColumns = tableColumns(db, legacyTable);
+        const knownColumns = new Set(["job_url", ...spec.additiveColumns.map((column) => column.name)]);
+        const commonColumns = legacyColumns.filter((column) => knownColumns.has(column));
+        if (!commonColumns.includes("job_url")) {
+          throw new Error(`Cannot migrate legacy table ${legacyTable}: missing job_url column for ${currentTable}`);
+        }
+      }
+
+      assertNoLifecycleMigrationConflicts(db, currentTable, existingLegacyTables);
+      ensureJobLifecycleTableSchema(db, spec);
+      if (existingLegacyTables.length === 0) {
+        continue;
+      }
+
+      for (const legacyTable of existingLegacyTables) {
+        const legacyColumns = tableColumns(db, legacyTable);
+        const currentColumns = tableColumns(db, currentTable);
+        const commonColumns = legacyColumns.filter((column) => currentColumns.includes(column));
+        const columns = commonColumns.map(quoteIdentifier).join(", ");
+        db.prepare(
+          `INSERT INTO ${quoteIdentifier(currentTable)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(legacyTable)}`,
+        ).run();
+        db.prepare(`DROP TABLE ${quoteIdentifier(legacyTable)}`).run();
+        migrated.add(currentTable);
       }
     }
-
-    ensureJobLifecycleTableSchema(db, spec);
-    if (!legacyExists) {
-      continue;
-    }
-
-    const currentColumns = tableColumns(db, currentTable);
-    const commonColumns = legacyColumns.filter((column) => currentColumns.includes(column));
-    const columns = commonColumns.map(quoteIdentifier).join(", ");
-    db.prepare(
-      `INSERT OR IGNORE INTO ${quoteIdentifier(currentTable)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(legacyTable)}`,
-    ).run();
-    db.prepare(`DROP TABLE ${quoteIdentifier(legacyTable)}`).run();
-    migrated.push(currentTable);
-  }
-  return migrated;
+    return [...migrated];
+  })();
 }
 
 function ensureJobLifecycleTableSchema(db: SqliteDatabase, spec: JobLifecycleTableSpec): void {
@@ -157,6 +164,27 @@ function ensureJobLifecycleTableSchema(db: SqliteDatabase, spec: JobLifecycleTab
       `ALTER TABLE ${quoteIdentifier(spec.currentTable)} ADD COLUMN ${quoteIdentifier(column.name)} ${column.definition}`,
     ).run();
     existingColumns.add(column.name);
+  }
+}
+
+function assertNoLifecycleMigrationConflicts(db: SqliteDatabase, currentTable: string, legacyTables: string[]): void {
+  const sources = [...(tableExists(db, currentTable) ? [currentTable] : []), ...legacyTables];
+  const seen = new Map<string, string>();
+  for (const source of sources) {
+    const columns = tableColumns(db, source);
+    if (!columns.includes("job_url")) {
+      throw new Error(`Cannot migrate lifecycle table ${source}: missing job_url column`);
+    }
+    const rows = db.prepare(`SELECT job_url FROM ${quoteIdentifier(source)} WHERE job_url IS NOT NULL`).all() as Array<{ job_url: string }>;
+    for (const row of rows) {
+      const previousSource = seen.get(row.job_url);
+      if (previousSource !== undefined) {
+        throw new Error(
+          `Cannot migrate lifecycle tables for ${currentTable}: duplicate job_url in ${previousSource} and ${source}`,
+        );
+      }
+      seen.set(row.job_url, source);
+    }
   }
 }
 

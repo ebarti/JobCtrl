@@ -17,9 +17,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
     EmployerAnalysis,
@@ -29,7 +29,7 @@ from jobctl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctl.domain.scoring import (
+from jobctrl.domain.scoring import (
     FitScore,
     RequirementArtifactCoverage,
     RequirementFitAssessment,
@@ -39,10 +39,10 @@ from jobctl.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import SqliteEmployerAnalysisRepository
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.infrastructure.scoring import SqliteRequirementFitReportRepository
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
 JOB_URL = "https://example.com/jobs/event-driven"
 JD = "Senior Event Engineer. Requires 5+ years Python. Kafka is a plus."

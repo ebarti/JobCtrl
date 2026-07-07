@@ -1,4 +1,4 @@
-import { DOMAIN_EVENT_TYPES, type TenantId } from "@jobctl/domain-types";
+import { DOMAIN_EVENT_TYPES, type TenantId } from "@jobctrl/domain-types";
 
 import type {
   DomainEventEnvelope,

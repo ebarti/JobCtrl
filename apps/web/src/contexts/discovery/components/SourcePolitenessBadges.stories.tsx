@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { SourcePolitenessOutcomes } from "@jobctl/contracts";
+import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 
 import { SourcePolitenessBadges } from "./SourcePolitenessBadges.js";
 

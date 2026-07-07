@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { ApplyRunStatus } from "@jobctl/domain-types";
+import type { ApplyRunStatus } from "@jobctrl/domain-types";
 
 import { ApplyRunBadge } from "./ApplyRunBadge.js";
 

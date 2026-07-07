@@ -1,5 +1,5 @@
 {
-  "name": "@jobctl/tsconfig",
+  "name": "@jobctrl/tsconfig",
   "version": "0.3.0",
   "private": true,
   "type": "module",

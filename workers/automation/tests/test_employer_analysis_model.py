@@ -14,8 +14,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     PROMPT_VERSION,
     SDK_SET_VERSION,
     AnalysisAgreement,
@@ -28,7 +28,7 @@ from jobctl.domain.materials.analysis import (
     cache_key,
     compute_snapshot_hash,
 )
-from jobctl.domain.materials.analysis_grounding import (
+from jobctrl.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
     ground_and_snap,
@@ -36,7 +36,7 @@ from jobctl.domain.materials.analysis_grounding import (
     locate_grounded_span,
     validate_evidence_spans,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 JD_SNAPSHOT = (
     "Senior Platform Engineer\n\n"

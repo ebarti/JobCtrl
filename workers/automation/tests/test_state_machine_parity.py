@@ -15,14 +15,14 @@ from typing import Any
 
 import pytest
 
-from jobctl.domain.pipeline.state_machine import (
+from jobctrl.domain.pipeline.state_machine import (
     StageTransition,
     TransitionRejected,
     _VALID_KIND_TRANSITIONS,
     is_valid_transition,
     transition,
 )
-from jobctl.domain.pipeline_types import (
+from jobctrl.domain.pipeline_types import (
     Blocked,
     Canceled,
     Exhausted,

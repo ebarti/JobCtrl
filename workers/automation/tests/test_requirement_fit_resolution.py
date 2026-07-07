@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobctl.domain.scoring import (
+from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,

@@ -8,7 +8,7 @@ import type { PostedCompensationFactResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
 
 function withTempApp(options: { factTable?: boolean } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-posted-compensation-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-posted-compensation-"));
   const dbPath = path.join(dir, "jobs.db");
   seedDatabase(dbPath, options);
   const app = buildApp({

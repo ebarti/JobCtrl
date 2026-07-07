@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.rpc.messages import (
+from jobctrl.domain.rpc.messages import (
     INTERNAL_ERROR,
     JsonRpcRequest,
     WorkflowStartSpec,
 )
-from jobctl.infrastructure.rpc.server import JsonRpcServer
+from jobctrl.infrastructure.rpc.server import JsonRpcServer
 
 
 class _FakeWorkflow:

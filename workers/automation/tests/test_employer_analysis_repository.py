@@ -15,9 +15,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
     EeoScreenHit,
@@ -26,8 +26,8 @@ from jobctl.domain.materials.analysis import (
     JobAnalysisDraft,
     compute_snapshot_hash,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import SqliteEmployerAnalysisRepository
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 
 JOB_URL = "https://example.com/jobs/staff-be"
 JD = "Staff Backend Engineer. Requires 8+ years in Go. Kafka is a plus."

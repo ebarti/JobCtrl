@@ -23,7 +23,7 @@ function findRepoRoot(start: string): string {
 }
 
 function loadDbPath(): string {
-  const stateFile = path.join(findRepoRoot(process.cwd()), ".jobctl-e2e-state.json");
+  const stateFile = path.join(findRepoRoot(process.cwd()), ".jobctrl-e2e-state.json");
   const raw = fs.readFileSync(stateFile, "utf-8");
   const state = JSON.parse(raw) as State;
   if (!state.workspace?.dbPath) {
@@ -50,7 +50,7 @@ function refreshWorkerHeartbeat(dbPath: string): void {
 // INSPECT-01: per-job material generation is invokable from the product surface.
 // The generate-materials route returns 202 (not 400), the button is enabled, and
 // the worker-confirmed approval reflects in-app via the SSE realtime loop. The
-// dispatch is stubbed (JOBCTL_E2E_STUB_DISPATCH) so the spec exercises the
+// dispatch is stubbed (JOBCTRL_E2E_STUB_DISPATCH) so the spec exercises the
 // route + UI wiring without a worker subprocess or LLM; the terminal
 // ResumeApproved event is injected into SQLite exactly as dry-run.spec.ts does.
 test("Generate materials: button enabled → dispatch queued → ResumeApproved surfaces in audit history", async ({

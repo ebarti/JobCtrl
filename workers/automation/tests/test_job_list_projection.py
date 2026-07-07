@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, ensure_projection_tables_in_db, init_db
-from jobctl.infrastructure.events.watermark import SqliteEventWatermarkRepository
-from jobctl.infrastructure.projections.projection_builder import (
+from jobctrl.database import close_connection, ensure_projection_tables_in_db, init_db
+from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
+from jobctrl.infrastructure.projections.projection_builder import (
     PROJECTION_NAME,
     ProjectionBuilder,
 )
-from jobctl.state import record_job_event, set_stage_state, utc_now
+from jobctrl.state import record_job_event, set_stage_state, utc_now
 
 
 @pytest.fixture
@@ -422,7 +422,7 @@ def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     _seed_job(conn, url)
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
             job_url     TEXT PRIMARY KEY,
             deleted_at  TEXT NOT NULL,
             reason      TEXT,
@@ -432,7 +432,7 @@ def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     )
     deleted_at = "2026-05-04T14:00:00+00:00"
     conn.execute(
-        "INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
+        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
         "VALUES (?, ?, ?, NULL)",
         (url, deleted_at, "test"),
     )
@@ -452,7 +452,7 @@ def test_stale_restore_before_delete_still_carries_deleted_at(conn: sqlite3.Conn
     _seed_job(conn, url)
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
             job_url     TEXT PRIMARY KEY,
             deleted_at  TEXT NOT NULL,
             reason      TEXT,
@@ -462,7 +462,7 @@ def test_stale_restore_before_delete_still_carries_deleted_at(conn: sqlite3.Conn
     )
     deleted_at = "2026-05-25T23:10:33.870522+00:00"
     conn.execute(
-        "INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
+        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
         "VALUES (?, ?, ?, ?)",
         (url, deleted_at, "discovery hygiene rejected source", "2026-05-25T21:35:55.879345+00:00"),
     )

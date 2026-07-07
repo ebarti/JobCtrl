@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.contact import workflow as contact_workflow
-from jobctl.domain.contact import (
+from jobctrl.contact import workflow as contact_workflow
+from jobctrl.domain.contact import (
     CandidateStatus,
     ContactLink,
     ContactResearchService,
@@ -27,16 +27,16 @@ from jobctl.domain.contact import (
     ResearchTaskStatus,
     RunContactResearchUseCase,
 )
-from jobctl.domain.ports.contact import ResearchPageFetch
-from jobctl.domain.ports.llm import LlmMessage, LlmPort
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.contact import (
+from jobctrl.domain.ports.contact import ResearchPageFetch
+from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.contact import (
     GatewayContactResearchFetcher,
     SqliteContactRepository,
     SqliteContactResearchTaskRepository,
 )
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 _HOST = "acme.example"
 _TEAM_URL = f"https://{_HOST}/team"
@@ -78,9 +78,9 @@ def _counter():
 
 
 def _setup(tmp_path: Path):
-    from jobctl.database import init_db
+    from jobctrl.database import init_db
 
-    conn = init_db(tmp_path / "jobctl.db")
+    conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
@@ -244,7 +244,7 @@ def test_candidate_values_never_leak_into_events(tmp_path: Path) -> None:
 
 
 def test_workflow_reuses_the_shared_spend_preflight() -> None:
-    from jobctl.llm import check_spend_budget
+    from jobctrl.llm import check_spend_budget
 
     # The workflow imports the existing preflight activity — no second spend system.
     assert contact_workflow.check_spend_budget is check_spend_budget
@@ -254,15 +254,15 @@ class _BlockedSession:
     """Fake PolitenessSession yielding a blocked decision (gateway routing test)."""
 
     def __init__(self, outcome: str) -> None:
-        from jobctl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
+        from jobctrl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
 
         self._decision = PolitenessDecision(
-            allowed=False, outcome=PolitenessOutcome(outcome), user_agent="JobCtl/test"
+            allowed=False, outcome=PolitenessOutcome(outcome), user_agent="JobCtrl/test"
         )
 
     @property
     def user_agent(self) -> str:
-        return "JobCtl/test"
+        return "JobCtrl/test"
 
     def guard(self, url: str):  # noqa: ARG002
         from contextlib import contextmanager

@@ -6,11 +6,11 @@ import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
-from jobctl import actions, cli
-from jobctl.actions import LocalActionRequest, run_local_action
-from jobctl.cli import app
-from jobctl.database import close_connection, get_connection, init_db
-from jobctl.workflow_specs import StartedWorkflowResult, build_run_stage_workflow_spec
+from jobctrl import actions, cli
+from jobctrl.actions import LocalActionRequest, run_local_action
+from jobctrl.cli import app
+from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.workflow_specs import StartedWorkflowResult, build_run_stage_workflow_spec
 
 
 def _started(result: dict | None = None) -> StartedWorkflowResult:
@@ -350,7 +350,7 @@ def test_stage_cli_commands_accept_limits(monkeypatch):
     specs = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobctl.config.check_tier", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("jobctrl.config.check_tier", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         cli,
         "start_workflow_spec_and_wait_sync",
@@ -394,7 +394,7 @@ def test_cli_workflow_runtime_failure_exits_with_doctor_hint(monkeypatch):
     text = output.getvalue()
     assert "Temporal workflow runtime is unavailable." in text
     assert "connection refused" in text
-    assert "jobctl doctor" in text
+    assert "jobctrl doctor" in text
 
 
 def test_discover_cli_requires_tier2_guard(monkeypatch):
@@ -408,7 +408,7 @@ def test_discover_cli_requires_tier2_guard(monkeypatch):
         raise AssertionError("discover should be tier-gated before workflow start")
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobctl.config.check_tier", fake_check_tier)
+    monkeypatch.setattr("jobctrl.config.check_tier", fake_check_tier)
     monkeypatch.setattr(cli, "_run_workflow_spec_from_cli", should_not_start_workflow)
 
     result = CliRunner().invoke(app, ["discover", "--limit", "1"])
@@ -428,7 +428,7 @@ def test_run_discover_requires_tier2_guard(monkeypatch):
         raise AssertionError("run discover should be tier-gated before workflow start")
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobctl.config.check_tier", fake_check_tier)
+    monkeypatch.setattr("jobctrl.config.check_tier", fake_check_tier)
     monkeypatch.setattr(cli, "_run_workflow_spec_from_cli", should_not_start_workflow)
 
     result = CliRunner().invoke(app, ["run", "discover", "--limit", "1"])

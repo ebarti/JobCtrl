@@ -1,4 +1,4 @@
-import type { LogOutreachSendRequest, OutreachThreadResponse } from "@jobctl/contracts";
+import type { LogOutreachSendRequest, OutreachThreadResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
@@ -10,7 +10,7 @@ import { outreachKeys } from "../queryKeys.js";
 export type LogSendVariables = LogOutreachSendRequest;
 
 /**
- * Record a user-attested send of an approved draft (INV-1 — JobCtl never
+ * Record a user-attested send of an approved draft (INV-1 — JobCtrl never
  * sends; this logs a fact). Optimistically appends the send log and flips the
  * cached by-contact thread to `isSent`; the due-follow-ups list is invalidated on
  * settle because logging a send can seed a follow-up. Rolls back on failure.

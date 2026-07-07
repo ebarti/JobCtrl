@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive JobCtl dependency installer for first-time local setup.
+# Interactive JobCtrl dependency installer for first-time local setup.
 
 set -euo pipefail
 
@@ -20,7 +20,7 @@ usage() {
 Usage:
   scripts/install [options]
 
-Interactive first-time installer for JobCtl. It checks machine-level tools,
+Interactive first-time installer for JobCtrl. It checks machine-level tools,
 then installs the Node workspace, Python worker environment, and Playwright
 Chromium browsers used by the web tests and Python PDF/rendering paths.
 
@@ -29,7 +29,7 @@ Options:
   --dry-run        Print commands without running them.
   --skip-system    Skip system dependency checks and Homebrew prompts.
   --skip-browsers  Skip Playwright Chromium browser installs.
-  --skip-doctor    Skip the final jobctl doctor check.
+  --skip-doctor    Skip the final jobctrl doctor check.
   -h, --help       Show this help.
 EOF
 }
@@ -214,7 +214,7 @@ ensure_chrome() {
     return 0
   fi
 
-  record_missing "Chrome or Chromium" "install Google Chrome/Chromium or set CHROME_PATH in ~/.jobctl/.env" 0
+  record_missing "Chrome or Chromium" "install Google Chrome/Chromium or set CHROME_PATH in ~/.jobctrl/.env" 0
 }
 
 check_system_dependencies() {
@@ -262,7 +262,7 @@ install_playwright_browsers() {
     return 0
   fi
 
-  run_in_root corepack pnpm --filter @jobctl/web exec playwright install chromium
+  run_in_root corepack pnpm --filter @jobctrl/web exec playwright install chromium
   run_in_root uv --project workers/automation run playwright install chromium
 }
 
@@ -278,10 +278,10 @@ run_python_setup() {
     setup_args+=(--skip-doctor)
   fi
 
-  if confirm "Run JobCtl setup for vendor auth and analysis-leg configuration?"; then
-    run_in_root uv --project workers/automation run jobctl setup "${setup_args[@]}"
+  if confirm "Run JobCtrl setup for vendor auth and analysis-leg configuration?"; then
+    run_in_root uv --project workers/automation run jobctrl setup "${setup_args[@]}"
   else
-    SKIPPED_STEPS+=("JobCtl setup")
+    SKIPPED_STEPS+=("JobCtrl setup")
   fi
 }
 
@@ -300,8 +300,8 @@ print_summary() {
   cat <<'EOF'
 
 Next commands:
-  uv --project workers/automation run jobctl init
-  uv --project workers/automation run jobctl doctor
+  uv --project workers/automation run jobctrl init
+  uv --project workers/automation run jobctrl doctor
   pnpm dev
 EOF
 }
@@ -330,7 +330,7 @@ main() {
     exit 2
   fi
 
-  heading "JobCtl interactive install"
+  heading "JobCtrl interactive install"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     ok "dry run enabled"
   fi

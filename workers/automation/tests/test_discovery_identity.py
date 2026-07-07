@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import ensure_source_observation_tables, init_db
-from jobctl.domain.discovery import (
+from jobctrl.database import ensure_source_observation_tables, init_db
+from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
     DuplicateJobLink,
@@ -18,20 +18,20 @@ from jobctl.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobctl.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
-from jobctl.domain.events.base import DomainEvent
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.job_content_identity import is_genuine_employer_identity
-from jobctl.domain.ports.discovery import ScrapedJobPosting
-from jobctl.domain.ports.events import EventHandler, Subscription
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.discovery import SqliteJobRepository
-from jobctl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
+from jobctrl.domain.events.base import DomainEvent
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.job_content_identity import is_genuine_employer_identity
+from jobctrl.domain.ports.discovery import ScrapedJobPosting
+from jobctrl.domain.ports.events import EventHandler, Subscription
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.discovery import SqliteJobRepository
+from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 
 
 @pytest.fixture
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 class RecordingPublisher:
@@ -478,7 +478,7 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     assert resurfaced.metadata.description == "Lead platform engineering teams in Spain."
     assert resurfaced.metadata.location == "Barcelona, Spain"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
         ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
@@ -638,7 +638,7 @@ def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
     assert hidden.is_deleted is True
     assert hidden.metadata.title == "Platform Engineer"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
         (str(job_id),),
     ).fetchone()
     assert tombstone is not None

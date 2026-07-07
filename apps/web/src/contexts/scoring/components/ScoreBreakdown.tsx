@@ -4,7 +4,7 @@ import type {
   ScoreCorrection,
   ScoreTrace,
   ScoringCriteriaSnapshot,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 import { ScoreBadge } from "./ScoreBadge.js";
 import { ScoreReasoning } from "./ScoreReasoning.js";

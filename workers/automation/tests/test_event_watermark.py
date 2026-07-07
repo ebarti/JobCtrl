@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.infrastructure.events.watermark import SqliteEventWatermarkRepository
+from jobctrl.database import close_connection, init_db
+from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 
 
 def test_initial_watermark_is_zero(tmp_path: Path) -> None:

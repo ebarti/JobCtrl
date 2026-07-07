@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     close_connection,
     ensure_materials_tables,
     get_connection,
@@ -25,8 +25,8 @@ from jobctl.database import (
     get_stats,
     init_db,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -36,9 +36,9 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.materials.policy import TailoringPolicy
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import (
+from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import (
     MaterialsGenerationConflict,
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
@@ -52,7 +52,7 @@ from jobctl.infrastructure.materials import (
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     return init_db(db_path)
 
 
@@ -807,7 +807,7 @@ def test_tailoring_policy_repository_resolves_current_concurrently(
     expected_version: int,
     expected_count: int,
 ) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     setup_conn = init_db(db_path)
     if seed_fingerprint is not None:
         SqliteTailoringPolicyRepository(setup_conn).resolve_current(

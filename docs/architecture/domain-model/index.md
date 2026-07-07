@@ -22,14 +22,14 @@ sidebar order — each answers one question:
 - [Ports & adapters](ports.md) — which interfaces does the domain depend on, and what implements them today?
 - [Cross-context integration](integration.md) — how do contexts coordinate, through domain events and the JSON-RPC bridge?
 - [Persistence & failure modes](persistence.md) — where does data live, and how does it stay consistent when a step fails?
-- [Cloud deployment](cloud.md) — what changes when JobCtl runs multi-tenant in the cloud?
+- [Cloud deployment](cloud.md) — what changes when JobCtrl runs multi-tenant in the cloud?
 - [Risks & glossary](reference.md) — what are the open risks, and what does each domain term mean?
 
 ## 1. Purpose & Non-Goals
 
 ### Purpose
 
-This section defines the **canonical domain architecture** for JobCtl,
+This section defines the **canonical domain architecture** for JobCtrl,
 modeled with Domain-Driven Design (DDD) and Hexagonal Architecture (Ports &
 Adapters). It is the authoritative reference for:
 

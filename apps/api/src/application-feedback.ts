@@ -257,9 +257,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   ensureApplicationFeedbackTables(db);
   refreshProjections(db);
 
-  const hiddenWhere = tableExists(db, "jobctl_hidden_jobs")
+  const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs")
     ? `AND NOT EXISTS (
-         SELECT 1 FROM jobctl_hidden_jobs h
+         SELECT 1 FROM jobctrl_hidden_jobs h
          WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
        )`
     : "";

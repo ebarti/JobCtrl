@@ -233,7 +233,7 @@ no interactivity.
 
 **Why named-not-built:**
 - RSC reduces client bundle and removes round-trip latency for static
-  panels. JobCtl's panels are not yet large enough to warrant the
+  panels. JobCtrl's panels are not yet large enough to warrant the
   added build complexity.
 - The architecture (clean separation of read-only renderers from
   interactive controls) is RSC-shaped already; we will not need to

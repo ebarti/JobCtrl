@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-from jobctl.domain.materials.voice import VoiceRequest
-from jobctl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+from jobctrl.domain.materials.voice import VoiceRequest
+from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
 
 
 class ResultMessage:
@@ -136,7 +136,7 @@ async def test_rewrite_opens_generation_span_with_model_and_tokens(in_memory_exp
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "llm.claude-opus-4-8"
-    assert span.instrumentation_scope.name == "jobctl.materials.voice"
+    assert span.instrumentation_scope.name == "jobctrl.materials.voice"
     attrs = dict(span.attributes or {})
     assert attrs["langfuse.observation.type"] == "generation"
     assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"

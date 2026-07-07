@@ -1,4 +1,4 @@
-import type { StageSummary } from "@jobctl/contracts";
+import type { StageSummary } from "@jobctrl/contracts";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { StageTimeline } from "./StageTimeline.js";

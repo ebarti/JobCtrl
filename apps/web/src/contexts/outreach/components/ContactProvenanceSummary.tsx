@@ -1,4 +1,4 @@
-import type { ContactSummary } from "@jobctl/contracts";
+import type { ContactSummary } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { contactSourceKindLabel } from "../lib/contact-copy.js";

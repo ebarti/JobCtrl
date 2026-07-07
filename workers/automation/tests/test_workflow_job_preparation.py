@@ -16,14 +16,14 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.domain.preparation import PreparationWorkItemKind
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.materials.activities import cover_letter_activity, render_pdf_activity, tailor_job_activity
-from jobctl.pipeline import preparation
-from jobctl.preparation import workflow as prep_workflow_mod
-from jobctl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
-from jobctl.scoring.activities import score_job_activity
-from jobctl.llm import SpendBudgetStatus
+from jobctrl.domain.preparation import PreparationWorkItemKind
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.materials.activities import cover_letter_activity, render_pdf_activity, tailor_job_activity
+from jobctrl.pipeline import preparation
+from jobctrl.preparation import workflow as prep_workflow_mod
+from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobctrl.scoring.activities import score_job_activity
+from jobctrl.llm import SpendBudgetStatus
 
 
 @activity.defn(name="check_spend_budget")
@@ -257,7 +257,7 @@ async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_n
 
     @activity.defn(name="check_spend_budget")
     async def budget_exceeded(_payload):
-        from jobctl.domain.errors import BudgetExceededError, to_application_error
+        from jobctrl.domain.errors import BudgetExceededError, to_application_error
 
         raise to_application_error(
             BudgetExceededError(
@@ -374,10 +374,10 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
         calls.append("pdf")
         return {"status": "ok", "rendered": []}
 
-    monkeypatch.setattr("jobctl.scoring.activities._score_one_job", fake_score_job)
-    monkeypatch.setattr("jobctl.materials.activities._tailor_one_job", fake_tailor_job)
-    monkeypatch.setattr("jobctl.materials.activities._cover_one_job", fake_cover_letter)
-    monkeypatch.setattr("jobctl.materials.activities._render_pdf_for_job", fake_render_pdf)
+    monkeypatch.setattr("jobctrl.scoring.activities._score_one_job", fake_score_job)
+    monkeypatch.setattr("jobctrl.materials.activities._tailor_one_job", fake_tailor_job)
+    monkeypatch.setattr("jobctrl.materials.activities._cover_one_job", fake_cover_letter)
+    monkeypatch.setattr("jobctrl.materials.activities._render_pdf_for_job", fake_render_pdf)
 
     activities = [
         _check_spend_budget,

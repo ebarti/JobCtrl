@@ -2,7 +2,7 @@ import type {
   ResumeTemplateLayout,
   ResumeTemplateSummary,
   ResumeTemplateTheme,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 

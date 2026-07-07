@@ -9,20 +9,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.discovery.scheduler import ScheduledSource
-from jobctl.domain.preparation import PreparationWorkItemKind
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.discovery.workflow import DiscoverWorkflow
-from jobctl.infrastructure.temporal.registry import WORKFLOWS
-from jobctl.pipeline import preparation, runner
-from jobctl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
-from jobctl.workflow_specs import build_run_stage_workflow_spec
+from jobctrl.database import init_db
+from jobctrl.domain.discovery.scheduler import ScheduledSource
+from jobctrl.domain.preparation import PreparationWorkItemKind
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.discovery.workflow import DiscoverWorkflow
+from jobctrl.infrastructure.temporal.registry import WORKFLOWS
+from jobctrl.pipeline import preparation, runner
+from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobctrl.workflow_specs import build_run_stage_workflow_spec
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explicit() -> None:
@@ -378,12 +378,12 @@ def test_discover_runs_internal_preparation_after_enrichment(
     monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
     monkeypatch.setitem(
         sys.modules,
-        "jobctl.discovery.workday",
+        "jobctrl.discovery.workday",
         SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
     )
     monkeypatch.setitem(
         sys.modules,
-        "jobctl.discovery.smartextract",
+        "jobctrl.discovery.smartextract",
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 

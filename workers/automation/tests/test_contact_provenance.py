@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.contact.value_objects import (
+from jobctrl.domain.contact.value_objects import (
     CONTACT_SOURCE_KINDS,
     ContactAttribute,
     ContactFactProvenance,

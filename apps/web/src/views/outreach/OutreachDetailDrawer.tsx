@@ -1,4 +1,4 @@
-import { JobCtlApiError } from "@jobctl/api-client";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 
 import { ContactDeleteButton } from "../../contexts/outreach/components/ContactDeleteButton.js";
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
@@ -18,7 +18,7 @@ export interface OutreachDetailDrawerProps {
 }
 
 function detailErrorTitle(error: unknown): string {
-  if (error instanceof JobCtlApiError && error.status === 404) {
+  if (error instanceof JobCtrlApiError && error.status === 404) {
     return "Contact not found.";
   }
   return error instanceof Error ? error.message : "";

@@ -1,4 +1,4 @@
-import type { OutreachDraftKind } from "@jobctl/contracts";
+import type { OutreachDraftKind } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { useGenerateDraftMutation } from "../hooks/useGenerateDraftMutation.js";

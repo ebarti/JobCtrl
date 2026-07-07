@@ -17,7 +17,7 @@ export function Topbar() {
     <header className="topbar">
       <Link className="brand" to="/dashboard">
         <span className="brand-mark">jh</span>
-        <span>jobctl</span>
+        <span>jobctrl</span>
       </Link>
       <NavBar />
       <input

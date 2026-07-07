@@ -38,7 +38,7 @@ profile achievement may cover zero or more job requirements.
   mandatory content, enhancement/draft claim status, and scorer-driven revision
   decisions.
 - Align generator and verifier prompts with the local resume-content-writer and
-  resume-fit-scorer skill contracts while keeping JobCtl's structured-output
+  resume-fit-scorer skill contracts while keeping JobCtrl's structured-output
   schemas and deterministic validators as the runtime contract.
 
 ## Capabilities
@@ -57,7 +57,7 @@ profile achievement may cover zero or more job requirements.
 ## Impact
 
 - Python Materials domain:
-  `workers/automation/src/jobctl/domain/materials/quality.py`,
+  `workers/automation/src/jobctrl/domain/materials/quality.py`,
   `use_cases.py`, provenance/audit helpers, and related tests.
 - Python Scoring domain: requirement fit report consumption and post-tailoring
   fit scorer output used for revision gates.

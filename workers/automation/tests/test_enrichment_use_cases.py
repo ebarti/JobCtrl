@@ -15,26 +15,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jobctl.domain.enrichment import (
+from jobctrl.domain.enrichment import (
     DetailPage,
     EnrichmentLifecycle,
     ExtractionTier,
     JobEnrichment,
 )
-from jobctl.domain.enrichment.services import ExtractionResult
-from jobctl.domain.enrichment.use_cases import (
+from jobctrl.domain.enrichment.services import ExtractionResult
+from jobctrl.domain.enrichment.use_cases import (
     EnrichBatchUseCase,
     EnrichJobUseCase,
     TierExtractor,
 )
-from jobctl.domain.enrichment.value_objects import (
+from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     FullDescription,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.ports.enrichment import DetailPageFetcherPort
-from jobctl.domain.ports.events import EventPublisher
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.ports.enrichment import DetailPageFetcherPort
+from jobctrl.domain.ports.events import EventPublisher
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

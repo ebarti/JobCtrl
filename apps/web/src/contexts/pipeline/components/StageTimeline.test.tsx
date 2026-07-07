@@ -1,4 +1,4 @@
-import type { StageSummary } from "@jobctl/contracts";
+import type { StageSummary } from "@jobctrl/contracts";
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -53,7 +53,7 @@ describe("<StageTimeline>", () => {
             durationMs: 20_000,
             errorCode: "DETAIL_ERROR",
             errorMessage: "no data extracted",
-            nextAction: "jobctl retry enrich https://example.com/jobs/1",
+            nextAction: "jobctrl retry enrich https://example.com/jobs/1",
           },
         ]}
       />,
@@ -62,6 +62,6 @@ describe("<StageTimeline>", () => {
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("DETAIL_ERROR");
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("no data extracted");
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(/retry\s*available/);
-    expect(screen.queryByText(/jobctl retry enrich/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/jobctrl retry enrich/i)).not.toBeInTheDocument();
   });
 });

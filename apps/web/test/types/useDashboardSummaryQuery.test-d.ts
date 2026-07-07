@@ -1,4 +1,4 @@
-import type { DashboardSummary } from "@jobctl/contracts";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { expectTypeOf, test } from "vitest";
 

@@ -3,7 +3,7 @@ import {
   JOB_SORT_FIELDS,
   STAGES,
   STAGE_STATES,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { z } from "zod";
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;

@@ -1,7 +1,7 @@
 import type {
   ActionRunResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

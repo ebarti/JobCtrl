@@ -7,19 +7,19 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
 const E2E_DIR =
-  process.env["JOBCTL_E2E_APP_DIR"] ?? path.join(os.tmpdir(), "jobctl-e2e-current");
-const E2E_DB = process.env["JOBCTL_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobctl.db");
+  process.env["JOBCTRL_E2E_APP_DIR"] ?? path.join(os.tmpdir(), "jobctrl-e2e-current");
+const E2E_DB = process.env["JOBCTRL_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobctrl.db");
 const E2E_SETTINGS =
-  process.env["JOBCTL_E2E_SETTINGS_PATH"] ?? path.join(E2E_DIR, "dashboard.json");
+  process.env["JOBCTRL_E2E_SETTINGS_PATH"] ?? path.join(E2E_DIR, "dashboard.json");
 
-process.env["JOBCTL_E2E_APP_DIR"] = E2E_DIR;
-process.env["JOBCTL_E2E_DB_PATH"] = E2E_DB;
-process.env["JOBCTL_E2E_SETTINGS_PATH"] = E2E_SETTINGS;
+process.env["JOBCTRL_E2E_APP_DIR"] = E2E_DIR;
+process.env["JOBCTRL_E2E_DB_PATH"] = E2E_DB;
+process.env["JOBCTRL_E2E_SETTINGS_PATH"] = E2E_SETTINGS;
 
 // Ports default to 8767/5174 (unchanged) but are overridable so parallel
 // worktrees / local stacks can run E2E without colliding on a busy port.
-const API_PORT = process.env["JOBCTL_E2E_API_PORT"] ?? "8767";
-const WEB_PORT = process.env["JOBCTL_E2E_WEB_PORT"] ?? "5174";
+const API_PORT = process.env["JOBCTRL_E2E_API_PORT"] ?? "8767";
+const WEB_PORT = process.env["JOBCTRL_E2E_WEB_PORT"] ?? "5174";
 
 export default defineConfig({
   testDir: "./tests",
@@ -45,30 +45,30 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "corepack pnpm --filter @jobctl/api dev",
+      command: "corepack pnpm --filter @jobctrl/api dev",
       port: Number(API_PORT),
       cwd: repoRoot,
       env: {
-        JOBCTL_API_PORT: API_PORT,
-        JOBCTL_DIR: E2E_DIR,
-        JOBCTL_DB_PATH: E2E_DB,
-        JOBCTL_DASHBOARD_CONFIG_PATH: E2E_SETTINGS,
+        JOBCTRL_API_PORT: API_PORT,
+        JOBCTRL_DIR: E2E_DIR,
+        JOBCTRL_DB_PATH: E2E_DB,
+        JOBCTRL_DASHBOARD_CONFIG_PATH: E2E_SETTINGS,
         // INSPECT-01: route material-generation dispatch to the deterministic
         // E2E stub (no worker subprocess, no LLM) while keeping the
         // worker-readiness gate live against the seeded heartbeat.
-        JOBCTL_E2E_STUB_DISPATCH: "1",
+        JOBCTRL_E2E_STUB_DISPATCH: "1",
       },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,
     },
     {
-      command: `corepack pnpm --filter @jobctl/web exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
+      command: `corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
       port: Number(WEB_PORT),
       cwd: repoRoot,
       env: {
-        VITE_JOBCTL_API_BASE_URL: "",
+        VITE_JOBCTRL_API_BASE_URL: "",
         VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
-        VITE_JOBCTL_HIDE_DEVTOOLS: "1",
+        VITE_JOBCTRL_HIDE_DEVTOOLS: "1",
       },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,

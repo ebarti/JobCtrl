@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.enrichment.activities import (
+from jobctrl.enrichment.activities import (
     EnrichActivityInput,
     EnrichActivityOutput,
     enrich_activity,
@@ -34,7 +34,7 @@ async def test_enrich_activity_invokes_observed_enrich_core():
     queue = f"enrich-{uuid.uuid4()}"
 
     with patch(
-        "jobctl.pipeline.runner._run_stage_observed",
+        "jobctrl.pipeline.runner._run_stage_observed",
         return_value=({"status": "ok"}, 0.2, "ok"),
     ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

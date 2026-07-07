@@ -42,7 +42,7 @@ question:
 ### Purpose
 
 This document defines the **canonical architecture** for the
-JobCtl web frontend (`apps/web`). It is the architectural twin of
+JobCtrl web frontend (`apps/web`). It is the architectural twin of
 [backend domain model](../domain-model/index.md) — where the backend models bounded
 contexts, aggregates, ports, and adapters for the Python worker and the TS
 API, this doc models the React/TypeScript single-page application that sits
@@ -107,7 +107,7 @@ it is the target deployment model.
   assertions live when they are added.
 - **Internationalization (i18n).** Single-user, English-only. The doc does
   not name a string-extraction library or a locale provider. The
-  `@jobctl/contracts` boundary is where translation would later wrap.
+  `@jobctrl/contracts` boundary is where translation would later wrap.
 - **Native / mobile / desktop wrappers.** The architecture targets a browser
   SPA. A Tauri / Electron wrapper is *not* an architectural decision this
   doc preempts: every I/O path goes through a port (§6), and `OpenInOsPort`
@@ -295,7 +295,7 @@ discipline:
   end. Component state derived from a projection is also `readonly`. No
   mutating array methods on cached data.
 - **Make illegal states unrepresentable.** `StageState` is already a
-  discriminated union in `@jobctl/domain-types/pipeline.ts`. The
+  discriminated union in `@jobctrl/domain-types/pipeline.ts`. The
   frontend uses **exhaustive `switch`** on `state.kind` to render stage
   badges; an unhandled state is a TypeScript error at compile time, not a
   runtime fallback.
@@ -324,7 +324,7 @@ extends the workspace base). The target frontend goes further:
 - **Route-level Zod schemas.** Every route's typed search params are
   declared with a Zod schema; the search-param type is *inferred* from the
   schema, never declared by hand. (Resolves §6 question 13.)
-- **`@jobctl/domain-types` is the source of truth.** No domain shape is
+- **`@jobctrl/domain-types` is the source of truth.** No domain shape is
   re-declared in `apps/web/`. If `JobListProjection` changes, the frontend
   rebuilds against the new type and the compiler points at every mismatch.
 

@@ -1,4 +1,4 @@
-import type { ArtifactSummary, PaginatedResponse } from "@jobctl/contracts";
+import type { ArtifactSummary, PaginatedResponse } from "@jobctrl/contracts";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { expectTypeOf, test } from "vitest";
 

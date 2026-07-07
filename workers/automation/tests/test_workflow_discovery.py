@@ -15,10 +15,10 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.cli import _reconcile_discovery_schedule
-from jobctl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
-from jobctl.domain.discovery.scheduler import DiscoveryRunProgress
-from jobctl.discovery.activities import (
+from jobctrl.cli import _reconcile_discovery_schedule
+from jobctrl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
+from jobctrl.domain.discovery.scheduler import DiscoveryRunProgress
+from jobctrl.discovery.activities import (
     DiscoveryEnrichmentActivityOutput,
     DiscoveryEnrichmentActivityInput,
     DiscoveryPreparationFanoutInput,
@@ -30,14 +30,14 @@ from jobctl.discovery.activities import (
     _build_per_job_handoff,
     discovery_preparation_fanout_activity,
 )
-from jobctl.discovery.workflow import (
+from jobctrl.discovery.workflow import (
     DiscoverWorkflow,
     DiscoverWorkflowInput,
     _activity_error_was_cancelled,
 )
-from jobctl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
-from jobctl.llm import SpendBudgetStatus
-from jobctl.pipeline import runner
+from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
+from jobctrl.llm import SpendBudgetStatus
+from jobctrl.pipeline import runner
 
 
 @dataclass(frozen=True)
@@ -100,10 +100,10 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
         return None
 
     monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
-    monkeypatch.setattr("jobctl.discovery.workflow._check_spend", fake_check_spend)
-    monkeypatch.setattr("jobctl.discovery.workflow.emit_workflow_started", fake_started)
-    monkeypatch.setattr("jobctl.discovery.workflow.emit_workflow_outcome", fake_outcome)
-    monkeypatch.setattr("jobctl.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
+    monkeypatch.setattr("jobctrl.discovery.workflow._check_spend", fake_check_spend)
+    monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_started", fake_started)
+    monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_outcome", fake_outcome)
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
 
     with pytest.raises(CancelledError):
         await workflow_instance.run(DiscoverWorkflowInput(tenant_id="local"))
@@ -230,15 +230,15 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
         }
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
     monkeypatch.setattr(
-        "jobctl.pipeline.preparation.start_discovery_preparation_workflows",
+        "jobctrl.pipeline.preparation.start_discovery_preparation_workflows",
         fake_start_fanout,
     )
 
@@ -290,15 +290,15 @@ async def test_discovery_preparation_fanout_activity_forwards_score_only(
         return {"started": {"job_preparation": 0}, "queued": {"job_preparation": 0}, "targets": 0}
 
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
     monkeypatch.setattr(
-        "jobctl.pipeline.preparation.start_discovery_preparation_workflows",
+        "jobctrl.pipeline.preparation.start_discovery_preparation_workflows",
         fake_start_fanout,
     )
 
@@ -325,7 +325,7 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
     starts each enriched job's preparation with the run's prep params."""
     calls: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
-        "jobctl.pipeline.preparation.start_job_preparation_workflow",
+        "jobctrl.pipeline.preparation.start_job_preparation_workflow",
         lambda url, **kwargs: calls.append((url, kwargs)),
     )
 
@@ -746,7 +746,7 @@ async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.Monk
     # recovery mechanism under test (heartbeat-timeout -> retry -> redelivery
     # to the surviving worker) is unchanged.
     monkeypatch.setattr(
-        "jobctl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT",
+        "jobctrl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT",
         timedelta(seconds=2),
     )
     _RESUME_GATE["first_attempt_started"] = asyncio.Event()
@@ -954,7 +954,7 @@ async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.
     workflow as canceled."""
     _reset_state()
     monkeypatch.setattr(
-        "jobctl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2)
+        "jobctrl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2)
     )
     global _MAX_PARALLEL
     _MAX_PARALLEL = 2
@@ -1068,12 +1068,12 @@ class _FakeScheduleClient:
 @pytest.mark.asyncio
 async def test_discovery_schedule_reconcile_deletes_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "jobctl.config.load_discovery_schedule_settings",
+        "jobctrl.config.load_discovery_schedule_settings",
         lambda: (False, "0 7 * * *"),
     )
     client = _FakeScheduleClient()
 
-    await _reconcile_discovery_schedule(client, "jobctl-test")
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.created == []
     assert client.handle.deleted == 1
@@ -1084,19 +1084,19 @@ async def test_discovery_schedule_reconcile_creates_skip_overlap_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.config.load_discovery_schedule_settings",
+        "jobctrl.config.load_discovery_schedule_settings",
         lambda: (True, "15 9 * * *"),
     )
     client = _FakeScheduleClient()
 
-    await _reconcile_discovery_schedule(client, "jobctl-test")
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     [(schedule_id, schedule)] = client.created
-    assert schedule_id == "jobctl-discovery-local"
+    assert schedule_id == "jobctrl-discovery-local"
     assert schedule.spec.cron_expressions == ["15 9 * * *"]
     assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
     assert schedule.action.id == "discover-local"
-    assert schedule.action.task_queue == "jobctl-test"
+    assert schedule.action.task_queue == "jobctrl-test"
 
 
 @pytest.mark.asyncio
@@ -1104,12 +1104,12 @@ async def test_discovery_schedule_reconcile_updates_existing_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.config.load_discovery_schedule_settings",
+        "jobctrl.config.load_discovery_schedule_settings",
         lambda: (True, "30 6 * * *"),
     )
     client = _FakeScheduleClient(create_raises=True)
 
-    await _reconcile_discovery_schedule(client, "jobctl-test")
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.handle.updated == 1
     assert client.handle.update_result.schedule.spec.cron_expressions == ["30 6 * * *"]
@@ -1121,11 +1121,11 @@ async def test_discovery_schedule_reconcile_failure_does_not_block_worker_boot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "jobctl.config.load_discovery_schedule_settings",
+        "jobctrl.config.load_discovery_schedule_settings",
         lambda: (True, "not a valid cron"),
     )
     client = _FakeScheduleClient(create_raises=True, update_raises=True)
 
-    await _reconcile_discovery_schedule(client, "jobctl-test")
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.handle.updated == 0

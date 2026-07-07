@@ -3,7 +3,7 @@ import {
   PIPELINE_RUN_STAGES,
   type PipelineRunStage,
   type PipelineValidationMode,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 

@@ -11,29 +11,29 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import set_tracer_provider
 
-from jobctl.domain.discovery.source_registry import ContentFilterOverridePolicy
-from jobctl.domain.enrichment import DetailPage, ExtractionTier, JobEnrichment
-from jobctl.domain.enrichment.filter_override import FilterOverrideError, FilterOverrideLogger
-from jobctl.domain.enrichment.services import ExtractionResult, JsonLdExtractor
-from jobctl.domain.enrichment.snapshot_services import (
+from jobctrl.domain.discovery.source_registry import ContentFilterOverridePolicy
+from jobctrl.domain.enrichment import DetailPage, ExtractionTier, JobEnrichment
+from jobctrl.domain.enrichment.filter_override import FilterOverrideError, FilterOverrideLogger
+from jobctrl.domain.enrichment.services import ExtractionResult, JsonLdExtractor
+from jobctrl.domain.enrichment.snapshot_services import (
     ActiveStateVerifier,
     ContentAcquisitionService,
     DedupeIndexEntry,
     TierExtractor,
 )
-from jobctl.domain.enrichment.snapshot_set import PostingSnapshotSet
-from jobctl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
-from jobctl.domain.enrichment.snapshot_value_objects import (
+from jobctrl.domain.enrichment.snapshot_set import PostingSnapshotSet
+from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
+from jobctrl.domain.enrichment.snapshot_value_objects import (
     ActiveState,
     FilterOverrideAudit,
     QuarantineReason,
     SnapshotApplyUrl,
     SnapshotDescriptionHash,
 )
-from jobctl.domain.enrichment.value_objects import ApplicationUrl, FullDescription
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.observability.enrichment_spans import (
+from jobctrl.domain.enrichment.value_objects import ApplicationUrl, FullDescription
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.observability.enrichment_spans import (
     content_render_span,
     llm_fallback_extraction_span,
 )

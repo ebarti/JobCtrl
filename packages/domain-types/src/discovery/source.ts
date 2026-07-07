@@ -254,7 +254,7 @@ export interface LocatorPolicy {
 }
 
 export const DEFAULT_LOCATOR_POLICY: LocatorPolicy = {
-  userAgent: "JobCtl Source Locator (local)",
+  userAgent: "JobCtrl Source Locator (local)",
   maxRequestsPerDomain: 5,
   minPromotionConfidence: 0.75,
   minManualReviewConfidence: 0.4,

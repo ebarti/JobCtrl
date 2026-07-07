@@ -85,17 +85,17 @@ Fixtures"), and stated in user-facing docs.
 
 **Canonical evidence (source of truth for the map).**
 - Profile achievement evidence — the reusable "proof point" / STAR raw material.
-  Domain: `AchievementEvidence` (`workers/automation/src/jobctl/domain/profile/value_objects.py`),
+  Domain: `AchievementEvidence` (`workers/automation/src/jobctrl/domain/profile/value_objects.py`),
   carrying `id, source_text, scope, action, tools, metrics, outcome,
   seniority_signal, evidence_strength, claim_confidence, user_confirmed, tags`.
   Persisted in `candidate_profile_achievement_evidence`
-  (`workers/automation/src/jobctl/database.py`, `ensure_profile_tables`).
+  (`workers/automation/src/jobctrl/database.py`, `ensure_profile_tables`).
   `evidence_strength` enum: `verified | supported | inferred | draft`.
 - Skills — `candidate_profile_skill_categories` / `candidate_profile_skill_items`.
 - Experience (with dates for freshness) — `candidate_profile_experience_entries`
   / `_bullets`.
 - Published, immutable copy for consumers — `ProfileSnapshot`
-  (`workers/automation/src/jobctl/domain/profile/snapshot.py`).
+  (`workers/automation/src/jobctrl/domain/profile/snapshot.py`).
 - Profile is served **live** from `candidate_profiles` (+ children) by
   `apps/api/src/profile-store.ts` (`readProfileConfig`), route `GET /v1/profile`
   (`apps/api/src/server.ts`). It is the **one read surface not on the projection
@@ -103,7 +103,7 @@ Fixtures"), and stated in user-facing docs.
 
 **Per-bullet provenance (where evidence was used).**
 - Domain: `BulletProvenance` / `BulletProvenanceSet`
-  (`workers/automation/src/jobctl/domain/materials/provenance.py`), built by
+  (`workers/automation/src/jobctrl/domain/materials/provenance.py`), built by
   `provenance_builder.py`. Each row binds a rendered line to `evidence_ids`
   (FK into profile evidence), `requirement_ids` (FK into `EmployerAnalysis`),
   `matched_keywords`, `transform_type`, `control`, `generated_text`.
@@ -118,7 +118,7 @@ Fixtures"), and stated in user-facing docs.
 - Domain: `RequirementFitReport`, `RequirementFitAssessment`,
   `RequirementFitStatus` (with `evidence_ids`), `RequirementArtifactCoverage`
   (states `covered | missing_from_resume | missing_from_profile | not_covered |
-  not_recorded`) — `workers/automation/src/jobctl/domain/scoring/value_objects.py`;
+  not_recorded`) — `workers/automation/src/jobctrl/domain/scoring/value_objects.py`;
   resolver `requirement_fit.py`.
 - Persisted in `job_requirement_fit_reports` + `job_requirement_fit_items`
   (`fit_json`, `contribution_json`, `tailoring_json`, `artifact_coverage_json`)
@@ -139,7 +139,7 @@ Fixtures"), and stated in user-facing docs.
   cross-posting company profile is greenfield (see Non-Goals).
 
 **Truthfulness / fabrication gates (reused verbatim for prep).**
-- `workers/automation/src/jobctl/domain/materials/fabrication_detector.py`:
+- `workers/automation/src/jobctrl/domain/materials/fabrication_detector.py`:
   `scan_resume_bullets` (never-fabricate numeric/date/title/employer),
   `scan_prose_skill_fabrications` (named-technology allowlist, word-form
   tolerant), `scan_cover_letter`, `build_skill_vocabulary`,
@@ -170,7 +170,7 @@ Fixtures"), and stated in user-facing docs.
   `ApplyWorkflow`, `ProfileImportWorkflow`, `DiscoverWorkflow`,
   `CompensationRefreshWorkflow`.
 - JSON-RPC handlers registered in
-  `workers/automation/src/jobctl/infrastructure/rpc/handlers.py`
+  `workers/automation/src/jobctrl/infrastructure/rpc/handlers.py`
   (`register_default_handlers`): `analyze_job` (sync), `tailor_job`,
   `retailor_job`, `rescore_job`, `run_stage`, `apply` (workflow). TS→Python
   bridge: `apps/api/src/json-rpc-adapter.ts` (`SubprocessJsonRpcAdapter`);
@@ -184,7 +184,7 @@ Fixtures"), and stated in user-facing docs.
   `infrastructure/projections/sqlite_projection_store.py` (`PROJECTION_TABLES`).
   Watermark `event_watermarks.operations_projections`.
 - Events: `DOMAIN_EVENT_TYPES`
-  (`workers/automation/src/jobctl/domain/events/__init__.py`) mirrored by
+  (`workers/automation/src/jobctrl/domain/events/__init__.py`) mirrored by
   `packages/domain-types/src/events/index.ts`; SSE `GET /v1/events/stream`
   (`apps/api/src/event-stream.ts`); frontend invalidation router
   (`apps/web/src/contexts/operations/invalidation-router.ts`). Every event type
@@ -345,7 +345,7 @@ depend on, with zero behavior change, so later phases add wiring, not re-design.
   asserting the new contract types are exported and shaped as specified; a Python
   round-trip test for each new value object (`from_dict`/`to_read_model`).
 - **Local QA path:** `pnpm api:check` + `pnpm web:check` + `pnpm --filter
-  @jobctl/web test-d` + `uv --project workers/automation run --extra dev
+  @jobctrl/web test-d` + `uv --project workers/automation run --extra dev
   pytest -q` all green with no runtime change.
 
 ---
@@ -449,7 +449,7 @@ surfaces — "inspect where used," not vibes.
   requirement-usage link resolving to the job detail route; an `*.a11y.test.tsx`
   meeting the zero critical/serious axe bar; a Storybook story per state
   (loading/populated/empty/error) via the MSW addon.
-- **Local QA path:** `pnpm --filter @jobctl/web test`, `pnpm web:check`,
+- **Local QA path:** `pnpm --filter @jobctrl/web test`, `pnpm web:check`,
   `pnpm web:storybook:test`, and an e2e spec
   (`apps/web/e2e/tests/evidence-map.spec.ts`) that opens the map, clicks a
   usage link, and lands on the correct artifact/job detail — plus a
@@ -591,7 +591,7 @@ no-live-assistance boundary.
      generate action; any streaming/transcript/websocket/live interview endpoint,
      live/in-session aggregate state, or browser/agent participation path still
      fails the guard.
-- **Local QA path:** `pnpm api:test` + `pnpm --filter @jobctl/web test` +
+- **Local QA path:** `pnpm api:test` + `pnpm --filter @jobctrl/web test` +
   `pnpm web:storybook:test` + `uv ... pytest -q`; an e2e spec
   (`apps/web/e2e/tests/interview-prep.spec.ts`) generating prep and inspecting a
   STAR draft's provenance link; a `docs/local-reliability-qa.md` "Interview Prep
@@ -632,7 +632,7 @@ application, feeding the existing outcome lifecycle without inventing a new stor
   `interview` outcome with its note, is returned by the job outcomes endpoint,
   and that no raw note text appears in any emitted event payload/projection
   (sensitivity assertion); a component test for the reflection form.
-- **Local QA path:** `pnpm api:test` + `pnpm --filter @jobctl/web test`; a
+- **Local QA path:** `pnpm api:test` + `pnpm --filter @jobctrl/web test`; a
   manual pass recording a reflection and confirming it appears in the timeline
   and not in the SSE payload; extend the Apply Review smoke in
   `docs/local-reliability-qa.md`.
@@ -676,9 +676,9 @@ marked done.
 | API typecheck | `pnpm api:check` | clean |
 | API tests | `pnpm api:test` | pass |
 | Web typecheck | `pnpm web:check` | clean |
-| Web unit/hook/component | `pnpm --filter @jobctl/web test` | pass |
-| Web type-level | `pnpm --filter @jobctl/web test-d` | pass |
-| Web e2e | `pnpm --filter @jobctl/web e2e` | pass |
+| Web unit/hook/component | `pnpm --filter @jobctrl/web test` | pass |
+| Web type-level | `pnpm --filter @jobctrl/web test-d` | pass |
+| Web e2e | `pnpm --filter @jobctrl/web e2e` | pass |
 | Web Storybook (a11y) | `pnpm web:storybook:test` | pass |
 | Full sweep | `pnpm test` | pass |
 | Diff hygiene | `git diff --check` | clean |

@@ -7,8 +7,8 @@ import json
 import httpx
 import pytest
 
-from jobctl.infrastructure.captcha import CaptchaChallenge, CaptchaSolveError
-from jobctl.infrastructure.captcha.capsolver import CapSolverClient
+from jobctrl.infrastructure.captcha import CaptchaChallenge, CaptchaSolveError
+from jobctrl.infrastructure.captcha.capsolver import CapSolverClient
 
 
 def test_capsolver_success_polls_and_returns_token_without_key_echo() -> None:

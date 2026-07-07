@@ -32,8 +32,8 @@ let tempDir = "";
 let db: Database.Database;
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-resume-template-"));
-  db = new Database(path.join(tempDir, "jobctl.db"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-resume-template-"));
+  db = new Database(path.join(tempDir, "jobctrl.db"));
   seedDatabase(db);
 });
 

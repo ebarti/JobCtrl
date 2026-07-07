@@ -1,4 +1,4 @@
-import type { ApplyRunEventRecorded } from "@jobctl/domain-types";
+import type { ApplyRunEventRecorded } from "@jobctrl/domain-types";
 
 export interface ApplyRunEventEntry {
   readonly at: string | null;

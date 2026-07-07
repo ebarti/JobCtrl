@@ -11,46 +11,54 @@ export interface ApiRuntimeConfig {
 }
 
 export function resolveApiConfig(env: NodeJS.ProcessEnv = process.env): ApiRuntimeConfig {
-  const appDir = env.JOBCTL_DIR || migrateDefaultWorkspace(env);
-  const port = Number.parseInt(env.JOBCTL_API_PORT || env.PORT || "8766", 10);
-  const host = env.JOBCTL_API_HOST || "127.0.0.1";
-  const remoteBindAllowed = ["1", "true", "yes"].includes((env.JOBCTL_API_ALLOW_REMOTE_BIND || "").toLowerCase());
+  const port = Number.parseInt(env.JOBCTRL_API_PORT || env.PORT || "8766", 10);
+  const host = env.JOBCTRL_API_HOST || "127.0.0.1";
+  const remoteBindAllowed = ["1", "true", "yes"].includes((env.JOBCTRL_API_ALLOW_REMOTE_BIND || "").toLowerCase());
   if (!isLoopbackHost(host) && !remoteBindAllowed) {
     throw new Error(
-      `Refusing to bind JobCtl API to non-loopback host "${host}". Set JOBCTL_API_ALLOW_REMOTE_BIND=1 to opt in.`,
+      `Refusing to bind JobCtrl API to non-loopback host "${host}". Set JOBCTRL_API_ALLOW_REMOTE_BIND=1 to opt in.`,
     );
   }
+  const appDir = env.JOBCTRL_DIR || migrateDefaultWorkspace(env);
 
   return {
     appDir,
-    dbPath: env.JOBCTL_DB_PATH || path.join(appDir, "jobctl.db"),
-    settingsPath: env.JOBCTL_DASHBOARD_CONFIG_PATH || path.join(appDir, "dashboard.json"),
+    dbPath: env.JOBCTRL_DB_PATH || path.join(appDir, "jobctrl.db"),
+    settingsPath: env.JOBCTRL_DASHBOARD_CONFIG_PATH || path.join(appDir, "dashboard.json"),
     host,
     port: Number.isFinite(port) ? port : 8766,
   };
 }
 
-const legacyToken = "job" + "hunter";
-const legacyAppDirname = `.${legacyToken}`;
-const currentAppDirname = ".jobctl";
-const legacyDbFilename = `${legacyToken}.db`;
-const currentDbFilename = "jobctl.db";
+const legacyTokens = ["job" + "ctl", "job" + "hunter"] as const;
+const currentAppDirname = ".jobctrl";
+const currentDbFilename = "jobctrl.db";
+
+type LegacyWorkspace = {
+  dir: string;
+  dbFilename: string;
+};
 
 export function migrateDefaultWorkspace(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.JOBCTL_DIR) return env.JOBCTL_DIR;
+  if (env.JOBCTRL_DIR) return env.JOBCTRL_DIR;
 
   const home = env.HOME || env.USERPROFILE || os.homedir();
-  const legacyDir = path.join(home, legacyAppDirname);
+  const legacyWorkspaces: LegacyWorkspace[] = legacyTokens.map((token) => ({
+    dir: path.join(home, `.${token}`),
+    dbFilename: `${token}.db`,
+  }));
+  const existingLegacyWorkspaces = legacyWorkspaces.filter((workspace) => fs.existsSync(workspace.dir));
   const currentDir = path.join(home, currentAppDirname);
-  const lockDir = path.join(home, ".jobctl-migration.lock");
+  const lockDir = path.join(home, ".jobctrl-migration.lock");
 
   if (fs.existsSync(currentDir)) {
-    if (fs.existsSync(legacyDir)) {
+    if (existingLegacyWorkspaces.length > 0) {
       throw new Error(`refusing to move legacy workspace because ${currentDir} already exists`);
     }
     return currentDir;
   }
-  if (!fs.existsSync(legacyDir)) {
+  const legacyWorkspace = existingLegacyWorkspaces[0];
+  if (!legacyWorkspace) {
     return currentDir;
   }
 
@@ -58,15 +66,16 @@ export function migrateDefaultWorkspace(env: NodeJS.ProcessEnv = process.env): s
     fs.mkdirSync(lockDir);
   } catch (error) {
     if (fs.existsSync(currentDir)) return currentDir;
-    throw new Error(`another JobCtl workspace migration is in progress; retry after it completes`, {
+    throw new Error(`another JobCtrl workspace migration is in progress; retry after it completes`, {
       cause: error,
     });
   }
 
   try {
-    if (!fs.existsSync(currentDir) && fs.existsSync(legacyDir)) {
-      moveWorkspace(legacyDir, currentDir);
-      renameLegacyDbFiles(currentDir);
+    if (!fs.existsSync(currentDir) && fs.existsSync(legacyWorkspace.dir)) {
+      assertNoLegacyDbRenameConflict(legacyWorkspace.dir, legacyWorkspace.dbFilename);
+      moveWorkspace(legacyWorkspace.dir, currentDir);
+      renameLegacyDbFiles(currentDir, legacyWorkspace.dbFilename);
       console.warn(`migrated legacy local workspace to ${currentDir}`);
     }
   } finally {
@@ -74,6 +83,16 @@ export function migrateDefaultWorkspace(env: NodeJS.ProcessEnv = process.env): s
   }
 
   return currentDir;
+}
+
+function assertNoLegacyDbRenameConflict(legacyDir: string, legacyDbFilename: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const legacyPath = path.join(legacyDir, `${legacyDbFilename}${suffix}`);
+    const currentPath = path.join(legacyDir, `${currentDbFilename}${suffix}`);
+    if (fs.existsSync(legacyPath) && fs.existsSync(currentPath)) {
+      throw new Error(`refusing to overwrite existing database file: ${currentPath}`);
+    }
+  }
 }
 
 function moveWorkspace(legacyDir: string, currentDir: string): void {
@@ -122,7 +141,7 @@ function walkRelative(root: string, prefix = ""): string[] {
   });
 }
 
-function renameLegacyDbFiles(appDir: string): void {
+function renameLegacyDbFiles(appDir: string, legacyDbFilename: string): void {
   for (const suffix of ["", "-wal", "-shm"]) {
     const legacyPath = path.join(appDir, `${legacyDbFilename}${suffix}`);
     const currentPath = path.join(appDir, `${currentDbFilename}${suffix}`);

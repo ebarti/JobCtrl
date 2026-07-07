@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.domain.events.base import create_domain_event
-from jobctl.domain.events.discovery import (
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.events.base import create_domain_event
+from jobctrl.domain.events.discovery import (
     JobDiscoveredPayload,
     create_job_discovered,
     JobUpdatedPayload,
@@ -33,19 +33,19 @@ from jobctl.domain.events.discovery import (
     DiscoveryFeedbackRecordedPayload,
     create_discovery_feedback_recorded,
 )
-from jobctl.domain.events.enrichment import (
+from jobctrl.domain.events.enrichment import (
     JobEnrichedPayload,
     create_job_enriched,
     EnrichmentFailedPayload,
     create_enrichment_failed,
 )
-from jobctl.domain.events.scoring import (
+from jobctrl.domain.events.scoring import (
     JobScoredPayload,
     create_job_scored,
     ScoreCorrectedPayload,
     create_score_corrected,
 )
-from jobctl.domain.events.materials import (
+from jobctrl.domain.events.materials import (
     ResumeApprovedPayload,
     create_resume_approved,
     ResumeFailedPayload,
@@ -57,13 +57,13 @@ from jobctl.domain.events.materials import (
     MaterialsExhaustedPayload,
     create_materials_exhausted,
 )
-from jobctl.domain.events.interview import (
+from jobctrl.domain.events.interview import (
     InterviewPrepFailedPayload,
     InterviewPrepGeneratedPayload,
     create_interview_prep_failed,
     create_interview_prep_generated,
 )
-from jobctl.domain.events.apply import (
+from jobctrl.domain.events.apply import (
     ApplicationSubmittedPayload,
     create_application_submitted,
     ApplicationFailedPayload,
@@ -73,7 +73,7 @@ from jobctl.domain.events.apply import (
     ApplyRunEventRecordedPayload,
     create_apply_run_event_recorded,
 )
-from jobctl.domain.events.orchestration import (
+from jobctrl.domain.events.orchestration import (
     StageStartedPayload,
     create_stage_started,
     StageCompletedPayload,
@@ -89,7 +89,7 @@ from jobctl.domain.events.orchestration import (
     StageSkippedPayload,
     create_stage_skipped,
 )
-from jobctl.domain.events.profile import (
+from jobctrl.domain.events.profile import (
     ProfileUpdatedPayload,
     create_profile_updated,
     ProfileImportedPayload,

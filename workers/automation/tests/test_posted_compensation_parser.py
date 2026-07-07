@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobctl.domain.compensation import SOURCE_TEXT_LIMIT, parse_posted_compensation
+from jobctrl.domain.compensation import SOURCE_TEXT_LIMIT, parse_posted_compensation
 
 
 def test_missing_salary_returns_missing_state() -> None:

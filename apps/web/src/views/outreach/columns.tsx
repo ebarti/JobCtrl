@@ -1,4 +1,4 @@
-import type { ContactSummary } from "@jobctl/contracts";
+import type { ContactSummary } from "@jobctrl/contracts";
 
 import { ContactProvenanceSummary } from "../../contexts/outreach/components/ContactProvenanceSummary.js";
 import { ContactRoleBadge } from "../../contexts/outreach/components/ContactRoleBadge.js";

@@ -1,6 +1,6 @@
 """No-auto-send enforcement suite for outreach (INV-1, plan §8.3).
 
-The headline product invariant: JobCtl NEVER sends. The four enforcement
+The headline product invariant: JobCtrl NEVER sends. The four enforcement
 layers from §8.3, patterned on the apply-safety suite:
 
   a. Aggregate invariant — a thread reaches "sent" only via a user-attested send
@@ -27,29 +27,29 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.contact.outreach import (
+from jobctrl.database import init_db
+from jobctrl.domain.contact.outreach import (
     OutreachDraft,
     OutreachDraftKind,
     OutreachThread,
 )
-from jobctl.domain.contact.outreach_gates import DraftGateResults
-from jobctl.domain.contact.outreach_use_cases import (
+from jobctrl.domain.contact.outreach_gates import DraftGateResults
+from jobctrl.domain.contact.outreach_use_cases import (
     ApproveOutreachDraftUseCase,
     CompleteFollowUpUseCase,
     LogOutreachSendUseCase,
     ScheduleFollowUpUseCase,
 )
-from jobctl.domain.materials.value_objects import (
+from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
     JudgeVerdict,
     ValidationResult,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.contact.outreach_repository import (
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.contact.outreach_repository import (
     SqliteOutreachThreadRepository,
 )
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 
 _PASS_GATES = DraftGateResults(
     fabrications=(),
@@ -59,7 +59,7 @@ _PASS_GATES = DraftGateResults(
 
 
 def _repo() -> tuple[SqliteOutreachThreadRepository, sqlite3.Connection]:
-    conn = init_db(Path(tempfile.mkdtemp()) / "jobctl.db")
+    conn = init_db(Path(tempfile.mkdtemp()) / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     return SqliteOutreachThreadRepository(conn, publisher=InProcessEventBus()), conn
 

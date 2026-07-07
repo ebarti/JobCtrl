@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.enrichment import (
+from jobctrl.domain.enrichment import (
     ApplicationUrl,
     AttemptStatus,
     EnrichmentAttempt,
@@ -19,8 +19,8 @@ from jobctl.domain.enrichment import (
     FullDescription,
     JobEnrichment,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

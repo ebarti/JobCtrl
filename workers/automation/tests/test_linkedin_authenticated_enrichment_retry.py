@@ -6,23 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.enrichment import (
+from jobctrl.database import init_db
+from jobctrl.domain.enrichment import (
     ApplicationUrl,
     EnrichmentError,
     ExtractionTier,
     FullDescription,
     JobEnrichment,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.enrichment.detail import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
     _reset_authenticated_linkedin_retry_candidates,
 )
-from jobctl.infrastructure.enrichment import SqliteEnrichmentRepository
-from jobctl.infrastructure.enrichment.linkedin_apply_resolver import (
+from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
 )
 
@@ -31,7 +31,7 @@ from .politeness_helpers import offline_session
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 class _Resolver:

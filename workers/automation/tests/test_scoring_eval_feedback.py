@@ -4,9 +4,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-from jobctl.database import get_jobs_by_stage, init_db
-from jobctl.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
-from jobctl.state import record_job_event
+from jobctrl.database import get_jobs_by_stage, init_db
+from jobctrl.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
+from jobctrl.state import record_job_event
 
 
 def test_feedback_signals_use_corrections_and_job_actions_transparently() -> None:
@@ -64,7 +64,7 @@ def test_feedback_signals_use_corrections_and_job_actions_transparently() -> Non
 
 
 def test_feedback_adjustments_affect_downstream_selector_order(tmp_path: Path) -> None:
-    conn = init_db(tmp_path / "jobctl.db")
+    conn = init_db(tmp_path / "jobctrl.db")
     corrected = "https://example.com/corrected"
     skipped = "https://example.com/skipped"
     for url in (corrected, skipped):

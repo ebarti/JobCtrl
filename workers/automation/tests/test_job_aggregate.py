@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.discovery import (
+from jobctrl.domain.discovery import (
     Employer,
     Job,
     JobMetadata,
@@ -18,8 +18,8 @@ from jobctl.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

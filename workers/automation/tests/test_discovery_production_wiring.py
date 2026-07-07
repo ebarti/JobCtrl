@@ -9,27 +9,27 @@ from typing import Any, Iterator
 
 import pytest
 
-from jobctl import config
-from jobctl.discovery import manual_capture_import as manual_capture_import_cli
-from jobctl.database import close_connection, get_jobs_by_stage, init_db
-from jobctl.domain.discovery import (
+from jobctrl import config
+from jobctrl.discovery import manual_capture_import as manual_capture_import_cli
+from jobctrl.database import close_connection, get_jobs_by_stage, init_db
+from jobctrl.domain.discovery import (
     AtsKind,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
     Source,
 )
-from jobctl.domain.discovery.scheduler import DiscoveryScheduler
-from jobctl.domain.discovery.source_registry import (
+from jobctrl.domain.discovery.scheduler import DiscoveryScheduler
+from jobctrl.domain.discovery.source_registry import (
     SourceKind,
     SourcePriority,
     SourceRegistryEntry,
     SourceState,
     WORKDAY_API_POLICY,
 )
-from jobctl.domain.ports.discovery import ScrapedJobPosting
-from jobctl.enrichment.detail import _record_posting_snapshot_from_cascade
-from jobctl.infrastructure.discovery.production_wiring import (
+from jobctrl.domain.ports.discovery import ScrapedJobPosting
+from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
+from jobctrl.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
     _posting_acceptance_policy,
     build_discovery_acceptance_report,
@@ -41,14 +41,14 @@ from jobctl.infrastructure.discovery.production_wiring import (
     seed_discovery_control_queues,
     seed_source_registry_controls,
 )
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.pipeline import runner
-from jobctl.state import record_job_event
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.pipeline import runner
+from jobctrl.state import record_job_event
 
 
 @pytest.fixture
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     connection = init_db(db_path)
     yield connection
@@ -652,7 +652,7 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctl_deleted_jobs").fetchall()
+        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
     }
     assert "https://boards.greenhouse.io/acme/jobs/valid" not in deleted
     assert "missing_description" in deleted["https://boards.greenhouse.io/acme/jobs/empty-description"]
@@ -744,7 +744,7 @@ def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
     assert result["retired_jobs"] == 1
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctl_deleted_jobs").fetchall()
+        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
     }
     assert good_url not in deleted
     assert "title_mismatch" in deleted[bad_url]
@@ -837,7 +837,7 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
     assert result["retired_jobs"] == 2
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctl_deleted_jobs").fetchall()
+        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
     }
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert "title_mismatch" in deleted["https://www.linkedin.com/jobs/view/head-school-biomedical"]
@@ -944,7 +944,7 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctl_deleted_jobs").fetchall()
+        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
     }
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert (
@@ -1067,7 +1067,7 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctl_deleted_jobs").fetchall()
+        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
     }
     assert "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager" not in deleted
     assert "https://wellfound.com/jobs/valid-head-engineering" not in deleted
@@ -1485,7 +1485,7 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     seed_discovery_control_queues(conn, _barcelona_registry())
     item_id = conn.execute(

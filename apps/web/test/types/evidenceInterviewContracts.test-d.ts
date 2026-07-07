@@ -4,7 +4,7 @@ import type {
   InterviewPrep,
   InterviewPrepItem,
   InterviewPrepStatus,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { expectTypeOf, test } from "vitest";
 
 test("evidence-map contracts are exported with camelCase read-model fields", () => {

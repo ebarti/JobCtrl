@@ -10,14 +10,14 @@ from typing import Any
 
 import pytest
 
-from jobctl.domain.apply.value_objects import (
+from jobctrl.domain.apply.value_objects import (
     ApplyPrompt,
     BrowserWorkerConfig,
     EmailOnlyApplication,
 )
-from jobctl.domain.ports.apply import BrowserSession
-from jobctl.infrastructure.apply import claude_code_cli
-from jobctl.infrastructure.apply.claude_code_cli import (
+from jobctrl.domain.ports.apply import BrowserSession
+from jobctrl.infrastructure.apply import claude_code_cli
+from jobctrl.infrastructure.apply.claude_code_cli import (
     ClaudeCodeCliAdapter,
     kill_active_claude_processes,
 )
@@ -99,7 +99,7 @@ def _session() -> BrowserSession:
     return BrowserSession(
         config=BrowserWorkerConfig(worker_id=0, cdp_port=9222, headless=True),
         pid=111,
-        worker_dir="/tmp/jobctl-worker",
+        worker_dir="/tmp/jobctrl-worker",
     )
 
 
@@ -256,7 +256,7 @@ def test_apply_adapter_minimal_env_is_exact(monkeypatch) -> None:
             "LC_ALL": "C.UTF-8",
             "TMPDIR": "/tmp",
             "ANTHROPIC_API_KEY": "secret",
-            "JOBCTL_DB_PATH": "/tmp/db",
+            "JOBCTRL_DB_PATH": "/tmp/db",
         },
     )
 
@@ -324,7 +324,7 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
 def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     calls: list[dict[str, Any]] = []
-    monkeypatch.setattr("jobctl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
     _FakePopen.calls.clear()
     _FakePopen.kwargs.clear()
 
@@ -439,7 +439,7 @@ def test_timeout_kills_only_registered_claude_process_tree(
         _HangingPopen.last.returncode = -9
 
     monkeypatch.setattr(claude_code_cli.time, "monotonic", fake_monotonic)
-    monkeypatch.setattr("jobctl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
 
     adapter = ClaudeCodeCliAdapter(
         log_dir=tmp_path,
@@ -468,7 +468,7 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
         killed.append(pid)
         proc.returncode = -9
 
-    monkeypatch.setattr("jobctl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
 
     claude_code_cli._register_active_claude_process(0, proc)
     kill_active_claude_processes()

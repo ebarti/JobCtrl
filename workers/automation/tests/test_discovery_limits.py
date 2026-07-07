@@ -6,21 +6,21 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.discovery import jobspy, smartextract, workday
-from jobctl.domain.discovery import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.discovery import jobspy, smartextract, workday
+from jobctrl.domain.discovery import (
     AtsKind,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
     Source,
 )
-from jobctl.domain.discovery.use_cases import DiscoverJobsUseCase
-from jobctl.domain.ports.discovery import ScrapedJobPosting
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.compensation import SqlitePostedCompensationRepository
-from jobctl.infrastructure.discovery import SqliteJobRepository
-from jobctl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctrl.domain.ports.discovery import ScrapedJobPosting
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.infrastructure.discovery import SqliteJobRepository
+from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -650,7 +650,7 @@ def test_jobspy_rejects_location_mismatches_before_discovery_persistence(tmp_pat
         assert [(row["url"], row["title"], row["location"]) for row in rows] == [
             ("https://www.linkedin.com/jobs/view/spain", "Software Engineer", "Spain (Remote)")
         ]
-        assert conn.execute("SELECT COUNT(*) FROM jobctl_deleted_jobs").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM jobctrl_deleted_jobs").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 
@@ -718,7 +718,7 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
         jobspy._ensure_deleted_jobs_table(conn)
         conn.execute(
             """
-            INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
             VALUES (?, ?, ?, NULL)
             """,
             (url, "2026-05-21T00:00:00+00:00", "stale invalid row"),
@@ -752,7 +752,7 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
             "location": "Barcelona, Spain",
         }
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
             (url,),
         ).fetchone()
         assert tombstone["restored_at"] is not None
@@ -1451,7 +1451,7 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         )
         conn.execute(
             """
-            INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
             VALUES (?, ?, ?, NULL)
             """,
             (duplicate_url, "2026-05-21T11:00:00+00:00", "content duplicate"),
@@ -1472,7 +1472,7 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         assert jobspy.store_jobspy_results(conn, rediscovered, "Product", limit=10) == (0, 1)
 
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
             (duplicate_url,),
         ).fetchone()
         assert tombstone["restored_at"] is None

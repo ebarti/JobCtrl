@@ -14,7 +14,7 @@ import {
 } from "../src/db.js";
 
 function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-schema-version-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-schema-version-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.pragma(`user_version = ${userVersion}`);
@@ -22,8 +22,8 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function legacyToken(): string {
-  return "job" + "hunter";
+function legacyTokens(): string[] {
+  return ["job" + "ctl", "job" + "hunter"];
 }
 
 function tableColumns(db: Database.Database, tableName: string): string[] {
@@ -77,9 +77,8 @@ describe("schema version guard at DB open", () => {
 });
 
 describe("legacy tombstone table migration", () => {
-  it("renames old deleted and hidden tables on writable open", () => {
+  it.each(legacyTokens())("renames old %s deleted and hidden tables on writable open", (token) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
-    const token = legacyToken();
     try {
       const seed = new Database(dbPath);
       seed.exec(`
@@ -104,16 +103,16 @@ describe("legacy tombstone table migration", () => {
 
       const db = openDatabase(dbPath);
       try {
-        expect(tableExists(db, "jobctl_deleted_jobs")).toBe(true);
-        expect(tableExists(db, "jobctl_hidden_jobs")).toBe(true);
+        expect(tableExists(db, "jobctrl_deleted_jobs")).toBe(true);
+        expect(tableExists(db, "jobctrl_hidden_jobs")).toBe(true);
         expect(tableExists(db, `${token}_deleted_jobs`)).toBe(false);
         expect(tableExists(db, `${token}_hidden_jobs`)).toBe(false);
-        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctl_deleted_jobs").get()).toMatchObject({ count: 1 });
-        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctl_hidden_jobs").get()).toMatchObject({ count: 1 });
-        expect(db.prepare("SELECT restored_at FROM jobctl_deleted_jobs").get()).toMatchObject({ restored_at: null });
-        expect(db.prepare("SELECT unhidden_at FROM jobctl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
-        expect(tableColumns(db, "jobctl_deleted_jobs")).toEqual(expect.arrayContaining(["job_url", "deleted_at", "reason", "restored_at"]));
-        expect(tableColumns(db, "jobctl_hidden_jobs")).toEqual(expect.arrayContaining(["job_url", "hidden_at", "reason", "unhidden_at"]));
+        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctrl_deleted_jobs").get()).toMatchObject({ count: 1 });
+        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get()).toMatchObject({ count: 1 });
+        expect(db.prepare("SELECT restored_at FROM jobctrl_deleted_jobs").get()).toMatchObject({ restored_at: null });
+        expect(db.prepare("SELECT unhidden_at FROM jobctrl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
+        expect(tableColumns(db, "jobctrl_deleted_jobs")).toEqual(expect.arrayContaining(["job_url", "deleted_at", "reason", "restored_at"]));
+        expect(tableColumns(db, "jobctrl_hidden_jobs")).toEqual(expect.arrayContaining(["job_url", "hidden_at", "reason", "unhidden_at"]));
       } finally {
         db.close();
       }
@@ -122,19 +121,18 @@ describe("legacy tombstone table migration", () => {
     }
   });
 
-  it("merges old rows into existing new tables by common columns", () => {
+  it.each(legacyTokens())("merges old %s rows into existing new tables by common columns", (token) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
-    const token = legacyToken();
     try {
       const seed = new Database(dbPath);
       seed.exec(`
-        CREATE TABLE jobctl_hidden_jobs (
+        CREATE TABLE jobctrl_hidden_jobs (
           job_url TEXT PRIMARY KEY,
           hidden_at TEXT NOT NULL,
           reason TEXT,
           unhidden_at TEXT
         );
-        INSERT INTO jobctl_hidden_jobs
+        INSERT INTO jobctrl_hidden_jobs
           (job_url, hidden_at, reason, unhidden_at)
         VALUES ('https://example.test/current', '2026-07-07T00:00:00Z', 'current', NULL);
         CREATE TABLE ${token}_hidden_jobs (
@@ -149,9 +147,9 @@ describe("legacy tombstone table migration", () => {
       `);
 
       const migrated = migrateLegacyJobTables(seed);
-      expect(migrated).toEqual(["jobctl_hidden_jobs"]);
+      expect(migrated).toEqual(["jobctrl_hidden_jobs"]);
       expect(tableExists(seed, `${token}_hidden_jobs`)).toBe(false);
-      expect(seed.prepare("SELECT COUNT(*) AS count FROM jobctl_hidden_jobs").get()).toMatchObject({ count: 2 });
+      expect(seed.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get()).toMatchObject({ count: 2 });
       seed.close();
     } finally {
       cleanup();
@@ -163,29 +161,65 @@ describe("legacy tombstone table migration", () => {
     try {
       const seed = new Database(dbPath);
       seed.exec(`
-        CREATE TABLE jobctl_deleted_jobs (
+        CREATE TABLE jobctrl_deleted_jobs (
           job_url TEXT PRIMARY KEY,
           deleted_at TEXT NOT NULL,
           reason TEXT
         );
-        INSERT INTO jobctl_deleted_jobs
+        INSERT INTO jobctrl_deleted_jobs
           (job_url, deleted_at, reason)
         VALUES ('https://example.test/deleted', '2026-07-07T00:00:00Z', 'test');
-        CREATE TABLE jobctl_hidden_jobs (
+        CREATE TABLE jobctrl_hidden_jobs (
           job_url TEXT PRIMARY KEY,
           hidden_at TEXT NOT NULL,
           reason TEXT
         );
-        INSERT INTO jobctl_hidden_jobs
+        INSERT INTO jobctrl_hidden_jobs
           (job_url, hidden_at, reason)
         VALUES ('https://example.test/hidden', '2026-07-07T00:00:00Z', 'test');
       `);
 
       expect(migrateLegacyJobTables(seed)).toEqual([]);
-      expect(seed.prepare("SELECT restored_at FROM jobctl_deleted_jobs").get()).toMatchObject({ restored_at: null });
-      expect(seed.prepare("SELECT unhidden_at FROM jobctl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
-      expect(tableColumns(seed, "jobctl_deleted_jobs")).toEqual(expect.arrayContaining(["restored_at"]));
-      expect(tableColumns(seed, "jobctl_hidden_jobs")).toEqual(expect.arrayContaining(["unhidden_at"]));
+      expect(seed.prepare("SELECT restored_at FROM jobctrl_deleted_jobs").get()).toMatchObject({ restored_at: null });
+      expect(seed.prepare("SELECT unhidden_at FROM jobctrl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
+      expect(tableColumns(seed, "jobctrl_deleted_jobs")).toEqual(expect.arrayContaining(["restored_at"]));
+      expect(tableColumns(seed, "jobctrl_hidden_jobs")).toEqual(expect.arrayContaining(["unhidden_at"]));
+      seed.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses duplicate lifecycle job URLs without dropping legacy tables", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    try {
+      const token = "job" + "ctl";
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE jobctrl_hidden_jobs (
+          job_url TEXT PRIMARY KEY,
+          hidden_at TEXT NOT NULL,
+          reason TEXT,
+          unhidden_at TEXT
+        );
+        INSERT INTO jobctrl_hidden_jobs
+          (job_url, hidden_at, reason, unhidden_at)
+        VALUES ('https://example.test/duplicate', '2026-07-07T00:00:00Z', 'current', NULL);
+        CREATE TABLE ${token}_hidden_jobs (
+          job_url TEXT PRIMARY KEY,
+          hidden_at TEXT NOT NULL,
+          reason TEXT
+        );
+        INSERT INTO ${token}_hidden_jobs
+          (job_url, hidden_at, reason)
+        VALUES ('https://example.test/duplicate', '2026-07-07T00:01:00Z', 'legacy');
+      `);
+
+      expect(() => migrateLegacyJobTables(seed)).toThrow(/duplicate job_url/);
+      expect(tableExists(seed, "jobctrl_hidden_jobs")).toBe(true);
+      expect(tableExists(seed, `${token}_hidden_jobs`)).toBe(true);
+      expect(seed.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get()).toMatchObject({ count: 1 });
+      expect(seed.prepare(`SELECT COUNT(*) AS count FROM ${token}_hidden_jobs`).get()).toMatchObject({ count: 1 });
       seed.close();
     } finally {
       cleanup();

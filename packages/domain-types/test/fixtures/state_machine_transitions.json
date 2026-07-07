@@ -73,7 +73,7 @@
         "errorCode": "TIMEOUT",
         "errorMessage": "stage timed out",
         "retryable": true,
-        "nextAction": "jobctl retry score"
+        "nextAction": "jobctrl retry score"
       },
       "expected": {
         "kind": "Failed",
@@ -82,7 +82,7 @@
         "errorCode": "TIMEOUT",
         "errorMessage": "stage timed out",
         "retryable": true,
-        "nextAction": "jobctl retry score"
+        "nextAction": "jobctrl retry score"
       }
     },
     {
@@ -107,12 +107,12 @@
         "retryable": true
       },
       "trigger": "Reset",
-      "inputs": { "resetAttempts": false, "nextAction": "jobctl retry tailor" },
+      "inputs": { "resetAttempts": false, "nextAction": "jobctrl retry tailor" },
       "expected": {
         "kind": "Pending",
         "attemptCount": 2,
         "maxAttempts": 5,
-        "nextAction": "jobctl retry tailor"
+        "nextAction": "jobctrl retry tailor"
       }
     },
     {

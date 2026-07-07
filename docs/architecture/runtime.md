@@ -1,6 +1,6 @@
 # Runtime Boundaries
 
-JobCtl runs as four long-lived local processes, plus a `jobctl rpc`
+JobCtrl runs as four long-lived local processes, plus a `jobctrl rpc`
 subprocess the TypeScript API spawns on demand. This page walks each runtime
 boundary — what it owns, what it must never do, and how the pieces talk.
 
@@ -10,12 +10,12 @@ or where a change belongs.
 | Process | What it is | Owns |
 | --- | --- | --- |
 | The web app | React/Vite single-page app (`apps/web`) | user interaction and view state |
-| The TypeScript API | Fastify server (`apps/api`), loopback-bound | typed read models and local product endpoints; spawns the `jobctl rpc` subprocess |
-| The Python worker | `jobctl worker`, a Temporal worker | executes workflows and activities (discovery, scoring, tailoring, apply, …) |
+| The TypeScript API | Fastify server (`apps/api`), loopback-bound | typed read models and local product endpoints; spawns the `jobctrl rpc` subprocess |
+| The Python worker | `jobctrl worker`, a Temporal worker | executes workflows and activities (discovery, scoring, tailoring, apply, …) |
 | Temporal dev server | the workflow engine (gRPC `:7233`, Web UI `:8233`) | durable workflow execution and history |
-| `jobctl rpc` subprocess | spawned by the TypeScript API on the first JSON-RPC call and reused | JSON-RPC dispatch for complex commands |
+| `jobctrl rpc` subprocess | spawned by the TypeScript API on the first JSON-RPC call and reused | JSON-RPC dispatch for complex commands |
 
-You start the first four; the API spawns and reuses the `jobctl rpc`
+You start the first four; the API spawns and reuses the `jobctrl rpc`
 subprocess itself.
 
 ## Frontend
@@ -29,8 +29,8 @@ The web app under `apps/web` owns user interaction:
 - filtering, sorting, pagination, and drawer state
 - UI action buttons
 
-The frontend uses `@jobctl/api-client` for API transport and
-`@jobctl/contracts` for shared schemas and DTOs. It should not know shell
+The frontend uses `@jobctrl/api-client` for API transport and
+`@jobctrl/contracts` for shared schemas and DTOs. It should not know shell
 command syntax.
 
 The frontend follows its own DDD + hexagonal target documented in the
@@ -56,7 +56,7 @@ cross-links to those pages; the Frontend section is the canonical detail.
 | Test runner | Vitest + React Testing Library + MSW for unit / hook / component | §10.2, §10.3 |
 | End-to-end | Playwright against a seeded local TypeScript API + SQLite fixture | §10.4 |
 | Component-driven dev | Storybook with `addon-msw` and `addon-a11y` (critical+serious axe violations fail CI) | §10.5, §10.7 |
-| Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm --filter @jobctl/web test-d` | §10.6 |
+| Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm --filter @jobctrl/web test-d` | §10.6 |
 
 ### Three Layers of State
 
@@ -108,7 +108,7 @@ to the ports in `shared/providers/PortsProvider.tsx`
 
 | Port | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|
-| `ApiClientPort` | `FetchApiClientAdapter` (wraps `@jobctl/api-client`) | Same adapter; baseUrl from env, `Authorization: Bearer <jwt>` injected by hosted `AuthInterceptor`. |
+| `ApiClientPort` | `FetchApiClientAdapter` (wraps `@jobctrl/api-client`) | Same adapter; baseUrl from env, `Authorization: Bearer <jwt>` injected by hosted `AuthInterceptor`. |
 | `EventStreamPort` | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` if SSE proves limiting. |
 | `StoragePort` | `LocalStorageAdapter` | `IndexedDbAdapter` when client-side cache exceeds 5 MB. |
 | `SessionPort` | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito). |
@@ -235,10 +235,10 @@ Current responsibilities:
 Simple state-transition writes (`resetJobStage`, `retryFailedJobs`,
 `markJobApplied`, `markJobSkipped`, `cancelJobAction`, `correctScore`,
 soft delete/restore, hide/unhide, permanent delete, and settings writes)
-execute inline in the TS process against shared `@jobctl/domain-types`
+execute inline in the TS process against shared `@jobctrl/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
 JSON-RPC to signal the Temporal workflow. Complex commands travel through
-`SubprocessJsonRpcAdapter` to the long-lived `jobctl rpc` subprocess. The
+`SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc` subprocess. The
 JSON-RPC surface is eleven methods: nine workflow-mode methods whose handlers
 return a workflow spec that the RPC server starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
@@ -289,7 +289,7 @@ Python owns automation execution:
 The worker package lives under `workers/automation`. Each bounded context owns
 its aggregate, repository (in `infrastructure/<context>/`), and ports (in
 `domain/ports/`). The CLI is the human-facing driving adapter; the JSON-RPC
-server (`jobctl rpc`) is the API-facing driving adapter.
+server (`jobctrl rpc`) is the API-facing driving adapter.
 
 ### Crawl Politeness Gateway (R10)
 
@@ -306,7 +306,7 @@ choke point in `infrastructure/network/`:
   pacing. A server `Retry-After` is honored but clamped at the sink, so a
   hostile header cannot freeze a pooled worker.
 - The UA is one honest identity resolved from `resolve_honest_user_agent()`
-  (built-in default `JobCtl/<version> (+repo)`, owner-overridable via env);
+  (built-in default `JobCtrl/<version> (+repo)`, owner-overridable via env);
   it never impersonates a browser on a controlled surface.
 - Robots-deny / rate-limit / budget-exhaustion are recorded as first-class
   **outcomes** in `operational_attempt_metrics` (`is_scrape_failure=0`,
@@ -323,20 +323,20 @@ The plan and phase-by-phase surface inventory live in
 ## Workflow Orchestration (Local Temporal)
 
 A local Temporal dev server (`temporal server start-dev --db-filename
-"$JOBCTL_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
-launcher defaults `JOBCTL_TEMPORAL_DB` to `.dev/temporal/temporal.db` so
+"$JOBCTRL_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
+launcher defaults `JOBCTRL_TEMPORAL_DB` to `.dev/temporal/temporal.db` so
 workflow execution history persists across local restarts. The infrastructure
-split lives under `workers/automation/src/jobctl/infrastructure/temporal/`:
+split lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
 
 - `client.py` — `get_temporal_client()` connects to `TEMPORAL_ADDRESS`
   (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`).
 - `worker.py` — `build_worker(client, *, workflows, activities)` returns a
-  `temporalio.worker.Worker` bound to `JOBCTL_TASK_QUEUE`. The worker
-  uses a `SandboxedWorkflowRunner` with `with_passthrough_modules("jobctl")`
+  `temporalio.worker.Worker` bound to `JOBCTRL_TASK_QUEUE`. The worker
+  uses a `SandboxedWorkflowRunner` with `with_passthrough_modules("jobctrl")`
   so workflow code can construct activity-input dataclasses at the workflow
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
   frozen dataclasses imported through `imports_passed_through()`). Activity
-  execution is bounded by `JOBCTL_MAX_CONCURRENT_ACTIVITIES` (default `4`)
+  execution is bounded by `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` (default `4`)
   and a worker-owned `ThreadPoolExecutor(max_workers = concurrency + 2)`, so
   blocking stage work no longer spills into the process default executor. The
   worker heartbeat records both values for `GET /v1/health` and Settings-page
@@ -346,7 +346,7 @@ split lives under `workers/automation/src/jobctl/infrastructure/temporal/`:
   `threading.Event`, waits up to the activity's cancel deadline for the worker
   thread to exit, and records an `abandoned_thread` operational metric if the
   thread ignores cancellation.
-- `task_queues.py` — single `JOBCTL_TASK_QUEUE = "jobctl-default"`.
+- `task_queues.py` — single `JOBCTRL_TASK_QUEUE = "jobctrl-default"`.
 - `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
   The CLI imports both lists and passes them to `build_worker`; new
   workflows / activities are added by appending here.
@@ -358,8 +358,8 @@ family, drains detail enrichment in one activity, then fans out per-job
 `USE_EXISTING`) — deliberately not children, so finishing discovery cannot
 terminate in-flight preparation. Other internal preparation stages (`enrich`,
 `score`, `tailor`, `cover`) still ship as Temporal **Activities** under the
-owning bounded context's package — e.g. `jobctl/scoring/activities.py`,
-`jobctl/materials/activities.py`. Activities are thin adapters: they defer
+owning bounded context's package — e.g. `jobctrl/scoring/activities.py`,
+`jobctrl/materials/activities.py`. Activities are thin adapters: they defer
 heavy imports inside the activity body and forward to the relevant domain
 function. The product-facing stage order is narrower: `discover -> apply`.
 
@@ -405,13 +405,13 @@ remain per-item facts when the owning context already records them that way.
 
 Production workflows live alongside the activities:
 
-- `JobPipelineWorkflow` (`jobctl/pipeline/workflow.py`) — drives the
+- `JobPipelineWorkflow` (`jobctrl/pipeline/workflow.py`) — drives the
   configured stage list serially in **batch mode** against eligible jobs in
   the local DB. Stage eligibility is owned by the underlying runner via
   `state.set_stage_state`, not by the workflow. Passing `"discover"` delegates
   to child `DiscoverWorkflow`; passing `"apply"` delegates to child
   `ApplyWorkflow`.
-- `DiscoverWorkflow` (`jobctl/discovery/workflow.py`) — deterministic
+- `DiscoverWorkflow` (`jobctrl/discovery/workflow.py`) — deterministic
   tenant workflow with id `discover-{tenantId}`. It plans JobSpy, canonical ATS,
   Workday, and Smart Extract source-family activities, preserves the legacy
   source ordering for limit/budget semantics, emits real activity heartbeats
@@ -419,34 +419,34 @@ Production workflows live alongside the activities:
   preparation root workflows in batches of 25. Source-family failures are attributed
   to concrete source ids for source-quality quarantine and fail the workflow
   after the remaining planned source families complete.
-- `ApplyWorkflow` (`jobctl/apply/workflow.py`) — single-activity,
+- `ApplyWorkflow` (`jobctrl/apply/workflow.py`) — single-activity,
   **per-job** workflow with live retry capped at one attempt and dry-run retry
   capped at two attempts. `apply_activity` re-raises transient failures so the
   retry policy fires; `LookupError` is wrapped in a non-retryable
   `ApplicationError` so operator errors fail fast. Continuous apply runs are
   bounded to batches of 25 and continue-as-new rather than growing one workflow
   forever.
-- `JobPreparationWorkflow` (`jobctl/preparation/workflow.py`) — durable
+- `JobPreparationWorkflow` (`jobctrl/preparation/workflow.py`) — durable
   **per-job** workflow that runs the requested subset of `score`, `tailor`,
   `cover`, and `pdf` in canonical order. Each step is an idempotent activity;
   already-complete steps return `already_done`, and Temporal resumes at the
   failed step after a worker interruption.
-- `ProfileImportWorkflow` (`jobctl/profile/workflow.py`) — starts profile
+- `ProfileImportWorkflow` (`jobctrl/profile/workflow.py`) — starts profile
   PDF import through the same workflow visibility/finalize path as other heavy
   work, then calls the existing profile-import activity.
 - `CompensationRefreshWorkflow`
-  (`jobctl/infrastructure/compensation/workflow.py`) — wraps the extracted
+  (`jobctrl/infrastructure/compensation/workflow.py`) — wraps the extracted
   compensation refresh core so posted facts and market estimates no longer run
   inside the JSON-RPC request thread.
 
 One non-pipeline workflow is also registered: `DurabilityProbeWorkflow`
-(`jobctl/infrastructure/temporal/durability_probe.py`) is a diagnostic
+(`jobctrl/infrastructure/temporal/durability_probe.py`) is a diagnostic
 self-test whose only in-flight state is a durable `workflow.sleep` timer — no
 network, no LLM, no browser, and never any apply. It is inert until explicitly
 started and exists so an operator can prove durable-execution recovery (TR-008 /
 CL-050) hermetically; `scripts/reliability-demo.sh` drives it.
 
-The pipeline package (`jobctl/pipeline/`) is split into `runner.py`
+The pipeline package (`jobctrl/pipeline/`) is split into `runner.py`
 (stage-core functions and `_run_stage_observed`) and `workflow.py` (the
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
 not re-exported; every CLI, API, and local-action entry point starts a workflow.
@@ -457,9 +457,9 @@ points, `dailyBudgetUsd` defaults to `25`, and `0` means unlimited. When the
 current day is at or above the configured budget, the preflight raises
 non-retryable `budget_exceeded`; finalize still records the workflow outcome.
 
-`jobctl worker` is the long-lived process that runs the worker loop. At
+`jobctrl worker` is the long-lived process that runs the worker loop. At
 startup it reconciles the local discovery Temporal Schedule:
-`scheduling_enabled=false` deletes any existing `jobctl-discovery-local`
+`scheduling_enabled=false` deletes any existing `jobctrl-discovery-local`
 schedule, while `scheduling_enabled=true` creates or updates a cron schedule
 with `ScheduleOverlapPolicy.SKIP` that starts `DiscoverWorkflow`. The default is
 off, so fresh installs do not run background discovery.

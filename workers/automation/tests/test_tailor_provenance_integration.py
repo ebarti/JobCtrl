@@ -19,15 +19,15 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
     RenderFormat,
 )
-from jobctl.domain.materials.aggregate import MaterialsSet
-from jobctl.domain.materials.analysis import (
+from jobctrl.domain.materials.aggregate import MaterialsSet
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -35,14 +35,14 @@ from jobctl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctl.domain.materials.analyze_use_case import AnalyzeJobOutcome
-from jobctl.domain.materials.provenance import BulletProvenanceSet
-from jobctl.domain.materials.services import ContentValidator, ResumeAssembler
-from jobctl.domain.materials.use_cases import TailorResumeUseCase
-from jobctl.domain.profile.aggregate import Profile
-from jobctl.domain.profile.snapshot import ProfileSnapshot
-from jobctl.domain.ports.llm import LlmMessage
-from jobctl.domain.scoring import (
+from jobctrl.domain.materials.analyze_use_case import AnalyzeJobOutcome
+from jobctrl.domain.materials.provenance import BulletProvenanceSet
+from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
+from jobctrl.domain.materials.use_cases import TailorResumeUseCase
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -51,7 +51,7 @@ from jobctl.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/job/provenance"
 

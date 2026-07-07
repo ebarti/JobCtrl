@@ -1,4 +1,4 @@
-import type { ContactDetailResponse } from "@jobctl/contracts";
+import type { ContactDetailResponse } from "@jobctrl/contracts";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

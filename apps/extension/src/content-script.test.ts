@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ExtensionAutofillProfileField } from "@jobctl/contracts";
+import type { ExtensionAutofillProfileField } from "@jobctrl/contracts";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 let getBoundingClientRectSpy: ReturnType<typeof vi.spyOn>;
@@ -50,7 +50,7 @@ describe("deterministic autofill content script", () => {
       suggestions: 1,
       missing: 0,
     });
-    expect(document.getElementById("jobctl-autofill-root")).not.toBeNull();
+    expect(document.getElementById("jobctrl-autofill-root")).not.toBeNull();
   });
 
   it("rejects unsupported ATS pages before suggesting fields", async () => {

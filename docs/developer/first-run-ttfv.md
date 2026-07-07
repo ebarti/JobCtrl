@@ -45,7 +45,7 @@ run starts from a clean environment:
 - no `node_modules`
 - no `workers/automation/.venv`
 - no pnpm, uv, pip, or Playwright browser cache intentionally reused
-- no existing `JOBCTL_DIR` for the run
+- no existing `JOBCTRL_DIR` for the run
 - real vendor auth present or completed by the owner during setup
 
 Record the auth scenario in the run notes outside the committed repository:
@@ -61,32 +61,32 @@ from the first owner baseline.
 
 Choose a real discovery target that the owner is willing to score and tailor.
 Do not commit the target role, generated job identifiers, or the generated
-measurement records. During `jobctl init`, configure exactly one real target
+measurement records. During `jobctrl init`, configure exactly one real target
 role, one real target location, and the source set the owner wants measured. Do
 not seed jobs, fixtures, or sample data. The wrapper captures the pre-work job
 baseline across all job visibility states, then starts the real path with
-`jobctl run discover score tailor --limit 1 --workers 1`; it must not enter
+`jobctrl run discover score tailor --limit 1 --workers 1`; it must not enter
 the live apply path during the TTFV baseline.
 
 ```bash
-export JOBCTL_TTFV_RUN=run-1
+export JOBCTRL_TTFV_RUN=run-1
 
-git clone https://github.com/ebarti/JobCtl.git "JobCtl-ttfv-${JOBCTL_TTFV_RUN}"
-cd "JobCtl-ttfv-${JOBCTL_TTFV_RUN}"
+git clone https://github.com/ebarti/JobCtrl.git "JobCtrl-ttfv-${JOBCTRL_TTFV_RUN}"
+cd "JobCtrl-ttfv-${JOBCTRL_TTFV_RUN}"
 git checkout main
 
 node scripts/ttfv-real.mjs run \
-  --output "$HOME/.jobctl/measurements/ttfv-real-${JOBCTL_TTFV_RUN}.json"
+  --output "$HOME/.jobctrl/measurements/ttfv-real-${JOBCTRL_TTFV_RUN}.json"
 ```
 
 Repeat from a clean environment for `run-2` and `run-3`, then summarize:
 
 ```bash
 node scripts/ttfv-real.mjs summarize \
-  "$HOME/.jobctl/measurements/ttfv-real-run-1.json" \
-  "$HOME/.jobctl/measurements/ttfv-real-run-2.json" \
-  "$HOME/.jobctl/measurements/ttfv-real-run-3.json" \
-  --output "$HOME/.jobctl/measurements/ttfv-real-summary.json"
+  "$HOME/.jobctrl/measurements/ttfv-real-run-1.json" \
+  "$HOME/.jobctrl/measurements/ttfv-real-run-2.json" \
+  "$HOME/.jobctrl/measurements/ttfv-real-run-3.json" \
+  --output "$HOME/.jobctrl/measurements/ttfv-real-summary.json"
 ```
 
 The summary command passes only when all inputs are gateable full-run records:
@@ -103,7 +103,7 @@ without starting install, setup, or a new job:
 
 ```bash
 node scripts/ttfv-real.mjs probe \
-  --output "$HOME/.jobctl/measurements/ttfv-probe.json"
+  --output "$HOME/.jobctrl/measurements/ttfv-probe.json"
 ```
 
 Probe-only records are useful for validating selectors and API expectations.

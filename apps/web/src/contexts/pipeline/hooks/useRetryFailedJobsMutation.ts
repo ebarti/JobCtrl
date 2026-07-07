@@ -1,4 +1,4 @@
-import type { BulkRetryFailedRequest, BulkRetryFailedResponse } from "@jobctl/contracts";
+import type { BulkRetryFailedRequest, BulkRetryFailedResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-from jobctl.domain.materials.analysis import JobAnalysisDraft
-from jobctl.infrastructure.analysis.antigravity_analysis_adapter import (
+from jobctrl.domain.materials.analysis import JobAnalysisDraft
+from jobctrl.infrastructure.analysis.antigravity_analysis_adapter import (
     ANTIGRAVITY_ANALYSIS_MODEL,
     AntigravityAnalysisAdapter,
 )
@@ -271,7 +271,7 @@ async def test_draft_opens_generation_span_with_model_and_tokens(
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "llm.gemini-3.5-flash"
-    assert span.instrumentation_scope.name == "jobctl.analysis.antigravity"
+    assert span.instrumentation_scope.name == "jobctrl.analysis.antigravity"
     attrs = dict(span.attributes or {})
     assert attrs["langfuse.observation.type"] == "generation"
     assert attrs["langfuse.observation.model.name"] == "gemini-3.5-flash"

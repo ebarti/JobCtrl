@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jobctl import config
+from jobctrl import config
 
 
 def test_gmail_mcp_auth_status_reports_authenticated_credentials(
@@ -67,7 +67,7 @@ def test_gmail_mcp_auth_status_points_to_auth_command_when_keys_exist(
     ok, note = config.gmail_mcp_auth_status()
 
     assert ok is False
-    assert "jobctl gmail-auth" in note
+    assert "jobctrl gmail-auth" in note
 
 
 def test_gmail_mcp_auth_status_reports_web_redirect_mismatch(
@@ -102,7 +102,7 @@ def test_gmail_mcp_auth_status_reports_missing_oauth_keys(
     mcp_dir = tmp_path / "gmail"
     monkeypatch.delenv("GMAIL_MCP_CREDENTIALS_PATH", raising=False)
     monkeypatch.delenv("GMAIL_MCP_OAUTH_KEYS_PATH", raising=False)
-    monkeypatch.setenv("JOBCTL_GMAIL_DIR", str(mcp_dir))
+    monkeypatch.setenv("JOBCTRL_GMAIL_DIR", str(mcp_dir))
     monkeypatch.setattr(config, "load_env", lambda: None)
 
     ok, note = config.gmail_mcp_auth_status()
