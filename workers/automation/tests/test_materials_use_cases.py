@@ -42,6 +42,8 @@ from jobctl.domain.materials.use_cases import (
     TAILORING_JUDGE_RESPONSE_SCHEMA,
     TailoringLlmPolicy,
     TailorResumeUseCase,
+    _bullet_limit_overflow_metadata,
+    _claim_mappings_from_payload,
 )
 from jobctl.domain.ports.events import EventPublisher
 from jobctl.domain.ports.llm import LlmMessage, LlmPort
@@ -695,6 +697,29 @@ def test_tailoring_structured_output_schemas_are_openai_strict_compatible(
     _assert_openai_strict_schema(schema)
 
 
+def test_tailored_resume_schema_constrains_non_requirement_reason_enum() -> None:
+    mapping_schema = TAILORED_RESUME_RESPONSE_SCHEMA["properties"]["generated_claim_mappings"][
+        "items"
+    ]["properties"]["non_requirement_reason"]
+
+    assert mapping_schema["enum"] == ["", "pinned", "positioning", "structure"]
+
+
+def test_claim_mapping_parser_clears_redundant_non_requirement_reason() -> None:
+    payload = _good_json_payload_dict()
+    payload["generated_claim_mappings"][0]["coverage_edge_ids"] = ["edge_req_latency"]
+    payload["generated_claim_mappings"][0]["requirement_ids"] = ["req_latency"]
+    payload["generated_claim_mappings"][0]["evidence_ids"] = ["ev_latency"]
+    payload["generated_claim_mappings"][0]["non_requirement_reason"] = "positioning"
+
+    mappings, errors = _claim_mappings_from_payload(payload)
+
+    assert errors == ()
+    assert mappings[0].coverage_edge_ids == ("edge_req_latency",)
+    assert mappings[0].non_requirement_reason == ""
+    assert payload["generated_claim_mappings"][0]["non_requirement_reason"] == ""
+
+
 def test_tailoring_policy_defaults_to_pipeline_gemini_flash() -> None:
     policy = TailoringLlmPolicy()
 
@@ -848,6 +873,74 @@ def test_tailor_use_case_rejects_unbound_generated_claim_mapping(
     assert outcome.report["candidate_summaries"][0]["validation"]["passed"] is False
     errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
     assert any("does not exist in the generated payload" in error for error in errors)
+
+
+def test_tailor_use_case_accepts_index_based_generated_claim_location(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    payload = json.loads(_good_json_payload())
+    payload["generated_claim_mappings"][0]["location"] = "experience_updates[0].bullets[0]"
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert (
+        outcome.report["attempt_history"][0]["candidates"][0]["claim_mapping_validation"][
+            "passed"
+        ]
+        is True
+    )
+
+
+def test_bullet_limit_overflow_metadata_matches_index_based_claim_locations(
+    snapshot: ProfileSnapshot,
+) -> None:
+    payload = _good_json_payload_dict()
+    payload["experience_updates"][0]["bullets"] = [
+        "Pinned bullet.",
+        "Covered requirement one.",
+        "Covered requirement two.",
+        "Covered requirement three.",
+        "Covered requirement four.",
+    ]
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": f"claim-{index}",
+            "location": f"experience_updates[0].bullets[{index}]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": [f"edge-{index}"] if index else [],
+            "requirement_ids": [f"req-{index}"] if index else [],
+            "evidence_ids": [f"ev-{index}"] if index else [],
+            "non_requirement_reason": "pinned" if index == 0 else "",
+            "review_required": False,
+        }
+        for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
+    ]
+
+    metadata = _bullet_limit_overflow_metadata(
+        payload=payload,
+        profile_snapshot=snapshot,
+    )
+
+    assert metadata == (
+        {
+            "experience_entry_id": "acme_swe",
+            "max_bullets": 4,
+            "actual_bullets": 5,
+            "reason": "requirement_coverage",
+            "evidence_ids": ["ev-1", "ev-2", "ev-3", "ev-4"],
+        },
+    )
 
 
 def test_tailor_use_case_labels_stock_phrases_without_retrying(

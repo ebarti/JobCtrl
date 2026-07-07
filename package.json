@@ -44,11 +44,15 @@
     "docs:build": "vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",
     "docs:preview": "vitepress preview docs",
+    "ttfv:real": "node scripts/ttfv-real.mjs run",
+    "ttfv:probe": "node scripts/ttfv-real.mjs probe",
+    "ttfv:summary": "node scripts/ttfv-real.mjs summarize",
+    "scripts:test": "node --test scripts/*.test.mjs",
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
     "check": "corepack pnpm --filter @jobctl/contracts check && corepack pnpm --filter @jobctl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm python:lint",
-    "test": "corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test"
+    "test": "corepack pnpm scripts:test && corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test"
   },
   "repository": {
     "type": "git",

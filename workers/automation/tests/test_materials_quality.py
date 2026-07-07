@@ -297,6 +297,88 @@ def test_build_tailoring_plan_maps_legacy_resume_bullets_to_evidence_ids() -> No
     assert "acme_swe_bullet_1" in plan.required_evidence_ids
 
 
+def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[
+            Requirement(
+                id="req_degree",
+                text="Bachelor's degree in Computer Science.",
+                tier="nice_to_have",
+                weight=0.3,
+                evidence_span="Bachelor's degree in Computer Science.",
+            )
+        ],
+        keywords=[],
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/senior-backend"),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash("degree"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+    report = RequirementFitReport(
+        job_id="https://example.com/senior-backend",
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(8),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_degree",
+                requirement_text="Bachelor's degree in Computer Science.",
+                tier="nice_to_have",
+                weight=0.3,
+                job_evidence_span="Bachelor's degree in Computer Science.",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("education:edu_state",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=0.375,
+                    awarded_points=0.375,
+                    weighted_impact=0.375,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.3,
+                    allowed_evidence_ids=("education:edu_state",),
+                ),
+            ),
+        ),
+    )
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=report,
+    )
+
+    result = evaluate_tailoring_quality(
+        _payload(bullet="Reduced API latency 35% by replacing synchronous calls."),
+        _resume_text(bullet="Reduced API latency 35% by replacing synchronous calls."),
+        plan,
+    )
+
+    assert "education:edu_state" in plan.required_evidence_ids
+    assert "education:edu_state" in result.represented_evidence_ids
+    assert "education:edu_state" not in result.missing_evidence_ids
+    assert not any("Missing required evidence support" in error for error in result.errors)
+
+
 def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -> None:
     profile = _profile()
     job = _senior_job()

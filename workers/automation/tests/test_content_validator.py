@@ -142,6 +142,35 @@ def test_validate_json_fields_allows_mandatory_requirement_coverage_overflow() -
     assert result.passed is True
 
 
+def test_validate_json_fields_allows_index_based_mandatory_overflow_locations() -> None:
+    payload = _good_payload()
+    payload["experience_updates"][0]["bullets"] = [
+        "Pinned bullet.",
+        "Covered requirement one.",
+        "Covered requirement two.",
+        "Covered requirement three.",
+        "Covered requirement four.",
+    ]
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": f"claim-{index}",
+            "location": f"experience_updates[0].bullets[{index}]",
+            "text": bullet,
+            "claim_label": "evidence_reframed",
+            "coverage_edge_ids": [f"edge-{index}"] if index else [],
+            "requirement_ids": [f"req-{index}"] if index else [],
+            "evidence_ids": [f"ev-{index}"] if index else [],
+            "non_requirement_reason": "pinned" if index == 0 else "",
+            "review_required": False,
+        }
+        for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
+    ]
+
+    result = _VALIDATOR.validate_json_fields(payload, _profile())
+
+    assert result.passed is True
+
+
 def test_resume_assembler_preserves_mandatory_requirement_coverage_overflow() -> None:
     payload = _good_payload()
     payload["experience_updates"][0]["bullets"] = [

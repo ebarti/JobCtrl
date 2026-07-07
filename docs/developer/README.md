@@ -94,6 +94,7 @@ pnpm api:check
 pnpm api:test
 pnpm web:check
 pnpm web:test
+pnpm scripts:test
 uv --project workers/automation run --extra dev pytest -q
 ```
 

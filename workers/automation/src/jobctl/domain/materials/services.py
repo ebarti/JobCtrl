@@ -215,7 +215,7 @@ def _validate_master_json_fields(
 
     all_text_parts: list[str] = [executive_profile]
     seen_experience_ids: set[str] = set()
-    for update in experience_updates:
+    for update_index, update in enumerate(experience_updates):
         if not isinstance(update, dict):
             errors.append("Experience update must be an object")
             continue
@@ -234,6 +234,7 @@ def _validate_master_json_fields(
         if len(bullets) > max_bullets and not _bullet_overflow_is_mandatory(
             data,
             entry_id=entry_id,
+            update_index=update_index,
             bullet_count=len(bullets),
         ):
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
@@ -319,30 +320,48 @@ def _validate_master_json_fields(
     return ValidationResult.success(warnings=tuple(warnings))
 
 
-def _bullet_overflow_is_mandatory(data: dict, *, entry_id: str, bullet_count: int) -> bool:
+def _bullet_overflow_is_mandatory(
+    data: dict,
+    *,
+    entry_id: str,
+    update_index: int,
+    bullet_count: int,
+) -> bool:
     mappings = data.get("generated_claim_mappings")
     if not isinstance(mappings, list):
         return False
     mandatory_indexes: set[int] = set()
-    prefix = f"experience.{entry_id}.bullets["
+    prefixes = (
+        f"experience.{entry_id}.bullets[",
+        f"experience_updates.{entry_id}.bullets[",
+        f"experience_updates[{update_index}].bullets[",
+    )
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
         location = str(mapping.get("location") or "")
-        if not location.startswith(prefix):
-            continue
-        try:
-            index = int(location.removeprefix(prefix).split("]", 1)[0])
-        except (TypeError, ValueError):
+        index = _claim_bullet_index(location, prefixes)
+        if index is None:
             continue
         coverage_edges = mapping.get("coverage_edge_ids")
         non_requirement_reason = str(mapping.get("non_requirement_reason") or "")
         if (
-            isinstance(coverage_edges, list)
+            isinstance(coverage_edges, (list, tuple))
             and any(str(edge).strip() for edge in coverage_edges)
         ) or non_requirement_reason == "pinned":
             mandatory_indexes.add(index)
     return len(mandatory_indexes) >= bullet_count
+
+
+def _claim_bullet_index(location: str, prefixes: tuple[str, ...]) -> int | None:
+    for prefix in prefixes:
+        if not location.startswith(prefix):
+            continue
+        try:
+            return int(location.removeprefix(prefix).split("]", 1)[0])
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------

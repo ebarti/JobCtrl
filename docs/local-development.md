@@ -126,6 +126,7 @@ pnpm api:check
 pnpm api:test
 pnpm web:check
 pnpm web:build
+pnpm scripts:test
 pnpm qa:test
 pnpm extension:check
 pnpm extension:test
@@ -135,6 +136,30 @@ pnpm extension:e2e
 
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 [Documentation Screenshots](#documentation-screenshots).
+
+## First-Run TTFV Measurement
+
+Real-path first-run time-to-value measurement is owner-run only because it uses
+real vendor auth, real discovery from the owner's target search settings, real
+job output, and real LLM spend. The wrapper lives at `scripts/ttfv-real.mjs`
+and is exposed through:
+
+```bash
+pnpm ttfv:real
+pnpm ttfv:probe
+pnpm ttfv:summary -- "$HOME/.jobctl/measurements/ttfv-real-run-"*.json
+```
+
+Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
+dependencies are installed; the wrapper records T0 immediately before it starts
+`corepack pnpm install:interactive`, captures a pre-work `/v1/jobs` baseline,
+across all job visibility states, and starts the real path with
+`jobctl run discover score tailor --limit 1 --workers 1`. The summary gate
+accepts only full clean-run records with all-state baseline absence,
+`discoveredAt >= T0`, hashed real discovery-source proof, plus same-job
+API/UI/PDF proof; probe-only, seeded, and timing-only records are rejected. See
+[`developer/first-run-ttfv.md`](developer/first-run-ttfv.md) for the clean-run
+protocol, stop conditions, record privacy rules, and three-run summary command.
 
 ## Frontend
 
