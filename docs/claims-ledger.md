@@ -218,6 +218,13 @@ source and a resolving pointer.
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-080 | The Profile is the single source of truth that scoring and tailoring build on; it is created or imported locally without any external account. | README (Normal Flow); Tour (Set Up Your Profile) | Current | repo owner | [scoring](architecture/scoring.md); [tailoring](architecture/tailoring.md) | 2026-07-06 |
 
+### Install & Distribution
+
+| Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
+| --- | --- | --- | --- | --- | --- | --- |
+| CL-081 | A one-line bootstrap script clones (or fast-forwards) a user-owned checkout and hands off to the guided interactive installer, which asks before any system-level (Homebrew) install and reports what it skipped. | README (Get Started); Getting Started (Install Dependencies) | Current | repo owner | `scripts/get`; `scripts/install` (confirm prompts, summary) | 2026-07-07 |
+| CL-082 | A Homebrew formula installs the toolchain dependencies (git, node, uv, temporal, poppler) plus a global `jobctrl` launcher that bootstraps and then proxies CLI commands into the user-owned checkout; the formula is staged in the existing `ebarti/homebrew-tap` (owner pushes at release), and the in-repo copy is installable today via `brew install --formula … --HEAD`. | README (Get Started); Getting Started (Install Dependencies) | Current | repo owner | `packaging/homebrew/Formula/jobctrl.rb`; `scripts/jobctrl-launcher`; [publish checklist §9.5](publish-checklist.md) | 2026-07-07 |
+
 ## Maintenance cadence and re-review
 
 Per plan §5 and §8.3, re-run the claim review and refresh each row's

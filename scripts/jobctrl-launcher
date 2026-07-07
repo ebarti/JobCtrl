@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Global `jobctrl` launcher installed by the Homebrew formula.
+# Resolves the JobCtrl checkout and proxies commands into it, so
+# `jobctrl doctor` / `jobctrl dev` work from anywhere.
+
+set -euo pipefail
+
+fail() {
+  printf 'jobctrl: %s\n' "$1" >&2
+  exit 1
+}
+
+resolve_repo() {
+  if [[ -n "${JOBCTRL_HOME:-}" ]]; then
+    printf '%s' "$JOBCTRL_HOME"
+    return
+  fi
+  # Running from inside a checkout (scripts/jobctrl-launcher)? Use that repo.
+  local self_dir
+  self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$self_dir/install" && -f "$self_dir/../package.json" ]]; then
+    printf '%s' "$(cd "$self_dir/.." && pwd)"
+    return
+  fi
+  printf '%s' "$HOME/JobCtrl"
+}
+
+bootstrap() {
+  local libexec_get
+  libexec_get="$(cd "$(dirname "${BASH_SOURCE[0]}")/../libexec" 2>/dev/null && pwd || true)"
+  if [[ -n "$libexec_get" && -x "$libexec_get/get" ]]; then
+    exec "$libexec_get/get" "$@"
+  fi
+  if [[ -x "$REPO/scripts/get" ]]; then
+    exec "$REPO/scripts/get" "$@"
+  fi
+  fail "bootstrap script not found; run: curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash"
+}
+
+REPO="$(resolve_repo)"
+CMD="${1:-}"
+
+case "$CMD" in
+  bootstrap|install)
+    shift
+    bootstrap "$@"
+    ;;
+  update)
+    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    shift
+    git -C "$REPO" pull --ff-only
+    exec "$REPO/scripts/install" --yes --skip-doctor "$@"
+    ;;
+  dev)
+    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    shift
+    cd "$REPO"
+    exec corepack pnpm dev "$@"
+    ;;
+  ""|-h|--help)
+    cat <<EOF
+JobCtrl launcher (checkout: $REPO)
+
+  jobctrl bootstrap        Clone + guided install (first run)
+  jobctrl update           Fast-forward the checkout and re-sync dependencies
+  jobctrl dev              Start the full local stack (Ctrl-C to stop)
+  jobctrl <command>        Any JobCtrl CLI command (doctor, init, run, ...)
+
+Set JOBCTRL_HOME to use a checkout other than ~/JobCtrl.
+EOF
+    [[ -d "$REPO/.git" ]] || printf '\nNo checkout found yet - start with: jobctrl bootstrap\n'
+    ;;
+  *)
+    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    exec uv --project "$REPO/workers/automation" run jobctrl "$@"
+    ;;
+esac

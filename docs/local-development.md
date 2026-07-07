@@ -25,6 +25,15 @@ enabled analysis legs, and finish with `jobctrl doctor`.
 `pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
 `--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
 
+`scripts/get` is the curl-able wrapper around the same installer: it clones
+(or fast-forwards) a checkout at `~/JobCtrl` (`JOBCTRL_HOME` / `--dir`
+override) and then executes `scripts/install` there, reattaching `/dev/tty`
+when run through a pipe. `scripts/jobctrl-launcher` is the global `jobctrl`
+shim installed by the Homebrew formula
+(`packaging/homebrew/Formula/jobctrl.rb`); it resolves the checkout and
+proxies `jobctrl <command>`, `jobctrl dev`, `jobctrl bootstrap`, and
+`jobctrl update`.
+
 For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
 
