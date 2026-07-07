@@ -16,12 +16,12 @@ const DEFAULT_WORST_MULTIPLIER = 1.5;
 const DEFAULT_TIMEOUT_MS = DEFAULT_TTFV_2_THRESHOLD_MS * DEFAULT_WORST_MULTIPLIER;
 const DEFAULT_POLL_MS = 5_000;
 const DEFAULT_INSTALL_COMMAND = "corepack pnpm install:interactive";
-const DEFAULT_INIT_COMMAND = "uv --project workers/automation run jobhunter init";
+const DEFAULT_INIT_COMMAND = "uv --project workers/automation run jobctl init";
 const DEFAULT_STACK_COMMAND = "corepack pnpm dev";
 const DEFAULT_DISCOVERY_LIMIT = 1;
 const DEFAULT_WORKERS = 1;
 const DEFAULT_WORK_COMMAND_LABEL =
-  "uv --project workers/automation run jobhunter run discover score tailor --limit 1 --workers 1";
+  "uv --project workers/automation run jobctl run discover score tailor --limit 1 --workers 1";
 const ALL_JOB_VISIBILITY_FILTER = "all";
 
 if (isMainModule()) {
@@ -258,7 +258,7 @@ export function summarizeMeasurementRecords(records, options = {}) {
   const ttfv2Durations = accepted.map((record) => record.probes?.ttfv2?.durationMs).filter(Number.isFinite);
   const summary = {
     schemaVersion: SCHEMA_VERSION,
-    kind: "jobhunter.realPathTtfvMeasurementSummary",
+    kind: "jobctl.realPathTtfvMeasurementSummary",
     generatedAt: nowIso(),
     inputRecords: records.length,
     acceptedRecords: accepted.length,
@@ -317,7 +317,7 @@ export function gateableRecordRejectionReasons(record) {
   const reasons = [];
   if (!record || typeof record !== "object") return ["record is not an object"];
   if (record.schemaVersion !== SCHEMA_VERSION) reasons.push("schema version mismatch");
-  if (record.kind !== "jobhunter.realPathTtfvMeasurement") reasons.push("record kind mismatch");
+  if (record.kind !== "jobctl.realPathTtfvMeasurement") reasons.push("record kind mismatch");
   if (record.mode !== "run") reasons.push("record is not a run-mode measurement");
   if (record.status !== "passed") reasons.push("record status is not passed");
   if (record.gateable !== true) reasons.push(record.gateableReason || "record is not gateable");
@@ -835,7 +835,7 @@ function resolveWorkCommand(options) {
   const workers = numberOption(options.workers, DEFAULT_WORKERS);
   if (discoveryLimit !== DEFAULT_DISCOVERY_LIMIT || workers !== DEFAULT_WORKERS) {
     return {
-      command: `uv --project workers/automation run jobhunter run discover score tailor --limit ${shellQuote(String(discoveryLimit))} --workers ${shellQuote(String(workers))}`,
+      command: `uv --project workers/automation run jobctl run discover score tailor --limit ${shellQuote(String(discoveryLimit))} --workers ${shellQuote(String(workers))}`,
       recordCommand: "custom discovery-inclusive real job command (not recorded)",
       expectedJobKey: stringOption(options.expectedJobKey, ""),
       gateable: false,
@@ -877,7 +877,7 @@ function applyProbeMetadata(record, options) {
 function baseRecord(mode, options, urls) {
   return {
     schemaVersion: SCHEMA_VERSION,
-    kind: "jobhunter.realPathTtfvMeasurement",
+    kind: "jobctl.realPathTtfvMeasurement",
     mode,
     generatedAt: null,
     gateable: false,
@@ -1049,7 +1049,7 @@ function nowIso() {
 
 function defaultOutputPath(prefix) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return path.join(os.homedir(), ".jobhunter", "measurements", `${prefix}-${stamp}.json`);
+  return path.join(os.homedir(), ".jobctl", "measurements", `${prefix}-${stamp}.json`);
 }
 
 function writeJson(file, value) {

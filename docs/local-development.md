@@ -147,14 +147,14 @@ and is exposed through:
 ```bash
 pnpm ttfv:real
 pnpm ttfv:probe
-pnpm ttfv:summary -- "$HOME/.jobhunter/measurements/ttfv-real-run-"*.json
+pnpm ttfv:summary -- "$HOME/.jobctl/measurements/ttfv-real-run-"*.json
 ```
 
 Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
 dependencies are installed; the wrapper records T0 immediately before it starts
 `corepack pnpm install:interactive`, captures a pre-work `/v1/jobs` baseline,
 across all job visibility states, and starts the real path with
-`jobhunter run discover score tailor --limit 1 --workers 1`. The summary gate
+`jobctl run discover score tailor --limit 1 --workers 1`. The summary gate
 accepts only full clean-run records with all-state baseline absence,
 `discoveredAt >= T0`, hashed real discovery-source proof, plus same-job
 API/UI/PDF proof; probe-only, seeded, and timing-only records are rejected. See
