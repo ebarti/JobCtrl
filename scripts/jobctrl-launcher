@@ -62,13 +62,13 @@ case "$CMD" in
     bootstrap ${1+"$@"}
     ;;
   update)
-    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    [[ -e "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
     shift
     git -C "$REPO" pull --ff-only
     exec "$REPO/scripts/install" --yes --skip-doctor ${1+"$@"}
     ;;
   dev)
-    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    [[ -e "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
     shift
     cd "$REPO"
     exec corepack pnpm dev ${1+"$@"}
@@ -84,10 +84,10 @@ JobCtrl launcher (checkout: $REPO)
 
 Set JOBCTRL_HOME to use a checkout other than ~/JobCtrl.
 EOF
-    [[ -d "$REPO/.git" ]] || printf '\nNo checkout found yet - start with: jobctrl bootstrap\n'
+    [[ -e "$REPO/.git" ]] || printf '\nNo checkout found yet - start with: jobctrl bootstrap\n'
     ;;
   *)
-    [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
+    [[ -e "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
     exec uv --project "$REPO/workers/automation" run jobctrl "$@"
     ;;
 esac

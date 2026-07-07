@@ -118,6 +118,21 @@ test("launcher prints help and hints bootstrap when no checkout exists", (t) => 
   assert.match(doctor.stderr, /run: jobctrl bootstrap/);
 });
 
+test("launcher accepts a linked git worktree as a checkout (.git file, not dir)", (t) => {
+  const root = makeTmp();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Linked worktrees have a `.git` FILE pointing at the real gitdir; the
+  // launcher must not misread that as "no checkout".
+  const dir = path.join(root, "worktree-style");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, ".git"), "gitdir: /somewhere/else\n");
+  const env = { ...process.env, JOBCTRL_HOME: dir };
+
+  const help = run(LAUNCHER, ["--help"], { env });
+  assert.equal(help.status, 0, `stderr: ${help.stderr}`);
+  assert.doesNotMatch(help.stdout, /No checkout found yet/);
+});
+
 test("brew-symlinked launcher resolves the baked libexec get (symlink regression)", (t) => {
   const root = makeTmp();
   t.after(() => rmSync(root, { recursive: true, force: true }));
