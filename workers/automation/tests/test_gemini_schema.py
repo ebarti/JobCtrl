@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from jobhunter.domain.materials.analysis import JobAnalysis
-from jobhunter.infrastructure.analysis.gemini_schema import gemini_json_schema
+from jobctl.domain.materials.analysis import JobAnalysis
+from jobctl.infrastructure.analysis.gemini_schema import gemini_json_schema
 
 
 def _walk(node: Any):
@@ -33,7 +33,7 @@ def test_additional_properties_stripped_recursively() -> None:
     ``additionalProperties`` at every object node, proving the Gemini transform
     removes it everywhere (nested objects + $defs), not just at the root.
     """
-    from jobhunter.infrastructure.analysis.strict_schema import strict_json_schema
+    from jobctl.infrastructure.analysis.strict_schema import strict_json_schema
 
     # strict_json_schema injects additionalProperties:false on every object node.
     seeded = strict_json_schema(JobAnalysis.model_json_schema())

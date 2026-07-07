@@ -1,4 +1,4 @@
-import type { ContactSummary } from "@jobhunter/contracts";
+import type { ContactSummary } from "@jobctl/contracts";
 import { useState } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";

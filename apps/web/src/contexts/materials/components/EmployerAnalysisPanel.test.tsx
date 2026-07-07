@@ -1,4 +1,4 @@
-import type { RequirementFitReport } from "@jobhunter/contracts";
+import type { RequirementFitReport } from "@jobctl/contracts";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

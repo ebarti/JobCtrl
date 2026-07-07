@@ -13,7 +13,7 @@ import type {
   MarketCompensationWarning,
   PostedCompensationFact,
   PostedCompensationWarning,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Input } from "../../../shared/ui/input.js";

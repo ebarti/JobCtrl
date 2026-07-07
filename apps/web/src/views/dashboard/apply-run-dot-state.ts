@@ -1,4 +1,4 @@
-import { WORKFLOW_RUN_STATUSES, type WorkflowRunStatus } from "@jobhunter/contracts";
+import { WORKFLOW_RUN_STATUSES, type WorkflowRunStatus } from "@jobctl/contracts";
 
 import { assertNever } from "../../shared/lib/exhaustive.js";
 import type { StatusDotState } from "../../shared/ui/status-tokens.js";

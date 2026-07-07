@@ -8,7 +8,7 @@ the LLM omits an experience update.
 
 from __future__ import annotations
 
-from jobhunter.domain.materials.services import ResumeAssembler
+from jobctl.domain.materials.services import ResumeAssembler
 
 
 _ASSEMBLER = ResumeAssembler()
@@ -143,9 +143,9 @@ def test_assembler_normalises_em_dashes_via_sanitize() -> None:
 
 def test_assembler_handles_snapshot_input() -> None:
     """ResumeAssembler accepts ProfileSnapshot directly via its facade."""
-    from jobhunter.domain.profile.aggregate import Profile
-    from jobhunter.domain.profile.snapshot import ProfileSnapshot
-    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobctl.domain.profile.aggregate import Profile
+    from jobctl.domain.profile.snapshot import ProfileSnapshot
+    from jobctl.domain.tenant import LOCAL_TENANT
 
     snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, _profile()))
     text = _ASSEMBLER.assemble_resume_text(_payload(), snapshot)

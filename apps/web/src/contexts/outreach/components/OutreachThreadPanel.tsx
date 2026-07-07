@@ -1,4 +1,4 @@
-import type { OutreachDraftDto, OutreachThreadDetail } from "@jobhunter/contracts";
+import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctl/contracts";
 import { useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
@@ -114,7 +114,7 @@ function OutreachThreadBody({
       <div className="outreach-send-log">
         <h4>Sends</h4>
         <p className="muted">
-          JobHunter never sends outreach. After you send an approved message yourself, record it
+          JobCtl never sends outreach. After you send an approved message yourself, record it
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />

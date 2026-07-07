@@ -28,7 +28,7 @@ The system SHALL create a resume review draft from a selected materials generati
 - **THEN** the existing draft remains inspectable as history and the current Apply Review draft is created from, or explicitly carried forward to, the refreshed generation
 
 ### Requirement: Plate editor supports live resume edits
-The system SHALL allow the user to edit the resume through a Plate editor while preserving resume structure, semantic line anchors, source pins, and draft dirty state. The editor MUST keep JobHunter claim-risk and provenance labels visible for generated lines when the data exists.
+The system SHALL allow the user to edit the resume through a Plate editor while preserving resume structure, semantic line anchors, source pins, and draft dirty state. The editor MUST keep JobCtl claim-risk and provenance labels visible for generated lines when the data exists.
 
 #### Scenario: Editing a tailored line
 - **WHEN** the user edits a tailored resume line in Apply Review
@@ -101,4 +101,4 @@ The system SHALL render the Profile page baseline resume through the same Plate 
 
 #### Scenario: Profile LaTeX path is not used
 - **WHEN** the Profile baseline resume preview is requested
-- **THEN** the system renders it through the HTML/CSS resume renderer and does not branch through `JOBHUNTER_RESUME_RENDERER=latex_pdf`, `pdflatex`, or the legacy LaTeX template
+- **THEN** the system renders it through the HTML/CSS resume renderer and does not branch through `JOBCTL_RESUME_RENDERER=latex_pdf`, `pdflatex`, or the legacy LaTeX template

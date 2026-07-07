@@ -2,15 +2,15 @@
 
 These tests pin the validation rules that previously lived in
 ``scoring/validator.py`` and now live in
-``jobhunter.domain.materials.services.ContentValidator``. Coverage matches
+``jobctl.domain.materials.services.ContentValidator``. Coverage matches
 the legacy module: banned words / fabrication / structural checks for
 both the JSON-side and the rendered-text side, plus cover letters.
 """
 
 from __future__ import annotations
 
-from jobhunter.domain.materials import ValidationResult
-from jobhunter.domain.materials.services import (
+from jobctl.domain.materials import ValidationResult
+from jobctl.domain.materials.services import (
     BANNED_WORDS,
     ContentValidator,
     LLM_LEAK_PHRASES,

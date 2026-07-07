@@ -1,4 +1,4 @@
-import type { BulkJobMutationRequest } from "@jobhunter/contracts";
+import type { BulkJobMutationRequest } from "@jobctl/contracts";
 
 import type { JobsListInput } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";

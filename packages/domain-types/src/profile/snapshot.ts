@@ -1,7 +1,7 @@
 /**
  * ProfileSnapshot — published language for the Candidate Profile context.
  *
- * Mirrors ``workers/automation/src/jobhunter/domain/profile/snapshot.py``.
+ * Mirrors ``workers/automation/src/jobctl/domain/profile/snapshot.py``.
  * Carries a ``version`` so consumers can detect stale snapshots and refuse
  * to mix data from two generations of the profile.
  *

@@ -12,7 +12,7 @@ def _attrs(span) -> dict:
 
 
 def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
-    from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctl.infrastructure.observability.llm_spans import llm_generation_span
 
     messages = [{"role": "user", "content": "hi"}]
     params = {"temperature": 0.0, "max_tokens": 100}
@@ -38,14 +38,14 @@ def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
 
 
 def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter):
-    from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctl.infrastructure.observability.llm_spans import llm_generation_span
 
     calls: list[dict] = []
 
     def fake_record_llm_spend(**kwargs):
         calls.append(kwargs)
 
-    monkeypatch.setattr("jobhunter.llm.record_llm_spend", fake_record_llm_spend)
+    monkeypatch.setattr("jobctl.llm.record_llm_spend", fake_record_llm_spend)
 
     with llm_generation_span(model="gemini-3.5-flash", messages=[], params={}) as record:
         record("hello", input_tokens=5, output_tokens=2)
@@ -60,7 +60,7 @@ def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter)
 
 
 def test_llm_generation_span_handles_unknown_tokens(in_memory_exporter):
-    from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctl.infrastructure.observability.llm_spans import llm_generation_span
 
     with llm_generation_span(model="gpt-4o-mini", messages=[], params={}) as record:
         record("done", input_tokens=None, output_tokens=None)
@@ -74,7 +74,7 @@ def test_llm_generation_span_handles_unknown_tokens(in_memory_exporter):
 def test_llm_generation_span_records_exception(in_memory_exporter):
     from opentelemetry.trace import StatusCode
 
-    from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctl.infrastructure.observability.llm_spans import llm_generation_span
 
     with pytest.raises(RuntimeError):
         with llm_generation_span(model="m", messages=[], params={}):

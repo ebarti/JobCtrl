@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { WorkflowRunStatus } from "@jobhunter/contracts";
+import type { WorkflowRunStatus } from "@jobctl/contracts";
 
 import { RunStatusBadge } from "./RunStatusBadge.js";
 

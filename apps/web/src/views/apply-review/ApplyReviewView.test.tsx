@@ -8,8 +8,8 @@ import type {
   ResumeReviewDraftRenderResponse,
   ResumeReviewDraftRevision,
   ResumeReviewEditDelta,
-} from "@jobhunter/contracts";
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+} from "@jobctl/contracts";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -188,7 +188,7 @@ function shadowElementWithText(shadow: HTMLElement, text: string): HTMLElement {
 
 async function selectResumeLine(shadow: HTMLElement, text: string): Promise<void> {
   await userEvent.click(shadowElementWithText(shadow, text));
-  await waitFor(() => expect(shadowElementWithText(shadow, text).className).toContain("jobhunter-selected-line"));
+  await waitFor(() => expect(shadowElementWithText(shadow, text).className).toContain("jobctl-selected-line"));
 }
 
 function savedDraftPlateDocument(lineText = "Restored human rewrite for incident response.") {
@@ -928,7 +928,7 @@ describe("<ApplyReviewView>", () => {
       "/v1/artifacts/resume-pdf-2/preview.pdf",
     );
     const shadow = await findResumeShadowRoot();
-    const comments = shadow.querySelectorAll('[aria-label="JobHunter resume comment"]');
+    const comments = shadow.querySelectorAll('[aria-label="JobCtl resume comment"]');
     expect(comments.length).toBeGreaterThan(0);
     comments.forEach((comment) => {
       expect(comment).toHaveAttribute("contenteditable", "false");
@@ -1392,9 +1392,9 @@ describe("<ApplyReviewView>", () => {
     const nameLine = shadowElementWithText(shadow, "Principal Platform Engineer");
     const bodyLine = shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.");
 
-    await waitFor(() => expect(nameLine.className).toContain("jobhunter-selected-line"));
+    await waitFor(() => expect(nameLine.className).toContain("jobctl-selected-line"));
     await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(nameLine.className).not.toContain("jobhunter-selected-line"));
+    await waitFor(() => expect(nameLine.className).not.toContain("jobctl-selected-line"));
 
     await userEvent.selectOptions(screen.getByLabelText("Font"), "garamond");
     await waitFor(() => expect(nameLine.style.fontFamily).toContain("Garamond"));
@@ -1420,7 +1420,7 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() =>
       expect(
         shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").className,
-      ).not.toContain("jobhunter-selected-line"),
+      ).not.toContain("jobctl-selected-line"),
     );
   });
 
@@ -1798,7 +1798,7 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith(draftArtifact.artifactId);
   });
 
-  it("lets the user reply to a persisted JobHunter line comment without hiding source context", async () => {
+  it("lets the user reply to a persisted JobCtl line comment without hiding source context", async () => {
     const draft: ResumeReviewDraft = {
       ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
         editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
@@ -1944,7 +1944,7 @@ describe("<ApplyReviewView>", () => {
     await screen.findByRole("region", { name: "Tailored resume preview" });
     const shadow = await findResumeShadowRoot();
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
-    expect(shadow.querySelectorAll('[aria-label="JobHunter resume comment"]').length).toBeGreaterThan(0);
+    expect(shadow.querySelectorAll('[aria-label="JobCtl resume comment"]').length).toBeGreaterThan(0);
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
     await waitFor(() => expect(shadowText(shadow)).toContain("Profile source field"));
     await waitFor(() => expect(shadowText(shadow)).toContain("Built platform services"));
@@ -2183,17 +2183,17 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("region", { name: "Resume line review" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rendered resume line review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Rendered resume text lines" })).not.toBeInTheDocument();
-    expect(shadow.querySelectorAll('[aria-label="JobHunter resume comment"]').length).toBeGreaterThan(0);
+    expect(shadow.querySelectorAll('[aria-label="JobCtl resume comment"]').length).toBeGreaterThan(0);
     const lineOne = shadowElementWithText(shadow, "Principal Platform Engineer");
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
     expect(shadowText(shadow)).toContain("missing source");
     await userEvent.click(lineOne);
-    await waitFor(() => expect(shadowElementWithText(shadow, "Principal Platform Engineer").className).toContain("jobhunter-selected-line"));
+    await waitFor(() => expect(shadowElementWithText(shadow, "Principal Platform Engineer").className).toContain("jobctl-selected-line"));
   });
 
-  it("renders skill provenance as a JobHunter comment in the resume editor", async () => {
+  it("renders skill provenance as a JobCtl comment in the resume editor", async () => {
     const explanationWithSkillProvenance: ArtifactTailoringExplanation = {
       ...sampleTailoringExplanation,
       bulletProvenance: [
@@ -2267,7 +2267,7 @@ describe("<ApplyReviewView>", () => {
     expect(shadowText(shadow)).not.toContain("Transform");
   });
 
-  it("resolves resume header rows to Profile source fields in JobHunter comments", async () => {
+  it("resolves resume header rows to Profile source fields in JobCtl comments", async () => {
     const queueWithProfileHeader = {
       ...sampleApplyReviewQueue,
       items: sampleApplyReviewQueue.items.map((item, index) =>

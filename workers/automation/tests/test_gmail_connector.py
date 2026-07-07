@@ -8,15 +8,15 @@ import time
 
 import httpx
 
-from jobhunter.infrastructure.gmail.auth import (
+from jobctl.infrastructure.gmail.auth import (
     GMAIL_SEND_SCOPE,
     GmailAuthError,
     OAuthClient,
     build_authorization_url,
     choose_redirect_uri,
 )
-from jobhunter.infrastructure.gmail.client import GmailClient
-from jobhunter.infrastructure.gmail.mcp_server import GmailMcpServer
+from jobctl.infrastructure.gmail.client import GmailClient
+from jobctl.infrastructure.gmail.mcp_server import GmailMcpServer
 
 
 def test_desktop_oauth_uses_loopback_redirect() -> None:
@@ -60,7 +60,7 @@ def test_authorization_url_requests_read_and_send_scopes() -> None:
 
 
 def test_gmail_client_searches_recent_metadata(monkeypatch) -> None:
-    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr("jobctl.infrastructure.gmail.client.get_access_token", lambda: "token")
     now_ms = int(time.time() * 1000)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -107,7 +107,7 @@ def test_gmail_client_searches_recent_metadata(monkeypatch) -> None:
 
 
 def test_gmail_client_rejects_search_without_recipient(monkeypatch) -> None:
-    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr("jobctl.infrastructure.gmail.client.get_access_token", lambda: "token")
     client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))))
 
     try:
@@ -119,7 +119,7 @@ def test_gmail_client_rejects_search_without_recipient(monkeypatch) -> None:
 
 
 def test_gmail_client_bounds_query_to_verification_terms(monkeypatch) -> None:
-    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr("jobctl.infrastructure.gmail.client.get_access_token", lambda: "token")
 
     def handler(request: httpx.Request) -> httpx.Response:
         query = str(request.url.params["q"])
@@ -141,7 +141,7 @@ def test_gmail_client_bounds_query_to_verification_terms(monkeypatch) -> None:
 
 
 def test_gmail_client_reads_message_body(monkeypatch) -> None:
-    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr("jobctl.infrastructure.gmail.client.get_access_token", lambda: "token")
     body = base64.urlsafe_b64encode(b"Your verification code is 654321").decode().rstrip("=")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -168,9 +168,9 @@ def test_gmail_client_reads_message_body(monkeypatch) -> None:
 
 
 def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    monkeypatch.setattr("jobctl.infrastructure.gmail.client.get_access_token", lambda: "token")
     monkeypatch.setattr(
-        "jobhunter.infrastructure.gmail.client.load_token",
+        "jobctl.infrastructure.gmail.client.load_token",
         lambda: {"scope": f"https://www.googleapis.com/auth/gmail.readonly {GMAIL_SEND_SCOPE}"},
     )
     attachment = tmp_path / "resume.pdf"
@@ -201,7 +201,7 @@ def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_p
 
 def test_gmail_client_refuses_send_without_send_scope(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "jobhunter.infrastructure.gmail.client.load_token",
+        "jobctl.infrastructure.gmail.client.load_token",
         lambda: {"scope": "https://www.googleapis.com/auth/gmail.readonly"},
     )
     attachment = tmp_path / "resume.pdf"

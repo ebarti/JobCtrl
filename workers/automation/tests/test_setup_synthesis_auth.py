@@ -1,7 +1,7 @@
 """setup/doctor surface the always-required Claude synthesis auth.
 
 Every employer-analysis run reconciles its legs with the Claude Agent SDK
-(``ClaudeAnalysisSynthesizer``) regardless of ``JOBHUNTER_ANALYSIS_LEGS``. These
+(``ClaudeAnalysisSynthesizer``) regardless of ``JOBCTL_ANALYSIS_LEGS``. These
 tests drive the CLI surfaces with a faked synthesis-auth probe — no real vendor
 CLI or network — and assert the user-facing readiness signals.
 """
@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from jobhunter.cli import app
-from jobhunter.infrastructure import setup_probes
+from jobctl.cli import app
+from jobctl.infrastructure import setup_probes
 
 _SETUP_ARGS = [
     "setup",
@@ -42,7 +42,7 @@ def _fake_synthesis(ok: bool):
 def test_setup_warns_analysis_not_ready_without_synthesis_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("JOBHUNTER_ANALYSIS_LEGS", "codex,antigravity")
+    monkeypatch.setenv("JOBCTL_ANALYSIS_LEGS", "codex,antigravity")
     monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(False))
 
     result = CliRunner().invoke(app, _SETUP_ARGS)
@@ -54,7 +54,7 @@ def test_setup_warns_analysis_not_ready_without_synthesis_auth(
 
 
 def test_setup_reports_ready_with_synthesis_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOBHUNTER_ANALYSIS_LEGS", "codex,antigravity")
+    monkeypatch.setenv("JOBCTL_ANALYSIS_LEGS", "codex,antigravity")
     monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(True))
 
     result = CliRunner().invoke(app, _SETUP_ARGS)
@@ -68,12 +68,12 @@ def test_setup_reports_ready_with_synthesis_auth(monkeypatch: pytest.MonkeyPatch
 def test_doctor_shows_red_synthesis_auth_when_claude_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("JOBHUNTER_ANALYSIS_LEGS", "codex,antigravity")
+    monkeypatch.setenv("JOBCTL_ANALYSIS_LEGS", "codex,antigravity")
     monkeypatch.setenv("COLUMNS", "220")  # keep the row on one line for the assert
     monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(False))
 
     with patch(
-        "jobhunter.infrastructure.temporal.client.Client.connect",
+        "jobctl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])

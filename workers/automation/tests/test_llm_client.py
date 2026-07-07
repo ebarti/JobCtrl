@@ -8,9 +8,9 @@ import math
 import httpx
 import pytest
 
-from jobhunter import llm
-from jobhunter.domain.materials.use_cases import TAILORED_RESUME_RESPONSE_SCHEMA
-from jobhunter.llm import LLMClient
+from jobctl import llm
+from jobctl.domain.materials.use_cases import TAILORED_RESUME_RESPONSE_SCHEMA
+from jobctl.llm import LLMClient
 
 
 def test_gemini_provider_defaults_to_gemini_35_flash(monkeypatch) -> None:

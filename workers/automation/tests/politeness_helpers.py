@@ -11,9 +11,9 @@ from __future__ import annotations
 import sqlite3
 import threading
 
-from jobhunter.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
-from jobhunter.domain.ports.politeness import RobotsVerdict
-from jobhunter.infrastructure.network import (
+from jobctl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
+from jobctl.domain.ports.politeness import RobotsVerdict
+from jobctl.infrastructure.network import (
     HostRateLimiter,
     PolitenessGateway,
     PolitenessSession,

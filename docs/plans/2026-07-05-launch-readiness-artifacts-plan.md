@@ -9,7 +9,7 @@
 
 ## 0. Purpose and relationship to existing plans
 
-This plan defines the **launch-readiness artifacts** JobHunter needs before it
+This plan defines the **launch-readiness artifacts** JobCtl needs before it
 is presented to the public: an accurate README, a synthetic demo-asset set, the
 docs-site launch pages, a claim-freeze ledger, and a publish-mechanics
 checklist. It is **artifacts only**.
@@ -80,7 +80,7 @@ Data And Safety"; `docs/user/data-and-safety.md`; `scripts/release_check.py`).
 - **Changing docs-site architecture or frozen URLs** (`docs/.vitepress/config.ts`
   `SIDEBAR` URLs are frozen; only labels/order may change). Screenshot-harness
   changes are additive only (new fixtures/surfaces), never contract-breaking.
-- **Producing any asset from a real `~/.jobhunter` workspace.**
+- **Producing any asset from a real `~/.jobctl` workspace.**
 
 ## 3. Gates and execution order
 
@@ -140,7 +140,7 @@ Every section below must uphold these:
 ## 5. Claim-freeze ledger (Goal 4) — Phase A
 
 **Objective.** A single, tracked source of truth for every public claim
-JobHunter makes, each labeled and provably backed, that can be *frozen* before
+JobCtl makes, each labeled and provably backed, that can be *frozen* before
 assets are built.
 
 **Ledger location and publication.** Propose `docs/claims-ledger.md`,
@@ -304,7 +304,7 @@ that must have merged first).
 
 | # | Asset | Fixture / data source | Exact product path | Must visibly prove | Class | Capability precondition |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | First run to dashboard | A synthetic **empty/initialized** workspace (new seed variant, or `jobhunter init` on a disposable dir) — distinct from the populated seed | `jobhunter init` → `jobhunter doctor` output, then web `/dashboard` in its empty/onboarding state | The onboarding path exists and a fresh install lands on a coherent, empty dashboard (not an error) | B | none |
+| 1 | First run to dashboard | A synthetic **empty/initialized** workspace (new seed variant, or `jobctl init` on a disposable dir) — distinct from the populated seed | `jobctl init` → `jobctl doctor` output, then web `/dashboard` in its empty/onboarding state | The onboarding path exists and a fresh install lands on a coherent, empty dashboard (not an error) | B | none |
 | 2 | Resume / profile import | Synthetic resume input + the profile-import wizard store (`apps/web/src/contexts/profile/stores/profile-import-store.ts`) | Profile import flow → `/profile` populated | Import ingests a synthetic resume into the canonical profile that scoring/tailoring build on | B/C | none |
 | 3 | Discovery → scored jobs w/ requirement fit + provenance | `qa-seed.ts` scored job (`fit_score` 9), `job_requirement_fit_items` (`r1` covered / `r2` transferable-missing), `job_bullet_provenance` | `/discovery` → `/jobs` (sorted by fit) → `/jobs/<url>` detail drawer | A discovery run yields scored jobs whose fit is explained per-requirement with provenance back to evidence | A (+B for the discovery→jobs sequence) | none |
 | 4 | Apply-review audit surfaces | `qa-seed.ts` approved materials generation, requirement evidence, `change_annotations` (comments), approval controls | `/apply-review` and its evidence / comments / approval-control sub-surfaces | Evidence, line comments, and explicit approval controls are inspectable before anything is submitted | A (+B for sub-surface captures) | none |
@@ -394,9 +394,9 @@ and publishes no comparative row.
 - **Page layout.** A criteria-by-approach matrix: rows are neutral *capability
   categories* (e.g. local-first data ownership, supervised apply gates, audited
   materials, explainable scoring, durable orchestration, spend control) drawn
-  from frozen `Current` ledger rows; columns are the JobHunter column plus
+  from frozen `Current` ledger rows; columns are the JobCtl column plus
   placeholder "alternative approach" columns the owner fills privately at
-  publish time. The JobHunter column cells cite ledger `Claim ID`s. The page
+  publish time. The JobCtl column cells cite ledger `Claim ID`s. The page
   lives in the published docs set with a frozen sidebar slot added to
   `docs/.vitepress/config.ts` `SIDEBAR` (label/placement is an owner decision,
   §11.3).
@@ -405,7 +405,7 @@ and publishes no comparative row.
   page and in the claim-review process (§5), so comparative rows do not rot.
 - **Facts-verified-before-publish rule.** No comparative cell about an external
   approach publishes without a recorded verification date and a dated source;
-  JobHunter-side cells must cite a frozen `Current` ledger row. Unverified rows
+  JobCtl-side cells must cite a frozen `Current` ledger row. Unverified rows
   stay unpublished (draft/commented) rather than shipping speculative claims.
   The rule is written into the page's own maintainer note and enforced at
   review.
@@ -433,9 +433,9 @@ the owner executes the owner-only steps per OSS spec §5.
 
 | Step | Action | Verification | Rollback note |
 | --- | --- | --- | --- |
-| 9.1 Repo visibility flip | Owner flips `github.com/ebarti/JobHunter` to public (owner-only, OSS spec §5) | `release-check` (`.github/workflows/release-check.yml`) green on `main` for every commit since W0.4; `python3 scripts/release_check.py` zero findings locally; OSS spec §5 final manual QA complete | Flip back to private. **Note honestly:** anything fetched while public cannot be recalled and git history remains reachable — the real mitigation is the pre-flip privacy gate, not rollback (OSS spec §1 records this acceptance). |
+| 9.1 Repo visibility flip | Owner flips `github.com/ebarti/JobCtl` to public (owner-only, OSS spec §5) | `release-check` (`.github/workflows/release-check.yml`) green on `main` for every commit since W0.4; `python3 scripts/release_check.py` zero findings locally; OSS spec §5 final manual QA complete | Flip back to private. **Note honestly:** anything fetched while public cannot be recalled and git history remains reachable — the real mitigation is the pre-flip privacy gate, not rollback (OSS spec §1 records this acceptance). |
 | 9.2 Docs-site deploy | Set repo variable `DOCS_DEPLOY_ENABLED=true` and the two Cloudflare secrets so the `deploy` job in `.github/workflows/docs-site.yml` runs from `main` | On next `main` push, the deploy job runs (not skipped), the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on the built artifact | Unset `DOCS_DEPLOY_ENABLED` → the deploy job skips cleanly and the workflow stays green; redeploy the previous `docs-site-dist` artifact if a bad build shipped. |
-| 9.3 Repo-rename redirect | Runs after the pre-publication rename train (`docs/plans/2026-07-05-rename-jobctl-plan.md`) merges — the rename decision is made; only its execution is pending | After the rename, GitHub auto-redirects old URLs: verify old `github.com/ebarti/JobHunter` links resolve; update the absolute `REPO_URL` in `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run `pnpm docs:build` | Rename back (GitHub reserves the prior name); revert the `REPO_URL`/link edits. |
+| 9.3 Repo-rename redirect | Runs after the pre-publication rename train (`docs/plans/2026-07-05-rename-jobctl-plan.md`) merges — the rename decision is made; only its execution is pending | After the rename, GitHub auto-redirects old URLs: verify old `github.com/ebarti/JobCtl` links resolve; update the absolute `REPO_URL` in `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run `pnpm docs:build` | Rename back (GitHub reserves the prior name); revert the `REPO_URL`/link edits. |
 | 9.4 Release tagging | Restore the tag trigger in `.github/workflows/publish.yml` (currently `workflow_dispatch` only) after the PyPI rename, then tag the first release | The pre-publication rename train merged (`docs/plans/2026-07-05-rename-jobctl-plan.md`: distribution name chosen, `pyproject.toml` updated); `publish.yml` tag trigger gated on the release-check workflow passing; build produces the renamed sdist/wheel | Delete the tag; if a bad artifact published to PyPI, yank it. Keep the trigger `workflow_dispatch`-only until the rename train is confirmed. |
 
 **Invariants.**
@@ -467,8 +467,8 @@ always. All commands are from the `CLAUDE.md` matrix plus the docs gates.
 | Cross-stack tests | `pnpm test` | All pass (if code/fixtures touched) |
 | API QA harness | `pnpm qa:test` | All pass (if `qa-seed.ts`/API touched) |
 | API tests | `pnpm api:test` | All pass (if API/seed touched) |
-| Web unit/hook/component | `pnpm --filter @jobhunter/web test` | All pass (if web touched) |
-| Web e2e (screenshots spec) | `pnpm --filter @jobhunter/web e2e -- tests/docs-screenshots.spec.ts` | Green (equivalent to `docs:screenshots`) |
+| Web unit/hook/component | `pnpm --filter @jobctl/web test` | All pass (if web touched) |
+| Web e2e (screenshots spec) | `pnpm --filter @jobctl/web e2e -- tests/docs-screenshots.spec.ts` | Green (equivalent to `docs:screenshots`) |
 | Hygiene | `git diff --check` | Clean |
 
 Notes:
@@ -549,7 +549,7 @@ Notes:
    → **RESOLVED 2026-07-06 (implemented).** Shipped in #304 as a scripted,
    hermetic, self-asserting e2e artifact: `scripts/reliability-demo.sh` drives
    the diagnostic `DurabilityProbeWorkflow`
-   (`workers/automation/src/jobhunter/infrastructure/temporal/durability_probe.py`)
+   (`workers/automation/src/jobctl/infrastructure/temporal/durability_probe.py`)
    and asserts same-workflow-id + same-run-id exactly-once recovery after a
    worker kill, with real pass/fail assertions. It fetches no job boards and
    spends no LLM tokens, lives in-repo, and stays true as the code evolves. The

@@ -3,7 +3,7 @@ import type {
   OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadResponse,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 function isThreadResponse(value: unknown): value is OutreachThreadResponse {
   return typeof value === "object" && value !== null && "thread" in value;

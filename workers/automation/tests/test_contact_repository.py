@@ -12,8 +12,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from jobhunter.database import init_db
-from jobhunter.domain.contact import (
+from jobctl.database import init_db
+from jobctl.domain.contact import (
     AttributeInput,
     ContactLink,
     ContactRole,
@@ -22,11 +22,11 @@ from jobhunter.domain.contact import (
     ImportContactsUseCase,
     UpdateContactUseCase,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.contact.sqlite_repository import SqliteContactRepository
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.infrastructure.projections.sqlite_projection_store import (
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.contact.sqlite_repository import SqliteContactRepository
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.infrastructure.projections.sqlite_projection_store import (
     SqliteProjectionStore,
 )
 
@@ -35,7 +35,7 @@ _SECRET_EMAIL = "jane@acme.example"
 
 
 def _setup(tmp_path: Path) -> tuple[SqliteContactRepository, sqlite3.Connection]:
-    conn = init_db(tmp_path / "jobhunter.db")
+    conn = init_db(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)

@@ -1,4 +1,4 @@
-import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobhunter/contracts";
+import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";

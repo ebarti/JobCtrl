@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import type { CredentialKey, CredentialsResponse } from "./contracts.js";
 import { CredentialKeys } from "./contracts.js";
 
-const KEYCHAIN_SERVICE = "JobHunter";
+const KEYCHAIN_SERVICE = "JobCtl";
 
 const LABELS: Record<CredentialKey, string> = {
   OPENAI_API_KEY: "OpenAI API key",

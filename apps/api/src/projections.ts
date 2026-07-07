@@ -1,7 +1,7 @@
 /**
  * TS read-model projection refresher (Phase 9 / S-32, S-33).
  *
- * Mirror of ``workers/automation/src/jobhunter/infrastructure/projections/
+ * Mirror of ``workers/automation/src/jobctl/infrastructure/projections/
  * projection_builder.py``.  The TS API process maintains the same
  * ``*_projections`` tables in SQLite so the read-model endpoints can
  * SELECT from a single denormalised source — no LEFT JOIN soup.
@@ -12,7 +12,7 @@
  * independently — both produce the same projection state because both
  * derive from the canonical aggregate tables (jobs, job_stage_states,
  * job_scores, job_materials, job_enrichments,
- * jobhunter_deleted_jobs, job_artifacts, job_materials_artifacts).
+ * jobctl_deleted_jobs, job_artifacts, job_materials_artifacts).
  *
  * PR 4 of the Temporal stack collapsed the bespoke ``apply_runs``
  * table; the Python projection builder now sources
@@ -2543,22 +2543,22 @@ function loadLatestApplyRun(db: SqliteDatabase, jobUrl: string): ApplyLatest {
 }
 
 function loadDeletedAt(db: SqliteDatabase, jobUrl: string): string | null {
-  if (!tableExists(db, "jobhunter_deleted_jobs")) return null;
+  if (!tableExists(db, "jobctl_deleted_jobs")) return null;
   const row = getRow<{ deleted_at: string | null }>(
     db,
-    "SELECT deleted_at FROM jobhunter_deleted_jobs WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+    "SELECT deleted_at FROM jobctl_deleted_jobs WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
     [jobUrl],
   );
   return row ? nullableString(row.deleted_at) : null;
 }
 
 function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
-  if (!tableExists(db, "jobhunter_deleted_jobs")) return [];
+  if (!tableExists(db, "jobctl_deleted_jobs")) return [];
   const rows = allRows<{ job_id: string }>(
     db,
     `SELECT p.job_id
      FROM job_list_projections p
-     JOIN jobhunter_deleted_jobs d
+     JOIN jobctl_deleted_jobs d
        ON d.job_url = p.job_id
      WHERE p.tenant_id = ?
        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
@@ -3677,9 +3677,9 @@ function buildOutcomeConversion(
 }
 
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
-  const hiddenWhere = tableExists(db, "jobhunter_hidden_jobs")
+  const hiddenWhere = tableExists(db, "jobctl_hidden_jobs")
     ? `AND NOT EXISTS (
-         SELECT 1 FROM jobhunter_hidden_jobs h
+         SELECT 1 FROM jobctl_hidden_jobs h
          WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
        )`
     : "";
@@ -3734,18 +3734,18 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   let dryRuns = 0;
   if (tableExists(db, "apply_run_projections")) {
     if (
-      tableExists(db, "jobhunter_deleted_jobs") ||
-      tableExists(db, "jobhunter_hidden_jobs") ||
+      tableExists(db, "jobctl_deleted_jobs") ||
+      tableExists(db, "jobctl_hidden_jobs") ||
       tableExists(db, "posting_snapshot_sets")
     ) {
-      const hasDeleted = tableExists(db, "jobhunter_deleted_jobs");
-      const hasHidden = tableExists(db, "jobhunter_hidden_jobs");
+      const hasDeleted = tableExists(db, "jobctl_deleted_jobs");
+      const hasHidden = tableExists(db, "jobctl_hidden_jobs");
       const hasSnapshots = tableExists(db, "posting_snapshot_sets");
       const deletedJoin = hasDeleted
-        ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+        ? " LEFT JOIN jobctl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
         : "";
       const hiddenJoin = hasHidden
-        ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+        ? " LEFT JOIN jobctl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
         : "";
       const snapshotJoin = hasSnapshots
         ? " LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_url = arp.job_id"
@@ -4825,15 +4825,15 @@ function jobLifecycleExclusionSql(
 ): { joinSql: string; whereSql: string } {
   const joins: string[] = [];
   const wheres: string[] = [];
-  if (tableExists(db, "jobhunter_deleted_jobs")) {
+  if (tableExists(db, "jobctl_deleted_jobs")) {
     joins.push(
-      `LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ${jobUrlExpression} AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`,
+      `LEFT JOIN jobctl_deleted_jobs d ON d.job_url = ${jobUrlExpression} AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`,
     );
     wheres.push("d.job_url IS NULL");
   }
-  if (tableExists(db, "jobhunter_hidden_jobs")) {
+  if (tableExists(db, "jobctl_hidden_jobs")) {
     joins.push(
-      `LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = ${jobUrlExpression} AND h.unhidden_at IS NULL`,
+      `LEFT JOIN jobctl_hidden_jobs h ON h.job_url = ${jobUrlExpression} AND h.unhidden_at IS NULL`,
     );
     wheres.push("h.job_url IS NULL");
   }

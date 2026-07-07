@@ -6,25 +6,25 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import ensure_market_compensation_tables, init_db
-from jobhunter.domain.compensation import (
+from jobctl.database import ensure_market_compensation_tables, init_db
+from jobctl.domain.compensation import (
     ReportedCompensationObservation,
     estimate_market_compensation,
     not_requested_market_estimate,
     parse_posted_compensation,
 )
-from jobhunter.infrastructure.compensation import (
+from jobctl.infrastructure.compensation import (
     SqliteMarketCompensationRepository,
     SqlitePostedCompensationRepository,
     load_euro_top_tech_observations,
     load_reported_compensation_observations,
 )
-from jobhunter.infrastructure.compensation.sqlite_market_repository import DEFAULT_FACTOR_REASON
+from jobctl.infrastructure.compensation.sqlite_market_repository import DEFAULT_FACTOR_REASON
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobhunter.db")
+    return init_db(tmp_path / "jobctl.db")
 
 
 def _seed_job(

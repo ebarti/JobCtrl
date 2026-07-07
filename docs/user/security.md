@@ -5,21 +5,21 @@ next: false
 
 # Security
 
-JobHunter runs entirely on your machine. There is no hosted backend, no account,
+JobCtl runs entirely on your machine. There is no hosted backend, no account,
 and no server that receives your job-search data. The trust boundary is your own
 computer: the local SQLite database, generated resumes and cover letters, browser
-profiles, logs, and credentials all live under `~/.jobhunter/` and stay there
+profiles, logs, and credentials all live under `~/.jobctl/` and stay there
 unless a step you run explicitly sends something to an external service. This
 page describes what those steps are, the approval gates that guard risky actions,
 and the honest limits of running everything locally.
 
-This page owns JobHunter's threat model and safety gates. For the full inventory
+This page owns JobCtl's threat model and safety gates. For the full inventory
 of what is stored locally and how to share bug reports safely, see
 [Data, Privacy & Safety](data-and-safety.md).
 
 ## Privacy Quick Answer
 
-Local-first means JobHunter stores your database, browser state, generated
+Local-first means JobCtl stores your database, browser state, generated
 resumes, cover letters, logs, and credentials on your own computer. It does not
 mean every character stays local forever: LLM providers, the apply agent,
 Gmail, Google Maps, CAPTCHA solving, and Langfuse receive data only when you
@@ -34,7 +34,7 @@ run the step that needs them and have configured the relevant provider:
 | --- | --- | --- |
 | LLM provider APIs | Scoring, employer analysis, resume tailoring, and cover-letter generation | Job posting text, your profile evidence (experience, skills, verified metrics), and the generated resume/cover-letter text. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
 | The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers) plus the tailored resume and cover-letter text. Profile passwords and CAPTCHA-provider keys are not included in the prompt. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
-| Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobHunter never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
+| Job boards, ATS APIs, and posting pages | Discovery and enrichment | Search queries and page fetches. JobCtl never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). |
 | Gmail | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails, plus approved email application sends. Raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs; outgoing sends require `gmail.send` and a matching Apply Review binding. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
 | CAPTCHA solving service | Only when `CAPSOLVER_API_KEY` is configured and a supported apply-page widget is detected | The owned local solver tool sends the site key and page URL to the configured provider; provider keys and solver tokens are not sent through the model prompt. Unsupported or unconfigured CAPTCHA flows fail closed. |
@@ -46,9 +46,9 @@ submission.
 
 ## What Stays On Your Machine
 
-JobHunter never uploads these files anywhere — they exist only on your disk:
+JobCtl never uploads these files anywhere — they exist only on your disk:
 
-- the `jobhunter.db` SQLite database (profile, jobs, events, projections,
+- the `jobctl.db` SQLite database (profile, jobs, events, projections,
   settings, artifact metadata, and its `-wal` / `-shm` sidecars);
 - generated resume, cover-letter, and PDF files;
 - browser profiles and apply-worker state;
@@ -63,24 +63,24 @@ above. If you configured no external provider, nothing in this list leaves in
 any form.
 
 ::: warning Local data is not encrypted
-JobHunter does not encrypt the database, the `.env` file, or generated
+JobCtl does not encrypt the database, the `.env` file, or generated
 artifacts, so their protection is your operating-system account and disk
-security. Treat `~/.jobhunter/` as sensitive: do not commit it, copy it into
+security. Treat `~/.jobctl/` as sensitive: do not commit it, copy it into
 shared locations, or attach it to bug reports.
 :::
 
 ## Browser Extension Pairing
 
 The browser-extension API surface uses a local capability token so an installed
-extension can prove it is paired with your local JobHunter stack. The token is
-generated under `~/.jobhunter/`, shown in Settings for pairing, and only
+extension can prove it is paired with your local JobCtl stack. The token is
+generated under `~/.jobctl/`, shown in Settings for pairing, and only
 accepted on `/v1/extension/*` routes that still target a loopback host. It does
 not grant application-submission authority; live submission remains behind
 Apply Review.
 
 In Phase 1, the extension can only capture the active http(s) page after you
 click **Save job** in the popup. It sends the page URL and visible text to the
-local API over loopback, where JobHunter records it through the same
+local API over loopback, where JobCtl records it through the same
 manual-capture importer used by the web app. If the local stack is down, the
 extension keeps a bounded local queue in browser extension storage. It does not
 send captures to third-party services and it has no submit/apply action.
@@ -93,7 +93,7 @@ form submit, `requestSubmit`, or an apply route.
 
 ## Approval And Control Gates
 
-Applying to jobs is JobHunter's one genuinely risky action, because it can drive
+Applying to jobs is JobCtl's one genuinely risky action, because it can drive
 a real browser and submit a real application. Several gates stand between a
 discovered job and a submitted one. In plain terms: you rehearse the application
 with a dry run before live submission, nothing is submitted for real until you
@@ -117,7 +117,7 @@ the gate off, the agent may submit immediately after claiming a job.
 
 Email-only application paths still use this approval model. During dry-run, the
 agent may report a posted recipient with `RESULT:EMAIL_ONLY:<address>`, but it
-does not draft or send email. JobHunter verifies that recipient against stored
+does not draft or send email. JobCtl verifies that recipient against stored
 posting text, records a deterministic candidate with the selected resume PDF
 attachment, and sends through Gmail only when Apply Review approves that exact
 recipient and attachment. A stale binding, missing `gmail.send` token, or missing
@@ -139,7 +139,7 @@ Dry-run submits nothing, so it does not require an approval decision.
 
 ### Applications Submit At Most Once
 
-JobHunter is built so that a job is never submitted twice, even if something
+JobCtl is built so that a job is never submitted twice, even if something
 crashes mid-apply. Before it starts, an apply run refuses to claim a job that
 already has a run in progress, succeeded, or parked for verification. The agent
 records a "submit intent" checkpoint just before it submits; if the process then
@@ -159,7 +159,7 @@ spend against the budget is shown on the health surface. See
 
 ### No Third-Party Bypass
 
-JobHunter must never submit applications, run destructive profile or database
+JobCtl must never submit applications, run destructive profile or database
 actions, or bypass third-party controls unless you explicitly authorize that
 behavior. This includes CAPTCHA, paywall, login, rate-limit, and bot-control
 bypass. The apply agent is instructed to stop on single sign-on and third-party login
@@ -182,10 +182,10 @@ navigations alike — routes through one crawl-politeness gateway. It:
   endpoint and fails **open with a warning** (allow), since a genuinely down host
   simply fails the follow-on content fetch harmlessly. The trade-off this accepts
   is that a host which refuses `/robots.txt` while still serving content is
-  crawled unenforced. JobHunter also uses the standard-library `robotparser`,
+  crawled unenforced. JobCtl also uses the standard-library `robotparser`,
   which is first-match rather than RFC 9309 longest-match, so it can over-block an
   `Allow` exception — the safe direction.
-- **Stamps one honest `User-Agent`** — `JobHunter/<version> (+<repo url>)` by
+- **Stamps one honest `User-Agent`** — `JobCtl/<version> (+<repo url>)` by
   default — that **never impersonates a browser** on a surface it controls. You
   can override the product token and contact via
   [configuration](configuration.md#crawl-politeness); review it before real
@@ -199,8 +199,8 @@ A blocked fetch is recorded as a first-class **outcome** — robots-disallowed,
 rate-limited, or budget-exhausted — never a scrape error, and is surfaced per
 source in the Source Health card (`SourcePolitenessBadges`) and discovery
 controls. Broad job boards fetched through `python-jobspy` own their internal
-per-board transport, so JobHunter cannot robots-gate those individual requests;
-it applies budget + pacing at its own invocation boundary, and `jobhunter
+per-board transport, so JobCtl cannot robots-gate those individual requests;
+it applies budget + pacing at its own invocation boundary, and `jobctl
 doctor` discloses when broad boards are active. The authenticated LinkedIn path
 uses your own logged-in browser session and presents its real browser identity —
 an owner-scoped exception that is still rate- and budget-limited.
@@ -211,7 +211,7 @@ Different secrets live in different places, and it is worth knowing which:
 
 - **LLM provider keys** (OpenAI, Gemini, and a local LLM endpoint) can be stored
   in the macOS Keychain through the web app's credential store, or in
-  `~/.jobhunter/.env`. When stored in the Keychain they are never written to
+  `~/.jobctl/.env`. When stored in the Keychain they are never written to
   SQLite, logs, traces, or artifacts.
 - **The CapSolver key** is the `CAPSOLVER_API_KEY` environment variable
   (`.env`). The apply agent does not receive this key in its model prompt; the
@@ -225,18 +225,18 @@ Different secrets live in different places, and it is worth knowing which:
   missing or the field is not a password field, login fails closed for operator
   handling.
 
-JobHunter never commits any of these; the release gate scans for accidental
+JobCtl never commits any of these; the release gate scans for accidental
 secret commits (see the [developer Security page](../developer/security.md)).
 
 ## The Apply Agent
 
 The apply agent is a local Claude runtime subprocess that drives a real Chrome
 browser through Playwright. It uses a system `claude` when present, then the
-pinned Claude Agent SDK bundled binary unless `JOBHUNTER_CLAUDE_BIN` is set. It
+pinned Claude Agent SDK bundled binary unless `JOBCTL_CLAUDE_BIN` is set. It
 runs with an explicit MCP tool allowlist for apply automation: browser form
 tools plus bounded Gmail verification-code tools, not shell/file access, raw
 Gmail mailbox send tools, raw page-script evaluation, or broad permission
-bypass. Email-only applications are sent by JobHunter's owned Gmail connector
+bypass. Email-only applications are sent by JobCtl's owned Gmail connector
 after Apply Review approval, not by an agent mailbox tool.
 
 ::: warning Prompt injection is a real risk

@@ -3,7 +3,7 @@ import type {
   EmployerAnalysis,
   ArtifactTailoringExplanation,
   RequirementFitReport,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 /**
  * Shared fixtures for the Phase 5 inspector surfaces (EmployerAnalysisPanel,

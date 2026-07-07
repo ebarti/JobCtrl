@@ -51,16 +51,16 @@ function postedSalarySource(): CompensationSourcePolicySummary {
     coverage: {
       geography: "posting",
       regions: ["Europe"],
-      notes: "Coverage follows the job posting location and text captured by JobHunter.",
+      notes: "Coverage follows the job posting location and text captured by JobCtl.",
     },
     notes: ["No external compensation provider is queried for this source."],
   };
 }
 
 function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
-  const accessMode = normalizeAccessMode(env["JOBHUNTER_LEVELS_FYI_ACCESS_MODE"]);
+  const accessMode = normalizeAccessMode(env["JOBCTL_LEVELS_FYI_ACCESS_MODE"]);
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
-  const europeCoverageConfirmed = isTrue(env["JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE"]);
+  const europeCoverageConfirmed = isTrue(env["JOBCTL_LEVELS_FYI_EUROPE_COVERAGE"]);
   const available = accessPermitted && europeCoverageConfirmed;
   const disabledReason = levelsDisabledReason(accessMode, accessPermitted, europeCoverageConfirmed);
   const reportedAccessMode: CompensationSourceAccessMode =
@@ -92,13 +92,13 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Europe coverage is not configured.",
     },
     notes: [
-      "Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
+      "Refresh automatically loads configured licensed rows from JOBCTL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
     ],
   };
 }
 
 function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
-  const accessMode = normalizeAccessMode(env["JOBHUNTER_GLASSDOOR_ACCESS_MODE"]);
+  const accessMode = normalizeAccessMode(env["JOBCTL_GLASSDOOR_ACCESS_MODE"]);
   const available = accessMode ? GLASSDOOR_ACCESS_MODES.has(accessMode) : false;
   const disabledReason = glassdoorDisabledReason(accessMode, available);
   const reportedAccessMode: CompensationSourceAccessMode =
@@ -130,7 +130,7 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Coverage is not configured.",
     },
     notes: [
-      "Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
+      "Refresh automatically loads configured permitted rows from JOBCTL_GLASSDOOR_OBSERVATIONS_PATH or JOBCTL_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
     ],
   };
 }

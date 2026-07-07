@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.infrastructure import setup_probes
+from jobctl.infrastructure import setup_probes
 
 
 def test_enabled_analysis_legs_default_and_aliases() -> None:
@@ -77,7 +77,7 @@ def test_antigravity_auth_requires_key_or_vertex() -> None:
 
 def test_resolve_codex_binary_uses_explicit_override(tmp_path: Path) -> None:
     override = tmp_path / "codex"
-    assert setup_probes.resolve_codex_binary({"JOBHUNTER_CODEX_BIN": str(override)}) == override
+    assert setup_probes.resolve_codex_binary({"JOBCTL_CODEX_BIN": str(override)}) == override
 
 
 def test_probe_claude_synthesis_auth_reflects_claude_auth(
@@ -125,7 +125,7 @@ def test_probe_analysis_setup_always_probes_claude_synthesis_auth(
     empty_config.mkdir()
 
     base = {
-        "JOBHUNTER_ANALYSIS_LEGS": "codex,antigravity",
+        "JOBCTL_ANALYSIS_LEGS": "codex,antigravity",
         "CLAUDE_CONFIG_DIR": str(empty_config),
         "CODEX_HOME": str(tmp_path / "codex-empty"),
     }
@@ -153,7 +153,7 @@ def test_resolve_claude_apply_binary_precedence(
     # 1. Explicit override wins over PATH and the bundled runtime.
     override = tmp_path / "claude-override"
     assert setup_probes.resolve_claude_apply_binary(
-        {"JOBHUNTER_CLAUDE_BIN": str(override)}
+        {"JOBCTL_CLAUDE_BIN": str(override)}
     ) == str(override)
 
     # 2. No override -> system `claude` on PATH.
@@ -183,6 +183,6 @@ def test_resolve_claude_apply_binary_expands_user_override(
     # A `~/...` override must reach Popen expanded, matching resolve_codex_binary
     # and the _has_claude_apply_runtime existence probe.
     monkeypatch.setenv("HOME", str(tmp_path))
-    resolved = setup_probes.resolve_claude_apply_binary({"JOBHUNTER_CLAUDE_BIN": "~/bin/claude"})
+    resolved = setup_probes.resolve_claude_apply_binary({"JOBCTL_CLAUDE_BIN": "~/bin/claude"})
     assert "~" not in resolved
     assert resolved == str(tmp_path / "bin" / "claude")

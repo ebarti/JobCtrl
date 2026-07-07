@@ -51,9 +51,9 @@ Run the full column for the touched surface; a phase is not done until every req
 | Python worker | `uv --project workers/automation run --extra dev pytest -q` · `uv --project workers/automation run --extra dev ruff check .` | all pass |
 | Domain-type parity | `uv --project workers/automation run python scripts/check-domain-type-parity.py` | no drift (if contracts/domain-types touched) |
 | TS API | `pnpm api:check` · `pnpm api:test` | typecheck clean, tests pass |
-| Web | `pnpm web:check` · `pnpm --filter @jobhunter/web test` · `pnpm --filter @jobhunter/web test-d` · `pnpm web:build` | all pass |
-| Web e2e | `pnpm --filter @jobhunter/web e2e` | touched flows pass (baseline in `docs/backlog.md`) |
-| Extension (new) | `pnpm --filter @jobhunter/extension check` · `…/extension test` · `…/extension build` · `…/extension e2e` | typecheck/lint clean, unit + privacy-invariant + e2e pass (§10) |
+| Web | `pnpm web:check` · `pnpm --filter @jobctl/web test` · `pnpm --filter @jobctl/web test-d` · `pnpm web:build` | all pass |
+| Web e2e | `pnpm --filter @jobctl/web e2e` | touched flows pass (baseline in `docs/backlog.md`) |
+| Extension (new) | `pnpm --filter @jobctl/extension check` · `…/extension test` · `…/extension build` · `…/extension e2e` | typecheck/lint clean, unit + privacy-invariant + e2e pass (§10) |
 | Cross-stack | `pnpm check` · `pnpm test` | aggregate green |
 | Privacy / hygiene | `python scripts/release_check.py` · `git diff --check` | privacy gate green (BR-055), no whitespace errors |
 
@@ -96,16 +96,16 @@ Uses the repo's Ubiquitous Language convention (`docs/architecture/domain-model/
 - Definition: a user-initiated save of a job from the browser — a canonical URL plus an optional description snapshot (rendered text and/or HTML) taken from the page the user is viewing.
 - Source of truth: the page the user chose to save, recorded through the existing manual-capture import as a `PostingContentSnapshot` and a `Job`.
 - Owning context: **Job Discovery**.
-- Invariants: provenance records that this capture came from the extension (client + version) and carries `source_kind = user_mediated_capture` (`workers/automation/src/jobhunter/domain/discovery/source_registry.py` » `SourceKind.USER_MEDIATED_CAPTURE`; value object `ManualCaptureProvenance`). Never silently merges with another job — dedupe uses the canonical-identity path (§4.3).
+- Invariants: provenance records that this capture came from the extension (client + version) and carries `source_kind = user_mediated_capture` (`workers/automation/src/jobctl/domain/discovery/source_registry.py` » `SourceKind.USER_MEDIATED_CAPTURE`; value object `ManualCaptureProvenance`). Never silently merges with another job — dedupe uses the canonical-identity path (§4.3).
 
 **Captured Job** (Aggregate — existing `Job`)
 - Definition: a `Job` created or matched from an Extension Capture. Not a new aggregate — it is the existing `Job` reached through the one legal creation path.
-- Source of truth: `workers/automation/src/jobhunter/domain/discovery/use_cases.py` » `DiscoverJobsUseCase` (the only place `Job` aggregates are created).
+- Source of truth: `workers/automation/src/jobctl/domain/discovery/use_cases.py` » `DiscoverJobsUseCase` (the only place `Job` aggregates are created).
 - Owning context: **Job Discovery**.
 
 **Answer Draft** (Read Model / Reviewable Artifact) — Phase 2
 - Definition: a per-job, per-form set of **suggested** application-form values: deterministic field values sourced from the profile, plus (optionally, Phase 2b) drafted free-text answers to screening questions.
-- Source of truth: `ProfileSnapshot` (`workers/automation/src/jobhunter/domain/profile/snapshot.py`) and `ApplicationDefaults` / `EeoVoluntary` (`workers/automation/src/jobhunter/domain/profile/value_objects.py`) for deterministic values; for free-text, a recorded drafting prompt + the profile evidence it was grounded in.
+- Source of truth: `ProfileSnapshot` (`workers/automation/src/jobctl/domain/profile/snapshot.py`) and `ApplicationDefaults` / `EeoVoluntary` (`workers/automation/src/jobctl/domain/profile/value_objects.py`) for deterministic values; for free-text, a recorded drafting prompt + the profile evidence it was grounded in.
 - Owning context: **Apply Automation** (mirrors the existing apply-review draft pattern; see `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.ts`).
 - Invariants: an Answer Draft is never auto-filled and never submitted; every value is inspectable to its source (I-4); free-text drafts never fabricate facts not present in the profile (reuse the tailoring truthfulness posture, `docs/architecture/tailoring.md`).
 
@@ -116,7 +116,7 @@ Uses the repo's Ubiquitous Language convention (`docs/architecture/domain-model/
 
 **Local Capability Token** (Auth credential) — Phase 0
 - Definition: a locally generated secret the extension presents to the local API to prove it is a paired local client.
-- Source of truth: generated and stored under `~/.jobhunter/` by the local stack (recommended: `jobhunter init` / API bootstrap), surfaced to the user for one-time pairing.
+- Source of truth: generated and stored under `~/.jobctl/` by the local stack (recommended: `jobctl init` / API bootstrap), surfaced to the user for one-time pairing.
 - Owning context: **Operations / runtime** (API), alongside existing runtime config (`apps/api/src/config.ts`).
 - Invariants: inbound-only (authenticates *to* the local API); never written to SQLite, logs, traces, or artifacts (mirrors the credentials rule TR-013); loopback Host gate still applies on top of it.
 
@@ -126,7 +126,7 @@ Uses the repo's Ubiquitous Language convention (`docs/architecture/domain-model/
 
 ### 3.1 Package and build
 
-- New workspace package `apps/extension/` (the `pnpm-workspace.yaml` glob already includes `apps/*`; `apps/` currently holds only `api` and `web`, so this is net-new). Name it `@jobhunter/extension`.
+- New workspace package `apps/extension/` (the `pnpm-workspace.yaml` glob already includes `apps/*`; `apps/` currently holds only `api` and `web`, so this is net-new). Name it `@jobctl/extension`.
 - Manifest V3, TypeScript, bundled with the repo's existing web toolchain (Vite). Components: a **background service worker** (the only code that talks to the local API), **content scripts** (Phase 2, on allowlisted ATS domains, DOM-only), a small **popup/side-panel** UI, and the static `manifest.json`.
 - Reuse shared types from `packages/contracts` and `packages/domain-types` so the extension's API calls are typed against the same schemas the API validates (`ManualCaptureImportSchema`, etc.). Reuse the transport shape of `packages/api-client` where practical; do not fork request/response types.
 - Dependency policy: honor the workspace `minimumReleaseAge` supply-chain guard in `pnpm-workspace.yaml`; no remotely hosted/eval'd code (MV3 forbids remote code and the security review enforces it, §8).
@@ -153,7 +153,7 @@ trust rules, contracts, and scope below, plus owner decisions D-1/D-2 (§13)
 workstream starts at P1 and consumes the substrate; it must not re-implement
 API authentication.
 
-- **Token.** The local stack generates a Local Capability Token (§2), stored under `~/.jobhunter/` with restrictive permissions, surfaced to the user in the web app Settings surface for one-time pairing (recommended). The extension stores it in extension storage and presents it on every request (recommended header: `Authorization: Bearer <token>`).
+- **Token.** The local stack generates a Local Capability Token (§2), stored under `~/.jobctl/` with restrictive permissions, surfaced to the user in the web app Settings surface for one-time pairing (recommended). The extension stores it in extension storage and presents it on every request (recommended header: `Authorization: Bearer <token>`).
 - **Server trust.** The API validates the token on the extension-facing routes and, for token-authenticated requests, treats the request as a trusted local client: it must still pass the loopback `Host` gate, and CORS must echo the extension origin for those routes. The exact relaxation of the mutation-origin check for token-bearing requests is **owner decision D-1** (§13); recommended default: a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
 - **Contracts.** Token issuance/rotation and the extension pairing exchange are added to `packages/contracts` so both sides share one schema. No token value is ever logged (TR-013, TR-014).
 - **Scope.** The token authorizes only the extension-facing capability set (capture in P1; capture + read-only profile/answer-draft in P2). It does not grant apply-submission authority — that stays behind the apply approval gate (I-3).
@@ -175,25 +175,25 @@ API authentication.
 
 ## 4. Phase 1 — Capture (gate: this plan + P0 merged)
 
-**Objective.** From any job page in the browser, the user saves the job (URL + optional description snapshot) into JobHunter through the **existing** manual-capture/import path, so the captured job is deduped, provenance-stamped, snapshotted, and visible in the product exactly like any other manually captured job.
+**Objective.** From any job page in the browser, the user saves the job (URL + optional description snapshot) into JobCtl through the **existing** manual-capture/import path, so the captured job is deduped, provenance-stamped, snapshotted, and visible in the product exactly like any other manually captured job.
 
 **Branch:** `feat/extension-capture` · **PR title:** `feat(extension): save-a-job capture into manual-capture path`
 
 ### 4.1 Contract
 
 - The capture request reuses the existing `ManualCaptureImportSchema` shape (`packages/contracts/src/schemas.ts`): `captureMode` ∈ `MANUAL_CAPTURE_MODE_VALUES` (`current_page`, `saved_html`, `copied_url`, `pasted_text`, `email_import`), `capturedUrl` (≤2048), `contentText` (≤200k) and/or `contentHtmlBase64` (≤8MB), `note` (≤400), `futureManualActionRequired`. The extension uses `current_page` (rendered text) or `saved_html` (HTML snapshot). At least one of URL/text/HTML is required (existing `.refine`).
-- **Substrate gap to close.** The current import endpoint (`POST /v1/discovery/manual-capture/:itemId/import`, `apps/api/src/server.ts`) and its worker (`import_manual_capture_item`, `workers/automation/src/jobhunter/infrastructure/discovery/production_wiring.py`) require a **pre-existing pending `manual_capture_queue` row** — they *update* a row that discovery's manual-action path seeded. An extension capture has no such row. Phase 1 therefore adds a **capture-ingest** entry point that (a) creates the pending `manual_capture_queue` row for an extension-originated capture (new manual-action reason, recommended `browser_extension_capture`, added to `MANUAL_ACTION_REASON_VALUES`), then (b) drives the existing import logic unchanged. Do **not** fork the import logic; reuse `DiscoverJobsUseCase` + `CapturePostingSnapshotUseCase` exactly as `import_manual_capture_item` does today.
+- **Substrate gap to close.** The current import endpoint (`POST /v1/discovery/manual-capture/:itemId/import`, `apps/api/src/server.ts`) and its worker (`import_manual_capture_item`, `workers/automation/src/jobctl/infrastructure/discovery/production_wiring.py`) require a **pre-existing pending `manual_capture_queue` row** — they *update* a row that discovery's manual-action path seeded. An extension capture has no such row. Phase 1 therefore adds a **capture-ingest** entry point that (a) creates the pending `manual_capture_queue` row for an extension-originated capture (new manual-action reason, recommended `browser_extension_capture`, added to `MANUAL_ACTION_REASON_VALUES`), then (b) drives the existing import logic unchanged. Do **not** fork the import logic; reuse `DiscoverJobsUseCase` + `CapturePostingSnapshotUseCase` exactly as `import_manual_capture_item` does today.
 - The response reuses `ManualCaptureImportResponse` (carries `provenance.sourceKind = "user_mediated_capture"`, `originatingUrl`, `captureMode`). The extension surfaces the returned `jobKey` and whether the job was newly created, matched an existing job, or quarantined.
 
 ### 4.2 Substrate reused (do not re-implement)
 
 - Import + snapshot + enrichment promotion: `import_manual_capture_item` → `_manual_capture_posting` (`source=Source(board="User-mediated capture")`, `strategy=SearchStrategy.MANUAL`, `ats_kind=AtsKind.OTHER`, `source_native_id=<item id>`) → `DiscoverJobsUseCase.execute(...)` → `CapturePostingSnapshotUseCase.execute(..., policy_id="user_mediated_capture", promote_to_job_enrichment=True)`.
-- API/worker bridge: `apps/api/src/manual-capture-worker.ts` » `createWorkerManualCaptureImporter` (spawns `python -m jobhunter.discovery.manual_capture_import`), `listManualCaptureQueue` / `dismissManualCapture` (`apps/api/src/discovery-controls.ts`).
+- API/worker bridge: `apps/api/src/manual-capture-worker.ts` » `createWorkerManualCaptureImporter` (spawns `python -m jobctl.discovery.manual_capture_import`), `listManualCaptureQueue` / `dismissManualCapture` (`apps/api/src/discovery-controls.ts`).
 - Web client + hooks: `packages/api-client/src/client.ts` » `manualCaptureQueue` / `importManualCapture` / `dismissManualCapture`; `apps/web/src/contexts/discovery/hooks/useDiscoveryProductControlMutations.ts` » `useManualCaptureImportMutation` / `useManualCaptureDismissMutation`; query hook `apps/web/src/contexts/operations/hooks/useDiscoveryProductControlsQuery.ts` » `useManualCaptureQueueQuery`; key `discoveryKeys.manualCapture`.
 
 ### 4.3 Dedupe and provenance
 
-- **Dedupe.** Reuse the canonical-identity path: `normalize_observed_url` (`workers/automation/src/jobhunter/domain/discovery/identity.py` — strips fragment, trailing slash, and tracking params incl. `utm_*`, `gh_*`, `ashby_jid`, `lever-source`, `src`, `ref`) and `SqliteJobRepository.find_canonical_owner` (resolution order: source observation by `(source_id, source_native_id)` → exact `jobs.url` → `job_canonical_identities.canonical_url` → normalized-observed-url match). A capture of a URL already known to JobHunter attaches to the existing `Job`; it never creates a silent duplicate (BR-021). Uncertain matches go to quarantine (`discovery_quarantine_entries`), never a fuzzy merge.
+- **Dedupe.** Reuse the canonical-identity path: `normalize_observed_url` (`workers/automation/src/jobctl/domain/discovery/identity.py` — strips fragment, trailing slash, and tracking params incl. `utm_*`, `gh_*`, `ashby_jid`, `lever-source`, `src`, `ref`) and `SqliteJobRepository.find_canonical_owner` (resolution order: source observation by `(source_id, source_native_id)` → exact `jobs.url` → `job_canonical_identities.canonical_url` → normalized-observed-url match). A capture of a URL already known to JobCtl attaches to the existing `Job`; it never creates a silent duplicate (BR-021). Uncertain matches go to quarantine (`discovery_quarantine_entries`), never a fuzzy merge.
 - **Provenance (captured-by-extension as a source).** Preserve `source_kind = user_mediated_capture` and extend `ManualCaptureProvenance` to record the capture client (recommended fields: `capture_client = "browser_extension"`, extension version) so the source registry can attribute capture volume/quality to the extension. Recommended `source_id` namespace: `manual_capture:extension` (distinct from the per-item fallback `manual_capture:<itemId>`), registered as a `USER_MEDIATED_CAPTURE`-kind source in the source registry (`source_registry_entries`) so it appears in Discovery source controls with quality stats (BR-018, BR-020). Exact provenance field names/source-id scheme is owner decision **D-3** (§13).
 
 ### 4.4 Projection / read model and UI surface
@@ -237,22 +237,22 @@ Ships in two sub-gated steps to bound risk:
 
 Start with the families the repo already has first-class knowledge for — the `AtsKind` enum and detector already recognize them:
 
-- Detection: reuse `workers/automation/src/jobhunter/infrastructure/discovery/production_wiring.py` » `_detect_ats_kind` (host-based: Workday `myworkdayjobs.com`, Greenhouse `greenhouse.io`, Lever `lever.co`, Ashby `ashbyhq.com`) and `AtsKind` (`workers/automation/src/jobhunter/domain/discovery/identity.py`). TS parity: `apps/api/src/discovery-controls.ts` » `isSharedAtsHost` / `sourceKindFromId`.
-- Content-script form mapping is per-ATS and net-new (there are **no** existing apply-side form/selector adapters — apply today is a generic LLM+Playwright agent, `workers/automation/src/jobhunter/apply/prompt.py`, which Phase 2 does **not** use). Begin with the two most structured families and expand; exact starting set and rollout order is owner decision **D-4** (§13). The content-script host allowlist is exactly these ATS domains (least privilege).
+- Detection: reuse `workers/automation/src/jobctl/infrastructure/discovery/production_wiring.py` » `_detect_ats_kind` (host-based: Workday `myworkdayjobs.com`, Greenhouse `greenhouse.io`, Lever `lever.co`, Ashby `ashbyhq.com`) and `AtsKind` (`workers/automation/src/jobctl/domain/discovery/identity.py`). TS parity: `apps/api/src/discovery-controls.ts` » `isSharedAtsHost` / `sourceKindFromId`.
+- Content-script form mapping is per-ATS and net-new (there are **no** existing apply-side form/selector adapters — apply today is a generic LLM+Playwright agent, `workers/automation/src/jobctl/apply/prompt.py`, which Phase 2 does **not** use). Begin with the two most structured families and expand; exact starting set and rollout order is owner decision **D-4** (§13). The content-script host allowlist is exactly these ATS domains (least privilege).
 
 ### 5.2 Source of truth for suggestions
 
-- Deterministic fields (P2a): `ProfileSnapshot` (`workers/automation/src/jobhunter/domain/profile/snapshot.py`) — identity/contact/address/links (`PersonalInfo`), work authorization/sponsorship (`WorkAuthorization`), compensation (`Compensation`), availability (`Availability`), and screening defaults (`ApplicationDefaults`, `EeoVoluntary` — whose docstring already frames them as "default form-field values consumed by Apply Automation when the agent encounters generic screening prompts"). No new profile fields are invented; if a form needs a field the profile lacks, the suggestion is absent and labeled "not in your profile" (I-4).
+- Deterministic fields (P2a): `ProfileSnapshot` (`workers/automation/src/jobctl/domain/profile/snapshot.py`) — identity/contact/address/links (`PersonalInfo`), work authorization/sponsorship (`WorkAuthorization`), compensation (`Compensation`), availability (`Availability`), and screening defaults (`ApplicationDefaults`, `EeoVoluntary` — whose docstring already frames them as "default form-field values consumed by Apply Automation when the agent encounters generic screening prompts"). No new profile fields are invented; if a form needs a field the profile lacks, the suggestion is absent and labeled "not in your profile" (I-4).
 - Free-text answers (P2b): an **Answer Draft** grounded strictly in profile evidence, with the drafting prompt and the evidence recorded and inspectable (I-4). Reuse the truthfulness/fabrication posture from `docs/architecture/tailoring.md`; a drafted answer that cannot be grounded is shown as empty with a "needs your input" prompt, never fabricated. LLM drafting reuses the existing spend-cap discipline (§6.2) so P2b cannot run over budget.
 
 ### 5.3 The no-auto-submit invariant (P2 core)
 
-- The content script fills only fields the user has accepted, and **never** dispatches the form's submit. This is asserted by a regression test that drives a synthetic ATS form and verifies the submit handler is never invoked by extension code (§10). This mirrors, at the client layer, the server-side dry-run guard (`workers/automation/src/jobhunter/apply/chrome.py` » `install_dry_run_cdp_guard` / `_FORM_SUBMIT_GUARD_SOURCE`) — but Phase 2 runs in the user's own browser, so the guarantee is structural (the extension has no submit code path) plus tested.
+- The content script fills only fields the user has accepted, and **never** dispatches the form's submit. This is asserted by a regression test that drives a synthetic ATS form and verifies the submit handler is never invoked by extension code (§10). This mirrors, at the client layer, the server-side dry-run guard (`workers/automation/src/jobctl/apply/chrome.py` » `install_dry_run_cdp_guard` / `_FORM_SUBMIT_GUARD_SOURCE`) — but Phase 2 runs in the user's own browser, so the guarantee is structural (the extension has no submit code path) plus tested.
 
 ### 5.4 Owning context, projection, UI
 
 - **Owning context:** Apply Automation owns Answer Drafts (sourced from Candidate Profile). Deterministic P2a suggestions are computed read-only from `ProfileSnapshot` and need no new persistent aggregate; the Answer Draft (P2b, and the record of what was suggested/accepted) is persisted as an apply-side read model, mirroring the resume-review-draft pattern (`apps/web/src/contexts/apply/hooks/useApplyReviewMutations.ts`, e.g. `useCreateResumeReviewDraftMutation`).
-- **Projection / read model:** a new answer-draft projection (per job + detected form), consistent with the apply projection conventions (`apply_run_projections` shape, `workers/automation/src/jobhunter/infrastructure/projections/sqlite_projection_store.py`) — rebuilt from events, read directly by the API. New domain event types get a registered SSE handler (parity test).
+- **Projection / read model:** a new answer-draft projection (per job + detected form), consistent with the apply projection conventions (`apply_run_projections` shape, `workers/automation/src/jobctl/infrastructure/projections/sqlite_projection_store.py`) — rebuilt from events, read directly by the API. New domain event types get a registered SSE handler (parity test).
 - **UI surface:** an in-page review overlay / extension side-panel listing each suggested field and its source; the web app **Apply Review** surface (`apps/web/src/views/apply-review/ApplyReviewView.tsx`) shows the Answer Draft with per-value source attribution so drafts are auditable outside the extension too.
 
 ### 5.5 Acceptance template (Phase 2)
@@ -296,10 +296,10 @@ All of the following must hold:
 
 A Phase-3 submission MUST enter through the existing apply workflow entry (`apply` JSON-RPC method → `ApplyWorkflow`), inheriting all four mechanisms — not the raw launcher, not the extension:
 
-- **Approval gate:** `apply_approval_required` (default `True`, `workers/automation/src/jobhunter/infrastructure/scoring/criteria_provider.py` » `read_apply_approval_required`) enforced in the worker's claim transaction (`workers/automation/src/jobhunter/apply/launcher.py` » `_latest_apply_review_decision`, the `approval_required and not dry_run` branch); consent recorded via `POST /v1/jobs/:jobKey/apply-review/decision` (`apps/api/src/server.ts`; `apps/api/src/application-feedback.ts` » `recordApplyReviewDecision`, decision `approve_submit` from `APPLY_REVIEW_DECISION_VALUES`).
-- **Explicit dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobhunter/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`). This protects runs that explicitly opt into dry-run mode; it is not a dry-run-by-default requirement.
-- **At-most-once lifecycle:** deterministic `apply_workflow_id` = `apply-{tenant}-{job_key}` (`workers/automation/src/jobhunter/workflow_specs.py`), Temporal `USE_EXISTING` conflict policy, single live attempt (`apply/workflow.py` » `_APPLY_LIVE_RETRY`), active-run exclusion (`_has_active_apply` / `list_active`), and the `ApplySubmitIntended` checkpoint (`workers/automation/src/jobhunter/domain/apply/process_manager.py`).
-- **Spend ceiling:** the `check_spend_budget` preflight (`workers/automation/src/jobhunter/llm.py`) raising `BudgetExceededError`; daily budget default $25 (`read_daily_budget_usd`).
+- **Approval gate:** `apply_approval_required` (default `True`, `workers/automation/src/jobctl/infrastructure/scoring/criteria_provider.py` » `read_apply_approval_required`) enforced in the worker's claim transaction (`workers/automation/src/jobctl/apply/launcher.py` » `_latest_apply_review_decision`, the `approval_required and not dry_run` branch); consent recorded via `POST /v1/jobs/:jobKey/apply-review/decision` (`apps/api/src/server.ts`; `apps/api/src/application-feedback.ts` » `recordApplyReviewDecision`, decision `approve_submit` from `APPLY_REVIEW_DECISION_VALUES`).
+- **Explicit dry-run guard:** the `dry_run` flag + aggregate invariant (`workers/automation/src/jobctl/domain/apply/aggregate.py`) + CDP network guard (`apply/chrome.py` » `install_dry_run_cdp_guard`). This protects runs that explicitly opt into dry-run mode; it is not a dry-run-by-default requirement.
+- **At-most-once lifecycle:** deterministic `apply_workflow_id` = `apply-{tenant}-{job_key}` (`workers/automation/src/jobctl/workflow_specs.py`), Temporal `USE_EXISTING` conflict policy, single live attempt (`apply/workflow.py` » `_APPLY_LIVE_RETRY`), active-run exclusion (`_has_active_apply` / `list_active`), and the `ApplySubmitIntended` checkpoint (`workers/automation/src/jobctl/domain/apply/process_manager.py`).
+- **Spend ceiling:** the `check_spend_budget` preflight (`workers/automation/src/jobctl/llm.py`) raising `BudgetExceededError`; daily budget default $25 (`read_daily_budget_usd`).
 - **Read model / UI:** `apply_run_projections`; Apply Review queue + `ApplyReviewDecisionControls`; apply events (`ApplyRunStarted`, `ApplySubmitIntended`, `ApplicationSubmitted`, `ApplicationFailed`, `ApplyReviewDecisionRecorded`).
 
 ### 6.3 What Phase 3 must NOT do
@@ -346,7 +346,7 @@ The extension is a high-privilege surface (content scripts on ATS pages, a local
 
 Beyond §0.3:
 
-- **Package tooling:** `@jobhunter/extension` gets `check` (tsc), `test` (Vitest unit: capture payload building, ATS detection reuse, field mapping, source labeling, offline queue), `build`, and `e2e`.
+- **Package tooling:** `@jobctl/extension` gets `check` (tsc), `test` (Vitest unit: capture payload building, ATS detection reuse, field mapping, source labeling, offline queue), `build`, and `e2e`.
 - **Privacy-invariant tests** (§7): manifest test + bundle scan + egress assertion — these are non-negotiable gates.
 - **No-submit test** (Phase 2): drive a synthetic ATS form fixture; assert the extension never invokes submit.
 - **Contract tests:** the extension's requests validate against the same `packages/contracts` schemas the API enforces (e.g. `ManualCaptureImportSchema`); add a type-level test if new contracts are introduced, and run `scripts/check-domain-type-parity.py` when domain types change.
@@ -380,8 +380,8 @@ Beyond §0.3:
 
 All nine decisions were resolved by the owner on 2026-07-06:
 
-- **D-1 (P0):** Exact token model — header name, storage location under `~/.jobhunter/`, pairing UX (Settings copy vs. localhost pairing page), and whether a valid token relaxes the mutation-origin gate (recommended: yes, with loopback `Host` still required).
-  - **Resolved (2026-07-06):** recommended defaults accepted — token under `~/.jobhunter/` with restrictive permissions, one-time pairing via the Settings surface, `Authorization: Bearer <token>`; a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
+- **D-1 (P0):** Exact token model — header name, storage location under `~/.jobctl/`, pairing UX (Settings copy vs. localhost pairing page), and whether a valid token relaxes the mutation-origin gate (recommended: yes, with loopback `Host` still required).
+  - **Resolved (2026-07-06):** recommended defaults accepted — token under `~/.jobctl/` with restrictive permissions, one-time pairing via the Settings surface, `Authorization: Bearer <token>`; a valid token satisfies the trusted-mutation-source requirement while the loopback `Host` gate remains mandatory.
 - **D-2 (P0):** Do existing unauthenticated loopback API reads stay open, or does the owner want auth required for all non-web clients? (Recommended: keep additive; extension routes require token; web app unchanged.)
   - **Resolved (2026-07-06):** keep additive. Extension routes require the token; existing unauthenticated loopback reads and the web app are unchanged.
 - **D-3 (P1):** Extension provenance fields and source-id scheme (recommended `source_id = manual_capture:extension`, provenance `capture_client="browser_extension"` + version) and whether to add a `browser_extension_capture` manual-action reason.

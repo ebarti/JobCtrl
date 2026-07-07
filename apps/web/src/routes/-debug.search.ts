@@ -1,4 +1,4 @@
-import { ACTIVITY_SORT_FIELDS } from "@jobhunter/contracts";
+import { ACTIVITY_SORT_FIELDS } from "@jobctl/contracts";
 import { z } from "zod";
 
 export const debugSearchSchema = z.object({

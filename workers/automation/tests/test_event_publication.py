@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.state import record_job_event
+from jobctl.database import close_connection, init_db
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.state import record_job_event
 
 
 def test_record_job_event_publishes_through_bus(tmp_path: Path) -> None:

@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { Stage } from "@jobhunter/contracts";
+import type { Stage } from "@jobctl/contracts";
 
 import { useCancelStageMutation } from "../hooks/useCancelStageMutation.js";
 

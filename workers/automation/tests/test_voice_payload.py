@@ -9,7 +9,7 @@ never silently corrupted).
 
 from __future__ import annotations
 
-from jobhunter.domain.materials.voice import (
+from jobctl.domain.materials.voice import (
     VoicePayload,
     VoiceResult,
     apply_voice_to_payload,

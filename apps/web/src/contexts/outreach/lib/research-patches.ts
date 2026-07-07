@@ -1,4 +1,4 @@
-import type { ContactResearchDetailResponse } from "@jobhunter/contracts";
+import type { ContactResearchDetailResponse } from "@jobctl/contracts";
 
 function isResearchDetailResponse(value: unknown): value is ContactResearchDetailResponse {
   return (

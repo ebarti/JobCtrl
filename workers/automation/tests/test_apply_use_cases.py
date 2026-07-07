@@ -10,29 +10,29 @@ fake repository (the launcher persists lifecycle state via
 import pytest
 from pathlib import Path
 
-from jobhunter.apply import chrome as chrome_mod
-from jobhunter.domain.apply import ApplyRun, ApplyRunStatus
-from jobhunter.domain.apply.services import (
+from jobctl.apply import chrome as chrome_mod
+from jobctl.domain.apply import ApplyRun, ApplyRunStatus
+from jobctl.domain.apply.services import (
     ApplyEligibilityChecker,
     ApplyPromptBuilder,
 )
-from jobhunter.domain.apply.use_cases import (
+from jobctl.domain.apply.use_cases import (
     SubmitApplicationUseCase,
     SubmitBatchUseCase,
 )
-from jobhunter.domain.apply.value_objects import (
+from jobctl.domain.apply.value_objects import (
     Applied,
     Captcha,
     DryRunComplete,
     Failed,
     TokenUsage,
 )
-from jobhunter.domain.ports.apply import (
+from jobctl.domain.ports.apply import (
     AgentResult,
     BrowserSession,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.apply.local_chrome import LocalChromeAdapter
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.apply.local_chrome import LocalChromeAdapter
 
 
 class _InMemoryApplyRunRepository:
@@ -157,7 +157,7 @@ def _ready_job():
 
 def _stub_legacy_prompt(monkeypatch):
     monkeypatch.setattr(
-        "jobhunter.apply.prompt.build_prompt",
+        "jobctl.apply.prompt.build_prompt",
         lambda **_kwargs: "rendered prompt",
     )
 
@@ -219,7 +219,7 @@ def test_execute_passes_worker_dir_to_prompt_builder(monkeypatch, repo):
         seen.update(kwargs)
         return "rendered prompt"
 
-    monkeypatch.setattr("jobhunter.apply.prompt.build_prompt", fake_build)
+    monkeypatch.setattr("jobctl.apply.prompt.build_prompt", fake_build)
     use_case = _build_use_case(repo)
 
     use_case.execute(
@@ -246,10 +246,10 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
     apply_workers = tmp_path / "apply-workers"
 
     monkeypatch.setattr(chrome_mod.config, "APPLY_WORKER_DIR", apply_workers)
-    monkeypatch.setattr("jobhunter.apply.prompt.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctl.apply.prompt.config.load_env", lambda: None)
     monkeypatch.setattr(
-        "jobhunter.apply.prompt.config.gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
+        "jobctl.apply.prompt.config.gmail_mcp_auth_status",
+        lambda: (False, "missing OAuth client at /tmp/.jobctl/gmail/oauth-client.json"),
     )
 
     class FakeChromeProc:

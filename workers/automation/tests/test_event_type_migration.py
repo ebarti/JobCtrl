@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jobhunter.database import close_connection, ensure_state_tables, init_db
+from jobctl.database import close_connection, ensure_state_tables, init_db
 
 
 def test_migration_renames_legacy_snake_case_event_types(tmp_path: Path) -> None:

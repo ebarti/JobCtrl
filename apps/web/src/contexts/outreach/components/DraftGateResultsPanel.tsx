@@ -1,4 +1,4 @@
-import type { OutreachDraftGateResults } from "@jobhunter/contracts";
+import type { OutreachDraftGateResults } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 export interface DraftGateResultsPanelProps {

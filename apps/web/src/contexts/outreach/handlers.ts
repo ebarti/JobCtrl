@@ -25,7 +25,7 @@ import type {
   FollowUpScheduled,
   FollowUpCompleted,
   FollowUpDismissed,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { outreachKeys } from "./queryKeys.js";

@@ -1,4 +1,4 @@
-import type { ContactRole } from "@jobhunter/contracts";
+import type { ContactRole } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { contactRoleLabel } from "../lib/contact-copy.js";

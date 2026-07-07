@@ -28,10 +28,10 @@ const resumePdfRenderer: ResumeHtmlPdfRenderer = (input) => {
 };
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-resume-review-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-resume-review-"));
   renderedPdfInputs = [];
   options = {
-    dbPath: path.join(tempDir, "jobhunter.db"),
+    dbPath: path.join(tempDir, "jobctl.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     resumePdfRenderer,
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({

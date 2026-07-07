@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import type { ResumeTemplateListResponse } from "@jobhunter/contracts";
+import type { ResumeTemplateListResponse } from "@jobctl/contracts";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";

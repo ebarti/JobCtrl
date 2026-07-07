@@ -7,7 +7,7 @@ import {
   type ManualApplicationOutcomeRequest,
   type OutcomeSuggestion,
   type OutcomeSuggestionDecisionRequest,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useState } from "react";
 

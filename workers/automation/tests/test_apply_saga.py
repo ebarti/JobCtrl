@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from jobhunter.domain.apply import (
+from jobctl.domain.apply import (
     Applied,
     ApplyPrompt,
     ApplyRun,
@@ -21,10 +21,10 @@ from jobhunter.domain.apply import (
     Manual,
     new_apply_run_id,
 )
-from jobhunter.domain.apply.process_manager import ApplySaga, EmailApplicationContext
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.ports.apply import AgentResult, BrowserSession, EmailApplicationSendResult
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.apply.process_manager import ApplySaga, EmailApplicationContext
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.ports.apply import AgentResult, BrowserSession, EmailApplicationSendResult
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 class _InMemoryApplyRunRepository:
@@ -520,7 +520,7 @@ def test_dry_run_violation_does_not_record_completion_evidence(repo):
 def test_lifecycle_state_coverage_exercises_each_terminal_status(repo):
     """One-shot guard: every §4.6 lifecycle terminal can be reached
     by completing an aggregate inside the repository round-trip."""
-    from jobhunter.domain.apply import (
+    from jobctl.domain.apply import (
         Captcha,
         DryRunComplete,
         Expired,

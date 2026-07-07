@@ -104,8 +104,8 @@ describe("<OutreachThreadPanel>", () => {
     // Default thread has an approved draft (draft-2) and no recorded sends yet.
     expect(view.getByText("No sends recorded yet.")).toBeInTheDocument();
     fireEvent.click(view.getByRole("button", { name: "log a send" }));
-    // The recording control is explicit that JobHunter does not send.
-    expect(view.getByText(/JobHunter only records that you sent it/i)).toBeInTheDocument();
+    // The recording control is explicit that JobCtl does not send.
+    expect(view.getByText(/JobCtl only records that you sent it/i)).toBeInTheDocument();
   });
 
   it("lists a recorded send with its channel and generation", async () => {
@@ -143,7 +143,7 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() =>
       expect(view.getByRole("heading", { name: "Follow-up" })).toBeInTheDocument(),
     );
-    expect(view.getByText(/JobHunter never sends it or acts on it/i)).toBeInTheDocument();
+    expect(view.getByText(/JobCtl never sends it or acts on it/i)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "schedule follow-up" })).toBeInTheDocument();
   });
 

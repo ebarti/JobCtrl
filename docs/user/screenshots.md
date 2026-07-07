@@ -4,7 +4,7 @@ pageClass: jh-user-guide-page jh-visual-doc jh-product-tour-page jh-outline-page
 
 # Product Tour
 
-This is a screen-by-screen tour of JobHunter, in the order you actually use it:
+This is a screen-by-screen tour of JobCtl, in the order you actually use it:
 set up your profile, configure discovery, run the pipeline, then review and
 apply. Every image below is generated from synthetic sample data, so nothing
 here is a real person, a real resume, or a real job.
@@ -14,11 +14,11 @@ sideways first when you want to inspect the actual controls.
 
 ## Set Up Your Profile
 
-![JobHunter Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
+![JobCtl Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
 
 Everything starts here. The Profile page collects your personal details, work
 authorization, experience, education, skills, and the baseline resume that
-tailoring builds on. This is the single source of truth JobHunter scores and
+tailoring builds on. This is the single source of truth JobCtl scores and
 tailors against, so the more accurate it is, the better every later step works.
 
 **What to do here:** fill in everything you can and keep it truthful — every
@@ -26,9 +26,9 @@ score and every generated resume builds on this page.
 
 ## Configure Discovery
 
-![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
+![JobCtl Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
 
-Next, tell JobHunter what you are looking for. On the Discovery page you set your
+Next, tell JobCtl what you are looking for. On the Discovery page you set your
 target roles, locations and work models, a seniority floor, a minimum fit score,
 and which job boards and sources to use. These settings drive every Discover run,
 so they decide which jobs even show up.
@@ -38,7 +38,7 @@ pick your boards. Tight targets beat broad ones.
 
 ## Run The Pipeline
 
-![JobHunter Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
+![JobCtl Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
 
 The Pipelines page is where you start work. Here you launch a Discover run and
 choose how far it reaches: a result limit, how many workers run in parallel, and
@@ -50,7 +50,7 @@ runs so you can judge the results before scaling up.
 
 ## The Dashboard
 
-![JobHunter dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
+![JobCtl dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
 
 The dashboard is your home base. It summarizes pipeline progress, how many jobs
 sit at each stage, the health of your job sources, and your most recent apply
@@ -62,7 +62,7 @@ run comes back thin — fix it before running more.
 
 ## The Jobs Table
 
-![JobHunter Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
+![JobCtl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
 
 Every discovered job lands in the Jobs table, ranked by fit score. You can
 filter, sort, and triage in bulk — hiding jobs you do not want and focusing on
@@ -74,7 +74,7 @@ anything above your bar.
 
 ## Job Detail
 
-![JobHunter job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
+![JobCtl job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
 
 Click a job to open its detail drawer — the audit view for a single posting. It
 shows the fit score and why it was given, which requirements you match or fall
@@ -87,11 +87,11 @@ have; a red flag is a high score whose evidence you cannot personally back.
 
 ## Apply Review
 
-![JobHunter Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
+![JobCtl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
 
 Apply Review is where you check and edit an application before it goes anywhere.
 It pairs the tailored resume preview with the job's requirements and the original
-posting, alongside JobHunter's own line comments. You can edit the resume, reply
+posting, alongside JobCtl's own line comments. You can edit the resume, reply
 to comments, and — only after saving and validating — approve a dry run or a real
 submission.
 
@@ -100,7 +100,7 @@ rehearse with a dry run, and approve the submission when you are satisfied.
 
 ## Runs History
 
-![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
+![JobCtl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
 
 The Runs page is the history of every workflow run, with status, mode, timing,
 and a link into the web interface of Temporal, the workflow engine, for deep

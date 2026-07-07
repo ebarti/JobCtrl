@@ -20,19 +20,19 @@ import dataclasses
 
 import pytest
 
-from jobhunter.domain.contact.outreach import (
+from jobctl.domain.contact.outreach import (
     OutreachDraft,
     OutreachDraftKind,
     OutreachSendLog,
     OutreachThread,
 )
-from jobhunter.domain.contact.outreach_gates import DraftGateResults
-from jobhunter.domain.materials.value_objects import (
+from jobctl.domain.contact.outreach_gates import DraftGateResults
+from jobctl.domain.materials.value_objects import (
     ArtifactStatus,
     JudgeVerdict,
     ValidationResult,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 _JUDGE_PASS = JudgeVerdict.passed(score=0.95, criterion_scores={"evidence_support": 1.0})
 

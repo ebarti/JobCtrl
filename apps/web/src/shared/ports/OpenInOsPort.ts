@@ -1,4 +1,4 @@
-import type { ArtifactOpenResponse } from "@jobhunter/contracts";
+import type { ArtifactOpenResponse } from "@jobctl/contracts";
 
 export interface OpenInOsPort {
   open(artifactId: string): Promise<ArtifactOpenResponse>;

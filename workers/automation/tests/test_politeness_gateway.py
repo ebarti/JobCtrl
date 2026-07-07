@@ -17,27 +17,27 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Iterator
 
-from jobhunter.domain.discovery.source_registry import (
+from jobctl.domain.discovery.source_registry import (
     RobotsPolicy,
     SourcePolicy,
     SourcePolicyMethod,
 )
-from jobhunter.domain.ports.politeness import (
+from jobctl.domain.ports.politeness import (
     HonestUserAgent,
     PolitenessOutcome,
     RobotsPort,
     RobotsVerdict,
 )
-from jobhunter.infrastructure.network.politeness import (
+from jobctl.infrastructure.network.politeness import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
 )
-from jobhunter.infrastructure.network.rate_limiter import HostRateLimiter
-from jobhunter.infrastructure.network.robots import RobotsCache
-from jobhunter.operational_metrics import ensure_operational_metric_tables
+from jobctl.infrastructure.network.rate_limiter import HostRateLimiter
+from jobctl.infrastructure.network.robots import RobotsCache
+from jobctl.operational_metrics import ensure_operational_metric_tables
 
-HONEST_UA = HonestUserAgent(product="JobHunter", version="test", contact_url="https://example.com/repo")
+HONEST_UA = HonestUserAgent(product="JobCtl", version="test", contact_url="https://example.com/repo")
 
 
 def _page_policy(**overrides: object) -> SourcePolicy:
@@ -157,7 +157,7 @@ def test_robots_deny_fixture_blocks_records_and_never_fetches_disallowed_path() 
         assert "/robots.txt" in server.requested_paths
         assert "/jobs/1" not in server.requested_paths
         # Honest UA on the robots fetch — no browser impersonation.
-        assert any(ua.startswith("JobHunter/") for ua in server.seen_user_agents)
+        assert any(ua.startswith("JobCtl/") for ua in server.seen_user_agents)
         assert all("Mozilla" not in ua for ua in server.seen_user_agents)
 
     rows = _blocked_rows(conn)
@@ -187,7 +187,7 @@ def test_robots_allow_path_proceeds_and_consumes_budget() -> None:
         with session.guard(f"{server.base_url}/public/1") as decision:
             assert decision.allowed is True
             assert decision.outcome is PolitenessOutcome.ALLOWED
-            assert decision.user_agent.startswith("JobHunter/")
+            assert decision.user_agent.startswith("JobCtl/")
         assert budget.consumed() == 1
 
 
@@ -322,12 +322,12 @@ def test_robots_cache_refetches_only_after_ttl_expires() -> None:
     opener = _CountingOpener(b"User-agent: *\nDisallow: /jobs\n")
     cache = RobotsCache(ttl_seconds=100.0, opener=opener, clock=clock.now)
 
-    assert cache.evaluate("http://host/jobs", "JobHunter/test") is RobotsVerdict.DISALLOW
-    assert cache.evaluate("http://host/ok", "JobHunter/test") is RobotsVerdict.ALLOW
+    assert cache.evaluate("http://host/jobs", "JobCtl/test") is RobotsVerdict.DISALLOW
+    assert cache.evaluate("http://host/ok", "JobCtl/test") is RobotsVerdict.ALLOW
     assert opener.calls == 1  # cached within TTL
 
     clock.t = 200.0  # past TTL
-    assert cache.evaluate("http://host/jobs", "JobHunter/test") is RobotsVerdict.DISALLOW
+    assert cache.evaluate("http://host/jobs", "JobCtl/test") is RobotsVerdict.DISALLOW
     assert opener.calls == 2
 
 
@@ -345,7 +345,7 @@ def test_unreachable_robots_5xx_fails_closed() -> None:
     )
     cache = RobotsCache(opener=opener)
     # D6: 5xx is unreachable => fail-closed (UNKNOWN), gateway treats as blocked.
-    assert cache.evaluate("http://host/jobs", "JobHunter/test") is RobotsVerdict.UNKNOWN
+    assert cache.evaluate("http://host/jobs", "JobCtl/test") is RobotsVerdict.UNKNOWN
 
 
 def test_missing_robots_404_allows() -> None:
@@ -354,14 +354,14 @@ def test_missing_robots_404_allows() -> None:
     )
     cache = RobotsCache(opener=opener)
     # RFC 9309: 4xx robots unavailable => allow.
-    assert cache.evaluate("http://host/jobs", "JobHunter/test") is RobotsVerdict.ALLOW
+    assert cache.evaluate("http://host/jobs", "JobCtl/test") is RobotsVerdict.ALLOW
 
 
 def test_definitively_absent_robots_connection_refused_fails_open() -> None:
     opener = _RaisingOpener(urllib.error.URLError("Connection refused"))
     cache = RobotsCache(opener=opener)
     # D6: definitive network absence => fail-open with warning (allow).
-    assert cache.evaluate("http://host/jobs", "JobHunter/test") is RobotsVerdict.ALLOW
+    assert cache.evaluate("http://host/jobs", "JobCtl/test") is RobotsVerdict.ALLOW
 
 
 def test_unknown_robots_verdict_blocks_at_gateway_fail_closed() -> None:
@@ -392,7 +392,7 @@ def test_documented_api_policy_skips_robots() -> None:
 
 def test_gateway_user_agent_is_honest() -> None:
     gateway = PolitenessGateway(user_agent=HONEST_UA)
-    assert gateway.user_agent == "JobHunter/test (+https://example.com/repo)"
+    assert gateway.user_agent == "JobCtl/test (+https://example.com/repo)"
     assert "Mozilla" not in gateway.user_agent
 
 

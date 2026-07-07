@@ -1,6 +1,6 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
-import type { ApplyRunEventRecorded, TenantId } from "@jobhunter/domain-types";
+import type { ApplyRunEventRecorded, TenantId } from "@jobctl/domain-types";
 
 import { appendApplyRunEvent } from "../apply/selectors/applyRunSelectors.js";
 import {

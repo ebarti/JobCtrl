@@ -15,13 +15,13 @@ from typing import Any
 
 import pytest
 
-import jobhunter.infrastructure.llm.llm_client as adapter_module
-from jobhunter.domain.ports.llm import LlmMessage, LlmPort
-from jobhunter.infrastructure.llm.llm_client import LlmAdapter
+import jobctl.infrastructure.llm.llm_client as adapter_module
+from jobctl.domain.ports.llm import LlmMessage, LlmPort
+from jobctl.infrastructure.llm.llm_client import LlmAdapter
 
 
 class _FakeClient:
-    """Stand-in for ``jobhunter.llm.LLMClient``.
+    """Stand-in for ``jobctl.llm.LLMClient``.
 
     Records every ``chat`` call so the adapter's translation layer is
     observable. ``model`` is exposed so the adapter's model-mismatch guard

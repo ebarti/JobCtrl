@@ -1,6 +1,6 @@
 ## Context
 
-Apply Review currently uses a Plate-backed HTML/CSS resume surface for line-level audit. The route selects a resume PDF artifact for final-file preview, fetches the generated sibling HTML for the Plate surface, and uses the tailored-resume text artifact for audit data when available. The current component parses generated HTML into custom Plate nodes, displays source-to-tailored pins, and shows JobHunter comments derived from canonical artifact projections.
+Apply Review currently uses a Plate-backed HTML/CSS resume surface for line-level audit. The route selects a resume PDF artifact for final-file preview, fetches the generated sibling HTML for the Plate surface, and uses the tailored-resume text artifact for audit data when available. The current component parses generated HTML into custom Plate nodes, displays source-to-tailored pins, and shows JobCtl comments derived from canonical artifact projections.
 
 The existing architecture is local-first, projection-backed, and audit-oriented. Materials Generation owns tailored resume artifacts, PDF rendering, provenance, coverage, voice, and layout boxes. Apply Automation owns the human review queue and apply decisions. Candidate Profile owns reusable profile data and tailoring policy. This change crosses those contexts, so the design has to preserve the current boundaries instead of treating the browser editor as a standalone source of truth.
 
@@ -10,7 +10,7 @@ The existing architecture is local-first, projection-backed, and audit-oriented.
 
 - Let the user edit the tailored resume directly in Apply Review through Plate.
 - Persist draft revisions and edit deltas against the exact generated materials the user reviewed.
-- Let the user reply to JobHunter's line comments and preserve those replies as audit and learning data.
+- Let the user reply to JobCtl's line comments and preserve those replies as audit and learning data.
 - Validate, re-render, and approve edited resumes as new materials candidates or generations.
 - Extract feedback signals from edits and replies without silently mutating profile data or global tailoring policy.
 - Preserve the existing invariant that failed refreshes and replacements do not destroy the last accepted artifact.
@@ -46,7 +46,7 @@ Alternative considered: accept sanitized edited HTML as the canonical resume sou
 
 ### 4. Comments become persisted review threads
 
-JobHunter-authored comments should be seeded from audit pins and risk labels when data exists, then represented as review threads with stable ids and lifecycle state. User replies attach to those threads. UI-only comment bubbles are insufficient because replies need to drive learning and remain visible in audit history.
+JobCtl-authored comments should be seeded from audit pins and risk labels when data exists, then represented as review threads with stable ids and lifecycle state. User replies attach to those threads. UI-only comment bubbles are insufficient because replies need to drive learning and remain visible in audit history.
 
 Alternative considered: use Plate comments only in editor state. That would support annotation UX but would not provide an auditable source of truth for learning or candidate validation.
 
@@ -93,4 +93,4 @@ Rollback strategy: because drafts and feedback are additive, rollback can hide t
 - Should the first implementation persist full Plate value, structured resume document, or both?
 - Which feedback signal tags should be manually reviewable in the first UI surface?
 - Should edited candidates create a new materials generation immediately, or remain draft candidates until explicit approval?
-- How much comment UI should use Plate's comment plugin versus JobHunter-owned thread components?
+- How much comment UI should use Plate's comment plugin versus JobCtl-owned thread components?

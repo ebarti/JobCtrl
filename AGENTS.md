@@ -23,15 +23,15 @@ Use these repository documents before making architectural, workflow, or QA deci
 
 ## How To Run The Project
 
-Use `pnpm dev` for the full local development stack. It stops previously tracked JobHunter process trees for the selected components, then runs the Temporal dev server, TypeScript API, React/Vite web app, and JobHunter Temporal worker in the foreground so supervised terminals keep the child processes alive. Keep the terminal session open while using the app and stop it with Ctrl-C. Use `pnpm dev:start` only when an explicitly detached background stack is desired in a normal shell.
+Use `pnpm dev` for the full local development stack. It stops previously tracked JobCtl process trees for the selected components, then runs the Temporal dev server, TypeScript API, React/Vite web app, and JobCtl Temporal worker in the foreground so supervised terminals keep the child processes alive. Keep the terminal session open while using the app and stop it with Ctrl-C. Use `pnpm dev:start` only when an explicitly detached background stack is desired in a normal shell.
 
 Known local commands:
 
-- First-run setup: `pnpm install:interactive` (guided system checks + Node/Python dependencies + Playwright Chromium) or `pnpm dev:setup` (non-interactive dependency sync), then `uv --project workers/automation run jobhunter init` and `uv --project workers/automation run jobhunter doctor`.
-- Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed. The full command tree (per-stage runs, `job <url>`, `backup`, `gmail-auth`, `migrate-resume-html`, …) is documented in `README.md` and `docs/user/`. Work-starting commands start Temporal workflows and require the Temporal dev server plus a running JobHunter worker.
+- First-run setup: `pnpm install:interactive` (guided system checks + Node/Python dependencies + Playwright Chromium) or `pnpm dev:setup` (non-interactive dependency sync), then `uv --project workers/automation run jobctl init` and `uv --project workers/automation run jobctl doctor`.
+- Python CLI: `uv --project workers/automation run jobctl doctor`, `uv --project workers/automation run jobctl run`, or targeted `uv --project workers/automation run jobctl <command>` after dependencies are installed. The full command tree (per-stage runs, `job <url>`, `backup`, `gmail-auth`, `migrate-resume-html`, …) is documented in `README.md` and `docs/user/`. Work-starting commands start Temporal workflows and require the Temporal dev server plus a running JobCtl worker.
 - Full local stack: `pnpm dev` (attached foreground supervisor; preferred for agents and annotation).
 - Detached local stack: `pnpm dev:start`, then `pnpm dev:status`, `pnpm dev:logs <name>`, and `pnpm dev:stop`.
-- Temporal worker: `uv --project workers/automation run jobhunter worker` (long-lived workflow worker; needs `temporal server start-dev` running).
+- Temporal worker: `uv --project workers/automation run jobctl worker` (long-lived workflow worker; needs `temporal server start-dev` running).
 - TypeScript API: `pnpm api:dev`.
 - Web app: `pnpm web:dev`.
 - Web preview after build: `pnpm web:preview`.
@@ -49,9 +49,9 @@ The unit-test and QA command set must be made explicit as the project evolves. U
 - TypeScript API tests: `pnpm api:test`.
 - Web typecheck: `pnpm web:check`.
 - Web build: `pnpm web:build`.
-- Web Vitest unit + hook + component tests: `pnpm --filter @jobhunter/web test` (watch: `:watch`; coverage: `:coverage`).
-- Web type-level tests: `pnpm --filter @jobhunter/web test-d`.
-- Web Playwright end-to-end specs: `pnpm --filter @jobhunter/web e2e` (headed: `e2e:headed`).
+- Web Vitest unit + hook + component tests: `pnpm --filter @jobctl/web test` (watch: `:watch`; coverage: `:coverage`).
+- Web type-level tests: `pnpm --filter @jobctl/web test-d`.
+- Web Playwright end-to-end specs: `pnpm --filter @jobctl/web e2e` (headed: `e2e:headed`).
 - Web Storybook: `pnpm web:storybook` (build: `pnpm web:storybook:build`; test runner with a11y addon: `pnpm web:storybook:test`).
 - Python tests: `uv --project workers/automation run --extra dev pytest -q`.
 - Python lint: `uv --project workers/automation run --extra dev ruff check .`.
@@ -213,7 +213,7 @@ The `apps/web` frontend follows the architecture documented in `docs/architectur
 
 ### Tests
 
-- Colocated `*.test.ts(x)` next to source. Type-level tests live under `apps/web/test/types/<name>.test-d.ts` (separate config: `vitest.types.config.ts`, runs Vitest's `typecheck` mode — invoked via `pnpm --filter @jobhunter/web test-d`). Accessibility tests are colocated `*.a11y.test.tsx`. Storybook stories are colocated `*.stories.tsx`.
+- Colocated `*.test.ts(x)` next to source. Type-level tests live under `apps/web/test/types/<name>.test-d.ts` (separate config: `vitest.types.config.ts`, runs Vitest's `typecheck` mode — invoked via `pnpm --filter @jobctl/web test-d`). Accessibility tests are colocated `*.a11y.test.tsx`. Storybook stories are colocated `*.stories.tsx`.
 - MSW handlers live in `apps/web/src/test/msw/handlers.ts` (REST) and `apps/web/src/test/msw/sse-handlers.ts` (SSE). Add to the existing handler file rather than creating new MSW setups.
 - One test per query hook and per mutation hook covering the success path AND the rollback path.
 - The two parity tests are non-negotiable: `every-event-has-handler.test.ts` (`apps/web/src/contexts/operations/`) for `DomainEventUnion`, `every-stage-state-has-badge.test.tsx` (`apps/web/src/contexts/pipeline/components/`) for `STAGE_STATE_KINDS`.

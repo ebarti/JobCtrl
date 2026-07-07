@@ -1,5 +1,5 @@
 /**
- * @jobhunter/domain-types — shared domain vocabulary.
+ * @jobctl/domain-types — shared domain vocabulary.
  *
  * Pure type definitions and value objects with no runtime I/O.
  * Consumers: packages/contracts, apps/api, workers/automation (via parity).

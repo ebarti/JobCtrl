@@ -5,26 +5,26 @@ from __future__ import annotations
 import sqlite3
 import urllib.error
 
-from jobhunter.domain.discovery.source_registry import (
+from jobctl.domain.discovery.source_registry import (
     RobotsPolicy,
     SourcePolicy,
     SourcePolicyMethod,
 )
-from jobhunter.domain.ports.politeness import (
+from jobctl.domain.ports.politeness import (
     HonestUserAgent,
     RobotsPort,
     RobotsVerdict,
 )
-from jobhunter.infrastructure.network.http_client import GatewayHttpClient, parse_retry_after
-from jobhunter.infrastructure.network.politeness import (
+from jobctl.infrastructure.network.http_client import GatewayHttpClient, parse_retry_after
+from jobctl.infrastructure.network.politeness import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
 )
-from jobhunter.infrastructure.network.rate_limiter import HostRateLimiter
-from jobhunter.operational_metrics import ensure_operational_metric_tables
+from jobctl.infrastructure.network.rate_limiter import HostRateLimiter
+from jobctl.operational_metrics import ensure_operational_metric_tables
 
-HONEST_UA = HonestUserAgent(product="JobHunter", version="test", contact_url="https://example.com/repo")
+HONEST_UA = HonestUserAgent(product="JobCtl", version="test", contact_url="https://example.com/repo")
 
 
 class _AllowAllRobots(RobotsPort):
@@ -114,7 +114,7 @@ def test_allowed_fetch_returns_json_with_honest_user_agent() -> None:
     payload = client.fetch_json("http://api.example.com/jobs")
     assert payload == {"jobs": [1, 2]}
     request = opener.requests[0]
-    assert request.get_header("User-agent") == "JobHunter/test (+https://example.com/repo)"
+    assert request.get_header("User-agent") == "JobCtl/test (+https://example.com/repo)"
     assert "Mozilla" not in request.get_header("User-agent")
 
 

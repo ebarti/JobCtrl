@@ -1,15 +1,15 @@
 ## Why
 
-Apply Review currently renders the generated HTML/CSS resume through Plate for line-level audit, but the approved materials remain read-only from the user's perspective. Users need to edit the tailored resume directly in the review surface, respond to JobHunter's line comments, and have those corrections feed future tailoring without silently mutating approved artifacts or weakening audit guarantees.
+Apply Review currently renders the generated HTML/CSS resume through Plate for line-level audit, but the approved materials remain read-only from the user's perspective. Users need to edit the tailored resume directly in the review surface, respond to JobCtl's line comments, and have those corrections feed future tailoring without silently mutating approved artifacts or weakening audit guarantees.
 
-This matters now because Apply Review already has the generated HTML, PDF layout boxes, source-to-tailored claim pins, and inline JobHunter comments in one place. The next step is to turn that audit surface into a controlled editing and learning workflow.
+This matters now because Apply Review already has the generated HTML, PDF layout boxes, source-to-tailored claim pins, and inline JobCtl comments in one place. The next step is to turn that audit surface into a controlled editing and learning workflow.
 
 ## What Changes
 
 - Add a versioned resume review draft lifecycle derived from the selected generated materials generation.
 - Replace the read-only Plate rendering path with a fully editable Plate resume editor that preserves line/page anchors, source pins, and the final-file link.
 - Persist user edits as structured edit deltas against the base artifact, including semantic ids, line anchors, before/after text, and draft revisions.
-- Allow users to respond to JobHunter-authored comments on tailored lines without losing the underlying claim-risk and provenance audit.
+- Allow users to respond to JobCtl-authored comments on tailored lines without losing the underlying claim-risk and provenance audit.
 - Convert accepted edits and comment replies into append-only feedback signals that can inform future tailoring, writing-style controls, profile evidence corrections, and claim-policy guidance.
 - Defer machine learning, model training, fine-tuning, model-routing changes, and automatic prompt/policy adaptation; this change captures reviewable structured feedback only.
 - Validate and re-render edited resumes as new materials candidates before approval; never mutate the last accepted artifact in place.
@@ -20,7 +20,7 @@ This matters now because Apply Review already has the generated HTML, PDF layout
 ### New Capabilities
 
 - `resume-review-drafts`: Versioned Apply Review drafts for live Plate editing, validation, re-rendering, and promotion to new materials candidates.
-- `resume-comment-replies`: Persisted user replies to JobHunter line comments, tied to source pins, risk labels, and audit lifecycle state.
+- `resume-comment-replies`: Persisted user replies to JobCtl line comments, tied to source pins, risk labels, and audit lifecycle state.
 - `resume-edit-feedback-learning`: Append-only feedback extraction from user edits and comment replies for future tailoring and profile-policy improvements.
 
 ### Modified Capabilities

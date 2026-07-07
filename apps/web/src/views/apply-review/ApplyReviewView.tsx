@@ -6,7 +6,7 @@ import type {
   ResumeCommentThread,
   ResumeReviewDraft,
   ResumeReviewDraftRenderResponse,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 

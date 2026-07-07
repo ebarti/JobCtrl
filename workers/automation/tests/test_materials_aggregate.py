@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -21,8 +21,8 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobhunter.domain.materials.aggregate import MaterialsLifecycle
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.materials.aggregate import MaterialsLifecycle
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

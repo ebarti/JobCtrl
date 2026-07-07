@@ -19,15 +19,15 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
     RenderFormat,
 )
-from jobhunter.domain.materials.aggregate import MaterialsSet
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.materials.aggregate import MaterialsSet
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -35,14 +35,14 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobhunter.domain.materials.analyze_use_case import AnalyzeJobOutcome
-from jobhunter.domain.materials.provenance import BulletProvenanceSet
-from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
-from jobhunter.domain.materials.use_cases import TailorResumeUseCase
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.scoring import (
+from jobctl.domain.materials.analyze_use_case import AnalyzeJobOutcome
+from jobctl.domain.materials.provenance import BulletProvenanceSet
+from jobctl.domain.materials.services import ContentValidator, ResumeAssembler
+from jobctl.domain.materials.use_cases import TailorResumeUseCase
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.ports.llm import LlmMessage
+from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -51,7 +51,7 @@ from jobhunter.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/job/provenance"
 

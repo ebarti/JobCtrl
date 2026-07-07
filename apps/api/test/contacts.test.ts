@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 function withTempApp() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-contacts-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-contacts-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.exec(`

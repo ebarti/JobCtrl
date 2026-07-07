@@ -20,17 +20,17 @@ from typing import Any
 
 import pytest
 
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.materials.analysis import (
     EnsembleError,
     JobAnalysis,
     JobAnalysisDraft,
 )
-from jobhunter.infrastructure.analysis.claude_analysis_adapter import (
+from jobctl.infrastructure.analysis.claude_analysis_adapter import (
     ClaudeAnalysisAdapter,
     ClaudeAnalysisSynthesizer,
 )
-from jobhunter.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
-from jobhunter.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
+from jobctl.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
+from jobctl.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,7 +216,7 @@ class TestClaudeAdapter:
         assert len(spans) == 1
         span = spans[0]
         assert span.name == "llm.claude-opus-4-8"
-        assert span.instrumentation_scope.name == "jobhunter.analysis.claude"
+        assert span.instrumentation_scope.name == "jobctl.analysis.claude"
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
@@ -299,7 +299,7 @@ class TestClaudeSynthesizer:
         span = spans[0]
         assert span.name == "llm.claude-opus-4-8"
         # A distinct scope keeps the synthesizer separable from the Claude draft leg.
-        assert span.instrumentation_scope.name == "jobhunter.analysis.synthesizer"
+        assert span.instrumentation_scope.name == "jobctl.analysis.synthesizer"
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["gen_ai.usage.input_tokens"] == 500
@@ -342,7 +342,7 @@ class TestCodexAdapter:
         assert len(spans) == 1
         span = spans[0]
         assert span.name == "llm.gpt-5.5"
-        assert span.instrumentation_scope.name == "jobhunter.analysis.codex"
+        assert span.instrumentation_scope.name == "jobctl.analysis.codex"
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "gpt-5.5"

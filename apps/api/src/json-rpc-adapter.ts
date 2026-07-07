@@ -1,11 +1,11 @@
 /**
  * SubprocessJsonRpcAdapter (Phase 9 / S-34).
  *
- * Spawns ``uv --project workers/automation run jobhunter rpc`` as a
+ * Spawns ``uv --project workers/automation run jobctl rpc`` as a
  * long-lived subprocess and pipes JSON-RPC requests over its
  * stdin/stdout.  Replaces the previous "spawn one subprocess per
  * action" pattern in ``local-actions.ts`` — per the no-strangler
- * directive the old per-call ``uv run jobhunter action ...`` path is
+ * directive the old per-call ``uv run jobctl action ...`` path is
  * deleted.
  *
  * Lifecycle:
@@ -126,12 +126,12 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child) return this.child;
 
-    const args = ["--project", this.options.projectDir, "run", "jobhunter", "rpc"];
+    const args = ["--project", this.options.projectDir, "run", "jobctl", "rpc"];
     const child = spawn(this.options.uvBinary, args, {
       cwd: this.options.appDir,
       env: {
         ...process.env,
-        JOBHUNTER_DIR: this.options.appDir,
+        JOBCTL_DIR: this.options.appDir,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });

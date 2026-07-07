@@ -1,4 +1,4 @@
-import type { OutreachThreadDetail } from "@jobhunter/contracts";
+import type { OutreachThreadDetail } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";

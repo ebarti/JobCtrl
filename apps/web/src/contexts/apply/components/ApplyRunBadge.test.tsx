@@ -1,4 +1,4 @@
-import { APPLY_RUN_STATUSES } from "@jobhunter/domain-types";
+import { APPLY_RUN_STATUSES } from "@jobctl/domain-types";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

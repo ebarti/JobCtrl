@@ -1,11 +1,11 @@
 # Local Development
 
-JobHunter is a pnpm TypeScript workspace plus a uv-managed Python worker (a
+JobCtl is a pnpm TypeScript workspace plus a uv-managed Python worker (a
 Temporal worker process that executes workflows). This page is the local loop
 end to end: install dependencies, run the full stack, verify a change, and the
 frontend, docs-site, and documentation-screenshot workflows.
 
-**Read this if** you are setting JobHunter up on your machine, or you changed
+**Read this if** you are setting JobCtl up on your machine, or you changed
 code and need the commands that prove it still works.
 
 ## Install
@@ -19,8 +19,8 @@ checks for Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler
 offers Homebrew installs for missing machine-level tools when available, then
 runs the repository dependency setup: frozen pnpm install, uv sync, and
 Playwright Chromium installs for both the web package and the Python worker. It
-then runs `jobhunter setup` to detect Claude/Codex/Antigravity auth, persist
-enabled analysis legs, and finish with `jobhunter doctor`.
+then runs `jobctl setup` to detect Claude/Codex/Antigravity auth, persist
+enabled analysis legs, and finish with `jobctl doctor`.
 
 `pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
 `--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
@@ -42,8 +42,8 @@ Run the Python setup command directly when you only need to refresh vendor auth
 or analysis-leg configuration:
 
 ```bash
-uv --project workers/automation run jobhunter setup
-uv --project workers/automation run jobhunter setup --non-interactive --json --skip-dependencies --skip-browsers
+uv --project workers/automation run jobctl setup
+uv --project workers/automation run jobctl setup --non-interactive --json --skip-dependencies --skip-browsers
 ```
 
 ## Run
@@ -54,20 +54,20 @@ pnpm dev
 
 `pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
 TypeScript API, Vite web app, and the Python worker. Before each
-component starts, the launcher stops the existing tracked JobHunter process
+component starts, the launcher stops the existing tracked JobCtl process
 tree for that component, so rerunning `pnpm dev` starts from a clean owned
 stack. It runs in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The
 launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
 defaults to:
 
-- API data dir: `JOBHUNTER_DIR=${HOME}/.jobhunter`
-- API bind: `JOBHUNTER_API_HOST=127.0.0.1`,
-  `JOBHUNTER_API_PORT=8766`
-- Web API base URL: `VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766`
-- Web port: `5173` (`JOBHUNTER_WEB_PORT` can override it)
+- API data dir: `JOBCTL_DIR=${HOME}/.jobctl`
+- API bind: `JOBCTL_API_HOST=127.0.0.1`,
+  `JOBCTL_API_PORT=8766`
+- Web API base URL: `VITE_JOBCTL_API_BASE_URL=http://127.0.0.1:8766`
+- Web port: `5173` (`JOBCTL_WEB_PORT` can override it)
 - Temporal persistence: `.dev/temporal/temporal.db`
-  (`JOBHUNTER_TEMPORAL_DB` can override it)
+  (`JOBCTL_TEMPORAL_DB` can override it)
 
 Inspect the foreground stack from another terminal:
 
@@ -90,7 +90,7 @@ pnpm dev:stop
 
 `pnpm dev:start` prints the observed API, web, and Temporal bindings after the
 processes launch. Use the printed web URL rather than assuming `5173`, because
-Vite can bind a higher port when another local JobHunter web server is already
+Vite can bind a higher port when another local JobCtl web server is already
 using the requested port.
 
 Run individual components only when troubleshooting a specific process:
@@ -99,15 +99,15 @@ Run individual components only when troubleshooting a specific process:
 temporal server start-dev --db-filename .dev/temporal/temporal.db
 pnpm api:dev
 pnpm web:dev
-uv --project workers/automation run jobhunter worker
-uv --project workers/automation run jobhunter doctor
+uv --project workers/automation run jobctl worker
+uv --project workers/automation run jobctl doctor
 ```
 
 The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
 the Web UI on `http://127.0.0.1:8233`. The launcher passes
-`--db-filename "$JOBHUNTER_TEMPORAL_DB"` so workflow history persists across
+`--db-filename "$JOBCTL_TEMPORAL_DB"` so workflow history persists across
 launcher restarts instead of disappearing when the process exits. With Temporal
-running, `jobhunter doctor` reports `Temporal: reachable`. The Vite web dev
+running, `jobctl doctor` reports `Temporal: reachable`. The Vite web dev
 server proxies `/v1/*` to the TypeScript API by default.
 
 ## Verify
@@ -172,12 +172,12 @@ The package-local commands are equivalent and useful when working directly
 inside the web package:
 
 ```bash
-pnpm --filter @jobhunter/web test
-pnpm --filter @jobhunter/web test:watch
-pnpm --filter @jobhunter/web test:coverage
-pnpm --filter @jobhunter/web test-d
-pnpm --filter @jobhunter/web e2e
-pnpm --filter @jobhunter/web e2e:headed
+pnpm --filter @jobctl/web test
+pnpm --filter @jobctl/web test:watch
+pnpm --filter @jobctl/web test:coverage
+pnpm --filter @jobctl/web test-d
+pnpm --filter @jobctl/web e2e
+pnpm --filter @jobctl/web e2e:headed
 ```
 
 Run Storybook locally and against the built assets:
@@ -244,7 +244,7 @@ variable and the Cloudflare credentials are configured.
 ## Documentation Screenshots
 
 Public screenshots are generated from synthetic data only — never from a real
-`~/.jobhunter` workspace.
+`~/.jobctl` workspace.
 
 ```bash
 pnpm docs:screenshots
@@ -261,9 +261,9 @@ account, or browser submission is involved.
 When running multiple worktrees, override the disposable paths and ports:
 
 ```bash
-JOBHUNTER_E2E_APP_DIR=/tmp/jobhunter-docs-shots \
-JOBHUNTER_E2E_API_PORT=8890 \
-JOBHUNTER_E2E_WEB_PORT=5290 \
+JOBCTL_E2E_APP_DIR=/tmp/jobctl-docs-shots \
+JOBCTL_E2E_API_PORT=8890 \
+JOBCTL_E2E_WEB_PORT=5290 \
 pnpm docs:screenshots
 ```
 
@@ -273,7 +273,7 @@ at `docs/public/assets/screenshots/dashboard.png` was refreshed from the
 gallery dashboard screenshot, update docs if screenshot names changed, and
 finish with `git diff --check`.
 
-Safety rules: never point generation at `~/.jobhunter`; never use real
+Safety rules: never point generation at `~/.jobctl`; never use real
 resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
 automation, mailbox scans, real crawling, or real LLM calls for screenshots;
 keep output deterministic (fixed viewport, synthetic database, seeded

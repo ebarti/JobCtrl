@@ -1,4 +1,4 @@
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { vi } from "vitest";
 
 import { FetchApiClientAdapter } from "../shared/adapters/local/FetchApiClientAdapter.js";

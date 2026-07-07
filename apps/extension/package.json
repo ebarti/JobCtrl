@@ -1,5 +1,5 @@
 {
-  "name": "@jobhunter/extension",
+  "name": "@jobctl/extension",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -10,10 +10,10 @@
     "e2e": "corepack pnpm build && vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
-    "@jobhunter/contracts": "workspace:*"
+    "@jobctl/contracts": "workspace:*"
   },
   "devDependencies": {
-    "@jobhunter/tsconfig": "workspace:*",
+    "@jobctl/tsconfig": "workspace:*",
     "@playwright/test": "^1.50.0",
     "@types/node": "25.9.2",
     "jsdom": "^26.0.0",

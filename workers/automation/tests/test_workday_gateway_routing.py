@@ -12,12 +12,12 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from jobhunter import database
-from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.discovery import workday
-from jobhunter.domain.discovery.source_registry import WORKDAY_API_POLICY
-from jobhunter.infrastructure.network.politeness import PolitenessGateway
-from jobhunter.infrastructure.network.rate_limiter import HostRateLimiter
+from jobctl import database
+from jobctl.database import close_connection, get_connection, init_db
+from jobctl.discovery import workday
+from jobctl.domain.discovery.source_registry import WORKDAY_API_POLICY
+from jobctl.infrastructure.network.politeness import PolitenessGateway
+from jobctl.infrastructure.network.rate_limiter import HostRateLimiter
 
 
 class _CxsServer:
@@ -83,7 +83,7 @@ def test_workday_search_routes_through_gateway_with_honest_ua() -> None:
     assert result == {"total": 0, "jobPostings": []}
     assert any("/wday/cxs/acme/External/jobs" in path for path in server.seen_paths)
     assert server.seen_user_agents
-    assert all(ua.startswith("JobHunter/") for ua in server.seen_user_agents)
+    assert all(ua.startswith("JobCtl/") for ua in server.seen_user_agents)
     assert all("Mozilla" not in ua for ua in server.seen_user_agents)
 
 
@@ -91,13 +91,13 @@ def test_workday_search_returns_empty_dict_when_gateway_blocks() -> None:
     # When the gateway blocks a fetch (here: an exhausted per-run budget), the
     # search returns {} gracefully rather than raising. A budget of 1 is forced
     # via a source policy override so no real network round-trips are needed.
-    from jobhunter.domain.discovery.source_registry import RobotsPolicy, SourcePolicy, SourcePolicyMethod
-    from jobhunter.domain.ports.politeness import RobotsPort, RobotsVerdict
-    from jobhunter.infrastructure.network.politeness import (
+    from jobctl.domain.discovery.source_registry import RobotsPolicy, SourcePolicy, SourcePolicyMethod
+    from jobctl.domain.ports.politeness import RobotsPort, RobotsVerdict
+    from jobctl.infrastructure.network.politeness import (
         PolitenessSession,
         PolitenessSourceContext,
     )
-    from jobhunter.infrastructure.network.http_client import GatewayHttpClient
+    from jobctl.infrastructure.network.http_client import GatewayHttpClient
 
     class _AllowAll(RobotsPort):
         def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:

@@ -1,4 +1,4 @@
-import type { ResumeTemplateState, ResumeTemplateStaleState } from "@jobhunter/contracts";
+import type { ResumeTemplateState, ResumeTemplateStaleState } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 export interface ResumeTemplateStatusBadgeProps {

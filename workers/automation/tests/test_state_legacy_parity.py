@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.state import (
+from jobctl.database import close_connection, init_db
+from jobctl.state import (
     STAGE_ORDER,
     ensure_job_stage_rows,
     get_job_stage_states,

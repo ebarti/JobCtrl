@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 
-from jobhunter.domain.events.base import DomainEvent
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.events.base import DomainEvent
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -21,10 +21,10 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobhunter.domain.ports.events import Subscription
-from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.scoring import (
+from jobctl.domain.ports.events import Subscription
+from jobctl.domain.ports.llm import LlmMessage
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -33,14 +33,14 @@ from jobhunter.domain.scoring import (
     ScoringPolicy,
     ScoringCriteria,
 )
-from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParser
-from jobhunter.domain.scoring.use_cases import (
+from jobctl.domain.scoring.services import ConstraintChecker, ScoreParser
+from jobctl.domain.scoring.use_cases import (
     CorrectScoreUseCase,
     ScoreJobUseCase,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.profile.factory import build_profile_repository
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.profile.factory import build_profile_repository
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def profile_snapshot(tmp_path):
         },
     }
     publisher = InProcessEventBus()
-    repo = build_profile_repository(db_path=tmp_path / "jobhunter.db", publisher=publisher)
+    repo = build_profile_repository(db_path=tmp_path / "jobctl.db", publisher=publisher)
     repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
     return repo.load_snapshot(LOCAL_TENANT)
 

@@ -9,7 +9,7 @@ import {
 } from "@tabler/icons-react";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
-import type { SavedTableView, TableId } from "@jobhunter/contracts";
+import type { SavedTableView, TableId } from "@jobctl/contracts";
 
 import {
   DEFAULT_SAVED_TABLE_VIEW_ID,

@@ -1,4 +1,4 @@
-import { WORKFLOW_RUN_STATUSES } from "@jobhunter/contracts";
+import { WORKFLOW_RUN_STATUSES } from "@jobctl/contracts";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

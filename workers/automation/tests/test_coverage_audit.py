@@ -28,15 +28,15 @@ demonstrated), ``missing`` (rendered nowhere the employer legitimately reads):
 
 from __future__ import annotations
 
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.materials.analysis import (
     JobAnalysis,
     ReasonedKeyword,
     Requirement,
 )
-from jobhunter.domain.materials.coverage_audit import KeywordCoverage, compute_keyword_coverage
-from jobhunter.domain.materials.fabrication_detector import EvidenceCorpus
-from jobhunter.domain.materials.provenance import BulletProvenance
-from jobhunter.domain.materials.value_objects import ControlRule, TransformType
+from jobctl.domain.materials.coverage_audit import KeywordCoverage, compute_keyword_coverage
+from jobctl.domain.materials.fabrication_detector import EvidenceCorpus
+from jobctl.domain.materials.provenance import BulletProvenance
+from jobctl.domain.materials.value_objects import ControlRule, TransformType
 
 
 def _analysis(*keywords: str) -> JobAnalysis:

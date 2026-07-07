@@ -57,7 +57,7 @@ describe("extension popup", () => {
       { type: "captureCurrentTab" },
       { type: "getStatus" },
     ]);
-    expect(document.getElementById("status")?.textContent).toBe("Saved to JobHunter: job-123");
+    expect(document.getElementById("status")?.textContent).toBe("Saved to JobCtl: job-123");
   });
 });
 

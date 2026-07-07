@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-from jobhunter.cli import app
-from jobhunter.database import close_connection, get_connection, get_jobs_by_stage, init_db
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import (
+from jobctl.cli import app
+from jobctl.database import close_connection, get_connection, get_jobs_by_stage, init_db
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -18,20 +18,20 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobhunter.domain.materials.use_cases import TailorOutcome
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.pipeline import _count_pending
-from jobhunter.state import ensure_job_stage_rows, set_stage_state
-from jobhunter.scoring.tailor import (
+from jobctl.domain.materials.use_cases import TailorOutcome
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.pipeline import _count_pending
+from jobctl.state import ensure_job_stage_rows, set_stage_state
+from jobctl.scoring.tailor import (
     _build_pdf_renderer,
     _build_llm_policy,
     _build_master_tailor_prompt,
     _tailor_one_job,
     tailor_job_by_url,
 )
-from jobhunter.infrastructure.materials import HtmlResumePdfAdapter, LatexPdfAdapter
+from jobctl.infrastructure.materials import HtmlResumePdfAdapter, LatexPdfAdapter
 
 
 def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
@@ -132,7 +132,7 @@ def test_count_pending_retailor_includes_already_tailored_jobs(tmp_path, monkeyp
             tailor_attempts=9,
         )
 
-        monkeypatch.setattr("jobhunter.pipeline.runner.get_connection", lambda: get_connection(db_path))
+        monkeypatch.setattr("jobctl.pipeline.runner.get_connection", lambda: get_connection(db_path))
 
         assert _count_pending("tailor", min_score=7) == 1
         assert _count_pending("tailor", min_score=7, retailor=True) == 2
@@ -167,10 +167,10 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
                 "materials": SimpleNamespace(generation=1),
             }
 
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_jobs_by_stage", forbidden_batch_selector)
-        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_jobs_by_stage", forbidden_batch_selector)
+        monkeypatch.setattr("jobctl.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobctl.scoring.tailor._tailor_one_job", fake_tailor_one_job)
 
         result = tailor_job_by_url(
             target_url,
@@ -191,7 +191,7 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
 
 
 def test_build_pdf_renderer_defaults_to_html_resume_renderer(monkeypatch) -> None:
-    monkeypatch.delenv("JOBHUNTER_RESUME_RENDERER", raising=False)
+    monkeypatch.delenv("JOBCTL_RESUME_RENDERER", raising=False)
 
     renderer = _build_pdf_renderer()
 
@@ -199,7 +199,7 @@ def test_build_pdf_renderer_defaults_to_html_resume_renderer(monkeypatch) -> Non
 
 
 def test_build_pdf_renderer_can_use_legacy_latex_renderer(monkeypatch) -> None:
-    monkeypatch.setenv("JOBHUNTER_RESUME_RENDERER", "latex_pdf")
+    monkeypatch.setenv("JOBCTL_RESUME_RENDERER", "latex_pdf")
 
     renderer = _build_pdf_renderer()
 
@@ -252,9 +252,9 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
                 "materials": SimpleNamespace(generation=2),
             }
 
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctl.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobctl.scoring.tailor._tailor_one_job", fake_tailor_one_job)
 
         result = tailor_job_by_url(
             target_url,
@@ -311,8 +311,8 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
         def fail_tailor_one_job(*_args, **_kwargs):
             raise AssertionError("score-five jobs must not tailor by default")
 
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor_one_job)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctl.scoring.tailor._tailor_one_job", fail_tailor_one_job)
 
         result = tailor_job_by_url(
             target_url,
@@ -348,9 +348,9 @@ def test_tailor_job_by_url_allows_low_fit_manual_override(tmp_path, monkeypatch)
                 "materials": SimpleNamespace(generation=1),
             }
 
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctl.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobctl.scoring.tailor._tailor_one_job", fake_tailor_one_job)
 
         result = tailor_job_by_url(
             target_url,
@@ -378,8 +378,8 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
         def fail_tailor_one_job(*_args, **_kwargs):
             raise AssertionError("blocked score must not tailor")
 
-        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor_one_job)
+        monkeypatch.setattr("jobctl.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctl.scoring.tailor._tailor_one_job", fail_tailor_one_job)
 
         result = tailor_job_by_url(
             target_url,
@@ -424,7 +424,7 @@ def test_tailor_cli_passes_retailor_flag(monkeypatch):
         captured["stage"] = stage
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr("jobhunter.cli._run_stage_command", fake_run_stage_command)
+    monkeypatch.setattr("jobctl.cli._run_stage_command", fake_run_stage_command)
 
     result = runner.invoke(app, ["tailor", "--retailor"])
 
@@ -441,7 +441,7 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
         captured["stage"] = stage
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr("jobhunter.cli._run_stage_command", fake_run_stage_command)
+    monkeypatch.setattr("jobctl.cli._run_stage_command", fake_run_stage_command)
 
     result = runner.invoke(
         app,
@@ -472,7 +472,7 @@ def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatc
         captured["kwargs"] = kwargs
 
     monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.77")
-    monkeypatch.setattr("jobhunter.cli._run_stage_command", fake_run_stage_command)
+    monkeypatch.setattr("jobctl.cli._run_stage_command", fake_run_stage_command)
 
     result = runner.invoke(
         app,

@@ -8,7 +8,7 @@ a route, or tracing how a web action reaches the Python worker.
 
 It owns product-facing JSON endpoints, reads the local SQLite database, and
 invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
-`jobhunter rpc` subprocess. It is intentionally local-first and binds to
+`jobctl rpc` subprocess. It is intentionally local-first and binds to
 `127.0.0.1` by default. As a DNS-rebinding defense, an `onRequest` hook rejects
 any request whose `Host` header is not a loopback host (`127.0.0.1`,
 `localhost`, or `[::1]`, with an optional port) with `403` `forbidden_host`;
@@ -52,7 +52,7 @@ need:
 ## Profile and preferences
 
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
-Profile tables in `jobhunter.db` as the source of truth. When the profile
+Profile tables in `jobctl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
 rendering settings. Explicit profile saves and resume-PDF imports create or
 update the SQLite rows.
@@ -90,7 +90,7 @@ normal editable street-address input.
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
 maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
-`ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
+`ProjectionBuilder` (`workers/automation/src/jobctl/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
 Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
@@ -101,7 +101,7 @@ sibling HTML file used by the Plate-backed Apply Review editor. That route is
 limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects
 LaTeX-rendered rows with `415`; operators can create HTML siblings for approved
 LaTeX resume PDFs with
-`uv --project workers/automation run jobhunter migrate-resume-html` after
+`uv --project workers/automation run jobctl migrate-resume-html` after
 checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
 with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
 renders a single registered PDF artifact page through local Poppler
@@ -114,7 +114,7 @@ for resume text/PDF artifacts it first runs the resume-template ensure-current
 path and opens the newest approved same-type artifact when a render-only
 template refresh succeeds.
 Every preview and open route only touches a path that is a registered artifact
-in the projection AND whose `realpath` stays inside the JobHunter app directory;
+in the projection AND whose `realpath` stays inside the JobCtl app directory;
 a path that resolves outside the app directory (for example a tampered
 projection row or a symlink escape) is rejected with `403`
 `artifact_path_forbidden` before any file is streamed or handed to the OS
@@ -239,7 +239,7 @@ stale in `job_score_staleness`; corrected score versions are not marked stale.
 markers and resets their score stage to `pending` for an explicit rescore. The
 body accepts `jobKeys` for selected stale scores or an empty list for all active
 stale scores, plus optional `limit` for bounded resets. The backend command
-that consumes those reset jobs is `jobhunter score --rescore` or the batch
+that consumes those reset jobs is `jobctl score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
 The jobs list `deleted` filter accepts `active`, `closed`, `deleted`, `hidden`,
 or `all`. Closed jobs are non-deleted postings whose active-state verification
@@ -247,7 +247,7 @@ marked them unavailable, expired, removed, or location-incompatible; they are
 excluded from active lists, dashboard totals, and worker queues while remaining
 inspectable from the Closed tab. Deleted jobs are temporary removals: discovery
 clears the delete tombstone when the same posting is observed again. Hidden jobs
-use a separate `jobhunter_hidden_jobs` tombstone and remain suppressed from
+use a separate `jobctl_hidden_jobs` tombstone and remain suppressed from
 active/deleted/closed lists, dashboard totals, artifacts, workflow runs, and
 activity until an unhide mutation clears that hidden tombstone. Soft delete
 and restore are exposed at `DELETE /v1/jobs/:key` and
@@ -373,15 +373,15 @@ The endpoint is deterministic and network-free. It does not fetch, scrape,
 cache, or return raw provider payloads. It lists posted salary text, Euro Top
 Tech, Levels.fyi, Glassdoor, and the temporary manual reported-compensation
 import as safe policy entries. Levels.fyi automated access remains unavailable unless
-`JOBHUNTER_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
-`enterprise_mcp` and `JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
+`JOBCTL_LEVELS_FYI_ACCESS_MODE` is `licensed_api`, `licensed_data_feed`, or
+`enterprise_mcp` and `JOBCTL_LEVELS_FYI_EUROPE_COVERAGE` is truthy.
 Glassdoor automated access remains unavailable unless
-`JOBHUNTER_GLASSDOOR_ACCESS_MODE` is `partner_api` or `written_permission`.
+`JOBCTL_GLASSDOOR_ACCESS_MODE` is `partner_api` or `written_permission`.
 When available, refresh paths automatically load licensed Levels.fyi rows from
-`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH` or
-`JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
-`JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH` or
-`JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL`. JSON and CSV feeds are accepted. The
+`JOBCTL_LEVELS_FYI_OBSERVATIONS_PATH` or
+`JOBCTL_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
+`JOBCTL_GLASSDOOR_OBSERVATIONS_PATH` or
+`JOBCTL_GLASSDOOR_OBSERVATIONS_URL`. JSON and CSV feeds are accepted. The
 source registry does not expose secrets, row contents, local paths, or feed URLs.
 
 `GET /v1/jobs/:jobKey/compensation/posted` returns the read-only
@@ -452,7 +452,7 @@ observation has a safe public URL, and match scores. Raw benchmark pages,
 credentials, private account payloads, local paths, unsafe/private URLs, and
 user compensation preferences are not returned.
 
-Temporary write trigger: `jobhunter compensation-refresh` reparses posted salary
+Temporary write trigger: `jobctl compensation-refresh` reparses posted salary
 facts from existing `jobs.salary` values and description compensation text,
 imports all configured reported compensation observations, estimates matching
 existing jobs, and refreshes projections without running discovery, scoring,
@@ -460,7 +460,7 @@ tailoring, cover, or apply automation. Explicit `--observations-json <file>`
 imports are additive with configured Levels.fyi feeds, configured Glassdoor
 feeds, and public Euro Top Tech rows. When reported evidence does not match, the
 estimator falls back to employer-posted salary facts already captured by
-JobHunter as low-confidence posted-salary evidence. It falls back through same company/role,
+JobCtl as low-confidence posted-salary evidence. It falls back through same company/role,
 same-location role, same-company adjacent-role, trimodal company-tier, and broad
 market-baseline tiers so sparse real evidence still produces a best estimate
 with a wider confidence interval. Fallback matching is seniority-aware, so
@@ -574,7 +574,7 @@ verification-code MCP server:
 - `POST /v1/resume-review/drafts/:draftId/revisions` saves manual or autosaved
   Plate document revisions and extracts bounded feedback signals from changed
   lines. `POST /v1/resume-review/drafts/:draftId/comment-threads` seeds
-  deterministic JobHunter line-comment threads from audit pins, and
+  deterministic JobCtl line-comment threads from audit pins, and
   `POST /v1/resume-review/comment-threads/:threadId/replies` records the user's
   reply without suppressing the original source pointer or risk label.
   `GET /v1/jobs/:jobKey/resume-review/feedback` lists the bounded feedback
@@ -1013,7 +1013,7 @@ all-runnable-source behavior.
 ## Worker runtime and health
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
-`JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
+`JOBCTL_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. The API also passes `expectedAppDir` and
 `expectedDbPath` into worker-started workflows. Worker activities verify those
 runtime values before writing, and fail non-retryably if the Python worker
@@ -1051,7 +1051,7 @@ open run whose Temporal execution has closed or vanished (dev-server restart →
 their own without a reaper. The `Workflow*` types are in the SSE catalog, so the
 `/runs` view refreshes as runs start and terminalize.
 
-The JSON-RPC transport is hang-hardened end to end: the Python `jobhunter rpc`
+The JSON-RPC transport is hang-hardened end to end: the Python `jobctl rpc`
 server dispatches each request on a bounded thread pool (responses serialized
 under a stdout lock and correlated by JSON-RPC `id`), so a slow or hung handler
 no longer head-of-line-blocks `cancel_run` or other fast calls; the TS
@@ -1081,12 +1081,12 @@ event-history cap.
   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_URL`) with a label, storage kind,
   and a `configured` presence flag only — values are never returned.
   `PATCH /v1/credentials` stores a value in the macOS Keychain
-  (service `JobHunter`) and `DELETE /v1/credentials/:key` removes it; unknown
+  (service `JobCtl`) and `DELETE /v1/credentials/:key` removes it; unknown
   keys return `400 invalid_credential_key`.
 - `GET /v1/extension/pairing-token` returns the local browser-extension
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under
-  the app dir (`~/.jobhunter/extension-capability-token` by default) with
+  the app dir (`~/.jobctl/extension-capability-token` by default) with
   restrictive file permissions. These pairing routes are for loopback web/CLI
   callers, not extension-origin CORS.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
@@ -1115,7 +1115,7 @@ event-history cap.
 - `apps/api`: Fastify API app.
 - `apps/web`: the React/Vite web app.
 - `packages/contracts`: shared schemas, DTOs, enums, JSON-RPC envelopes, and
-  re-exported `@jobhunter/domain-types`.
+  re-exported `@jobctl/domain-types`.
 - `packages/domain-types`: pure TypeScript mirror of the Python domain model.
 - `packages/api-client`: typed API client.
 - `apps/extension`: Manifest V3 local capture extension.
@@ -1145,7 +1145,7 @@ pnpm extension:e2e
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to
-that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set. The Vite dev-server
+that origin unless `VITE_JOBCTL_API_BASE_URL` is set. The Vite dev-server
 proxy target itself is controlled by `VITE_DEV_API_PROXY_TARGET` (default
 `http://127.0.0.1:8766`); isolated or multi-worktree stacks override it to
 point the proxy at a non-default API port.

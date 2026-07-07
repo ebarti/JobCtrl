@@ -2,7 +2,7 @@ import type {
   ArtifactComparison as ArtifactComparisonReadModel,
   ArtifactComparisonSide,
   CoverageDelta,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { useMemo } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";

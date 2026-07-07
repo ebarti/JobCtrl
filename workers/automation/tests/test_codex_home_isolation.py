@@ -1,10 +1,10 @@
 """Codex SDK ``CODEX_HOME`` isolation — pure-helper regression.
 
 These tests pin the invariant that the Codex analysis leg writes its session
-rollouts (and a copied auth token) into an isolated home under the JobHunter
+rollouts (and a copied auth token) into an isolated home under the JobCtl
 runtime root instead of the user's real ``~/.codex`` chat history. They exercise
 ONLY the pure helpers — no ``openai_codex`` import, no app-server, no network —
-by pointing both ``jobhunter.config.APP_DIR`` and ``Path.home()`` at tmp dirs.
+by pointing both ``jobctl.config.APP_DIR`` and ``Path.home()`` at tmp dirs.
 """
 
 from __future__ import annotations
@@ -13,21 +13,21 @@ import os
 import stat
 from pathlib import Path
 
-import jobhunter.config
-from jobhunter.infrastructure.analysis import codex_analysis_adapter as adapter
+import jobctl.config
+from jobctl.infrastructure.analysis import codex_analysis_adapter as adapter
 
 
 def _isolate_homes(monkeypatch, tmp_path: Path) -> tuple[Path, Path]:
     """Redirect ``APP_DIR`` and ``Path.home()`` under ``tmp_path``.
 
-    ``APP_DIR`` is read lazily via ``from jobhunter.config import APP_DIR`` inside
-    the helper, so patching ``jobhunter.config.APP_DIR`` is what takes effect.
+    ``APP_DIR`` is read lazily via ``from jobctl.config import APP_DIR`` inside
+    the helper, so patching ``jobctl.config.APP_DIR`` is what takes effect.
     Returns ``(app_dir, user_home)``.
     """
-    app_dir = tmp_path / "jobhunter"
+    app_dir = tmp_path / "jobctl"
     user_home = tmp_path / "home"
     user_home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(jobhunter.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(jobctl.config, "APP_DIR", app_dir)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
     return app_dir, user_home
 

@@ -1,4 +1,4 @@
-import { DOMAIN_EVENT_TYPES, LOCAL_TENANT, type DomainEventType } from "@jobhunter/domain-types";
+import { DOMAIN_EVENT_TYPES, LOCAL_TENANT, type DomainEventType } from "@jobctl/domain-types";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 

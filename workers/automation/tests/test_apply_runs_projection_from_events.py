@@ -24,9 +24,9 @@ from typing import Iterator
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.state import record_job_event, utc_now
+from jobctl.database import close_connection, init_db
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.state import record_job_event, utc_now
 
 
 @pytest.fixture

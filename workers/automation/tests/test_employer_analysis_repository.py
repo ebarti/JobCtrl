@@ -15,9 +15,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import (
+from jobctl.database import close_connection, init_db
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
     EeoScreenHit,
@@ -26,8 +26,8 @@ from jobhunter.domain.materials.analysis import (
     JobAnalysisDraft,
     compute_snapshot_hash,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.materials import SqliteEmployerAnalysisRepository
 
 JOB_URL = "https://example.com/jobs/staff-be"
 JD = "Staff Backend Engineer. Requires 8+ years in Go. Kafka is a plus."

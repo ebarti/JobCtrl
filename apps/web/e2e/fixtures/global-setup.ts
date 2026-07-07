@@ -25,11 +25,11 @@ function findRepoRoot(start: string): string {
 
 export default async function globalSetup(): Promise<void> {
   const repoRoot = findRepoRoot(process.cwd());
-  const stateFile = path.join(repoRoot, ".jobhunter-e2e-state.json");
-  const targetDir = process.env["JOBHUNTER_E2E_APP_DIR"];
+  const stateFile = path.join(repoRoot, ".jobctl-e2e-state.json");
+  const targetDir = process.env["JOBCTL_E2E_APP_DIR"];
   if (!targetDir) {
     throw new Error(
-      "JOBHUNTER_E2E_APP_DIR is not set; playwright.config.ts should populate it before globalSetup runs.",
+      "JOBCTL_E2E_APP_DIR is not set; playwright.config.ts should populate it before globalSetup runs.",
     );
   }
   fs.rmSync(targetDir, { force: true, recursive: true });
@@ -37,7 +37,7 @@ export default async function globalSetup(): Promise<void> {
 
   const stdout = execFileSync(
     "corepack",
-    ["pnpm", "--filter", "@jobhunter/api", "exec", "tsx", "test/qa-seed.ts", targetDir],
+    ["pnpm", "--filter", "@jobctl/api", "exec", "tsx", "test/qa-seed.ts", targetDir],
     { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"], encoding: "utf-8" },
   );
   const report = JSON.parse(stdout.trim()) as SeedReport;

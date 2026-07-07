@@ -1,5 +1,5 @@
-from jobhunter.discovery.target_queries import build_target_role_queries
-from jobhunter.profile_import import PdfTextResult, extract_pdf_text, profile_from_resume_text, style_from_pdf_metadata
+from jobctl.discovery.target_queries import build_target_role_queries
+from jobctl.profile_import import PdfTextResult, extract_pdf_text, profile_from_resume_text, style_from_pdf_metadata
 
 
 def _simple_pdf(lines: list[str]) -> bytes:

@@ -21,7 +21,7 @@ interface FakeLoopbackApi {
 
 describe("Chromium loaded extension privacy boundary", () => {
   it("sends capture and autofill API requests only to loopback origins", async () => {
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-extension-e2e-"));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-extension-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
     try {
@@ -157,7 +157,7 @@ async function sendAutofillReviewFromExtensionPage(page: Page, token: string): P
         return await (globalThis as unknown as {
           chrome: { tabs: { sendMessage(tabId: number, message: unknown): Promise<unknown> } };
         }).chrome.tabs.sendMessage(tab.id, {
-          type: "jobhunter.autofill.review",
+          type: "jobctl.autofill.review",
           profile,
         });
       } catch (error) {

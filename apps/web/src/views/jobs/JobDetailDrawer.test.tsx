@@ -114,7 +114,7 @@ describe("<JobDetailDrawer>", () => {
     };
     expect(JSON.stringify(sourceConflictAudit)).toContain("source_conflict_with_posted_salary");
     expect(JSON.stringify(sourceConflictAudit)).toContain("reported_compensation_sample");
-    expect(JSON.stringify(sourceConflictAudit)).not.toMatch(/~\/\.jobhunter|\/Users\/|api[_-]?key|oauth|resume|cover letter/i);
+    expect(JSON.stringify(sourceConflictAudit)).not.toMatch(/~\/\.jobctl|\/Users\/|api[_-]?key|oauth|resume|cover letter/i);
 
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) =>
@@ -350,7 +350,7 @@ describe("<JobDetailDrawer>", () => {
     renderJobDetailDrawer("https://example.com/jobs/missing-parent");
 
     await waitFor(() => expect(screen.getByText("Job not found.")).toBeInTheDocument());
-    expect(screen.queryByText(/JobHunter API request failed: 404/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/JobCtl API request failed: 404/i)).not.toBeInTheDocument();
   });
 
   it("renders compensation audit range, statistical confidence, and reported sources", async () => {
@@ -541,7 +541,7 @@ describe("<JobDetailDrawer>", () => {
           currentStage: "discover",
           currentSubstage: "enrich",
           currentState: "failed",
-          nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+          nextAction: "jobctl retry enrich https://example.com/jobs/1",
         });
         return HttpResponse.json({
           ...detail,
@@ -560,7 +560,7 @@ describe("<JobDetailDrawer>", () => {
               errorMessage: "no data extracted",
               retryable: false,
               blockedBy: [],
-              nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+              nextAction: "jobctl retry enrich https://example.com/jobs/1",
             },
           ],
         });
@@ -571,7 +571,7 @@ describe("<JobDetailDrawer>", () => {
 
     await screen.findByText(sampleJob.title);
     const drawer = screen.getByLabelText("Job details");
-    expect(drawer).not.toHaveTextContent("jobhunter retry enrich");
+    expect(drawer).not.toHaveTextContent("jobctl retry enrich");
     expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
   });
 
@@ -604,7 +604,7 @@ describe("<JobDetailDrawer>", () => {
               errorMessage: "no data extracted",
               retryable: true,
               blockedBy: [],
-              nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+              nextAction: "jobctl retry enrich https://example.com/jobs/1",
             },
           ],
         });

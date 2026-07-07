@@ -18,6 +18,6 @@ export const Default: Story = {
 
 export const LongCommand: Story = {
   args: {
-    command: "pnpm --filter @jobhunter/web storybook:build -o ../../dist/web-storybook",
+    command: "pnpm --filter @jobctl/web storybook:build -o ../../dist/web-storybook",
   },
 };

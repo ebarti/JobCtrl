@@ -32,7 +32,7 @@ captureButton.addEventListener("click", () => {
   void sendMessage({ type: "captureCurrentTab" })
     .then((response) => {
       if (response.ok && response.status === "captured") {
-        setStatus(response.jobKey ? `Saved to JobHunter: ${response.jobKey}` : "Saved to JobHunter.");
+        setStatus(response.jobKey ? `Saved to JobCtl: ${response.jobKey}` : "Saved to JobCtl.");
       } else if (response.ok && response.status === "queued") {
         setStatus(`Queued locally. ${response.queueSize} capture(s) waiting.`);
       } else if (!response.ok) {
@@ -89,7 +89,7 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
     return;
   }
   if (!response.paired) {
-    setStatus("Paste the pairing token from JobHunter Settings.");
+    setStatus("Paste the pairing token from JobCtl Settings.");
   } else if (!response.apiReady) {
     setStatus(`Local app is down. ${response.queueSize} queued capture(s).`);
   } else if (response.queueSize > 0) {

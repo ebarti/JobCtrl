@@ -14,15 +14,15 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import set_tracer_provider
 
 
-_TEST_APP_DIR = Path(tempfile.mkdtemp(prefix="jobhunter-pytest-"))
-os.environ["JOBHUNTER_DIR"] = str(_TEST_APP_DIR)
+_TEST_APP_DIR = Path(tempfile.mkdtemp(prefix="jobctl-pytest-"))
+os.environ["JOBCTL_DIR"] = str(_TEST_APP_DIR)
 
 # Initialise the session sandbox DB so activities that open the default
 # thread-local connection (e.g. the Temporal finalize activities) find their
 # tables. Per-test suites that need isolated state still use their own
 # ``tmp_path`` databases via ``init_db(path)``.
-from jobhunter.config import ensure_dirs  # noqa: E402
-from jobhunter.database import init_db  # noqa: E402
+from jobctl.config import ensure_dirs  # noqa: E402
+from jobctl.database import init_db  # noqa: E402
 
 ensure_dirs()
 init_db()
@@ -30,7 +30,7 @@ init_db()
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session-scoped user-data sandbox after pytest exits."""
-    if os.environ.get("JOBHUNTER_DIR") == str(_TEST_APP_DIR):
+    if os.environ.get("JOBCTL_DIR") == str(_TEST_APP_DIR):
         shutil.rmtree(_TEST_APP_DIR, ignore_errors=True)
 
 
@@ -51,7 +51,7 @@ def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, 
 @pytest.fixture(autouse=True)
 def reset_apply_dashboard_state() -> None:
     """Keep the module-level apply dashboard state from leaking across tests."""
-    from jobhunter.apply import dashboard
+    from jobctl.apply import dashboard
 
     with dashboard._lock:
         dashboard._events.clear()

@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jobhunter.digest import acknowledge_digest, build_digest, read_digest_state
-from jobhunter.llm import SpendBudgetStatus
+from jobctl.digest import acknowledge_digest, build_digest, read_digest_state
+from jobctl.llm import SpendBudgetStatus
 
 
 FIXTURE_PATH = (
@@ -22,7 +22,7 @@ FIXTURE_PATH = (
 
 def test_build_digest_matches_shared_fixture_without_acknowledging(tmp_path: Path) -> None:
     fixture = json.loads(FIXTURE_PATH.read_text())
-    conn = sqlite3.connect(tmp_path / "jobhunter.db")
+    conn = sqlite3.connect(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     _create_schema(conn)
     _seed_fixture(conn, fixture)
@@ -65,7 +65,7 @@ def test_build_digest_matches_shared_fixture_without_acknowledging(tmp_path: Pat
 
 def test_acknowledge_digest_updates_watermark_and_records_event(tmp_path: Path) -> None:
     fixture = json.loads(FIXTURE_PATH.read_text())
-    conn = sqlite3.connect(tmp_path / "jobhunter.db")
+    conn = sqlite3.connect(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     _create_schema(conn)
     _seed_fixture(conn, fixture)
@@ -251,7 +251,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             duration_ms INTEGER,
             events_json TEXT NOT NULL DEFAULT '[]'
         );
-        CREATE TABLE jobhunter_hidden_jobs (
+        CREATE TABLE jobctl_hidden_jobs (
             tenant_id TEXT NOT NULL DEFAULT 'local',
             job_url TEXT NOT NULL,
             hidden_at TEXT NOT NULL,
@@ -350,7 +350,7 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         )
         if job.get("hidden"):
             conn.execute(
-                "INSERT INTO jobhunter_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
+                "INSERT INTO jobctl_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
                 (job["jobId"], fixture["now"]),
             )
         if job.get("activeState"):

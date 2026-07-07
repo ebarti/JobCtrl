@@ -1,4 +1,4 @@
-import type { ApplyAuditFact, ApplyAuditSource } from "@jobhunter/contracts";
+import type { ApplyAuditFact, ApplyAuditSource } from "@jobctl/contracts";
 
 import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";

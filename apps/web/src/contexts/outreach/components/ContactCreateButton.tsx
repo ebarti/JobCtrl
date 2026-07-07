@@ -1,4 +1,4 @@
-import type { ContactCreateRequest } from "@jobhunter/contracts";
+import type { ContactCreateRequest } from "@jobctl/contracts";
 import { useState } from "react";
 
 import {

@@ -11,7 +11,7 @@ import { ManualCaptureImportError, type ManualCaptureImporter } from "../src/man
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-discovery-controls-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-discovery-controls-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.exec(`
@@ -1212,7 +1212,7 @@ describe("discovery product controls API", () => {
         jobKey: null,
         status: "dismissed",
         dismissedAt,
-        message: "Capture was already dismissed in JobHunter.",
+        message: "Capture was already dismissed in JobCtl.",
       });
       expect(itemIds).toHaveLength(1);
     } finally {

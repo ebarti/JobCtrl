@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "src" / "jobhunter"
+ROOT = Path(__file__).resolve().parents[1] / "src" / "jobctl"
 
 # Regex: capture the third positional argument to record_job_event, which is
 # the event_type literal. We accept either single- or double-quoted strings

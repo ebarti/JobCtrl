@@ -68,7 +68,7 @@ change the tenant source without rewriting query factories, invalidation call
 sites, persistence adapters, or tests.
 
 **Tenant resolution.** Today: `useTenantId()` returns `LOCAL_TENANT` from
-`@jobhunter/domain-types`. Tomorrow: `useTenantId()` returns the active
+`@jobctl/domain-types`. Tomorrow: `useTenantId()` returns the active
 tenant from `TenantProvider`, which reads from `SessionProvider`, which
 reads from the JWT (§9). The hook signature does not change.
 
@@ -368,7 +368,7 @@ from the same context.
 
 ```ts
 // contexts/profile/forms/profile-form.tsx
-const profileFormSchema = ProfileSchema; // imported from @jobhunter/contracts
+const profileFormSchema = ProfileSchema; // imported from @jobctl/contracts
 type ProfileFormValues = z.infer<typeof profileFormSchema>;
 
 export function ProfileForm({ initial }: { initial: ProfileFormValues }) {
@@ -435,7 +435,7 @@ such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `tokens.css` is the source of the app's token values. It defines the
 light `:root` and dark `:root[data-theme="dark"]` shadcn semantic
 variables, chart tokens, sidebar/menu tokens, radius scale inputs,
-Fontsource-backed font stacks, and JobHunter status extensions
+Fontsource-backed font stacks, and JobCtl status extensions
 (`success`, `warning`, `status-info`). The Tailwind config bridge
 is not part of the active contract; generated utilities come from `@theme inline`
 plus the active CSS variables.

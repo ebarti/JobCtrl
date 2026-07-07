@@ -20,32 +20,32 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.domain.materials import (
+from jobctl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
     RenderFormat,
 )
-from jobhunter.domain.materials.services import ResumeAssembler
-from jobhunter.domain.ports.materials import PdfRendererPort
-from jobhunter.infrastructure.materials import html_resume_pdf
-from jobhunter.infrastructure.materials import (
+from jobctl.domain.materials.services import ResumeAssembler
+from jobctl.domain.ports.materials import PdfRendererPort
+from jobctl.infrastructure.materials import html_resume_pdf
+from jobctl.infrastructure.materials import (
     HtmlResumePdfAdapter,
     LatexPdfAdapter,
     PlaywrightHtmlPdfAdapter,
 )
-from jobhunter.infrastructure.materials.html_resume_pdf import (
+from jobctl.infrastructure.materials.html_resume_pdf import (
     build_resume_document,
     build_resume_html,
 )
-from jobhunter.infrastructure.materials.latex_pdf import (
+from jobctl.infrastructure.materials.latex_pdf import (
     DEFAULT_RESUME_LATEX_TEMPLATE,
     _escape_latex,
     _escape_latex_light,
     build_latex,
     validate_latex_template,
 )
-from jobhunter.infrastructure.materials.playwright_html_pdf import _build_letter_html
+from jobctl.infrastructure.materials.playwright_html_pdf import _build_letter_html
 
 
 # ---------------------------------------------------------------------------

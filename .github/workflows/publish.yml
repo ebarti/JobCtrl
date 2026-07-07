@@ -1,10 +1,10 @@
-# Tag publishing returns with the pre-publication rename train
-# (docs/plans/2026-07-03-oss-release-remediation-spec.md §1 "Naming").
-# Do not re-enable before it; the release_check structural guard enforces this.
 name: Publish to PyPI
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   publish:
@@ -24,6 +24,9 @@ jobs:
 
       - name: Install build tools
         run: pip install build
+
+      - name: Run release check
+        run: python3 scripts/release_check.py
 
       - name: Build package
         run: python -m build workers/automation

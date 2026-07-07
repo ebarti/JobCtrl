@@ -1,4 +1,4 @@
-import { type CredentialKey, CredentialKeys } from "@jobhunter/contracts";
+import { type CredentialKey, CredentialKeys } from "@jobctl/contracts";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { CredentialForm } from "../forms/credential-form.js";

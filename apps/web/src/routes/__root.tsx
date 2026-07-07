@@ -13,7 +13,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootComponent() {
   const showDevtools =
-    import.meta.env.DEV && import.meta.env.VITE_JOBHUNTER_HIDE_DEVTOOLS !== "1";
+    import.meta.env.DEV && import.meta.env.VITE_JOBCTL_HIDE_DEVTOOLS !== "1";
 
   return (
     <>

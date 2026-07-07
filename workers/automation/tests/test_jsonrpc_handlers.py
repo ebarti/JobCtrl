@@ -10,36 +10,36 @@ from types import SimpleNamespace
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
 
-from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
-from jobhunter.domain.compensation import ReportedCompensationObservation
-from jobhunter.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
-from jobhunter.infrastructure.compensation import refresh as compensation_refresh_mod
-from jobhunter.infrastructure.compensation import sqlite_market_repository as market_repository_mod
-from jobhunter.infrastructure.compensation.refresh import refresh_compensation_facts
-from jobhunter.infrastructure.compensation.workflow import (
+from jobctl.database import close_connection, get_connection, init_db
+from jobctl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
+from jobctl.domain.compensation import ReportedCompensationObservation
+from jobctl.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
+from jobctl.infrastructure.compensation import refresh as compensation_refresh_mod
+from jobctl.infrastructure.compensation import sqlite_market_repository as market_repository_mod
+from jobctl.infrastructure.compensation.refresh import refresh_compensation_facts
+from jobctl.infrastructure.compensation.workflow import (
     CompensationRefreshWorkflow,
     CompensationRefreshWorkflowInput,
 )
-from jobhunter.domain.rpc.messages import (
+from jobctl.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     JsonRpcRequest,
     WorkflowStartSpec,
 )
-from jobhunter.infrastructure.rpc import handlers as handlers_mod
-from jobhunter.infrastructure.rpc.handlers import register_default_handlers
-from jobhunter.infrastructure.rpc.server import JsonRpcServer
-from jobhunter.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
-from jobhunter.materials import activities as materials_activities_mod
-from jobhunter.materials.activities import CoverActivityInput, TailorActivityInput, cover_activity, tailor_activity
-from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
-from jobhunter.pipeline import workflow as workflow_mod
-from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
-from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
-from jobhunter.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
-from jobhunter.scoring import activities as scoring_activities_mod
-from jobhunter.scoring.activities import ScoreActivityInput, score_activity
+from jobctl.infrastructure.rpc import handlers as handlers_mod
+from jobctl.infrastructure.rpc.handlers import register_default_handlers
+from jobctl.infrastructure.rpc.server import JsonRpcServer
+from jobctl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
+from jobctl.materials import activities as materials_activities_mod
+from jobctl.materials.activities import CoverActivityInput, TailorActivityInput, cover_activity, tailor_activity
+from jobctl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctl.pipeline import workflow as workflow_mod
+from jobctl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
+from jobctl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobctl.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
+from jobctl.scoring import activities as scoring_activities_mod
+from jobctl.scoring.activities import ScoreActivityInput, score_activity
 
 
 class _StubHandle:
@@ -134,8 +134,8 @@ def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
             method="generate_interview_prep",
             params={
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "jobUrl": "https://example.com/job/interview",
                 "llmModel": "gpt-test",
             },
@@ -155,8 +155,8 @@ def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
     (payload,) = seen[0].args
     assert payload == InterviewPrepWorkflowInput(
         tenant_id="local",
-        expected_app_dir="/tmp/jobhunter",
-        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        expected_app_dir="/tmp/jobctl",
+        expected_db_path="/tmp/jobctl/jobctl.db",
         job_url="https://example.com/job/interview",
         llm_model="gpt-test",
     )
@@ -315,8 +315,8 @@ def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> N
             params={
                 "tenantId": "local",
                 "allJobs": True,
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "observationsJsonPath": str(observations_path),
                 "includeEuroTopTech": False,
                 "euroTopTechMaxPages": 3,
@@ -338,8 +338,8 @@ def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> N
     (payload,) = started_workflows[0].args
     assert payload == CompensationRefreshWorkflowInput(
         tenant_id="local",
-        expected_app_dir="/tmp/jobhunter",
-        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        expected_app_dir="/tmp/jobctl",
+        expected_db_path="/tmp/jobctl/jobctl.db",
         job_url=None,
         limit=10,
         observations_json_path=str(observations_path),
@@ -628,11 +628,11 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_ACCESS_MODE", "licensed_data_feed")
-    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE", "true")
-    monkeypatch.setenv("JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
-    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_ACCESS_MODE", "written_permission")
-    monkeypatch.setenv("JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
+    monkeypatch.setenv("JOBCTL_LEVELS_FYI_ACCESS_MODE", "licensed_data_feed")
+    monkeypatch.setenv("JOBCTL_LEVELS_FYI_EUROPE_COVERAGE", "true")
+    monkeypatch.setenv("JOBCTL_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
+    monkeypatch.setenv("JOBCTL_GLASSDOOR_ACCESS_MODE", "written_permission")
+    monkeypatch.setenv("JOBCTL_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
 
     def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
         return (
@@ -731,8 +731,8 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
             method="run_stage",
             params={
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "stage": "score",
                 "stages": ["score", "tailor"],
                 "jobUrls": [
@@ -766,8 +766,8 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
     (payload,) = seen[0].args
     assert payload == JobPipelineWorkflowInput(
         tenant_id="local",
-        expected_app_dir="/tmp/jobhunter",
-        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        expected_app_dir="/tmp/jobctl",
+        expected_db_path="/tmp/jobctl/jobctl.db",
         stages=["score", "tailor"],
         job_urls=(
             "https://example.com/job/score-a",
@@ -802,8 +802,8 @@ def test_run_stage_preserves_selected_discovery_source_ids(tmp_db: Path) -> None
             method="run_stage",
             params={
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "stage": "discover",
                 "stages": ["discover"],
                 "limit": 25,
@@ -820,8 +820,8 @@ def test_run_stage_preserves_selected_discovery_source_ids(tmp_db: Path) -> None
     (payload,) = seen[0].args
     assert payload == DiscoverWorkflowInput(
         tenant_id="local",
-        expected_app_dir="/tmp/jobhunter",
-        expected_db_path="/tmp/jobhunter/jobhunter.db",
+        expected_app_dir="/tmp/jobctl",
+        expected_db_path="/tmp/jobctl/jobctl.db",
         limit=25,
         source_ids=("jobspy:linkedin",),
         llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -843,8 +843,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             method="run_stage",
             params={
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "stage": "tailor",
                 "stages": ["tailor"],
                 "tailorModels": ["local:draft-a"],
@@ -867,8 +867,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "rescore_job",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "jobUrl": "https://example.com/job/score",
                 "dryRun": True,
             },
@@ -882,8 +882,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "rescore_jobs_not_on_current_scoring_policy",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "limit": 10,
                 "jobUrls": [
                     "https://example.com/job/score-a",
@@ -909,8 +909,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "tailor_job",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "jobUrl": "https://example.com/job/tailor",
                 "dryRun": True,
                 "allowLowFitOverride": True,
@@ -932,8 +932,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "retailor_job",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "jobUrl": "https://example.com/job/tailor",
                 "dryRun": True,
                 "suppressExistingArtifacts": False,
@@ -955,8 +955,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "retailor_job",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "jobUrl": "https://example.com/job/tailor",
             },
             {
@@ -970,8 +970,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "retailor_current_policy",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "limit": 5,
                 "jobUrls": [
                     "https://example.com/job/tailor-a",
@@ -999,8 +999,8 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             "retailor_current_policy",
             {
                 "tenantId": "local",
-                "expectedAppDir": "/tmp/jobhunter",
-                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "expectedAppDir": "/tmp/jobctl",
+                "expectedDbPath": "/tmp/jobctl/jobctl.db",
                 "limit": 5,
                 "jobUrls": ["https://example.com/job/tailor-a"],
             },
@@ -1051,8 +1051,8 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
     else:
         assert seen[0].workflow is JobPipelineWorkflow
         assert isinstance(payload, JobPipelineWorkflowInput)
-        assert payload.expected_app_dir == "/tmp/jobhunter"
-        assert payload.expected_db_path == "/tmp/jobhunter/jobhunter.db"
+        assert payload.expected_app_dir == "/tmp/jobctl"
+        assert payload.expected_db_path == "/tmp/jobctl/jobctl.db"
     for name, value in expected_payload.items():
         assert getattr(payload, name) == value
     assert payload.tenant_id == "local"
@@ -1082,8 +1082,8 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
         method="retailor_job",
         params={
             "tenantId": "local",
-            "expectedAppDir": "/tmp/jobhunter",
-            "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+            "expectedAppDir": "/tmp/jobctl",
+            "expectedDbPath": "/tmp/jobctl/jobctl.db",
             "jobUrl": job_url,
             "dryRun": False,
         },
@@ -1230,7 +1230,7 @@ def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
         calls.append((url, kwargs))
         return SimpleNamespace(ok=True, error=None)
 
-    monkeypatch.setattr("jobhunter.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
 
     result = scoring_activities_mod._run_selected_scores(
         ScoreActivityInput(
@@ -1287,7 +1287,7 @@ def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
         calls.append(url)
         return SimpleNamespace(ok=True, error=None)
 
-    monkeypatch.setattr("jobhunter.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
     monkeypatch.setattr(scoring_activities_mod, "ThreadPoolExecutor", RecordingExecutor)
     monkeypatch.setattr(scoring_activities_mod, "as_completed", lambda futures: futures)
 
@@ -1338,8 +1338,8 @@ def test_current_policy_score_activity_skips_current_policy_scores(
         calls.append(url)
         return SimpleNamespace(ok=True, error=None)
 
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: get_connection(tmp_db))
-    monkeypatch.setattr("jobhunter.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: get_connection(tmp_db))
+    monkeypatch.setattr("jobctl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
 
     result = scoring_activities_mod._run_current_policy_scores(
         ScoreActivityInput(
@@ -1376,7 +1376,7 @@ def test_selected_tailor_activity_runs_only_requested_urls(monkeypatch) -> None:
         calls.append((url, kwargs))
         return {"status": "approved"}
 
-    monkeypatch.setattr("jobhunter.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
+    monkeypatch.setattr("jobctl.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
 
     result = materials_activities_mod._run_selected_tailoring(
         TailorActivityInput(
@@ -1443,8 +1443,8 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
         calls.append((url, kwargs))
         return {"status": "approved"}
 
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: get_connection(tmp_db))
-    monkeypatch.setattr("jobhunter.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: get_connection(tmp_db))
+    monkeypatch.setattr("jobctl.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
 
     result = materials_activities_mod._run_current_policy_tailoring(
         TailorActivityInput(

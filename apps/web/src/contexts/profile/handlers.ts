@@ -2,7 +2,7 @@ import type {
   ProfileImported,
   ProfileUpdated,
   TailoringPolicyUpdated,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";

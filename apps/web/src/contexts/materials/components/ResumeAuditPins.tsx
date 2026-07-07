@@ -9,7 +9,7 @@ import type {
   ResumeReviewCommentThreadSeedInput,
   ResumeLayoutBox,
   ResumeTemplateTheme,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { BasicMarksPlugin } from "@platejs/basic-nodes/react";
 import {
   IconAlignCenter,
@@ -1565,7 +1565,7 @@ function selectedLineMatchesElement(
 function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateComment }): JSX.Element {
   return (
     <span
-      aria-label="JobHunter resume comment"
+      aria-label="JobCtl resume comment"
       className={`resume-plate-comment ${comment.tone}`}
       contentEditable={false}
       data-resume-editor-chrome="true"
@@ -1573,7 +1573,7 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
       suppressContentEditableWarning
     >
       <span className="resume-plate-comment-head">
-        <b>JobHunter</b>
+        <b>JobCtl</b>
         <span>{comment.status}</span>
       </span>
       {comment.sourceText ? (
@@ -1665,9 +1665,9 @@ function ResumeCommentThreadPanel({
 }): JSX.Element | null {
   if (!threads.length && !error) return null;
   return (
-    <aside className="resume-comment-thread-panel" aria-label="JobHunter line comments">
+    <aside className="resume-comment-thread-panel" aria-label="JobCtl line comments">
       <div className="resume-comment-thread-head">
-        <b>JobHunter comments</b>
+        <b>JobCtl comments</b>
         <span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span>
       </div>
       {error ? <div className="banner inline">{error}</div> : null}
@@ -1755,9 +1755,9 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
   const className = [
     element.className,
     lineEntry && !element.className ? resumeClassForLineKind(lineEntry.line.kind) : "",
-    element.lineNumber ? "jobhunter-review-line" : "",
-    comment ? "has-jobhunter-comment" : "",
-    selected ? "jobhunter-selected-line" : "",
+    element.lineNumber ? "jobctl-review-line" : "",
+    comment ? "has-jobctl-comment" : "",
+    selected ? "jobctl-selected-line" : "",
   ]
     .filter(Boolean)
     .join(" ");

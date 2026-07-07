@@ -1,4 +1,4 @@
-import type { EvidenceMapEntry, EvidenceMapResponse } from "@jobhunter/contracts";
+import type { EvidenceMapEntry, EvidenceMapResponse } from "@jobctl/contracts";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { expectTypeOf, test } from "vitest";
 

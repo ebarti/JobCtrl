@@ -455,7 +455,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (!databaseExists(options.dbPath)) {
       void reply.code(503);
-      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+      return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${options.dbPath}` };
     }
     const seeded = await withWritableDb(reply, options.dbPath, (db) => seedExtensionManualCapture(db, body));
     if (!seeded || "ok" in seeded) {
@@ -634,7 +634,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       if (!databaseExists(options.dbPath)) {
         void reply.code(503);
-        return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+        return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${options.dbPath}` };
       }
       try {
         return await manualCaptureImporter(decodeRouteParam(request.params.itemId), body, {
@@ -1006,7 +1006,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (!databaseExists(options.dbPath)) {
       void reply.code(503);
-      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+      return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${options.dbPath}` };
     }
     try {
       const output = await gmailFeedbackScanner(body, { appDir, dbPath: options.dbPath });
@@ -1876,7 +1876,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return {
         ok: false,
         error: "artifact_path_forbidden",
-        message: "Artifact path resolves outside the JobHunter app directory.",
+        message: "Artifact path resolves outside the JobCtl app directory.",
       };
     }
 
@@ -1914,7 +1914,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return {
         ok: false,
         error: "artifact_path_forbidden",
-        message: "Artifact path resolves outside the JobHunter app directory.",
+        message: "Artifact path resolves outside the JobCtl app directory.",
       };
     }
 
@@ -1956,7 +1956,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return {
           ok: false,
           error: "artifact_path_forbidden",
-          message: "Artifact path resolves outside the JobHunter app directory.",
+          message: "Artifact path resolves outside the JobCtl app directory.",
         };
       }
 
@@ -2002,7 +2002,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return {
         ok: false,
         error: "artifact_path_forbidden",
-        message: "Artifact path resolves outside the JobHunter app directory.",
+        message: "Artifact path resolves outside the JobCtl app directory.",
       };
     }
     await artifactOpener(detail.artifact.localPath);
@@ -2080,7 +2080,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (!databaseExists(options.dbPath)) {
       void reply.code(503);
-      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+      return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${options.dbPath}` };
     }
     try {
       const nextProfile = parseProfileUpdateProfile(body);
@@ -2830,7 +2830,7 @@ function safeJsonObject(value: string | null | undefined): Record<string, unknow
 }
 
 async function defaultArtifactPdfPageRenderer(pdfPath: string, pageNumber: number): Promise<Buffer> {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-pdf-preview-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-pdf-preview-"));
   const outputPrefix = path.join(tempDir, "page");
   const outputPath = `${outputPrefix}.png`;
   try {
@@ -3230,7 +3230,7 @@ function withDb<T>(
 ): T | { ok: false; error: string; message: string } {
   if (!databaseExists(dbPath)) {
     void reply.code(503);
-    return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${dbPath}` };
+    return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${dbPath}` };
   }
 
   // Phase 9 (S-33): read endpoints maintain the projection tables
@@ -3265,7 +3265,7 @@ function withDb<T>(
     return {
       ok: false,
       error: opened ? "db_read_failed" : "db_open_failed",
-      message: error instanceof Error ? error.message : "Unable to read the JobHunter database.",
+      message: error instanceof Error ? error.message : "Unable to read the JobCtl database.",
     };
   } finally {
     db?.close();
@@ -3279,7 +3279,7 @@ async function withWritableDb<T>(
 ): Promise<T | { ok: false; error: string; message: string }> {
   if (!databaseExists(dbPath)) {
     void reply.code(503);
-    return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${dbPath}` };
+    return { ok: false, error: "db_not_found", message: `No JobCtl database found at ${dbPath}` };
   }
 
   let db: ReturnType<typeof openDatabase> | null = null;
@@ -3307,7 +3307,7 @@ async function withWritableDb<T>(
     return {
       ok: false,
       error: "db_write_failed",
-      message: error instanceof Error ? error.message : "Unable to write the JobHunter database.",
+      message: error instanceof Error ? error.message : "Unable to write the JobCtl database.",
     };
   } finally {
     db?.close();

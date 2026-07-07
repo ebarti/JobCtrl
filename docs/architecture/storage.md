@@ -58,9 +58,9 @@ The remaining tables group by owner:
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
 | Discovery & preparation | `discovery_runs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
-| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `jobhunter_deleted_jobs` |
+| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `jobctl_deleted_jobs` |
 
-SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,
+SQLite in `~/.jobctl/jobctl.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
 rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
@@ -79,7 +79,7 @@ Market compensation estimates live in the canonical
 `job_market_compensation_estimates` table. The estimator consumes deterministic
 local compensation observations keyed by company, role, location, and trimodal
 company tier, including imported reported-compensation observations and
-employer-posted salary facts captured by JobHunter. It records explicit non-range
+employer-posted salary facts captured by JobCtl. It records explicit non-range
 states only when required inputs or usable sources are missing. When sparse real
 evidence exists, it emits the best available estimate by falling back from exact
 company-role evidence to same-location role evidence, same-company adjacent
@@ -93,7 +93,7 @@ available, and match scores.
 Employer-posted salary observations can emit low-confidence ranges with
 low-sample warnings. High-value posted base-salary text with an omitted period
 can be treated as annual evidence for market estimation, but bonus-only and
-one-sided rows are rejected. The `jobhunter compensation-refresh` command
+one-sided rows are rejected. The `jobctl compensation-refresh` command
 reparses existing posted salary text, imports explicit local
 observations, configured licensed Levels.fyi and Glassdoor feeds, and public
 Euro Top Tech observations additively, writes estimates for existing jobs, and
@@ -113,7 +113,7 @@ those projection columns only; it does not parse raw salary text on read.
 ```mermaid
 flowchart LR
     subgraph FS["Local filesystem (workspace dir)"]
-        DB[("jobhunter.db + -wal/-shm")]
+        DB[("jobctl.db + -wal/-shm")]
         ART["artifacts: resumes, cover letters, PDFs, imported PDFs"]
         LOGS["logs incl. per-worker agent log"]
     end
@@ -160,5 +160,5 @@ structured result alone, and `0.2` for inferred/unstructured outcomes.
 Dry-run Chrome launches install a CDP guard in addition to the prompt
 instruction. The guard attaches to page targets, blocks non-local
 POST/PUT/PATCH requests with `Fetch.failRequest`, and injects a form-submit
-interceptor that marks `window.__jobhunter_dryrun_blocked` when a hostile page
+interceptor that marks `window.__jobctl_dryrun_blocked` when a hostile page
 tries to submit.

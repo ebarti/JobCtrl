@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 
-import { createJobHunterApiClient } from "@jobhunter/api-client";
-import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@jobhunter/contracts";
+import { createJobCtlApiClient } from "@jobctl/api-client";
+import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@jobctl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
@@ -79,9 +79,9 @@ async function waitForExpectation(assertion: () => void, timeoutMs = 500): Promi
 }
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-"));
   options = {
-    dbPath: path.join(tempDir, "jobhunter.db"),
+    dbPath: path.join(tempDir, "jobctl.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
     resumePdfRenderer: ({ htmlPath, pdfPath }) => {
@@ -123,7 +123,7 @@ describe("local TypeScript API", () => {
       }),
     );
 
-    await createJobHunterApiClient().health();
+    await createJobCtlApiClient().health();
 
     // The client attaches an AbortSignal (per-request timeout) to every fetch;
     // assert the URL + method and ignore the signal implementation detail.
@@ -135,8 +135,8 @@ describe("local TypeScript API", () => {
   });
 
   it("refuses non-loopback API binds unless explicitly allowed", () => {
-    expect(() => resolveApiConfig({ JOBHUNTER_API_HOST: "0.0.0.0" })).toThrow(/Refusing to bind/);
-    expect(resolveApiConfig({ JOBHUNTER_API_HOST: "0.0.0.0", JOBHUNTER_API_ALLOW_REMOTE_BIND: "1" }).host).toBe(
+    expect(() => resolveApiConfig({ JOBCTL_API_HOST: "0.0.0.0" })).toThrow(/Refusing to bind/);
+    expect(resolveApiConfig({ JOBCTL_API_HOST: "0.0.0.0", JOBCTL_API_ALLOW_REMOTE_BIND: "1" }).host).toBe(
       "0.0.0.0",
     );
   });
@@ -213,7 +213,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a healthy JobHunter automation worker heartbeat from the API database", async () => {
+  it("reports a healthy JobCtl automation worker heartbeat from the API database", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-1",
       appDir: tempDir,
@@ -237,7 +237,7 @@ describe("local TypeScript API", () => {
           workerId: "worker-1",
           appDir: tempDir,
           dbPath: options.dbPath,
-          taskQueue: "jobhunter-default",
+          taskQueue: "jobctl-default",
           maxConcurrentActivities: 8,
           activityExecutorMaxWorkers: 10,
         },
@@ -273,7 +273,7 @@ describe("local TypeScript API", () => {
       "localhost",
       tempDir,
       options.dbPath,
-      "jobhunter-default",
+      "jobctl-default",
       "2026-05-20T10:00:00.000Z",
       new Date().toISOString(),
     );
@@ -300,7 +300,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a stale JobHunter automation worker heartbeat", async () => {
+  it("reports a stale JobCtl automation worker heartbeat", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-stale",
       appDir: tempDir,
@@ -326,11 +326,11 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a mismatched JobHunter automation worker heartbeat", async () => {
+  it("reports a mismatched JobCtl automation worker heartbeat", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-wrong-db",
       appDir: path.join(tempDir, "other-app"),
-      dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+      dbPath: path.join(tempDir, "other-app", "jobctl.db"),
       lastSeenAt: new Date().toISOString(),
     });
     const app = buildApp(options);
@@ -348,7 +348,7 @@ describe("local TypeScript API", () => {
         heartbeat: {
           workerId: "worker-wrong-db",
           appDir: path.join(tempDir, "other-app"),
-          dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+          dbPath: path.join(tempDir, "other-app", "jobctl.db"),
         },
       },
     });
@@ -413,7 +413,7 @@ describe("local TypeScript API", () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-wrong-db",
       appDir: path.join(tempDir, "other-app"),
-      dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+      dbPath: path.join(tempDir, "other-app", "jobctl.db"),
       lastSeenAt: new Date().toISOString(),
     });
     const app = buildApp({
@@ -2212,7 +2212,7 @@ describe("local TypeScript API", () => {
   it("treats stale restores before later deletes as deleted", async () => {
     const db = new Database(options.dbPath);
     db.exec(`
-      CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+      CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
         job_url TEXT PRIMARY KEY,
         deleted_at TEXT NOT NULL,
         reason TEXT,
@@ -2220,7 +2220,7 @@ describe("local TypeScript API", () => {
       );
     `);
     db.prepare(
-      "INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at) VALUES (?, ?, ?, ?)",
     ).run(
       "https://example.com/jobs/ready",
       "2026-05-25T23:10:33.870522+00:00",
@@ -2417,8 +2417,8 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     expect(countRows(db, "jobs", "url", readyUrl)).toBe(0);
-    expect(countRows(db, "jobhunter_deleted_jobs", "job_url", readyUrl)).toBe(0);
-    expect(countRows(db, "jobhunter_hidden_jobs", "job_url", blockedUrl)).toBe(0);
+    expect(countRows(db, "jobctl_deleted_jobs", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "jobctl_hidden_jobs", "job_url", blockedUrl)).toBe(0);
     expect(countRows(db, "job_stage_states", "job_url", readyUrl)).toBe(0);
     expect(countRows(db, "job_scores", "job_url", readyUrl)).toBe(0);
 
@@ -2883,7 +2883,7 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare("UPDATE job_stage_states SET retryable = 1, next_action = ? WHERE job_url = ? AND stage = ?")
       .run(
-        "jobhunter retry score https://example.com/jobs/failed-score",
+        "jobctl retry score https://example.com/jobs/failed-score",
         "https://example.com/jobs/failed-score",
         "score",
       );
@@ -3277,7 +3277,7 @@ describe("local TypeScript API", () => {
       ok: true,
       count: 1,
       jobKeys: [staleUrl],
-      nextAction: "jobhunter run score --rescore",
+      nextAction: "jobctl run score --rescore",
     });
 
     const db = new Database(options.dbPath);
@@ -3296,7 +3296,7 @@ describe("local TypeScript API", () => {
         .get(staleUrl) as { event_type: string; payload_json: string };
       expect(event.event_type).toBe("ScoreRescoreRequested");
       expect(JSON.parse(event.payload_json)).toMatchObject({
-        nextAction: "jobhunter run score --rescore",
+        nextAction: "jobctl run score --rescore",
         newPolicyVersion: 2,
       });
     } finally {
@@ -5317,7 +5317,7 @@ describe("local TypeScript API", () => {
 
   it("refuses to open an artifact whose path resolves outside the app directory", async () => {
     const opened: string[] = [];
-    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-appdir-"));
     const app = buildApp({
       ...options,
       appDir: isolatedAppDir,
@@ -5345,7 +5345,7 @@ describe("local TypeScript API", () => {
   });
 
   it("refuses to preview a PDF artifact whose path resolves outside the app directory", async () => {
-    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-appdir-"));
     const app = buildApp({ ...options, appDir: isolatedAppDir });
     try {
       const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
@@ -5365,7 +5365,7 @@ describe("local TypeScript API", () => {
   });
 
   it("refuses to serve HTML preview for an artifact whose path resolves outside the app directory", async () => {
-    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-appdir-"));
     const app = buildApp({ ...options, appDir: isolatedAppDir });
     try {
       const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
@@ -5405,7 +5405,7 @@ describe("local TypeScript API", () => {
 
   it("refuses to render a PDF page preview for an artifact whose path resolves outside the app directory", async () => {
     const rendered: Array<{ path: string; pageNumber: number }> = [];
-    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-appdir-"));
+    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-appdir-"));
     const app = buildApp({
       ...options,
       appDir: isolatedAppDir,
@@ -7802,9 +7802,9 @@ describe("local TypeScript API", () => {
   });
 
   it("uses the HTML/CSS resume renderer for default profile PDF previews", () => {
-    expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobhunter.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
-    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobhunter.infrastructure.materials.latex_pdf");
-    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("JOBHUNTER_RESUME_RENDERER");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobctl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
+    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobctl.infrastructure.materials.latex_pdf");
+    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("JOBCTL_RESUME_RENDERER");
     expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
   });
 
@@ -8436,7 +8436,7 @@ function insertWorkerHeartbeat(
     "localhost",
     heartbeat.appDir,
     heartbeat.dbPath,
-    "jobhunter-default",
+    "jobctl-default",
     "2026-05-20T10:00:00.000Z",
     heartbeat.lastSeenAt,
     heartbeat.maxConcurrentActivities ?? 8,

@@ -5,7 +5,7 @@ export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
 
 // Mirror of the Python worker's ``SCHEMA_VERSION``
-// (workers/automation/src/jobhunter/database.py). The worker is the single
+// (workers/automation/src/jobctl/database.py). The worker is the single
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
@@ -14,10 +14,10 @@ export const SUPPORTED_SCHEMA_VERSION = 2;
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
     super(
-      `JobHunter database schema version ${current} is newer than this API build `
+      `JobCtl database schema version ${current} is newer than this API build `
         + `supports (max ${SUPPORTED_SCHEMA_VERSION}); it was created by a newer `
-        + `JobHunter build. Upgrade JobHunter or restore a compatible backup `
-        + `('jobhunter backup').`,
+        + `JobCtl build. Upgrade JobCtl or restore a compatible backup `
+        + `('jobctl backup').`,
     );
     this.name = "IncompatibleSchemaVersionError";
   }
@@ -55,6 +55,7 @@ export function openDatabase(dbPath: string): SqliteDatabase {
   // so the API doesn't fail with ``SQLITE_BUSY`` on a write conflict.
   db.pragma("busy_timeout = 5000");
   assertSchemaVersionSupported(db);
+  migrateLegacyJobTables(db);
   return db;
 }
 
@@ -67,6 +68,42 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName) as { name?: string } | undefined;
   return row?.name === tableName;
+}
+
+const legacyProductToken = "job" + "hunter";
+
+export function migrateLegacyJobTables(db: SqliteDatabase): string[] {
+  const migrated: string[] = [];
+  for (const suffix of ["deleted_jobs", "hidden_jobs"]) {
+    const legacyTable = `${legacyProductToken}_${suffix}`;
+    const currentTable = `jobctl_${suffix}`;
+    if (!tableExists(db, legacyTable)) continue;
+
+    if (!tableExists(db, currentTable)) {
+      db.prepare(`ALTER TABLE ${legacyTable} RENAME TO ${currentTable}`).run();
+      migrated.push(currentTable);
+      continue;
+    }
+
+    const currentColumns = tableColumns(db, currentTable);
+    const commonColumns = tableColumns(db, legacyTable).filter((column) => currentColumns.includes(column));
+    if (commonColumns.length === 0) {
+      throw new Error(`Cannot migrate legacy table ${legacyTable}: no shared columns with ${currentTable}`);
+    }
+    const columns = commonColumns.map(quoteIdentifier).join(", ");
+    db.prepare(`INSERT OR IGNORE INTO ${currentTable} (${columns}) SELECT ${columns} FROM ${legacyTable}`).run();
+    db.prepare(`DROP TABLE ${legacyTable}`).run();
+    migrated.push(currentTable);
+  }
+  return migrated;
+}
+
+function tableColumns(db: SqliteDatabase, tableName: string): string[] {
+  return db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all().map((row) => String((row as { name: unknown }).name));
+}
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
 }
 
 export function allRows<T extends Record<string, unknown>>(

@@ -1,6 +1,6 @@
 # Decisions (ADRs)
 
-This is JobHunter's log of Architecture Decision Records (ADRs): short, dated,
+This is JobCtl's log of Architecture Decision Records (ADRs): short, dated,
 append-only notes on why the codebase is shaped the way it is. Once written, an
 entry stays verbatim — a reversed decision earns a new entry that supersedes the
 old one, and later refinements are appended inline as dated amendments.
@@ -88,7 +88,7 @@ the Historical Spec Ledger in `plans/README.md`.
 
 Status: accepted
 
-Decision: validate JobHunter as a reliable local product before building hosted
+Decision: validate JobCtl as a reliable local product before building hosted
 multi-tenant infrastructure.
 
 Rationale:
@@ -100,7 +100,7 @@ Rationale:
 
 Consequences:
 
-- local data remains in `~/.jobhunter`
+- local data remains in `~/.jobctl`
 - SaaS hardening belongs in `docs/backlog.md`
 - local safety and reliability tests gate near-term work
 
@@ -123,7 +123,7 @@ Consequences:
 - `apps/api` owns the local TypeScript API
 - `packages/contracts` owns shared DTOs and schemas
 - `packages/api-client` owns typed API transport
-- `workers/automation/src/jobhunter` remains the automation engine
+- `workers/automation/src/jobctl` remains the automation engine
 
 ## 2026-05-02: Fastify For The Local API
 
@@ -177,7 +177,7 @@ Rationale:
 Consequences:
 
 - default host is `127.0.0.1`
-- remote bind requires `JOBHUNTER_API_ALLOW_REMOTE_BIND=1`
+- remote bind requires `JOBCTL_API_ALLOW_REMOTE_BIND=1`
 
 ## 2026-05-02: Stage State Is The Operational Source Of Truth
 
@@ -263,7 +263,7 @@ Rationale:
 
 Consequences:
 
-- `workers/automation/src/jobhunter/{domain,infrastructure}/<context>/`
+- `workers/automation/src/jobctl/{domain,infrastructure}/<context>/`
   layout becomes the canonical worker shape
 - pure types live in `packages/domain-types` (mirror of Python) — TS code
   derives state-machine logic from the same authority
@@ -351,15 +351,15 @@ The canonical list is `PROJECTION_TABLES` in
 Status: accepted
 
 Decision: the integration protocol between the TS API process and the Python
-worker is JSON-RPC 2.0 over a long-lived `jobhunter rpc` subprocess. The
+worker is JSON-RPC 2.0 over a long-lived `jobctl rpc` subprocess. The
 `SubprocessJsonRpcAdapter` (`apps/api/src/json-rpc-adapter.ts`) speaks to
-the `JsonRpcServer` (`workers/automation/src/jobhunter/infrastructure/rpc/`).
+the `JsonRpcServer` (`workers/automation/src/jobctl/infrastructure/rpc/`).
 Method schemas are defined once in `packages/contracts/src/rpc.ts` and
-mirrored in `workers/automation/src/jobhunter/domain/rpc/messages.py`.
+mirrored in `workers/automation/src/jobctl/domain/rpc/messages.py`.
 
 Rationale:
 
-- the previous pattern spawned a fresh `uv run jobhunter action ...`
+- the previous pattern spawned a fresh `uv run jobctl action ...`
   subprocess per request (~400 ms cold start), with stringly-typed action
   names parsed via Typer and stdout-scraped for results
 - JSON-RPC gives us typed request/response envelopes, three dispatch modes
@@ -372,7 +372,7 @@ Consequences:
 
 - `apps/api/src/local-actions.ts` no longer spawns subprocesses for actions;
   it routes through the JSON-RPC adapter
-- the worker ships the `jobhunter rpc` Typer command (Phase 3 / S-11)
+- the worker ships the `jobctl rpc` Typer command (Phase 3 / S-11)
 - TS-side JSON-RPC dispatcher is testable in isolation without spawning the
   Python worker (`apps/api/test/json-rpc-adapter.test.ts`)
 
@@ -485,7 +485,7 @@ Rationale:
 - Mirrors the backend's hexagonal architecture (`docs/architecture/domain-model/` §3,
   §5) so the same vocabulary applies on both sides of the wire.
 - Cloud-evolution seams are in place from day one: every port that needs
-  to swap when JobHunter goes hosted (auth, storage, telemetry, event
+  to swap when JobCtl goes hosted (auth, storage, telemetry, event
   transport) has its named adapter, and feature code is already coded
   against the interface. The migration is an adapter swap, not a
   feature-code rewrite. Per the no-strangler memo
@@ -724,7 +724,7 @@ the TS `apply_runs → apply_run_projections` projector were removed.
 
 Status: accepted
 
-Decision: JobHunter tracks what happens to a submitted application and closes the
+Decision: JobCtl tracks what happens to a submitted application and closes the
 loop with a bounded, Gmail-only email feedback path. A local review/outcome model
 (review decisions, reviewed outcomes, linked email evidence, outcome suggestions)
 lives in SQLite behind the existing Apply, Pipeline, Operations, and
@@ -921,7 +921,7 @@ PRs #162–#177, #189.
 
 Status: accepted
 
-Decision: JobHunter surfaces compensation as auditable, warning-only evidence and
+Decision: JobCtl surfaces compensation as auditable, warning-only evidence and
 never lets it change ranking, scoring, apply-readiness, or apply dispatch. A
 deterministic source-access policy registry gates which observation sources are
 usable; posted-salary facts are parsed from discovery text and stored canonically
@@ -962,7 +962,7 @@ Status: accepted
 
 Decision: the default resume renderer is HTML/CSS printed to PDF through
 Playwright (`html_pdf`); LaTeX (`latex_pdf`, `pdflatex`) is retained only as an
-explicitly selected compatibility renderer via `JOBHUNTER_RESUME_RENDERER`.
+explicitly selected compatibility renderer via `JOBCTL_RESUME_RENDERER`.
 
 Rationale:
 
@@ -1019,7 +1019,7 @@ Cites: PRs #201 (proposal), #202 (implementation); follow-ups #216, #224, #228,
 Status: accepted
 
 Decision: the local database ships a first-class backup command and a
-schema-version guard. `jobhunter backup` (`cli.py`) writes a consistent copy via
+schema-version guard. `jobctl backup` (`cli.py`) writes a consistent copy via
 `backup_database` (`database.py`); every connection runs `_ensure_schema_version`,
 which stamps `PRAGMA user_version` to the code's `SCHEMA_VERSION` and refuses to
 open a database whose schema is newer than the running code.
@@ -1172,7 +1172,7 @@ heartbeats, drains enrichment in a separate activity, and then starts
 `JobPreparationWorkflow` children. The legacy discover/enrich reaper is deleted;
 worker death is recovered by Temporal retry/resumption and workflow finalization.
 Local Temporal Schedules are supported but disabled by default. Worker startup
-reconciles `jobhunter-discovery-local`: disabled settings delete the schedule;
+reconciles `jobctl-discovery-local`: disabled settings delete the schedule;
 enabled settings create or update a cron schedule with
 `ScheduleOverlapPolicy.SKIP`.
 
@@ -1214,8 +1214,8 @@ Rationale:
 
 Consequences:
 
-- `jobhunter run` and per-stage commands require a reachable Temporal server
-  plus a running JobHunter worker
+- `jobctl run` and per-stage commands require a reachable Temporal server
+  plus a running JobCtl worker
 - workflow start failures are reported immediately with no in-process fallback
 - `_run_stage_observed` remains the stage event/metric/span boundary inside
   activities
@@ -1402,7 +1402,7 @@ Consequences:
   (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
   `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
 - Phase 3 (parallel source families) is **gated, default off**:
-  `JOBHUNTER_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1` = sequential = today's
+  `JOBCTL_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1` = sequential = today's
   behavior). Values > 1 process families in batches of that size — the source
   crawls run concurrently (`asyncio.gather`), then the batch's enrichment +
   score-only fan-out runs once (enrichment never runs concurrently). The cap is
@@ -1565,7 +1565,7 @@ Rationale:
 
 Consequences:
 
-- dashboard load and `jobhunter digest` are passive until the operator chooses
+- dashboard load and `jobctl digest` are passive until the operator chooses
   "mark reviewed" or `--acknowledge`
 - future scheduled or external delivery needs a separate opt-in design and
   safety decision
@@ -1609,14 +1609,14 @@ Consequences:
   D6 trade-off)
 - broad boards fetched by `python-jobspy` are policed only at the invocation
   boundary (budget + pacing) because that library owns its internal transport;
-  `jobhunter doctor` discloses when they are active
+  `jobctl doctor` discloses when they are active
 - the authenticated LinkedIn path is an owner-scoped exception (real logged-in
   session, its own browser identity) that still applies rate + budget
 - a server `Retry-After` is clamped at the limiter sink so a hostile header
   cannot freeze a pooled worker; an over-clamp value is recorded as rate-limited
   and skipped rather than slept
-- the honest UA is owner-tunable via `JOBHUNTER_CRAWL_UA_PRODUCT` /
-  `JOBHUNTER_CRAWL_UA_CONTACT`; per-host rate/concurrency/budget defaults live on
+- the honest UA is owner-tunable via `JOBCTL_CRAWL_UA_PRODUCT` /
+  `JOBCTL_CRAWL_UA_CONTACT`; per-host rate/concurrency/budget defaults live on
   each `SourcePolicy` (a registry policy editor is deferred, D4)
 
 Cites: R10 crawl-politeness train (PRs #297 → #315); plan
@@ -1637,7 +1637,7 @@ strangle an existing one.
 
 The context is deliberately stricter than every send-capable design in the
 backlog: **it has no send transport of any kind, and the product never sends.**
-Contacts are records; JobHunter drafts nothing and sends nothing in this scope.
+Contacts are records; JobCtl drafts nothing and sends nothing in this scope.
 Contact data is advisory — it never feeds apply eligibility, scoring, ranking, or
 thresholds.
 

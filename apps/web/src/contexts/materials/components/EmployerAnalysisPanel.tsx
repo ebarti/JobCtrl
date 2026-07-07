@@ -6,7 +6,7 @@ import type {
   EmployerAnalysisSubAnalysis,
   RequirementFitAssessment,
   RequirementFitReport,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { formatToken, scorePercent, weightPercent } from "../lib/audit-format.js";

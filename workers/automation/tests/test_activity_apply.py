@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobhunter.apply.activities import (
+from jobctl.apply.activities import (
     ApplyActivityInput,
     ApplyActivityOutput,
     apply_activity,
@@ -35,7 +35,7 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(2, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -80,7 +80,7 @@ async def test_apply_activity_continuous_calls_apply_main_with_limit_zero():
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -114,13 +114,13 @@ async def test_auto_apply_activity_live_reads_min_score_and_workers(monkeypatch,
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "jobhunter.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
+        "jobctl.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
         settings_path,
     )
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -153,7 +153,7 @@ async def test_apply_activity_continuous_dry_run_keeps_submit_guard_mode():
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -187,7 +187,7 @@ async def test_apply_activity_non_continuous_floors_limit_at_one():
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

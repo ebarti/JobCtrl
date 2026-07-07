@@ -8,18 +8,18 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobhunter.database import get_connection, init_db
-from jobhunter.infrastructure.compensation.workflow import (
+from jobctl.database import get_connection, init_db
+from jobctl.infrastructure.compensation.workflow import (
     CompensationRefreshWorkflow,
     CompensationRefreshWorkflowInput,
 )
-from jobhunter.infrastructure.temporal.finalize import (
+from jobctl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
-from jobhunter.llm import SpendBudgetStatus
-from jobhunter.profile.activities import ProfileImportActivityInput, ProfileImportActivityOutput
-from jobhunter.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
+from jobctl.llm import SpendBudgetStatus
+from jobctl.profile.activities import ProfileImportActivityInput, ProfileImportActivityOutput
+from jobctl.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
 
 
 @activity.defn(name="check_spend_budget")
@@ -61,10 +61,10 @@ async def _refresh_compensation(payload: CompensationRefreshWorkflowInput) -> di
 
 
 def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> tuple[str, str]:
-    from jobhunter import config
-    import jobhunter.database as database
+    from jobctl import config
+    import jobctl.database as database
 
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)

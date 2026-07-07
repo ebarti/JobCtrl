@@ -1,4 +1,4 @@
-import type { ApplyReviewDecisionValue, ApplyReviewQueueItem } from "@jobhunter/contracts";
+import type { ApplyReviewDecisionValue, ApplyReviewQueueItem } from "@jobctl/contracts";
 import { useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";

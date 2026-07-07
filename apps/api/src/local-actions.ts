@@ -2,9 +2,9 @@
  * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
  *
  * Per the no-strangler directive the previous "spawn one ``uv run
- * jobhunter action ...`` subprocess per call" path is **deleted**.
+ * jobctl action ...`` subprocess per call" path is **deleted**.
  * Every action is now routed through ``SubprocessJsonRpcAdapter``
- * (long-lived ``jobhunter rpc`` worker) per ddd-target.md §6.5.
+ * (long-lived ``jobctl rpc`` worker) per ddd-target.md §6.5.
  *
  * Two seams stay outside JSON-RPC:
  *
@@ -351,7 +351,7 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
 };
 
 export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-profile-preview-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-profile-preview-"));
   const profilePath = path.join(tempDir, "profile-preview-input.json");
   const outputPath = path.join(tempDir, "resume-preview.pdf");
   const htmlPath = outputPath.replace(/\.pdf$/i, ".html");
@@ -793,7 +793,7 @@ function runCommand(command: string, args: string[], appDir: string): Promise<st
     const child = spawn(command, args, {
       env: {
         ...process.env,
-        JOBHUNTER_DIR: appDir,
+        JOBCTL_DIR: appDir,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -824,7 +824,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jobhunter.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter
+from jobctl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter
 
 profile_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])

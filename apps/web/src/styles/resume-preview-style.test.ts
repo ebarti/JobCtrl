@@ -16,9 +16,9 @@ const cssRuleContaining = (selector: string): string => {
 };
 
 describe("resume preview style contract", () => {
-  it("keeps JobHunter comment markers outside the resume line layout", () => {
-    const lineRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobhunter-comment");
-    const markerRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobhunter-comment::before");
+  it("keeps JobCtl comment markers outside the resume line layout", () => {
+    const lineRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobctl-comment");
+    const markerRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobctl-comment::before");
 
     expect(lineRule, "line marker class must not shift final-PDF text geometry").not.toMatch(
       /\b(?:padding|margin|border-inline|border-left)\b/i,

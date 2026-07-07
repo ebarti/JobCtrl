@@ -1,4 +1,4 @@
-import type { ContactResearchSourceAttempt } from "@jobhunter/contracts";
+import type { ContactResearchSourceAttempt } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";

@@ -1,4 +1,4 @@
-import type { GenerateOutreachDraftRequest, OutreachThreadResponse } from "@jobhunter/contracts";
+import type { GenerateOutreachDraftRequest, OutreachThreadResponse } from "@jobctl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

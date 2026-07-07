@@ -87,8 +87,8 @@ import type {
   WorkflowRunSummary,
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
-} from "@jobhunter/contracts";
-import type { DomainEventUnion } from "@jobhunter/domain-types";
+} from "@jobctl/contracts";
+import type { DomainEventUnion } from "@jobctl/domain-types";
 
 export type {
   ArtifactDetail,

@@ -38,7 +38,7 @@ describe("<SettingsPanel>", () => {
     expect(screen.getByText("Executor threads")).toBeInTheDocument();
     expect(screen.getByText("14")).toBeInTheDocument();
     expect(
-      screen.getByText("JOBHUNTER_MAX_CONCURRENT_ACTIVITIES"),
+      screen.getByText("JOBCTL_MAX_CONCURRENT_ACTIVITIES"),
     ).toBeInTheDocument();
   });
 

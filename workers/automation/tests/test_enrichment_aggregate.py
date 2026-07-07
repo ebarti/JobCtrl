@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.enrichment import (
+from jobctl.domain.enrichment import (
     ApplicationUrl,
     AttemptStatus,
     EnrichmentAttempt,
@@ -19,8 +19,8 @@ from jobhunter.domain.enrichment import (
     FullDescription,
     JobEnrichment,
 )
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import type { ArtifactSummary } from "@jobhunter/contracts";
+import type { ArtifactSummary } from "@jobctl/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 

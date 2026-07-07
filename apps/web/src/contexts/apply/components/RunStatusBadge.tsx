@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 
-import type { WorkflowRunStatus } from "@jobhunter/contracts";
+import type { WorkflowRunStatus } from "@jobctl/contracts";
 
 import { assertNever } from "../../../shared/lib/exhaustive.js";
 import type { ApplyRunTone } from "../lib/apply-run-tone.js";

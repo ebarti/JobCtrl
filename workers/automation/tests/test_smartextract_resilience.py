@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter import config
-from jobhunter.database import close_connection, init_db
-from jobhunter.discovery import smartextract
+from jobctl import config
+from jobctl.database import close_connection, init_db
+from jobctl.discovery import smartextract
 
 
 def test_smart_extract_counts_site_timeouts_without_aborting_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobhunter.db")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctl.db")
 
     def fake_run_one_site(name: str, url: str) -> dict:
         if name == "Slow Board":
@@ -53,7 +53,7 @@ def test_limited_smart_extract_uses_requested_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(smartextract, "init_db", lambda: init_db(db_path))
     init_db(db_path)

@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from jobhunter.domain.enrichment import DetailPage
-from jobhunter.domain.enrichment.services import (
+from jobctl.domain.enrichment import DetailPage
+from jobctl.domain.enrichment.services import (
     CssSelectorExtractor,
     JsonLdExtractor,
     LlmExtractor,
 )
-from jobhunter.domain.ports.llm import LlmMessage, LlmPort
+from jobctl.domain.ports.llm import LlmMessage, LlmPort
 
 
 class _StubLlm(LlmPort):

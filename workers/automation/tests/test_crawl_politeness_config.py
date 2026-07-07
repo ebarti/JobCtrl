@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from jobhunter.cli import politeness_doctor_notices
-from jobhunter.domain.ports.politeness import (
+from jobctl.cli import politeness_doctor_notices
+from jobctl.domain.ports.politeness import (
     PolitenessDecision,
     PolitenessOutcome,
     default_honest_user_agent,
 )
-from jobhunter.infrastructure.network.politeness import (
+from jobctl.infrastructure.network.politeness import (
     UA_CONTACT_ENV,
     UA_PRODUCT_ENV,
     PolitenessGateway,
@@ -23,7 +23,7 @@ from jobhunter.infrastructure.network.politeness import (
     record_politeness_outcome,
     resolve_honest_user_agent,
 )
-from jobhunter.operational_metrics import ensure_operational_metric_tables
+from jobctl.operational_metrics import ensure_operational_metric_tables
 
 
 # --- honest-UA env override -------------------------------------------------
@@ -34,9 +34,9 @@ def test_resolve_honest_ua_defaults_to_the_builtin_identity(monkeypatch) -> None
     monkeypatch.delenv(UA_CONTACT_ENV, raising=False)
     ua = resolve_honest_user_agent()
     default = default_honest_user_agent()
-    assert ua.product == default.product == "JobHunter"
+    assert ua.product == default.product == "JobCtl"
     assert ua.contact_url == default.contact_url
-    assert ua.header_value().startswith("JobHunter/")
+    assert ua.header_value().startswith("JobCtl/")
     assert "Mozilla" not in ua.header_value()
 
 
@@ -54,7 +54,7 @@ def test_empty_contact_env_drops_the_contact_suffix(monkeypatch) -> None:
     monkeypatch.setenv(UA_CONTACT_ENV, "")
     ua = resolve_honest_user_agent()
     assert ua.contact_url is None
-    assert ua.header_value() == f"JobHunter/{ua.version}"
+    assert ua.header_value() == f"JobCtl/{ua.version}"
 
 
 def test_gateway_default_ua_reflects_the_owner_override(monkeypatch) -> None:
@@ -86,7 +86,7 @@ def test_doctor_notice_reports_effective_ua(monkeypatch) -> None:
     notices = _rows_by_check(politeness_doctor_notices(_conn(), {"boards": ["greenhouse"]}))
     level, note = notices["crawl user-agent"]
     assert level == "ok"
-    assert note.startswith("JobHunter/")
+    assert note.startswith("JobCtl/")
     assert "review" in note.lower()
 
 
@@ -109,7 +109,7 @@ def test_doctor_notice_warns_on_recently_blocked_sources() -> None:
         decision=PolitenessDecision(
             allowed=False,
             outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
-            user_agent="JobHunter/test",
+            user_agent="JobCtl/test",
             reason="robots.txt disallows this path",
         ),
         context=PolitenessSourceContext(stage="discover", source_id="greenhouse:acme"),

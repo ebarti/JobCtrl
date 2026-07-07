@@ -18,13 +18,13 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobhunter.apply.activities import apply_activity
-from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
-from jobhunter.infrastructure.temporal.finalize import (
+from jobctl.apply.activities import apply_activity
+from jobctl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
-from jobhunter.llm import SpendBudgetStatus
+from jobctl.llm import SpendBudgetStatus
 
 
 @activity.defn(name="check_spend_budget")
@@ -49,7 +49,7 @@ async def test_apply_workflow_returns_ok_when_apply_main_succeeds():
     workflow_id = f"apply-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(3, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -91,7 +91,7 @@ async def test_live_apply_workflow_does_not_retry_transient_failures():
     workflow_id = f"apply-retry-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         side_effect=RuntimeError("apply boom"),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -127,7 +127,7 @@ async def test_dry_run_apply_workflow_recovers_when_first_attempt_fails():
     workflow_id = f"apply-recover-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         side_effect=[RuntimeError("transient"), (1, 0)],
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -167,11 +167,11 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
         return SimpleNamespace(status="ok", error=None, applied=0, failed=0)
 
     monkeypatch.setattr(
-        "jobhunter.apply.workflow.workflow.info",
+        "jobctl.apply.workflow.workflow.info",
         lambda: SimpleNamespace(workflow_id="apply-continuous"),
     )
     monkeypatch.setattr(
-        "jobhunter.apply.workflow.workflow.execute_activity",
+        "jobctl.apply.workflow.workflow.execute_activity",
         fake_execute_activity,
     )
 
@@ -205,17 +205,17 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
 
     workflow = ApplyWorkflow()
     monkeypatch.setattr(workflow, "_run_apply", fake_run_apply)
-    monkeypatch.setattr("jobhunter.apply.workflow.emit_workflow_started", fake_started)
-    monkeypatch.setattr("jobhunter.apply.workflow.emit_workflow_outcome", fake_outcome)
+    monkeypatch.setattr("jobctl.apply.workflow.emit_workflow_started", fake_started)
+    monkeypatch.setattr("jobctl.apply.workflow.emit_workflow_outcome", fake_outcome)
     monkeypatch.setattr(
-        "jobhunter.apply.workflow.workflow.now",
+        "jobctl.apply.workflow.workflow.now",
         lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
-        "jobhunter.apply.workflow.workflow.continue_as_new",
+        "jobctl.apply.workflow.workflow.continue_as_new",
         fake_continue_as_new,
     )
-    monkeypatch.setattr("jobhunter.apply.workflow.workflow.sleep", fake_sleep)
+    monkeypatch.setattr("jobctl.apply.workflow.workflow.sleep", fake_sleep)
 
     with pytest.raises(ContinueAsNewRaised):
         await workflow.run(ApplyWorkflowInput(tenant_id="local", continuous=True))
@@ -237,7 +237,7 @@ async def test_continuous_apply_workflow_budget_exceeded_halts_before_apply():
         )
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         return_value=(1, 0),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -276,7 +276,7 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
     workflow_id = f"apply-lookup-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.apply.launcher.main",
+        "jobctl.apply.launcher.main",
         side_effect=LookupError("no job URL provided"),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

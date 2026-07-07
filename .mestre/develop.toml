@@ -26,5 +26,5 @@ timeout_seconds = 1800
 
 [[develop.self_test]]
 name = "doctor"
-run = ["uv", "--project", "workers/automation", "run", "jobhunter", "doctor"]
+run = ["uv", "--project", "workers/automation", "run", "jobctl", "doctor"]
 timeout_seconds = 300

@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from jobhunter.domain.apply.value_objects import BrowserWorkerConfig
-from jobhunter.domain.ports.apply import BrowserPort, BrowserSession
+from jobctl.domain.apply.value_objects import BrowserWorkerConfig
+from jobctl.domain.ports.apply import BrowserPort, BrowserSession
 
 
 class _FakeBrowserAdapter:

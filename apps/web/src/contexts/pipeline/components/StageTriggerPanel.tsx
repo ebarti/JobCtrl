@@ -8,7 +8,7 @@ import {
   type PipelineStageRunResponse,
   type PipelineValidationMode,
   type Stage,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { IconPlayerPlay } from "@tabler/icons-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
@@ -424,10 +424,10 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const workerUnhealthy =
     health.isPending || health.isError || health.data?.worker.status !== "healthy";
   const workerHealthMessage = health.isPending
-    ? "Checking JobHunter automation worker runtime..."
+    ? "Checking JobCtl automation worker runtime..."
     : health.isError
-      ? `JobHunter automation worker health check failed: ${health.error.message}`
-      : (health.data?.worker.message ?? "JobHunter automation worker health is unavailable.");
+      ? `JobCtl automation worker health check failed: ${health.error.message}`
+      : (health.data?.worker.message ?? "JobCtl automation worker health is unavailable.");
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);

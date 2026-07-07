@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.tenant import TenantId, LOCAL_TENANT
-from jobhunter.domain.identifiers import JobId, generate_job_id
-from jobhunter.domain.pipeline_types import (
+from jobctl.domain.tenant import TenantId, LOCAL_TENANT
+from jobctl.domain.identifiers import JobId, generate_job_id
+from jobctl.domain.pipeline_types import (
     Stage,
     STAGES,
     STAGE_STATE_KINDS,
@@ -23,7 +23,7 @@ from jobhunter.domain.pipeline_types import (
     serialize_stage_state,
     deserialize_stage_state_kind,
 )
-from jobhunter.state import STAGE_ORDER
+from jobctl.state import STAGE_ORDER
 
 import pytest
 

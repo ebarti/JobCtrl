@@ -3,7 +3,7 @@ import {
   type ExtensionAutofillProfileResponse,
   type ExtensionCaptureIngestRequest,
   type ExtensionCaptureIngestResponse,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 export const LOOPBACK_API_ORIGINS = ["http://127.0.0.1:8766", "http://localhost:8766"] as const;
 
@@ -69,7 +69,7 @@ export async function postExtensionCapture(
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   if (!response.ok) {
-    throw new LocalApiError(`Local JobHunter API rejected capture: ${response.status}.`, response.status);
+    throw new LocalApiError(`Local JobCtl API rejected capture: ${response.status}.`, response.status);
   }
   return (await response.json()) as ExtensionCaptureIngestResponse;
 }
@@ -96,7 +96,7 @@ export async function getExtensionAutofillProfile(
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   if (!response.ok) {
-    throw new LocalApiError(`Local JobHunter API rejected autofill profile: ${response.status}.`, response.status);
+    throw new LocalApiError(`Local JobCtl API rejected autofill profile: ${response.status}.`, response.status);
   }
   return (await response.json()) as ExtensionAutofillProfileResponse;
 }
@@ -122,7 +122,7 @@ async function fetchWithTimeout(
     return await fetchImpl(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new LocalApiError(`Local JobHunter API request timed out after ${timeoutMs}ms.`);
+      throw new LocalApiError(`Local JobCtl API request timed out after ${timeoutMs}ms.`);
     }
     throw error;
   } finally {

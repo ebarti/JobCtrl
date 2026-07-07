@@ -157,11 +157,11 @@ const QA_RESUME_HTML = `<!doctype html>
 `;
 
 export function createQaWorkspace(targetDir?: string): QaWorkspace {
-  const appDir = targetDir ? path.resolve(targetDir) : fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-qa-"));
+  const appDir = targetDir ? path.resolve(targetDir) : fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-qa-"));
   fs.mkdirSync(appDir, { recursive: true });
   const workspace = {
     appDir,
-    dbPath: path.join(appDir, "jobhunter.db"),
+    dbPath: path.join(appDir, "jobctl.db"),
     settingsPath: path.join(appDir, "dashboard.json"),
   };
   seedQaWorkspace(workspace);
@@ -1107,7 +1107,7 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
     "localhost",
     path.resolve(path.dirname(dbPath)),
     path.resolve(dbPath),
-    "jobhunter-default",
+    "jobctl-default",
     new Date().toISOString(),
     new Date().toISOString(),
     4,

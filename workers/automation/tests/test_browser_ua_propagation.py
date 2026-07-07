@@ -3,7 +3,7 @@
 Before the fix, the three Playwright surfaces (``PlaywrightDetailPageFetcher``,
 ``smartextract.collect_page_intelligence``, ``detail.scrape_site_batch``) bound
 their page/context ``user_agent`` from an import-time ``default_honest_user_agent()``
-constant. That made ``JOBHUNTER_CRAWL_UA_*`` env overrides invisible to the browser
+constant. That made ``JOBCTL_CRAWL_UA_*`` env overrides invisible to the browser
 fetch, and — worse — the gateway would evaluate ``robots.txt`` as the *overridden*
 identity while the page fetched as the *default* one.
 
@@ -20,22 +20,22 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.discovery import smartextract
-from jobhunter.domain.discovery.source_registry import (
+from jobctl.database import close_connection, init_db
+from jobctl.discovery import smartextract
+from jobctl.domain.discovery.source_registry import (
     ENRICHMENT_CRAWL_POLICY,
     SMART_EXTRACT_EXPERIMENTAL_POLICY,
 )
-from jobhunter.domain.ports.politeness import RobotsVerdict, default_honest_user_agent
-from jobhunter.enrichment import detail
-from jobhunter.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
-from jobhunter.infrastructure.network import (
+from jobctl.domain.ports.politeness import RobotsVerdict, default_honest_user_agent
+from jobctl.enrichment import detail
+from jobctl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
+from jobctl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
     RunBudgetCounter,
 )
-from jobhunter.infrastructure.network.politeness import UA_CONTACT_ENV, UA_PRODUCT_ENV
+from jobctl.infrastructure.network.politeness import UA_CONTACT_ENV, UA_PRODUCT_ENV
 
 from .politeness_helpers import no_sleep_limiter
 
@@ -228,7 +228,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _owner_override(monkeypatch)
-    monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+    monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
     # Tier-1 (JSON-LD) success so navigation proceeds without touching the LLM.
     monkeypatch.setattr(detail, "get_llm_adapter", lambda: _OfflineLlm())
     monkeypatch.setattr(

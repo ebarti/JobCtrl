@@ -22,10 +22,10 @@ from typing import Iterator
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.enrichment import detail
-from jobhunter.enrichment.detail import scrape_detail_page, scrape_site_batch
-from jobhunter.infrastructure.network import (
+from jobctl.database import close_connection, init_db
+from jobctl.enrichment import detail
+from jobctl.enrichment.detail import scrape_detail_page, scrape_site_batch
+from jobctl.infrastructure.network import (
     HostRateLimiter,
     PolitenessGateway,
     RunBudgetCounter,
@@ -239,7 +239,7 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
         try:
             _seed_pending(conn, url, "RemoteOK")
             spy = _SpyPlaywright()
-            monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+            monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
             monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
             # Real RobotsCache fetches the loopback robots.txt; no-sleep limiter.
@@ -291,7 +291,7 @@ def test_budget_exhausted_defers_job_without_navigation(
     try:
         _seed_pending(conn, url, "RemoteOK")
         spy = _SpyPlaywright()
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
         exhausted = RunBudgetCounter(1)
@@ -322,7 +322,7 @@ def test_run_budget_decrements_per_navigation_and_stops_batch(
         for url in urls:
             _seed_pending(conn, url, "RemoteOK")
         spy = _SpyPlaywright()
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
         budget = RunBudgetCounter(2)  # only two navigations allowed this run
@@ -380,7 +380,7 @@ class _FakeResolver:
         return _SpyPage(self._sink)
 
     def resolve_loaded_page(self, _page: object, _url: str):  # noqa: ANN201
-        from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
+        from jobctl.infrastructure.enrichment.linkedin_apply_resolver import (
             LinkedInApplyResolution,
         )
 
@@ -400,7 +400,7 @@ def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
         try:
             _seed_pending(conn, url, "linkedin")
             sink: list[str] = []
-            monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "1")
+            monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "1")
             monkeypatch.setattr(
                 detail, "LinkedInApplyUrlResolver", lambda **kw: _FakeResolver(sink, **kw)
             )
@@ -483,7 +483,7 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         # _run_detail_scraper builds the shared run gateway via PolitenessGateway();
         # hand it our virtual-clock, allow-all gateway so pacing is observable.
         monkeypatch.setattr(detail, "PolitenessGateway", lambda **_kw: shared_gateway)
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
 
         sink: list[str] = []
         sink_lock = threading.Lock()
@@ -537,7 +537,7 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
     try:
         _seed_pending(conn, url, "RemoteOK")
         spy = _SpyPlaywright()
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
         # Run 1 — robots disallows: folded blocked, zero navigation, je pending.
@@ -591,7 +591,7 @@ def test_repeatedly_robots_blocked_job_stays_blocked_never_failed(
     try:
         _seed_pending(conn, url, "RemoteOK")
         spy = _SpyPlaywright()
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
         for _ in range(3):

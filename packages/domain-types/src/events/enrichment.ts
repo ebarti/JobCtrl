@@ -49,7 +49,7 @@ export function createEnrichmentFailed(
 }
 
 // -- ActiveState ------------------------------------------------------------
-// Mirrors workers/automation/src/jobhunter/domain/enrichment/snapshot_value_objects.py
+// Mirrors workers/automation/src/jobctl/domain/enrichment/snapshot_value_objects.py
 // `ActiveState`. Kept as a string-literal union so JSON-RPC payloads can carry
 // the same shape without a separate enum import path.
 
@@ -62,7 +62,7 @@ export type ActiveStateValue =
   | "location_incompatible";
 
 // -- DuplicateEvidenceKind --------------------------------------------------
-// Mirrors workers/automation/src/jobhunter/domain/enrichment/snapshot_value_objects.py
+// Mirrors workers/automation/src/jobctl/domain/enrichment/snapshot_value_objects.py
 // `DuplicateEvidenceKind` so the SSE payload shape matches the Python writer.
 
 export type DuplicateEvidenceKindValue =

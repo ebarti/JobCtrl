@@ -9,7 +9,7 @@ import {
   type SavedTableViewGridFilters,
   type SavedTableViewUrlFilters,
   type TableId,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 

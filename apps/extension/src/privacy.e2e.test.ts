@@ -104,7 +104,7 @@ describe("built extension privacy boundary", () => {
     expect(autofill).toMatchObject({ ok: true, status: "review_opened" });
     expect(sendMessage).toHaveBeenCalledWith(
       42,
-      expect.objectContaining({ type: "jobhunter.autofill.review" }),
+      expect.objectContaining({ type: "jobctl.autofill.review" }),
     );
     expect(requests).toEqual([
       "http://127.0.0.1:8766/v1/extension/captures",

@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobhunter.materials.activities import (
+from jobctl.materials.activities import (
     CoverActivityInput,
     CoverActivityOutput,
     cover_activity,
@@ -34,7 +34,7 @@ async def test_cover_activity_invokes_observed_cover_core():
     queue = f"cover-{uuid.uuid4()}"
 
     with patch(
-        "jobhunter.pipeline.runner._run_stage_observed",
+        "jobctl.pipeline.runner._run_stage_observed",
         return_value=({"status": "ok"}, 0.5, "ok"),
     ) as observed_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

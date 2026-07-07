@@ -32,7 +32,7 @@ import type {
   ContactSummary,
   ContactUpdateRequest,
 } from "./contracts.js";
-import { CONTACT_ROLES } from "@jobhunter/domain-types";
+import { CONTACT_ROLES } from "@jobctl/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
 

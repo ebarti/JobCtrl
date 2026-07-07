@@ -36,7 +36,7 @@ describe("interactive install script contract", () => {
 
     expect(output).toContain("corepack pnpm install --frozen-lockfile");
     expect(output).toContain("uv --project workers/automation sync --extra dev");
-    expect(output).toContain("corepack pnpm --filter @jobhunter/web exec playwright install chromium");
+    expect(output).toContain("corepack pnpm --filter @jobctl/web exec playwright install chromium");
     expect(output).toContain("uv --project workers/automation run playwright install chromium");
   });
 });

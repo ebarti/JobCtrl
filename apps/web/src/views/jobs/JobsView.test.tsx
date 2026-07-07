@@ -12,7 +12,7 @@ import type {
   JobListQuery,
   JobSummary,
   Stage,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -1147,7 +1147,7 @@ describe("<JobsView> bulk delete integration", () => {
             ok: true,
             count: body.jobKeys?.length ?? 0,
             jobKeys: body.jobKeys ?? [],
-            nextAction: "jobhunter run score --rescore",
+            nextAction: "jobctl run score --rescore",
           });
         },
       ),

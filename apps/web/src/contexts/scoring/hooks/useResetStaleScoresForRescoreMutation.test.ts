@@ -1,7 +1,7 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { makeJobDetail, makeJobsPage, sampleJob } from "../../../test/fixtures/projections.js";
 import { renderHookWithProviders } from "../../../test/render.js";
@@ -29,7 +29,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobhunter run score --rescore",
+      nextAction: "jobctl run score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {
@@ -72,7 +72,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobhunter run score --rescore",
+      nextAction: "jobctl run score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result, queryClient } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {

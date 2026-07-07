@@ -17,7 +17,7 @@ import type {
   WorkflowCanceled,
   WorkflowTimedOut,
   WorkflowTerminated,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";

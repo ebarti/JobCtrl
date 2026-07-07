@@ -17,11 +17,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from jobhunter.database import init_db
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.infrastructure.projections.sqlite_projection_store import SqliteProjectionStore
+from jobctl.database import init_db
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.infrastructure.projections.sqlite_projection_store import SqliteProjectionStore
 
 _FIXTURE = (
     Path(__file__).resolve().parents[3]
@@ -94,7 +94,7 @@ def _normalize(row: sqlite3.Row) -> dict[str, Any]:
 
 def test_outreach_projection_parity(tmp_path: Path) -> None:
     fixture = json.loads(_FIXTURE.read_text())
-    conn = init_db(tmp_path / "jobhunter.db")
+    conn = init_db(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     _seed_canonical(conn, fixture)
 
@@ -116,7 +116,7 @@ def test_outreach_projection_parity(tmp_path: Path) -> None:
 
 def test_outreach_projection_rebuild_is_idempotent(tmp_path: Path) -> None:
     fixture = json.loads(_FIXTURE.read_text())
-    conn = init_db(tmp_path / "jobhunter.db")
+    conn = init_db(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     _seed_canonical(conn, fixture)
 

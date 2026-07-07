@@ -1,4 +1,4 @@
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { http, HttpResponse } from "msw";
 import { waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";

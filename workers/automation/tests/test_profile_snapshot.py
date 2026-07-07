@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 def _profile() -> Profile:

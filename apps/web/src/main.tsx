@@ -21,7 +21,7 @@ import { ToasterProvider } from "./shared/providers/ToasterProvider.js";
 import { TooltipProvider } from "./shared/ui/tooltip.js";
 import "./styles/globals.css";
 
-const apiBaseUrl = import.meta.env.VITE_JOBHUNTER_API_BASE_URL ?? "";
+const apiBaseUrl = import.meta.env.VITE_JOBCTL_API_BASE_URL ?? "";
 const api = new FetchApiClientAdapter(apiBaseUrl);
 
 const ports: Ports = {

@@ -6,7 +6,7 @@ import dataclasses
 import re
 from pathlib import Path
 
-from jobhunter.domain.events import (
+from jobctl.domain.events import (
     DOMAIN_EVENT_TYPES,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,

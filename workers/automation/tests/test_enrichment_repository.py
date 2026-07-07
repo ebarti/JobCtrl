@@ -12,21 +12,21 @@ import sqlite3
 
 import pytest
 
-from jobhunter.database import init_db
-from jobhunter.domain.enrichment import (
+from jobctl.database import init_db
+from jobctl.domain.enrichment import (
     ApplicationUrl,
     ExtractionTier,
     FullDescription,
     JobEnrichment,
 )
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.enrichment import SqliteEnrichmentRepository
 
 
 @pytest.fixture
 def conn(tmp_path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     return init_db(db_path)
 
 
@@ -85,7 +85,7 @@ def test_save_upserts_on_repeated_save(conn: sqlite3.Connection) -> None:
     repo.save(_make_enriched())
 
     # Reset + new attempt cycle ⇒ failed
-    from jobhunter.domain.enrichment import EnrichmentError
+    from jobctl.domain.enrichment import EnrichmentError
 
     failed = (
         _make_enriched()
@@ -142,7 +142,7 @@ def test_list_pending_excludes_running_and_failed(conn: sqlite3.Connection) -> N
     ).start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
     repo.save(running)
 
-    from jobhunter.domain.enrichment import EnrichmentError
+    from jobctl.domain.enrichment import EnrichmentError
 
     failed = (
         JobEnrichment.empty(
@@ -162,7 +162,7 @@ def test_list_pending_excludes_running_and_failed(conn: sqlite3.Connection) -> N
 def test_list_failed_returns_full_aggregates(conn: sqlite3.Connection) -> None:
     _insert_job(conn, "https://example.com/jobs/F")
     repo = SqliteEnrichmentRepository(conn)
-    from jobhunter.domain.enrichment import EnrichmentError
+    from jobctl.domain.enrichment import EnrichmentError
 
     failed = (
         JobEnrichment.empty(
@@ -191,7 +191,7 @@ def test_list_failed_returns_full_aggregates(conn: sqlite3.Connection) -> None:
 
 def test_backfill_idempotent_when_table_already_populated(tmp_path) -> None:
     """Re-running the migration on an existing DB must not duplicate rows."""
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = init_db(db_path)
     _insert_job(conn, "https://example.com/jobs/1", full_description="Legacy desc")
     repo = SqliteEnrichmentRepository(conn)
@@ -199,7 +199,7 @@ def test_backfill_idempotent_when_table_already_populated(tmp_path) -> None:
 
     # The table now has at least one row, so subsequent calls are no-ops.
     rows_before = conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0]
-    from jobhunter.database import ensure_enrichment_tables
+    from jobctl.database import ensure_enrichment_tables
 
     # Insert a NEW legacy row that WOULD be backfilled if the migration
     # fired — and confirm it doesn't, because the table is already
@@ -216,7 +216,7 @@ def test_backfill_idempotent_when_table_already_populated(tmp_path) -> None:
 
 def test_backfill_creates_enriched_rows_from_legacy_columns(tmp_path) -> None:
     """A legacy job with full_description should backfill as ``enriched``."""
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     # Insert legacy data BEFORE init_db runs the backfill
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -276,7 +276,7 @@ def test_backfill_creates_enriched_rows_from_legacy_columns(tmp_path) -> None:
 
 
 def test_backfill_creates_failed_row_for_legacy_error(tmp_path) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute(
@@ -320,7 +320,7 @@ def test_backfill_creates_failed_row_for_legacy_error(tmp_path) -> None:
 
 def test_backfill_does_not_fire_when_table_has_rows(tmp_path) -> None:
     """Idempotent backfill: subsequent runs against new legacy data are no-ops."""
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = init_db(db_path)
     _insert_job(conn, "https://example.com/jobs/A")
     repo = SqliteEnrichmentRepository(conn)
@@ -333,7 +333,7 @@ def test_backfill_does_not_fire_when_table_has_rows(tmp_path) -> None:
         full_description="Legacy desc",
         detail_scraped_at="2026-04-01T00:00:00+00:00",
     )
-    from jobhunter.database import ensure_enrichment_tables
+    from jobctl.database import ensure_enrichment_tables
 
     ensure_enrichment_tables(conn)
 

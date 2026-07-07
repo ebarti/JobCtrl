@@ -238,9 +238,9 @@ describe("daily digest read model", () => {
 });
 
 function makeTempDb(): { dbPath: string; settingsPath: string; tempDir: string; cleanup: () => void } {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-digest-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-digest-"));
   return {
-    dbPath: path.join(tempDir, "jobhunter.db"),
+    dbPath: path.join(tempDir, "jobctl.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     tempDir,
     cleanup: () => fs.rmSync(tempDir, { recursive: true, force: true }),
@@ -376,7 +376,7 @@ function createDigestSchema(db: Database.Database): void {
       superseded_at TEXT,
       PRIMARY KEY (job_url, generation, artifact_type)
     );
-    CREATE TABLE jobhunter_hidden_jobs (
+    CREATE TABLE jobctl_hidden_jobs (
       tenant_id TEXT NOT NULL DEFAULT 'local',
       job_url TEXT NOT NULL,
       hidden_at TEXT NOT NULL,
@@ -477,7 +477,7 @@ function seedJobs(db: Database.Database, tempDir: string): void {
     );
     if (job.hidden) {
       db.prepare(
-        "INSERT INTO jobhunter_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
+        "INSERT INTO jobctl_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
       ).run(job.jobId, fixture.now);
     }
     if (job.activeState) {

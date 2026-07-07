@@ -2,9 +2,9 @@
 pageClass: jh-user-guide-page
 ---
 
-# How JobHunter Compares
+# How JobCtl Compares
 
-This page compares JobHunter's **approach** to common job-search-tool
+This page compares JobCtl's **approach** to common job-search-tool
 capabilities against other approaches, one neutral capability category at a time.
 
 ::: warning Scaffold — alternative columns are not yet published
@@ -16,14 +16,14 @@ verifying each fact against that approach's own public documentation (see
 verified it stays a `TODO(owner)` placeholder rather than a speculative claim.
 :::
 
-The **JobHunter** column states only shipped, `Current` behavior; each cell cites
+The **JobCtl** column states only shipped, `Current` behavior; each cell cites
 the claim-ledger IDs (`CL-0xx`) that back it. Those IDs are governed in the
 repository-only claims ledger (`docs/claims-ledger.md`), and each maps to a
 user-facing page linked from the capability category on the left.
 
 ## Capability comparison
 
-| Capability category | JobHunter | Alternative approach A | Alternative approach B |
+| Capability category | JobCtl | Alternative approach A | Alternative approach B |
 | --- | --- | --- | --- |
 | **Data ownership** — where your profile, jobs, and materials live | Local-first: one SQLite database and generated files under your home directory; no hosted backend and no account (`CL-060`, `CL-061`). Data at rest is not encrypted — protection is your OS account (`CL-066`). See [Data, Privacy & Safety](user/data-and-safety.md). | `TODO(owner)` | `TODO(owner)` |
 | **Outbound data** — what leaves your machine, and when | Nothing leaves by default; each egress path (LLM, apply-agent prompt, job boards, read-only Gmail, Maps, CAPTCHA, telemetry) is opt-in and configuration-gated (`CL-061`, `CL-062`, `CL-065`). See [Security → What Leaves Your Machine](user/security.md#what-leaves-your-machine). | `TODO(owner)` | `TODO(owner)` |
@@ -42,7 +42,7 @@ This comparison rots unless it is re-verified. Two rules keep it honest:
   approach is published without (a) a recorded verification date and (b) a dated
   link to that approach's **own public documentation** (README, docs site, or
   official page). No cell asserts a claim from memory, marketing copy, or a
-  third-party summary. Every JobHunter-column cell cites a frozen `Current`
+  third-party summary. Every JobCtl-column cell cites a frozen `Current`
   claim-ledger row. Any alternative cell that is not yet verified stays a
   `TODO(owner)` placeholder (or an HTML-commented draft) — never a speculative
   claim.
@@ -50,7 +50,7 @@ This comparison rots unless it is re-verified. Two rules keep it honest:
   a published approach, with the source and check date recorded. No unverifiable
   or comparative-superlative claims.
 
-**Maintenance cadence.** Re-verify every JobHunter-column cell against the claims
+**Maintenance cadence.** Re-verify every JobCtl-column cell against the claims
 ledger, and every published alternative cell against its cited source, on each
 release and at minimum **quarterly**. `TODO(owner)`: confirm the interval and
 the sidebar label/placement (plan §11.3). Record the last full re-verification

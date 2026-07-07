@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import ensure_score_tables, get_jobs_by_stage, init_db
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.scoring import (
+from jobctl.database import ensure_score_tables, get_jobs_by_stage, init_db
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -34,22 +34,22 @@ from jobhunter.domain.scoring import (
     ScoreTrace,
     ScoringCriteria,
 )
-from jobhunter.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.scoring import (
+from jobctl.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoreStalenessRepository,
     SqliteScoringPolicyRepository,
 )
-from jobhunter.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
-from jobhunter.scoring.eval import build_scoring_governance_report
-from jobhunter.state import set_stage_state
+from jobctl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
+from jobctl.scoring.eval import build_scoring_governance_report
+from jobctl.state import set_stage_state
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     return init_db(db_path)
 
 

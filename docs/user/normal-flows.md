@@ -4,7 +4,7 @@ pageClass: jh-user-guide-page jh-visual-doc jh-daily-workflow-page jh-outline-pa
 
 # Daily Workflow
 
-This is your daily loop with JobHunter: set up once, then repeat Discover →
+This is your daily loop with JobCtl: set up once, then repeat Discover →
 review → Apply. The web app is the main way you work; the command line stays
 available for maintenance and diagnostics. For a screen-by-screen walkthrough of
 each page below, see the [Product Tour](screenshots.md).
@@ -31,7 +31,7 @@ flowchart TD
   class Discover,DryRun auto
 ```
 
-*Blue steps are yours; green steps are JobHunter's. Setup happens once, the
+*Blue steps are yours; green steps are JobCtl's. Setup happens once, the
 loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
 each eligible job. Live submission approval is bound to the current materials,
 profile version, application URL, and dry-run evidence.*
@@ -47,7 +47,7 @@ scores and tailors against.
 Profile and settings forms autosave after a short delay. The explicit Save
 buttons use the same save path.
 
-![JobHunter Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
+![JobCtl Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
 *The Profile page collects personal information, resume baseline, experience, skills, and voluntary equal-opportunity (EEO) fields alongside the baseline resume editor.*
 
 ## 2. Configure Discovery
@@ -68,7 +68,7 @@ Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.
 
-![JobHunter Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
+![JobCtl Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
 *The Discovery page configures target search, seniority floors, locations and work models, minimum fit score, job boards, and the source registry.*
 
 ## 3. Run Discover
@@ -77,17 +77,17 @@ From the web app, open the Pipelines page and start `Discover`. From the command
 line:
 
 ```bash
-uv --project workers/automation run jobhunter run discover
+uv --project workers/automation run jobctl run discover
 ```
 
 Starts a Discover run from the terminal — the same workflow the Pipelines page
 starts.
 
-![JobHunter Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
+![JobCtl Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
 *The Pipelines page starts a Discover run with limit, worker count, and a dry-run toggle.*
 
-Per-stage commands (`jobhunter enrich`, `score`, `tailor`, `cover`) and the
-single-job path (`jobhunter job <url> --dry-run`) start the same underlying
+Per-stage commands (`jobctl enrich`, `score`, `tailor`, `cover`) and the
+single-job path (`jobctl job <url> --dry-run`) start the same underlying
 workflows when you want a narrower run.
 
 Discover owns the preparation path:
@@ -108,7 +108,7 @@ The Jobs view supports filters, sorting, pagination, deep links, deleted and
 hidden views, fit-score ranges, stage state, source provenance, compensation
 evidence, and job detail drawers.
 
-![JobHunter Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
+![JobCtl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
 *The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
 
 Use the job detail drawer to inspect:
@@ -120,7 +120,7 @@ Use the job detail drawer to inspect:
 - generated artifacts;
 - apply readiness and blockers.
 
-![JobHunter job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
+![JobCtl job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
 *The job detail drawer shows the audit triage: ranking, requirement fit, matched and transferable requirements, keywords, and compensation evidence.*
 
 Failed preparation work can be retried per job or in bulk without automatically
@@ -148,7 +148,7 @@ after it validates and you approve it.
 
 From a job detail drawer, use "generate interview prep" when you want stored
 pre-interview notes for that job. Prep is generated only after you ask for it and
-uses JobHunter's grounded data: profile evidence, requirement fit, accepted
+uses JobCtl's grounded data: profile evidence, requirement fit, accepted
 materials, employer analysis, and evidence-map usage.
 
 The drawer shows the latest accepted prep as themes, STAR-story drafts, gap
@@ -161,23 +161,23 @@ After the interview, record reflection notes from the same prep panel. Each
 reflection is saved as a normal manual `interview` outcome linked to that prep
 generation, so it also appears in the job's application outcome timeline.
 
-Interview prep is not live interview assistance. JobHunter does not provide
+Interview prep is not live interview assistance. JobCtl does not provide
 in-session answers, transcript upload, microphone input, websocket streaming, or
 real-time interview participation.
 
 ## 8. Review And Edit The Resume
 
 Apply Review opens the generated resume in an in-browser editor. The editor keeps
-the final PDF link, the source behind each line, risk flags, JobHunter's line
+the final PDF link, the source behind each line, risk flags, JobCtl's line
 comments, and your draft together.
 
-![JobHunter Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
-*Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobHunter line comments, and approve or dry-run controls.*
+![JobCtl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
+*Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobCtl line comments, and approve or dry-run controls.*
 
 Typical review actions:
 
 - edit the generated resume text or formatting;
-- reply to JobHunter line comments;
+- reply to JobCtl line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;
 - compare the accepted artifact with the rendered draft using stored coverage,
@@ -192,8 +192,8 @@ artifact.
 Apply automation can submit real applications, so start with dry runs:
 
 ```bash
-uv --project workers/automation run jobhunter apply --dry-run --limit 1
-uv --project workers/automation run jobhunter apply --url https://example.com/job/123 --dry-run
+uv --project workers/automation run jobctl apply --dry-run --limit 1
+uv --project workers/automation run jobctl apply --url https://example.com/job/123 --dry-run
 ```
 
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
@@ -222,10 +222,10 @@ the [Security](security.md) page.
 Useful command-line checks:
 
 ```bash
-uv --project workers/automation run jobhunter status
-uv --project workers/automation run jobhunter digest
-uv --project workers/automation run jobhunter runs
-uv --project workers/automation run jobhunter runs --failed-only
+uv --project workers/automation run jobctl status
+uv --project workers/automation run jobctl digest
+uv --project workers/automation run jobctl runs
+uv --project workers/automation run jobctl runs --failed-only
 ```
 
 These print your pipeline status, show the local daily digest, list all workflow
@@ -246,7 +246,7 @@ Useful web app views:
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
 
-![JobHunter Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
+![JobCtl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
 *The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
 
 ## 11. Keep Contacts (Optional)
@@ -268,7 +268,7 @@ You can also run **supervised research** from a job's Contacts panel to propose
 contacts:
 
 - Click **run research** (optionally pasting one public source URL, such as a
-  company team page). JobHunter starts a supervised run; with no URL it simply
+  company team page). JobCtl starts a supervised run; with no URL it simply
   records which sources it could and could not use.
 - Research **proposes** candidates for review — it never stores them automatically
   (supervised, INV-4). Each proposed candidate shows its provenance (the page it
@@ -284,7 +284,7 @@ Once you have a contact, you can **draft an outreach message** to them — a
 truthful, reviewable message that you send yourself:
 
 - On the contact's detail (the **Outreach** panel), click **generate draft**.
-  JobHunter writes a short message grounded only in your profile and the confirmed
+  JobCtl writes a short message grounded only in your profile and the confirmed
   contact facts, then runs it through the **same anti-fabrication gates as your
   resumes and cover letters**: a deterministic never-fabricate check, a content
   validator, an LLM judge, and a claim-to-fact provenance record.
@@ -298,11 +298,11 @@ truthful, reviewable message that you send yourself:
 - **Approve** the message once the gates pass, then **copy** it and send it
   yourself through your own channel (your email client, and so on).
 - After you have sent it, **log the send**: record the date you sent it and the
-  channel you used (for example "email"). This is a record you enter — JobHunter
+  channel you used (for example "email"). This is a record you enter — JobCtl
   never sends the message and has no way to; logging simply marks the thread as
   sent so your history is honest. A send can only be logged against an approved
   draft, and approving a draft is a separate action that never sends anything.
-- Optionally **schedule a follow-up**. JobHunter suggests a conservative date —
+- Optionally **schedule a follow-up**. JobCtl suggests a conservative date —
   7 days after the application was submitted for the first nudge, 14 days for a
   later one if you have had no reply — which you can edit freely. Due follow-ups
   surface in a **Follow-ups** list and a badge so you remember to reach out; you
@@ -310,7 +310,7 @@ truthful, reviewable message that you send yourself:
   reminders only: they are never sent for you, and any optional recurring reminder
   is off by default.
 
-You send every message yourself. JobHunter drafts, previews, and records; it
+You send every message yourself. JobCtl drafts, previews, and records; it
 never sends anything to a contact — there is no email, message, or outreach send
 transport of any kind, drafts terminate at copy/export, a thread only becomes
 "sent" through a send you log yourself, and contact, research, draft, send, or

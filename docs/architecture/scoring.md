@@ -36,16 +36,16 @@ back as a new score version and a calibration anchor on the scoring policy.
 ## Retrieval Before Scoring
 
 The Scoring context owns a local hybrid retrieval service under
-`workers/automation/src/jobhunter/domain/scoring/retrieval.py`. It builds an
+`workers/automation/src/jobctl/domain/scoring/retrieval.py`. It builds an
 in-memory lexical index over normalized posting fields already produced by
 Discovery, including Discovery's internal detail-enrichment queue drain, then
 ranks candidate jobs before the scorer spends LLM calls. When
-`jobhunter run score --limit N` or equivalent pipeline calls cap scoring, the
+`jobctl run score --limit N` or equivalent pipeline calls cap scoring, the
 runner fetches a broader pending/enriched pool and lets hybrid retrieval choose
 the top N.
 
 Semantic search is optional. The `EmbeddingIndexPort` in
-`workers/automation/src/jobhunter/domain/ports/retrieval.py` is the adapter seam
+`workers/automation/src/jobctl/domain/ports/retrieval.py` is the adapter seam
 for a hosted or local embedding index; local mode defaults to
 `DisabledEmbeddingIndex`, so lexical retrieval and scoring continue to work
 without any external embedding service.
@@ -71,7 +71,7 @@ keeps rubric weights and fit-band thresholds stable; subsequent scores load the
 latest policy version and include the active anchor IDs in `trace_json`.
 
 ::: warning Applicant-side triage only — not an employer hiring system
-This is not an employer-side candidate selection system. If JobHunter is ever
+This is not an employer-side candidate selection system. If JobCtl is ever
 used to rank people for hiring decisions, the architecture needs a separate
 governance layer for validation, bias audits, notices, adverse-impact review,
 and human-review procedures before production use.

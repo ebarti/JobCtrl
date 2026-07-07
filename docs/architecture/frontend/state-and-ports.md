@@ -129,7 +129,7 @@ hitting the network and gives a clear seam for cloud evolution.
 
 | Port | Purpose | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|---|
-| `ApiClientPort` | HTTP requests against `apps/api` | `FetchApiClientAdapter` (wraps `@jobhunter/api-client`) | Same adapter; baseUrl from env, JWT auth header injected by `AuthInterceptor` |
+| `ApiClientPort` | HTTP requests against `apps/api` | `FetchApiClientAdapter` (wraps `@jobctl/api-client`) | Same adapter; baseUrl from env, JWT auth header injected by `AuthInterceptor` |
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
@@ -168,7 +168,7 @@ export function usePorts(): Ports { /* throws if missing */ }
 Concrete adapters are constructed in `main.tsx`:
 
 ```ts
-const api = new FetchApiClientAdapter(import.meta.env.VITE_JOBHUNTER_API_BASE_URL);
+const api = new FetchApiClientAdapter(import.meta.env.VITE_JOBCTL_API_BASE_URL);
 const eventStream = new SseEventStreamAdapter(api);
 const storage = new LocalStorageAdapter("jh:");
 const session = new LocalSessionAdapter();
@@ -203,8 +203,8 @@ promises. LLM spend/budget is not a dedicated method; it rides on
 `health()` (`ApiHealthResponse.llmSpend`). Methods take `jobKey: string`,
 not a branded `JobId` (see R13).
 
-The `FetchApiClientAdapter` delegates to the existing `JobHunterApiClient`
-from `@jobhunter/api-client`. The reason we still have a port wrapping it:
+The `FetchApiClientAdapter` delegates to the existing `JobCtlApiClient`
+from `@jobctl/api-client`. The reason we still have a port wrapping it:
 
 1. **Test seam.** Without a port, every test that needs to fake the API
    has to install MSW handlers (slower, more setup). With a port, tests
@@ -256,9 +256,9 @@ The frontend has an Anti-Corruption Layer too: `contexts/operations/types.ts`
 re-exports the projection and API response types and adds frontend-only
 refinements (e.g., narrower string-union types over `state` / `stage`
 derived from `STAGES` / `STAGE_STATE_KINDS`). The projection shapes are
-canonically defined in `@jobhunter/domain-types` (`operations/`) and
-re-exported through `@jobhunter/contracts`; the ACL is the intended single
-import surface for feature code, though `@jobhunter/contracts` is still
+canonically defined in `@jobctl/domain-types` (`operations/`) and
+re-exported through `@jobctl/contracts`; the ACL is the intended single
+import surface for feature code, though `@jobctl/contracts` is still
 imported directly in places today.
 
 Why an ACL (this thin):
@@ -272,7 +272,7 @@ Why an ACL (this thin):
   computed field) has a natural home.
 
 This is an extremely thin ACL — it is mostly re-exports today. It exists
-because the alternative ("just import from `@jobhunter/contracts` directly")
+because the alternative ("just import from `@jobctl/contracts` directly")
 makes a future tightening of types or addition of frontend computed shape
 into a sprawling refactor.
 
@@ -281,7 +281,7 @@ into a sprawling refactor.
 A pattern visible in the current `App.tsx`:
 
 ```ts
-window.dispatchEvent(new CustomEvent("jobhunter:set-jobs-filter", { detail: target }));
+window.dispatchEvent(new CustomEvent("jobctl:set-jobs-filter", { detail: target }));
 ```
 
 This is the canonical anti-pattern the target eliminates. Cross-component

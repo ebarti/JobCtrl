@@ -16,7 +16,7 @@ import { ensureProjectionTables } from "../src/projections.js";
 import { buildApp } from "../src/server.js";
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-projections-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-projections-"));
   const dbPath = path.join(dir, "jobs.db");
   return {
     dbPath,
@@ -617,13 +617,13 @@ function createEvidenceMapSchema(db: Database.Database): void {
       position INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
     );
-    CREATE TABLE jobhunter_deleted_jobs (
+    CREATE TABLE jobctl_deleted_jobs (
       job_url TEXT PRIMARY KEY,
       deleted_at TEXT NOT NULL,
       reason TEXT,
       restored_at TEXT
     );
-    CREATE TABLE jobhunter_hidden_jobs (
+    CREATE TABLE jobctl_hidden_jobs (
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
       reason TEXT,
@@ -2724,7 +2724,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
   it("excludes soft-deleted and hidden jobs from the career evidence map", async () => {
     // Regression for the R5 evidence-usage index: soft delete only writes a
-    // jobhunter_deleted_jobs tombstone (and hide only writes jobhunter_hidden_jobs),
+    // jobctl_deleted_jobs tombstone (and hide only writes jobctl_hidden_jobs),
     // leaving the job_bullet_provenance / job_requirement_fit_items /
     // artifact_list_projections rows in place. Those rows must not re-surface a
     // removed job's title, employer, generated-text preview, usages, or gaps.
@@ -2872,11 +2872,11 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       });
 
       db.prepare(
-        `INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+        `INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
          VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)`,
       ).run(deletedUrl);
       db.prepare(
-        `INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+        `INSERT INTO jobctl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
          VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
       ).run(hiddenUrl);
       db.close();
@@ -4318,10 +4318,10 @@ describe("outcome analytics read-only guard", () => {
     const decisionFiles = [
       "apps/api/src/write-model.ts",
       "apps/api/src/application-feedback.ts",
-      "workers/automation/src/jobhunter/domain/scoring/use_cases.py",
-      "workers/automation/src/jobhunter/domain/apply/services.py",
-      "workers/automation/src/jobhunter/apply/launcher.py",
-      "workers/automation/src/jobhunter/pipeline/runner.py",
+      "workers/automation/src/jobctl/domain/scoring/use_cases.py",
+      "workers/automation/src/jobctl/domain/apply/services.py",
+      "workers/automation/src/jobctl/apply/launcher.py",
+      "workers/automation/src/jobctl/pipeline/runner.py",
     ];
     for (const file of decisionFiles) {
       const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
