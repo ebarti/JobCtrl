@@ -12,7 +12,7 @@ import {
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
@@ -270,7 +270,6 @@ export function JobsView() {
   const [localTableFilters, setLocalTableFilters] =
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
-  const autoPendingPreparationKeys = useRef<Set<string>>(new Set());
   const activeSavedView = useMemo(
     () =>
       savedTableViews.find(
@@ -580,40 +579,6 @@ export function JobsView() {
       })
       .catch(() => undefined);
   };
-
-  useEffect(() => {
-    if (
-      !data ||
-      runPendingPreparation.isPending ||
-      hasLocalFilters ||
-      search.deleted !== "active"
-    ) {
-      return;
-    }
-    const payloads = pendingPreparationPayloads();
-    const requestKey = JSON.stringify(payloads);
-    if (autoPendingPreparationKeys.current.has(requestKey)) {
-      return;
-    }
-    autoPendingPreparationKeys.current.add(requestKey);
-    mutatePendingPreparationPayloads(runPendingPreparation, payloads, {
-      clearSelectionOnSuccess: false,
-    });
-  }, [
-    data?.items,
-    hasLocalFilters,
-    runPendingPreparation,
-    search.applyStatus,
-    search.deleted,
-    search.maxFitScore,
-    search.minFitScore,
-    search.q,
-    search.discoveredSince,
-    search.scoredSince,
-    search.stage,
-    search.state,
-    stageTriggerConfigs,
-  ]);
 
   const mutateSelected = (mutation: BulkJobMutation, label: string) => {
     const count = allMatchingSelected
