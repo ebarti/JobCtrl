@@ -14,10 +14,16 @@
    mock-up duplicates its nav in both the rail and the top bar; per the owner,
    we do **not** copy that duplication. Rail = navigation, top bar = search +
    runtime status only.
-2. **Brand mark** (owner-provided logo): three stacked check strokes,
-   `#c4b5fd` → `#a78bfa` → `#7c3aed`, identical to the inline SVG in the
-   mock-up's `.brand-mark-svg`. Reproduced as a React component, no binary
-   asset.
+2. **Brand assets** (owner-provided 2026-07-08, saved at the repo root of
+   the main checkout): `logo.png` (app icon — bold purple check resting on
+   two stacked, rounded diamond layers in light violet), `primarylogo.png`
+   and `horizontallockuo.png` (color lockups: "Job" in near-black, "Ctrl"
+   in purple, tagline "Plan. Apply. Track. Succeed."), `monochromelogo.png`
+   (black mono lockup). These supersede the mock-up's three-stroke
+   `.brand-mark-svg`: the canonical mark is **check-over-layered-diamonds**.
+   Optimized copies are committed under `docs/assets/brand/`; the in-app
+   `BrandMark` is a hand-drawn SVG reproduction of the mark (crisp at rail
+   size, theme-aware), and the app icon feeds the favicon set (§5 Phase 1).
 3. **Current implementation** as mapped on 2026-07-08: shell =
    `apps/web/src/shared/layout/{AppShell,Topbar,NavBar,ThemeToggle,ConnectionStatusPill}.tsx`;
    tokens = `apps/web/src/styles/tokens.css` (contract-tested by
@@ -93,8 +99,12 @@ fills (`#ecfdf5` / `#fffbeb` / `#fef2f2` equivalents).
 Sticky, `--rail-width`, translucent white + blur, right border. Top to
 bottom:
 
-1. **Brand**: `BrandMark.tsx` (stacked-check SVG) + Job**Ctrl** wordmark,
-   links to `/dashboard`.
+1. **Brand**: `BrandMark.tsx` — SVG reproduction of the canonical mark
+   (purple check over two rounded diamond layers, `#ddd6fe`/`#c4b5fd`
+   layers + `#7c3aed` check) + wordmark "Job" (foreground) / "Ctrl"
+   (purple), links to `/dashboard`. The tagline "Plan. Apply. Track.
+   Succeed." is available for empty states / the sheet-nav header; it does
+   not clutter the rail.
 2. **Grouped nav** — all 14 existing routes, unchanged paths and link labels
    (e2e locates them by role/name), grouped with uppercase section labels:
    - **Overview**: Dashboard, Analytics
@@ -159,6 +169,11 @@ Single PR, stacked commits per phase, each phase leaves the app green
    queries unchanged). `dashboard.spec.ts` / `dry-run.spec.ts` selectors are
    unaffected but must be re-run.
 6. Per-route `document.title`.
+7. **Brand asset refresh**: commit optimized copies of the four owner
+   PNGs under `docs/assets/brand/` (downscaled, web-weight); replace the
+   web app favicon with a hand-drawn `favicon.svg` of the mark + a 180px
+   `apple-touch-icon.png` derived from `logo.png`; update `index.html`
+   `<link rel>` tags accordingly.
 
 ### Phase 2 — shared primitive restyle (`apps/web/src/shared/ui/`)
 
