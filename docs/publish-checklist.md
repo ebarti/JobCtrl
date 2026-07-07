@@ -38,7 +38,8 @@ to the rename train / post-rename launch assets (R7b).
 - **Verification.**
   - `release-check` (`.github/workflows/release-check.yml`) is green on `main`
     for every commit since W0.4 landed (it triggers on every `push` to `main`
-    and every `pull_request`).
+    and is also available through `workflow_dispatch` for maintainer-reviewed
+    branches).
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
@@ -56,8 +57,8 @@ to the rename train / post-rename launch assets (R7b).
 - **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
   public `jobctrl-docs` Cloudflare project is itself a going-public act, so it
   carries the **same OSS spec §5 gate as 9.1**. The `deploy` job in
-  `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED`, `main`, and
-  non-`pull_request` — **not** on `release-check` — so this checklist is the
+  `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED` and `main` — **not**
+  on `release-check` — so this checklist is the
   only guard. Before setting `DOCS_DEPLOY_ENABLED` or configuring the Cloudflare
   secrets:
   - `python3 scripts/release_check.py` reports zero findings locally on the
@@ -72,7 +73,7 @@ to the rename train / post-rename launch assets (R7b).
 - **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
   Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
   `deploy` job in `.github/workflows/docs-site.yml` runs from `main` (it is
-  gated on `vars.DOCS_DEPLOY_ENABLED == 'true'`, `main`, and non-`pull_request`;
+  gated on `vars.DOCS_DEPLOY_ENABLED == 'true'` and `main`;
   it deploys `docs/.vitepress/dist` to the Cloudflare Pages project
   `jobctrl-docs`).
 - **Verification.** On the next `main` push the `deploy` job runs (not skipped),

@@ -1,0 +1,65 @@
+name: QA regression
+description: Report a visible regression in a product path, acceptance gate, or documented QA flow.
+title: "[QA]: "
+labels:
+  - "status: needs triage"
+  - "type: qa-regression"
+body:
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Regression surface
+      options:
+        - Dashboard or Jobs
+        - Apply Review
+        - Artifacts
+        - Profile or Settings
+        - Browser extension
+        - CLI or worker
+        - Documentation site
+        - GitHub workflow
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: invariant
+    attributes:
+      label: Expected invariant
+      description: What product or QA invariant is supposed to hold?
+      placeholder: "Example: a failed refresh must preserve the last accepted artifact."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What broke?
+      description: Describe the visible symptom and where it appears. Use synthetic data and sanitized screenshots only.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction path
+      placeholder: |
+        1. Seed ...
+        2. Run ...
+        3. Open ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Validation already attempted
+      description: Mention local commands or browser QA steps. Summarize private output instead of pasting it.
+    validations:
+      required: false
+  - type: checkboxes
+    id: release
+    attributes:
+      label: Release impact
+      options:
+        - label: This appears to block a public release, source install, or documented first-run flow.
+          required: false
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
+          required: true

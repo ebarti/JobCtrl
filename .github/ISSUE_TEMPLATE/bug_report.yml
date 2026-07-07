@@ -1,0 +1,79 @@
+name: Bug report
+description: Report behavior that is broken or inconsistent with the documented product.
+title: "[Bug]: "
+labels:
+  - "status: needs triage"
+  - "type: bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real resumes, profile facts, generated materials, browser profiles, SQLite databases, API keys, raw logs, local paths, or vulnerability details. Use synthetic data or the `pnpm qa:seed` fixtures when possible.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Web app
+        - TypeScript API
+        - Python worker or CLI
+        - Browser extension
+        - Documentation
+        - Setup or install
+        - GitHub workflows
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior without pasting sensitive data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic fixtures or sanitized examples.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node, Python, browser, and command context. Avoid local usernames and paths.
+      placeholder: |
+        - OS:
+        - Browser:
+        - Node:
+        - Python:
+        - Install method:
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Checks already run
+      description: Commands, tests, or QA steps already tried. Summarize results instead of pasting private logs.
+      placeholder: "`pnpm check`, `pnpm test`, `python3 scripts/release_check.py`, etc."
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data-safety confirmation
+      options:
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
+          required: true

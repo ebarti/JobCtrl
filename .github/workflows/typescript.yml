@@ -10,14 +10,6 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
-  pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 jobs:

@@ -1,0 +1,46 @@
+name: Question or support
+description: Ask a setup, usage, or contributor-workflow question that is safe to discuss publicly.
+title: "[Question]: "
+labels:
+  - "status: needs triage"
+  - "type: question"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep public questions synthetic and privacy-safe. Do not paste real job-search data, resumes, generated materials, credentials, raw logs, browser state, SQLite data, local paths, or vulnerability details.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Setup or install
+        - Web app
+        - CLI or worker
+        - Browser extension
+        - Documentation
+        - Contributor workflow
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to understand or do?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Optional. Mention sanitized commands, docs pages, or synthetic fixture steps already tried.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Public issue confirmation
+      options:
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, local paths, or vulnerability details.
+          required: true

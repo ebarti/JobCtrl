@@ -33,6 +33,9 @@ JOBCTRL_DIR=/tmp/jobctrl-qa pnpm dev
   configuration, architecture, or QA expectations change.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
+- Heavy CI workflows do not run automatically on public pull requests. Run the
+  relevant local validation before opening a PR; maintainers run manual
+  workflows or local checks after reviewing the change.
 
 ## Developer Certificate of Origin Sign-Off
 

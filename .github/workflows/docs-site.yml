@@ -8,12 +8,6 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/docs-site.yml"
-  pull_request:
-    paths:
-      - "docs/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 
 permissions:
@@ -59,7 +53,7 @@ jobs:
     # Deploys only from main, and only once the repository variable
     # DOCS_DEPLOY_ENABLED is set to "true" alongside the two Cloudflare
     # secrets. Until then this job skips cleanly and the workflow stays green.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
 
     steps:

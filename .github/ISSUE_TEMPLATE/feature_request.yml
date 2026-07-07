@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a product, workflow, documentation, or developer-experience improvement.
+title: "[Feature]: "
+labels:
+  - "status: needs triage"
+  - "type: feature"
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Web app
+        - TypeScript API
+        - Python worker or CLI
+        - Browser extension
+        - Documentation
+        - Setup or install
+        - GitHub workflows
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user or maintainer problem does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should JobCtrl do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention workarounds or simpler versions.
+    validations:
+      required: false
+  - type: textarea
+    id: safety
+    attributes:
+      label: Data, safety, or automation impact
+      description: Note whether this touches local data, credentials, generated materials, browser automation, apply submission, telemetry, or third-party services.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Public issue confirmation
+      options:
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
+          required: true

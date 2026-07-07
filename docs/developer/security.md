@@ -128,9 +128,13 @@ CapSolver key is an env var scoped to the owned CAPTCHA tool. A job-site login
 password, if the user provides one, remains local profile data consumed by the
 owned `type_credential` tool; it is not interpolated into the apply prompt.
 
-**The release gate is enforced in CI.** `scripts/release_check.py` runs on every
-push and pull request and scans the git-tracked and untracked tree — plus any
-built wheel/sdist archives — for:
+**The release gate is enforced before release-bound changes land.**
+`scripts/release_check.py` runs automatically on every push to `main` and is
+available as a manual GitHub workflow for maintainer-reviewed branches. Public
+pull requests do not run heavyweight CI automatically, so maintainers run the
+manual workflow or local scanner before merging release-bound changes. The
+scanner checks the git-tracked and untracked tree — plus any built wheel/sdist
+archives — for:
 
 - private-profile needles (real names, emails, personal domains, employer
   evidence, home paths, and private toolchain paths);

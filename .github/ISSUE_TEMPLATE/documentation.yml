@@ -1,0 +1,50 @@
+name: Documentation issue
+description: Report confusing, missing, stale, or broken documentation.
+title: "[Docs]: "
+labels:
+  - "status: needs triage"
+  - "type: documentation"
+  - "area: docs"
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Page or file
+      description: Link the page or name the repository file.
+      placeholder: "README.md, docs/user/getting-started.md, ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: Documentation problem
+      options:
+        - Missing information
+        - Stale information
+        - Confusing instructions
+        - Broken link
+        - Incorrect command or configuration
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What should change?
+      description: Describe the correction or the question the documentation should answer.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation context
+      description: If relevant, mention the command, page, or local flow you tried. Do not paste private logs or local paths.
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data-safety confirmation
+      options:
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
+          required: true

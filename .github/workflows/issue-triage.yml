@@ -1,0 +1,208 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, edited, reopened, transferred]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to triage manually.
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    name: Label issue
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Apply triage labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.payload.issue?.number ?? Number(core.getInput("issue_number"));
+
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber,
+            });
+
+            const labelDefinitions = {
+              "status: needs triage": {
+                color: "fbca04",
+                description: "Needs maintainer review and prioritization.",
+              },
+              "type: bug": {
+                color: "d73a4a",
+                description: "Broken or incorrect behavior.",
+              },
+              "type: documentation": {
+                color: "0075ca",
+                description: "Documentation issue or improvement.",
+              },
+              "type: feature": {
+                color: "a2eeef",
+                description: "New capability or product improvement.",
+              },
+              "type: qa-regression": {
+                color: "b60205",
+                description: "Visible regression in a product or QA flow.",
+              },
+              "type: question": {
+                color: "d876e3",
+                description: "Usage, setup, or contributor-workflow question.",
+              },
+              "type: security-contact": {
+                color: "ee0701",
+                description: "Public request for a private vulnerability contact path.",
+              },
+              "area: api": {
+                color: "c2e0c6",
+                description: "TypeScript API or API contract.",
+              },
+              "area: browser-extension": {
+                color: "c2e0c6",
+                description: "Browser extension capture or autofill.",
+              },
+              "area: cli-worker": {
+                color: "c2e0c6",
+                description: "Python CLI, worker, or automation engine.",
+              },
+              "area: docs": {
+                color: "c2e0c6",
+                description: "Repository or published documentation.",
+              },
+              "area: github": {
+                color: "c2e0c6",
+                description: "GitHub workflows, templates, or contribution metadata.",
+              },
+              "area: setup": {
+                color: "c2e0c6",
+                description: "Install, setup, or local environment.",
+              },
+              "area: security": {
+                color: "c2e0c6",
+                description: "Security posture or private-reporting coordination.",
+              },
+              "area: web": {
+                color: "c2e0c6",
+                description: "React web app or frontend product flow.",
+              },
+              "privacy: review-needed": {
+                color: "5319e7",
+                description: "Maintainers should check the public issue for sensitive data exposure.",
+              },
+              "release: possible-blocker": {
+                color: "e99695",
+                description: "May block a public release, install path, or documented first-run flow.",
+              },
+            };
+
+            async function ensureLabel(name) {
+              const definition = labelDefinitions[name];
+              if (!definition) {
+                return;
+              }
+
+              try {
+                await github.rest.issues.updateLabel({
+                  owner,
+                  repo,
+                  name,
+                  color: definition.color,
+                  description: definition.description,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name,
+                  color: definition.color,
+                  description: definition.description,
+                });
+              }
+            }
+
+            const body = issue.body ?? "";
+            const title = issue.title ?? "";
+            const userBody = body
+              .replace(/### Data-safety confirmation[\s\S]*?(?=\n### |$)/gi, "")
+              .replace(/### Public issue confirmation[\s\S]*?(?=\n### |$)/gi, "")
+              .replace(/### Confirmation[\s\S]*?(?=\n### |$)/gi, "");
+            const haystack = `${title}\n${userBody}`.toLowerCase();
+            const titleText = title.toLowerCase();
+            const currentLabels = new Set(issue.labels.map((label) => label.name));
+            const labelsToAdd = new Set();
+
+            if (![...currentLabels].some((label) => label.startsWith("status: "))) {
+              labelsToAdd.add("status: needs triage");
+            }
+
+            const typeRules = [
+              ["type: security-contact", /\[security contact\]|security contact request|minimal public summary/],
+              ["type: qa-regression", /\[qa\]|expected invariant|regression surface|what broke\?/],
+              ["type: documentation", /\[docs\]|page or file|documentation problem|broken link/],
+              ["type: feature", /\[feature\]|problem to solve|proposed behavior|data, safety, or automation impact/],
+              ["type: bug", /\[bug\]|what happened\?|expected behavior|reproduction steps/],
+              ["type: question", /\[question\]|question or support|contributor workflow/],
+            ];
+
+            for (const [label, pattern] of typeRules) {
+              if (pattern.test(haystack) && ![...currentLabels].some((existing) => existing.startsWith("type: "))) {
+                labelsToAdd.add(label);
+                break;
+              }
+            }
+
+            const areaRules = [
+              ["area: web", /web app|dashboard|jobs|apply review|artifacts|profile|settings|frontend|react|vite/],
+              ["area: api", /typescript api|api route|json-rpc|sse|server|read model|endpoint/],
+              ["area: cli-worker", /python worker|worker|cli|jobctrl doctor|temporal|automation engine/],
+              ["area: browser-extension", /browser extension|extension|capture|autofill|ats/],
+              ["area: docs", /documentation|docs site|readme|docs\//],
+              ["area: setup", /setup|install|pnpm dev:setup|environment|first run/],
+              ["area: github", /github workflow|github workflows|actions|ci|dco|pull request|issue template/],
+              ["area: security", /security|vulnerability|credential|secret|token|private contact/],
+            ];
+
+            for (const [label, pattern] of areaRules) {
+              if (pattern.test(haystack)) {
+                labelsToAdd.add(label);
+              }
+            }
+
+            if (/release blocker|blocks a public release|public release|first-run flow|source install/.test(haystack)) {
+              labelsToAdd.add("release: possible-blocker");
+            }
+
+            if (
+              labelsToAdd.has("type: security-contact") ||
+              /\b(security|vulnerability|secret|credential|token|api key|private data)\b/.test(titleText) ||
+              /\b(secret|credential|token|api key|private contact|exploit detail)\b/.test(haystack)
+            ) {
+              labelsToAdd.add("privacy: review-needed");
+            }
+
+            const finalLabels = [...labelsToAdd].filter((label) => !currentLabels.has(label));
+            for (const label of finalLabels) {
+              await ensureLabel(label);
+            }
+
+            if (finalLabels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issue.number,
+                labels: finalLabels,
+              });
+            }
