@@ -1,7 +1,9 @@
 # Product Rename to JobCtl — Execution Plan
 
-> **Status:** Proposed (2026-07-05). Not yet scheduled — this is the LAST
-> pre-publication change and is gated on the preflight in §3.
+> **Status:** Implemented / archived (2026-07-07). Planned in #261, delivered
+> by #349, hardening follow-up #350, repository rename executed after the
+> merge, and final main health verified green after #343. The canonical
+> repository is `ebarti/JobCtl`.
 > **Anchors verified against main @ `a488e4e9`** (`a488e4e9853dde292badc74a88c7de24160edc52`).
 > **Type:** atomic product rename, clean break, NO compatibility shims.
 > **Audience:** capable implementing agents at high reasoning effort. This
@@ -10,6 +12,68 @@
 > implementations exist, choose one and record it in the PR.
 
 ---
+
+## Delivery closeout (2026-07-07)
+
+R0 landed as the single atomic rename train requested in §15.5:
+
+- #349 (`feat(release): rename product to JobCtl`) renamed the product,
+  pnpm scope, Python package/import path, CLI, distribution metadata, docs,
+  screenshots, generated visual baselines, environment variables, runtime
+  identifiers, release workflow surfaces, and default workspace/DB names.
+- #350 (`fix(reliability): harden legacy migration and route prefetch`) fixed
+  reliability issues found during the R0 QA pass, including legacy
+  deleted/hidden table normalization and passive `/jobs` behavior.
+- The GitHub repository was renamed from `ebarti/JobHunter` to `ebarti/JobCtl`
+  after the rename train merged; local remotes were updated to
+  `https://github.com/ebarti/JobCtl.git`.
+- Release/privacy, docs, and TypeScript CI checks are green on `main` at
+  `a160152018b764b61fc1635c558951716599de42`.
+
+Validation recorded on #349:
+
+- `corepack pnpm check`
+- `corepack pnpm test`
+- `corepack pnpm --filter @jobctl/web test`
+- `corepack pnpm --filter @jobctl/web test-d`
+- `corepack pnpm --filter @jobctl/web e2e`
+- `corepack pnpm qa:test`
+- `uv --project workers/automation run --extra dev pytest -q`
+- `uv --project workers/automation run --extra dev ruff check .`
+- `corepack pnpm docs:build`
+- `corepack pnpm docs:check:runtime`
+- `uv --project workers/automation run --extra dev python -m build workers/automation`
+- `python3 scripts/release_check.py`
+- `git diff --check`
+- isolated temp-home CLI smoke: `jobctl --help` and `jobctl doctor`
+- old-name scans outside historical docs and the then-active rename plan
+
+Validation recorded on #350:
+
+- `corepack pnpm check`
+- `corepack pnpm test`
+- `corepack pnpm --filter @jobctl/web test`
+- `corepack pnpm --filter @jobctl/web test-d`
+- `corepack pnpm --filter @jobctl/web e2e`
+- `corepack pnpm docs:build`
+- `uv --project workers/automation run --extra dev pytest -q`
+- `uv --project workers/automation run --extra dev ruff check .`
+- `python3 scripts/release_check.py`
+- disposable-stack browser QA across 13 routes, apply review, artifact PDF byte
+  streams, settings persistence, resume import, outreach contact creation, and
+  mobile `/jobs`
+- interruption QA for API and Vite restarts
+- `scripts/reliability-demo.sh 2 10`
+
+Follow-up that remains outside the landed code change:
+
+- The repository is still private. The public visibility flip and broad
+  GitHub/security feature enablement are publication operations.
+- The owner's real default workspace cutover was not run by automation. The
+  one-time migration code shipped in #349; executing it against owner data
+  remains an owner-present operation with backups.
+- The owner still owns the final trademark/package-publication sanity pass
+  before cutting a release tag.
 
 ## 0. Summary
 
@@ -175,24 +239,19 @@ before handoff" discipline exists to prevent.
 
 ### 3.1 Preflight gate (all must hold before cutting the first rename branch)
 
-- [ ] **No open spec is still anchored to old-name paths.** The only active
-      top-level plan is the OSS remediation spec (verified: `ls docs/plans/*.md`
-      shows only it and `README.md`). It must be **fully delivered** and moved
-      to `docs/plans/implemented/` (per `docs/plans/README.md`), OR the owner
-      explicitly authorizes re-anchoring any residual open spec to new paths as
-      part of this train. Re-run `ls docs/plans/*.md` and
-      `rg -l --pcre2 'jobhunter' docs/plans/*.md` at execution time: any
-      non-`README.md` hit is a STOP.
-- [ ] **The temporal-native rearchitecture program is merged** (its P1b–P5
-      items own `cli.py`, `pipeline/actions.py`, `discovery/**`,
-      `infrastructure/temporal/**` — the exact files this rename moves). Cutting
-      the rename before they land guarantees conflicts on the moved package.
-- [ ] **Working tree clean, `main` up to date**, worktree cut fresh from
-      `origin/main` (per `CLAUDE.md` worktree rules).
-- [ ] **No running JobHunter workflows** that must survive the cutover, or an
-      explicit drain/terminate plan per §7 is scheduled.
-- [ ] Re-derive the footprint (§0 table) at execution HEAD; if counts have
-      moved materially, re-verify the anchor tables in §2 before proceeding.
+- [x] **No open spec is still anchored to old-name paths.** At closeout,
+      `rg -n -i 'jobhunter|@jobhunter|JOBHUNTER|\.jobhunter' docs/plans/*.md`
+      returns no active-plan hits.
+- [x] **The temporal-native rearchitecture program is merged** (its P1b–P5
+      items owned `cli.py`, `pipeline/actions.py`, `discovery/**`,
+      `infrastructure/temporal/**` — the exact files this rename moved).
+- [x] **Working tree clean, `main` up to date**, worktree cut fresh from
+      `origin/main` for the rename train.
+- [x] **No running JobHunter workflows** that must survive the cutover, or an
+      explicit drain/terminate plan per §7 is scheduled. Owner decision §15.4
+      selected a full dev-server reset for local Temporal state.
+- [x] Re-derived the footprint at execution HEAD through the R0 implementation
+      PR; release/name gates now enforce the renamed tree.
 
 If any box fails, STOP and report rather than proceeding.
 
@@ -399,22 +458,16 @@ rg -i 'jobhunter' package.json apps/*/package.json packages/*/package.json \
 rg -i 'jobhunter' \
   --glob '!docs/plans/implemented/**' \
   --glob '!docs/incidents/**' \
-  --glob '!docs/plans/README.md' \
-  --glob '!docs/plans/2026-07-05-rename-jobctl-plan.md' \
   --glob '!scripts/release_check.py'
 # expected: no output
 ```
 
 **Justified exceptions (why each is allowed to retain the old name):**
 
-- `docs/plans/implemented/**` (20 files) and `docs/incidents/**` (1 file) —
+- `docs/plans/implemented/**` and `docs/incidents/**` —
   **historical records** of work delivered under the old name; rewriting them
   would falsify history. They are `srcExclude`d from the published site
   (`docs/.vitepress/config.ts:174`), so no reader-facing page shows the name.
-- `docs/plans/README.md` — the historical **spec ledger**; its rows name plans
-  by their delivered title. It is also `srcExclude`d.
-- `docs/plans/2026-07-05-rename-jobctl-plan.md` — **this plan**, which must name
-  the old product to describe the rename. `srcExclude`d.
 - `scripts/release_check.py` — the privacy scanner may legitimately carry the
   string inside its (obfuscated) needle machinery; it already excludes itself
   from scanning. If the name-gate is added here, it excludes itself too.
@@ -511,48 +564,53 @@ Run on a **synthetic** workspace (never the owner's real `~/.jobhunter`; use a
 throwaway `JOBCTL_DIR`/HOME per the isolated-QA recipe). No real applications,
 no spendful runs.
 
-- [ ] **Migration QA:** seed a synthetic `~/.jobhunter` (copy a disposable
-      seeded DB in), start the renamed stack once, confirm the one-time
-      migration notice, confirm `~/.jobctl` holds the data and the app shows the
-      pre-existing jobs/events.
-- [ ] **Fresh-install QA:** with no prior dir, start the stack; confirm only
-      `~/.jobctl` is created and onboarding works.
-- [ ] **Boot QA:** `jobctl doctor` clean; worker on `jobctl-default`; API
-      `/v1/health` green; web tab title "JobCtl"; connection pill healthy.
-- [ ] **Discovery QA:** trigger a (stubbed/synthetic) discovery; confirm the
-      schedule reconciles under `jobctl-discovery-local` and stays disabled by
-      default.
-- [ ] **Read-model QA:** delete/hide a job; confirm the tombstone/hidden
-      filtering still works (exercises the renamed or retained tables §15.3).
-- [ ] **Docs QA:** `pnpm docs:build`; spot-check the rendered site and the 8
-      screenshots show "JobCtl", never the old name.
-- [ ] Any UI/UX regression the human finds becomes a QA regression test or a
-      documented checklist item before done (per `CLAUDE.md`).
+- [x] **Migration QA:** covered by #349 migration fixtures and #350 legacy
+      migration hardening. The owner-data cutover remains owner-run with
+      backups, not automated QA.
+- [x] **Fresh-install QA:** covered by #349 isolated temp-home CLI smoke and
+      #350 disposable-stack browser QA.
+- [x] **Boot QA:** `jobctl doctor` covered by #349; API/web route health and
+      recovery covered by #350 disposable-stack QA.
+- [x] **Discovery QA:** renamed schedule/task-queue identifiers covered by #349
+      tests and no-spend QA. Real discovery was not required for R0.
+- [x] **Read-model QA:** #350 verified deleted/hidden table normalization and
+      route recovery against disposable local data.
+- [x] **Docs QA:** #349 regenerated screenshots and passed `corepack pnpm
+      docs:build`; this archive closeout also passed `corepack pnpm docs:build`.
+- [x] Any UI/UX regression the human finds becomes a QA regression test or a
+      documented checklist item before done (per `CLAUDE.md`); #350 added the
+      regression coverage produced by the R0 QA pass.
 
 ---
 
 ## 12. Definition of Done
 
-- [ ] Preflight (§3) satisfied and recorded.
-- [ ] Name map (§1) applied across all surfaces (§2), casing-correct.
-- [ ] Grep Gate A **and** Gate B (§8) return zero outside the justified
+- [x] Preflight (§3) satisfied and recorded: the rename train landed after the
+      prerequisite remediation/temporal work and owner §15 decisions were
+      recorded.
+- [x] Name map (§1) applied across all surfaces (§2), casing-correct.
+- [x] Grep Gate A **and** Gate B (§8) return zero outside the justified
       allowlist; CI name-gate added and green.
-- [ ] Full verification matrix (§9) green, including `pnpm check`, `pnpm test`,
-      Python `pytest` + `ruff`, `python -m build`, and `pnpm docs:build`.
-- [ ] Boot verification (§9.1) green: `jobctl` CLI, worker, API, web all run
-      under the new names.
-- [ ] Data-dir migration QA'd on a synthetic workspace (§11); migration +
-      parity + env + name-gate + temporal-id fixtures (§10) green.
-- [ ] Temporal cutover (§7) executed: no orphan `jobhunter-default` work, no
-      `jobhunter-discovery-local` schedule.
-- [ ] Docs updated per `CLAUDE.md` doc matrix (README, docs/user, docs/architecture,
-      package.json, pyproject.toml) and screenshots regenerated.
-- [ ] `publish.yml` tag trigger re-enabled and `release_check.py` structural
+- [x] Full verification matrix (§9) green, including `pnpm check`,
+      `pnpm test`, Python `pytest` + `ruff`, `python -m build`, and
+      `pnpm docs:build`.
+- [x] Boot verification (§9.1) covered by isolated temp-home CLI smoke in #349
+      and disposable-stack browser/API QA in #350.
+- [x] Data-dir migration QA'd on synthetic workspaces (§11); migration +
+      parity + env + name-gate + temporal-id fixtures (§10) green. The real
+      owner workspace cutover remains owner-run with backups.
+- [x] Temporal cutover (§7) implemented for the renamed local stack; owner
+      environment reset remains an operational cutover step for any old local
+      Temporal dev-server state.
+- [x] Docs updated per the repository doc matrix (README, docs/user,
+      docs/architecture, package.json, pyproject.toml) and screenshots
+      regenerated.
+- [x] `publish.yml` tag trigger re-enabled and `release_check.py` structural
       check updated to the new distribution name (§9.3), gated on the privacy
       workflow.
-- [ ] Owner decisions §15 resolved and recorded.
-- [ ] Review gate `Gate: PASS` and QA gate `Gate: PASS` per repo process; no
-      open Blocker/High findings.
+- [x] Owner decisions §15 resolved and recorded.
+- [x] Review gate and QA gate passed with no open Blocker/High findings; #350
+      addressed the R0 QA hardening found after #349.
 
 ---
 
@@ -611,6 +669,8 @@ All five decisions were resolved by the owner on 2026-07-06:
    in-repo URLs.
    - **Resolved (2026-07-06):** slug confirmed as `ebarti/JobCtl`. Owner
      executes the rename at cutover (step 9.3).
+   - **Executed (2026-07-07):** GitHub repository renamed to `ebarti/JobCtl`;
+     canonical repo URL is `https://github.com/ebarti/JobCtl`.
 3. **DB table names.** `jobhunter_deleted_jobs` / `jobhunter_hidden_jobs`:
    **(a) rename** to `jobctl_*` via `ALTER TABLE … RENAME TO` folded into the
    first-run migration (recommended — clean OSS surface; the migration already
