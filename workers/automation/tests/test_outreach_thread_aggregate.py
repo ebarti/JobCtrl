@@ -20,19 +20,19 @@ import dataclasses
 
 import pytest
 
-from jobctl.domain.contact.outreach import (
+from jobctrl.domain.contact.outreach import (
     OutreachDraft,
     OutreachDraftKind,
     OutreachSendLog,
     OutreachThread,
 )
-from jobctl.domain.contact.outreach_gates import DraftGateResults
-from jobctl.domain.materials.value_objects import (
+from jobctrl.domain.contact.outreach_gates import DraftGateResults
+from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
     JudgeVerdict,
     ValidationResult,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 _JUDGE_PASS = JudgeVerdict.passed(score=0.95, criterion_scores={"evidence_support": 1.0})
 

@@ -1,4 +1,4 @@
-import { DOMAIN_EVENT_TYPES } from "@jobctl/domain-types";
+import { DOMAIN_EVENT_TYPES } from "@jobctrl/domain-types";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,

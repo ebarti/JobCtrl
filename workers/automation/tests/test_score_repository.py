@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import ensure_score_tables, get_jobs_by_stage, init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.scoring import (
+from jobctrl.database import ensure_score_tables, get_jobs_by_stage, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -34,22 +34,22 @@ from jobctl.domain.scoring import (
     ScoreTrace,
     ScoringCriteria,
 )
-from jobctl.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.scoring import (
+from jobctrl.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoreStalenessRepository,
     SqliteScoringPolicyRepository,
 )
-from jobctl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
-from jobctl.scoring.eval import build_scoring_governance_report
-from jobctl.state import set_stage_state
+from jobctrl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
+from jobctrl.scoring.eval import build_scoring_governance_report
+from jobctrl.state import set_stage_state
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     return init_db(db_path)
 
 

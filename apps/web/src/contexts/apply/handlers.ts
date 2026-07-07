@@ -6,7 +6,7 @@ import type {
   ApplyRunStarted,
   ApplySubmitIntended,
   EmailApplicationCandidateRecorded,
-} from "@jobctl/domain-types";
+} from "@jobctrl/domain-types";
 
 import { analyticsKeys } from "../operations/analyticsKeys.js";
 import { applyRunsKeys } from "../operations/applyRunsKeys.js";

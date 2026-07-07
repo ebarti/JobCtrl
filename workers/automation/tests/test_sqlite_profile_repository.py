@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import ensure_profile_tables
-from jobctl.domain.events.base import DomainEvent
-from jobctl.domain.profile.aggregate import InvalidProfileError, Profile
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
-from jobctl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
+from jobctrl.database import ensure_profile_tables
+from jobctrl.domain.events.base import DomainEvent
+from jobctrl.domain.profile.aggregate import InvalidProfileError, Profile
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 
 def _valid_profile() -> dict:
@@ -64,7 +64,7 @@ def _valid_profile() -> dict:
 
 
 def _new_repo(tmp_path: Path) -> tuple[SqliteProfileRepository, sqlite3.Connection, list[DomainEvent]]:
-    conn = sqlite3.connect(tmp_path / "jobctl.db")
+    conn = sqlite3.connect(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     ensure_profile_tables(conn)
     bus = InProcessEventBus()

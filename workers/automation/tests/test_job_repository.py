@@ -4,7 +4,7 @@ The repository sits on the existing wide ``jobs`` table (per migration
 plan §8 the per-aggregate table narrowing is deferred). These tests pin
 the discovery-column round-trip plus the soft-delete tombstone shape so
 the aggregate's ``deleted_at`` field stays consistent with the
-``jobctl_deleted_jobs`` table the API also writes to.
+``jobctrl_deleted_jobs`` table the API also writes to.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import sqlite3
 
 import pytest
 
-from jobctl.database import init_db, resurface_deleted_job
-from jobctl.domain.discovery import (
+from jobctrl.database import init_db, resurface_deleted_job
+from jobctrl.domain.discovery import (
     Employer,
     Job,
     JobMetadata,
@@ -22,15 +22,15 @@ from jobctl.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.discovery import SqliteJobRepository
-from jobctl.infrastructure.discovery.sqlite_repository import JobUrlConflict
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.discovery import SqliteJobRepository
+from jobctrl.infrastructure.discovery.sqlite_repository import JobUrlConflict
 
 
 @pytest.fixture
 def conn(tmp_path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     return init_db(db_path)
 
 
@@ -192,7 +192,7 @@ def test_soft_delete_writes_tombstone_row(conn: sqlite3.Connection) -> None:
     assert deleted is not None and deleted.is_deleted
 
     row = conn.execute(
-        "SELECT deleted_at, reason, restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+        "SELECT deleted_at, reason, restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
         (str(job.job_id),),
     ).fetchone()
     assert row is not None
@@ -239,7 +239,7 @@ def test_restore_clears_tombstone(conn: sqlite3.Connection) -> None:
 
     # Tombstone row carries restored_at (audit history preserved)
     row = conn.execute(
-        "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
         (str(job.job_id),),
     ).fetchone()
     assert row is not None
@@ -260,7 +260,7 @@ def test_resurface_deleted_job_clears_tombstone_and_records_event(conn: sqlite3.
     resurface_deleted_job(conn, str(job.job_id), resurfaced_at="2026-05-03T00:00:00+00:00")
 
     row = conn.execute(
-        "SELECT restored_at FROM jobctl_deleted_jobs WHERE job_url = ?",
+        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
         (str(job.job_id),),
     ).fetchone()
     assert row is not None

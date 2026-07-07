@@ -200,7 +200,7 @@ transport is an adapter concern behind the JSON-RPC transport adapter.
 
 | Environment | Transport Adapter | How it works |
 |---|---|---|
-| **Local-first** | `SubprocessJsonRpcAdapter` | TypeScript API spawns `uv run jobctl rpc` subprocess. Request written to stdin as JSON-RPC. Response read from stdout. Existing `local-actions.ts` pattern, formalized. |
+| **Local-first** | `SubprocessJsonRpcAdapter` | TypeScript API spawns `uv run jobctrl rpc` subprocess. Request written to stdin as JSON-RPC. Response read from stdout. Existing `local-actions.ts` pattern, formalized. |
 | **Cloud** | `HttpJsonRpcAdapter` | TypeScript API sends HTTP POST to Python worker service endpoint (`POST /rpc`). Same JSON-RPC body. Worker service is a FastAPI/Starlette app exposing the same handlers. |
 | **Cloud (async)** | `HttpJsonRpcAdapter` to Python workflow starter | For long-running stages, the TypeScript API sends the same JSON-RPC command to the Python worker service. The Python handler builds a workflow spec, starts Temporal behind its port, and returns the workflow handle. |
 
@@ -270,7 +270,7 @@ authority is a **plain TypeScript discriminated union** in
 `packages/domain-types/src/events/index.ts` (`DomainEventUnion`, currently 68
 event types enumerated in `DOMAIN_EVENT_TYPES`, guarded by a compile-time
 exhaustiveness check), mirrored byte-for-byte by the Python registry in
-`workers/automation/src/jobctl/domain/events/__init__.py`. This is **not**
+`workers/automation/src/jobctrl/domain/events/__init__.py`. This is **not**
 Zod and does **not** live in `packages/contracts`. At the SSE boundary the
 frontend validates each frame by set-membership on the known event types plus
 `JSON.parse` (`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by

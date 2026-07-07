@@ -1,5 +1,5 @@
-import type { OutreachThreadResponse } from "@jobctl/contracts";
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import type { OutreachThreadResponse } from "@jobctrl/contracts";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import type { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { waitFor } from "@testing-library/react";

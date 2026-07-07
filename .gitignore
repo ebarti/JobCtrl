@@ -7,7 +7,7 @@ resume.pdf
 !.env.example
 
 # Runtime artifacts
-.jobctl-e2e-state.json
+.jobctrl-e2e-state.json
 *.db
 *.db-shm
 *.db-wal

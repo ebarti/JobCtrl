@@ -1,4 +1,4 @@
-import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctl/contracts";
+import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
@@ -114,7 +114,7 @@ function OutreachThreadBody({
       <div className="outreach-send-log">
         <h4>Sends</h4>
         <p className="muted">
-          JobCtl never sends outreach. After you send an approved message yourself, record it
+          JobCtrl never sends outreach. After you send an approved message yourself, record it
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />

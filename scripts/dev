@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dev — JobCtl local dev fleet launcher.
+# scripts/dev — JobCtrl local dev fleet launcher.
 #
 # Runs or daemonizes temporal / api / web / worker, tracks each by PID file
 # under .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEV_DIR="${JOBCTL_DEV_DIR:-$ROOT/.dev}"
+DEV_DIR="${JOBCTRL_DEV_DIR:-$ROOT/.dev}"
 PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
 mkdir -p "$PID_DIR" "$LOG_DIR"
@@ -33,10 +33,10 @@ process_names() { echo "temporal api web worker"; }
 
 process_command() {
   case "$1" in
-    temporal) echo 'temporal server start-dev --db-filename "$JOBCTL_TEMPORAL_DB"' ;;
-    api)      echo "pnpm --filter @jobctl/api dev" ;;
-    web)      echo 'pnpm --filter @jobctl/web exec vite --host 127.0.0.1 --port "$JOBCTL_WEB_PORT"' ;;
-    worker)   echo "uv --project workers/automation run jobctl worker" ;;
+    temporal) echo 'temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"' ;;
+    api)      echo "pnpm --filter @jobctrl/api dev" ;;
+    web)      echo 'pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
+    worker)   echo "uv --project workers/automation run jobctrl worker" ;;
     *)        return 1 ;;
   esac
 }
@@ -101,26 +101,43 @@ is_alive_pid() {
 }
 
 migrate_default_workspace() {
-  [[ -z "${JOBCTL_DIR:-}" ]] || return 0
-  local legacy_token legacy_dir current_dir lock_dir suffix legacy_db current_db
-  legacy_token="job""hunter"
-  legacy_dir="$HOME/.${legacy_token}"
-  current_dir="$HOME/.jobctl"
-  lock_dir="$HOME/.jobctl-migration.lock"
+  [[ -z "${JOBCTRL_DIR:-}" ]] || return 0
+  local legacy_token legacy_dir current_dir lock_dir suffix legacy_db current_db candidate_token candidate_dir
+  local legacy_tokens=("job""ctl" "job""hunter")
+  current_dir="$HOME/.jobctrl"
+  lock_dir="$HOME/.jobctrl-migration.lock"
+  legacy_token=""
+  legacy_dir=""
 
-  if [[ -e "$current_dir" && -e "$legacy_dir" ]]; then
+  for candidate_token in "${legacy_tokens[@]}"; do
+    candidate_dir="$HOME/.${candidate_token}"
+    [[ -e "$candidate_dir" ]] || continue
+    legacy_token="$candidate_token"
+    legacy_dir="$candidate_dir"
+    break
+  done
+
+  if [[ -e "$current_dir" && -n "$legacy_dir" ]]; then
     echo "dev: refusing to move legacy workspace because $current_dir already exists" >&2
     return 1
   fi
-  if [[ -e "$current_dir" || ! -e "$legacy_dir" ]]; then
+  if [[ -e "$current_dir" || -z "$legacy_dir" ]]; then
     return 0
   fi
+
+  for suffix in "" "-wal" "-shm"; do
+    legacy_db="$legacy_dir/${legacy_token}.db${suffix}"
+    current_db="$legacy_dir/jobctrl.db${suffix}"
+    [[ -e "$legacy_db" && -e "$current_db" ]] || continue
+    echo "dev: refusing to overwrite existing database file: $current_db" >&2
+    return 1
+  done
 
   if ! mkdir "$lock_dir" 2>/dev/null; then
     if [[ -e "$current_dir" ]]; then
       return 0
     fi
-    echo "dev: another JobCtl workspace migration is in progress; retry after it completes" >&2
+    echo "dev: another JobCtrl workspace migration is in progress; retry after it completes" >&2
     return 1
   fi
 
@@ -128,7 +145,7 @@ migrate_default_workspace() {
     mv "$legacy_dir" "$current_dir"
     for suffix in "" "-wal" "-shm"; do
       legacy_db="$current_dir/${legacy_token}.db${suffix}"
-      current_db="$current_dir/jobctl.db${suffix}"
+      current_db="$current_dir/jobctrl.db${suffix}"
       [[ -e "$legacy_db" ]] || continue
       if [[ -e "$current_db" ]]; then
         rmdir "$lock_dir" 2>/dev/null || true
@@ -162,9 +179,9 @@ wait_pids_gone() {
 stop_pid_tree() {
   local pid="$1"
   local pids target
-  local wait_ticks="${JOBCTL_STOP_WAIT_TICKS:-50}"
-  local wait_interval="${JOBCTL_STOP_WAIT_INTERVAL_SECONDS:-0.1}"
-  local kill_wait_ticks="${JOBCTL_KILL_WAIT_TICKS:-20}"
+  local wait_ticks="${JOBCTRL_STOP_WAIT_TICKS:-50}"
+  local wait_interval="${JOBCTRL_STOP_WAIT_INTERVAL_SECONDS:-0.1}"
+  local kill_wait_ticks="${JOBCTRL_KILL_WAIT_TICKS:-20}"
   pids=$(collect_tree_pids "$pid" | awk '/^[0-9]+$/ && $1 > 0 && !seen[$1]++')
   for target in $pids; do
     kill -TERM "$target" 2>/dev/null || true
@@ -199,7 +216,7 @@ ensure_not_running() {
 # observability and optional local UI integrations in the dev fleet.
 load_env_file() {
   local env_file
-  for env_file in "$HOME/.jobctl/.env" "$ROOT/.env" "${JOBCTL_USER_ENV_PATH:-$HOME/JobCtl/.env}"; do
+  for env_file in "$HOME/.jobctrl/.env" "$ROOT/.env" "${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"; do
     [[ -f "$env_file" ]] || continue
     set -a
     # shellcheck disable=SC1090,SC1091
@@ -209,13 +226,13 @@ load_env_file() {
 }
 
 set_default_env() {
-  export JOBCTL_DIR="${JOBCTL_DIR:-$HOME/.jobctl}"
-  export JOBCTL_API_HOST="${JOBCTL_API_HOST:-127.0.0.1}"
-  export JOBCTL_API_PORT="${JOBCTL_API_PORT:-8766}"
-  export VITE_JOBCTL_API_BASE_URL="${VITE_JOBCTL_API_BASE_URL:-http://${JOBCTL_API_HOST}:${JOBCTL_API_PORT}}"
-  export JOBCTL_WEB_PORT="${JOBCTL_WEB_PORT:-5173}"
-  export JOBCTL_TEMPORAL_DB="${JOBCTL_TEMPORAL_DB:-$DEV_DIR/temporal/temporal.db}"
-  mkdir -p "$(dirname "$JOBCTL_TEMPORAL_DB")"
+  export JOBCTRL_DIR="${JOBCTRL_DIR:-$HOME/.jobctrl}"
+  export JOBCTRL_API_HOST="${JOBCTRL_API_HOST:-127.0.0.1}"
+  export JOBCTRL_API_PORT="${JOBCTRL_API_PORT:-8766}"
+  export VITE_JOBCTRL_API_BASE_URL="${VITE_JOBCTRL_API_BASE_URL:-http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}}"
+  export JOBCTRL_WEB_PORT="${JOBCTRL_WEB_PORT:-5173}"
+  export JOBCTRL_TEMPORAL_DB="${JOBCTRL_TEMPORAL_DB:-$DEV_DIR/temporal/temporal.db}"
+  mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")"
 }
 
 start_detached_command() {
@@ -297,8 +314,8 @@ read_log_url() {
 
 wait_for_log_url() {
   local file="$1" pattern="$2"
-  local ticks="${JOBCTL_BINDING_WAIT_TICKS:-50}"
-  local interval="${JOBCTL_BINDING_WAIT_INTERVAL_SECONDS:-0.1}"
+  local ticks="${JOBCTRL_BINDING_WAIT_TICKS:-50}"
+  local interval="${JOBCTRL_BINDING_WAIT_INTERVAL_SECONDS:-0.1}"
   local i url
   for i in $(seq 1 "$ticks"); do
     url=$(read_log_url "$file" "$pattern")
@@ -319,7 +336,7 @@ print_binding_for() {
       if [[ -n "$url" ]]; then
         echo "api: $url"
       else
-        echo "api: http://${JOBCTL_API_HOST}:${JOBCTL_API_PORT} (configured)"
+        echo "api: http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT} (configured)"
       fi
       ;;
     web)
@@ -330,7 +347,7 @@ print_binding_for() {
       if [[ -n "$url" ]]; then
         echo "web: $url"
       else
-        echo "web: http://127.0.0.1:${JOBCTL_WEB_PORT}/ (requested; startup log pending)"
+        echo "web: http://127.0.0.1:${JOBCTRL_WEB_PORT}/ (requested; startup log pending)"
       fi
       ;;
     temporal)
@@ -483,7 +500,7 @@ worker_health_status() {
   local payload status
   payload=$(
     curl -fsS --max-time 1 \
-      "http://${JOBCTL_API_HOST}:${JOBCTL_API_PORT}/v1/health" 2>/dev/null || true
+      "http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}/v1/health" 2>/dev/null || true
   )
   if [[ -z "$payload" ]]; then
     echo "unknown"
@@ -498,7 +515,6 @@ worker_health_status() {
 }
 
 cmd_status() {
-  migrate_default_workspace
   load_env_file
   set_default_env
   printf "%-10s %-8s %-8s %-10s %s\n" NAME STATE PID HEALTH LOG

@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 
-from jobctl.domain.rpc.messages import (
+from jobctrl.domain.rpc.messages import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -13,7 +13,7 @@ from jobctl.domain.rpc.messages import (
     PARSE_ERROR,
     JsonRpcRequest,
 )
-from jobctl.infrastructure.rpc.server import JsonRpcServer, invalid_params
+from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 
 
 def _request(method: str, params=None, rid: int | str | None = 1) -> JsonRpcRequest:

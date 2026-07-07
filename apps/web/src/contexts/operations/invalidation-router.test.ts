@@ -1,4 +1,4 @@
-import { LOCAL_TENANT, type DomainEventUnion } from "@jobctl/domain-types";
+import { LOCAL_TENANT, type DomainEventUnion } from "@jobctrl/domain-types";
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

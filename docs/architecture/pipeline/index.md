@@ -1,6 +1,6 @@
 # Job Pipeline
 
-"The pipeline" is the life of one job posting inside JobCtl: from the moment
+"The pipeline" is the life of one job posting inside JobCtrl: from the moment
 discovery finds a posting, through enrichment, scoring, and tailored resume and
 cover-letter generation, to a supervised apply and the feedback that comes back.
 This overview page holds the product stage shape, the execution surfaces that
@@ -67,7 +67,7 @@ the first actionable row, the list projection advances the product stage to
 ## Execution Surfaces
 
 Every surface builds the same kind of workflow start spec and starts a workflow
-on the JobCtl task queue. They differ only in which entry point is used and
+on the JobCtrl task queue. They differ only in which entry point is used and
 which workflow is selected.
 
 | Surface | Entry point | What it starts |
@@ -76,15 +76,15 @@ which workflow is selected.
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
 | Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |
-| CLI | `jobctl <command>` | Builds the same spec, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobctl discover` / `run discover` is the normal path; `score`/`tailor`/`cover` are maintenance commands. |
-| Temporal schedule | `jobctl-discovery-local` | Optional cron schedule that starts `DiscoverWorkflow`. Off by default (see [Discovery Schedule](operations.md#discovery-schedule)). |
+| CLI | `jobctrl <command>` | Builds the same spec, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobctrl discover` / `run discover` is the normal path; `score`/`tailor`/`cover` are maintenance commands. |
+| Temporal schedule | `jobctrl-discovery-local` | Optional cron schedule that starts `DiscoverWorkflow`. Off by default (see [Discovery Schedule](operations.md#discovery-schedule)). |
 
 ### Entry Points → JSON-RPC → Workflow Selection
 
 The TypeScript API never runs pipeline logic itself. It maps UI/CLI intent to a JSON-RPC
-method over a long-lived `jobctl rpc` subprocess (stdin/stdout, one JSON
+method over a long-lived `jobctrl rpc` subprocess (stdin/stdout, one JSON
 envelope per line). The method registry in
-`workers/automation/src/jobctl/infrastructure/rpc/handlers.py` marks each
+`workers/automation/src/jobctrl/infrastructure/rpc/handlers.py` marks each
 method as either `mode="workflow"` (start a workflow, return its ids) or
 `mode="sync"` (run inline, return the result). The server also supports a
 `streaming` generator mode; no default method currently uses it.
@@ -102,7 +102,7 @@ method as either `mode="workflow"` (start a workflow, return its ids) or
 | `cancel_run` | sync | none (issues a Temporal cancel to a running handle) |
 
 Workflow selection for `run_stage` lives in
-`workers/automation/src/jobctl/workflow_specs.py`
+`workers/automation/src/jobctrl/workflow_specs.py`
 (`build_run_stage_workflow_spec` and `build_apply_workflow_spec`).
 
 ### Async vs Sync (202 vs 200)
@@ -130,7 +130,7 @@ sequenceDiagram
     participant User
     participant Web as Web UI
     participant Api as TypeScript API (Fastify)
-    participant Rpc as jobctl rpc (JSON-RPC)
+    participant Rpc as jobctrl rpc (JSON-RPC)
     participant T as Temporal
     participant WF as Workflow (worker)
     participant DB as SQLite
@@ -152,7 +152,7 @@ sequenceDiagram
 ## Workflow Catalog
 
 Six workflows are registered in
-`workers/automation/src/jobctl/infrastructure/temporal/registry.py`
+`workers/automation/src/jobctrl/infrastructure/temporal/registry.py`
 (`WORKFLOWS`). All timeouts and retry policies below are set at the workflow's
 activity call sites.
 
@@ -207,37 +207,37 @@ Primary implementation files (repo-relative):
 - `apps/api/src/json-rpc-adapter.ts` — long-lived subprocess JSON-RPC adapter.
 - `apps/api/src/projections.ts` — TS projection builder (`refreshProjections`).
 - `packages/domain-types/src/events/` — the 68-type `DomainEventType` union.
-- `workers/automation/src/jobctl/infrastructure/rpc/handlers.py` — JSON-RPC
+- `workers/automation/src/jobctrl/infrastructure/rpc/handlers.py` — JSON-RPC
   method registry (workflow vs sync modes).
-- `workers/automation/src/jobctl/workflow_specs.py` — `run_stage` / `apply`
+- `workers/automation/src/jobctrl/workflow_specs.py` — `run_stage` / `apply`
   workflow selection and deterministic IDs.
-- `workers/automation/src/jobctl/infrastructure/temporal/registry.py` — the
+- `workers/automation/src/jobctrl/infrastructure/temporal/registry.py` — the
   six workflows and nineteen activities.
-- `workers/automation/src/jobctl/infrastructure/temporal/finalize.py` — the
+- `workers/automation/src/jobctrl/infrastructure/temporal/finalize.py` — the
   workflow envelope (`record_workflow_started` / `record_workflow_outcome`).
-- `workers/automation/src/jobctl/infrastructure/temporal/run_in_activity.py`
+- `workers/automation/src/jobctrl/infrastructure/temporal/run_in_activity.py`
   — `run_blocking_with_heartbeat`.
-- `workers/automation/src/jobctl/infrastructure/temporal/runtime_guard.py` —
+- `workers/automation/src/jobctrl/infrastructure/temporal/runtime_guard.py` —
   `assert_activity_runtime`.
-- `workers/automation/src/jobctl/discovery/workflow.py`,
+- `workers/automation/src/jobctrl/discovery/workflow.py`,
   `.../discovery/activities.py` — `DiscoverWorkflow` and its four activities.
-- `workers/automation/src/jobctl/pipeline/workflow.py` — `JobPipelineWorkflow`.
-- `workers/automation/src/jobctl/pipeline/preparation.py` — target derivation
+- `workers/automation/src/jobctrl/pipeline/workflow.py` — `JobPipelineWorkflow`.
+- `workers/automation/src/jobctrl/pipeline/preparation.py` — target derivation
   and root preparation fan-out.
-- `workers/automation/src/jobctl/preparation/workflow.py` —
+- `workers/automation/src/jobctrl/preparation/workflow.py` —
   `JobPreparationWorkflow`.
-- `workers/automation/src/jobctl/apply/workflow.py`,
+- `workers/automation/src/jobctrl/apply/workflow.py`,
   `.../apply/activities.py`, `.../apply/launcher.py` — apply workflow, activity,
   and browser/agent launcher (safety invariants).
-- `workers/automation/src/jobctl/contact/workflow.py`,
+- `workers/automation/src/jobctrl/contact/workflow.py`,
   `.../contact/activities.py` — `ContactResearchWorkflow` and its single
   source-family research activity (Contact & Outreach, supervised research).
-- `workers/automation/src/jobctl/scoring/` and `.../domain/scoring/` — scoring
+- `workers/automation/src/jobctrl/scoring/` and `.../domain/scoring/` — scoring
   runner, employer-analysis ensemble, BM25 retrieval, `chat_json` scoring.
-- `workers/automation/src/jobctl/llm.py` — httpx `LLMClient`,
+- `workers/automation/src/jobctrl/llm.py` — httpx `LLMClient`,
   `check_spend_budget`, and the `llm_spend` ledger.
-- `workers/automation/src/jobctl/domain/errors.py` — the error taxonomy.
-- `workers/automation/src/jobctl/cli.py` — `worker`, `rpc`, the worker
+- `workers/automation/src/jobctrl/domain/errors.py` — the error taxonomy.
+- `workers/automation/src/jobctrl/cli.py` — `worker`, `rpc`, the worker
   heartbeat/reconciler loop, and `_reconcile_discovery_schedule`.
-- `workers/automation/src/jobctl/infrastructure/projections/` — Python
+- `workers/automation/src/jobctrl/infrastructure/projections/` — Python
   projection builders.

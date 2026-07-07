@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobctl.domain.events import (
+from jobctrl.domain.events import (
     ContentDuplicateCandidateDetectedPayload,
     JobActiveStateChangedPayload,
     PostingContentSnapshotCapturedPayload,
@@ -12,7 +12,7 @@ from jobctl.domain.events import (
     create_posting_content_snapshot_captured,
     create_posting_content_snapshot_failed,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 NOW = "2026-05-13T00:00:00+00:00"

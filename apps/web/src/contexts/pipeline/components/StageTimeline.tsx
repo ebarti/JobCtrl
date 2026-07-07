@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { StageSummary } from "@jobctl/contracts";
+import type { StageSummary } from "@jobctrl/contracts";
 
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";

@@ -1,7 +1,7 @@
 /**
  * normalizeJobLocation — canonical location normalization for the read-model
  * projections. Mirrored in Python at
- * workers/automation/src/jobctl/infrastructure/projections/location_normalization.py.
+ * workers/automation/src/jobctrl/infrastructure/projections/location_normalization.py.
  *
  * The TS and Python projection builders both write ``job_list_projections.location``
  * and MUST produce byte-identical output. Keep this module in lockstep with the

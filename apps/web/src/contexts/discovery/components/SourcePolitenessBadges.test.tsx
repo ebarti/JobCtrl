@@ -1,4 +1,4 @@
-import type { SourcePolitenessOutcomes } from "@jobctl/contracts";
+import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

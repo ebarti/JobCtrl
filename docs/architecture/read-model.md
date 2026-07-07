@@ -93,7 +93,7 @@ rewound to `pending`.
 Apply Review resume edits are modeled as a local feedback/draft layer in the
 TypeScript API, not as direct writes to the Materials aggregate. The generated
 HTML/CSS resume is loaded into a Plate editor; saved revisions, line edit
-deltas, JobCtl comment threads, user replies, and feedback signals are
+deltas, JobCtrl comment threads, user replies, and feedback signals are
 persisted in `resume_review_*` / `tailoring_feedback_signals` tables. A render
 promotion validates the saved draft, creates a new `job_materials` generation
 with replacement `tailored_resume` and `resume_pdf` artifacts plus layout boxes,
@@ -102,7 +102,7 @@ artifacts remain visible until that replacement generation is written, so failed
 validation or render attempts do not destroy reviewable materials.
 
 Gmail outcome feedback is implemented in
-`workers/automation/src/jobctl/infrastructure/gmail/feedback.py`, separate
+`workers/automation/src/jobctrl/infrastructure/gmail/feedback.py`, separate
 from the verification-only Gmail MCP server. The scanner reuses the readonly
 Gmail OAuth/client support but searches only bounded post-application windows
 for known SQLite application anchors. Candidate queries combine the recipient
@@ -260,7 +260,7 @@ Company-role market compensation estimates are persisted in
 `job_market_compensation_estimates` before inspection. Estimates are
 deterministic local facts derived from configured reported compensation feeds for
 Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from employer-posted
-salary facts already captured by JobCtl.
+salary facts already captured by JobCtrl.
 Euro Top Tech rows are treated as public community-reported EUR/year total
 compensation observations; Levels.fyi and Glassdoor rows are loaded only when a
 permitted source-policy mode and feed path or URL are configured.

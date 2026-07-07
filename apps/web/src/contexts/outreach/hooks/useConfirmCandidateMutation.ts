@@ -1,7 +1,7 @@
 import type {
   ConfirmContactCandidateRequest,
   ConfirmContactCandidateResponse,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";

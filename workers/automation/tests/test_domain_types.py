@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobctl.domain.tenant import TenantId, LOCAL_TENANT
-from jobctl.domain.identifiers import JobId, generate_job_id
-from jobctl.domain.pipeline_types import (
+from jobctrl.domain.tenant import TenantId, LOCAL_TENANT
+from jobctrl.domain.identifiers import JobId, generate_job_id
+from jobctrl.domain.pipeline_types import (
     Stage,
     STAGES,
     STAGE_STATE_KINDS,
@@ -23,7 +23,7 @@ from jobctl.domain.pipeline_types import (
     serialize_stage_state,
     deserialize_stage_state_kind,
 )
-from jobctl.state import STAGE_ORDER
+from jobctrl.state import STAGE_ORDER
 
 import pytest
 

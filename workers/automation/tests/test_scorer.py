@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.database import init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -24,8 +24,8 @@ from jobctl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctl.domain.profile.aggregate import Profile
-from jobctl.domain.scoring import (
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.scoring import (
     EligibilityAssessment,
     FitScore,
     JobScore,
@@ -36,15 +36,15 @@ from jobctl.domain.scoring import (
     ScoreTrace,
     WeightedScoreDimension,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.scoring import (
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
-from jobctl.infrastructure.materials import SqliteEmployerAnalysisRepository
-from jobctl.scoring import scorer as scorer_module
-from jobctl.state import set_stage_state
+from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
+from jobctrl.scoring import scorer as scorer_module
+from jobctrl.state import set_stage_state
 
 
 class _ScriptedLlm:
@@ -134,7 +134,7 @@ class _FailingAnalyzeUseCase:
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     return init_db(db_path)
 
 
@@ -212,8 +212,8 @@ def _seed_pending_job_with_description(
 
 @pytest.fixture()
 def profile_snapshot(tmp_path):
-    from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
-    from jobctl.infrastructure.profile.factory import build_profile_repository
+    from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+    from jobctrl.infrastructure.profile.factory import build_profile_repository
 
     profile = {
         "personal": {"full_name": "Tester"},
@@ -225,7 +225,7 @@ def profile_snapshot(tmp_path):
         },
     }
     bus = InProcessEventBus()
-    repo = build_profile_repository(db_path=tmp_path / "jobctl.db", publisher=bus)
+    repo = build_profile_repository(db_path=tmp_path / "jobctrl.db", publisher=bus)
     repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
     return repo.load_snapshot(LOCAL_TENANT)
 

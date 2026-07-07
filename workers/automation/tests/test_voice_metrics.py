@@ -10,7 +10,7 @@ are pure and reproducible (no LLM), so they can gate output without a model.
 
 from __future__ import annotations
 
-from jobctl.domain.materials.voice_metrics import (
+from jobctrl.domain.materials.voice_metrics import (
     VoiceMetrics,
     compute_voice_metrics,
     measure_voice_delta,

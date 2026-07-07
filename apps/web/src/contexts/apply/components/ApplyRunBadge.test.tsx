@@ -1,4 +1,4 @@
-import { APPLY_RUN_STATUSES } from "@jobctl/domain-types";
+import { APPLY_RUN_STATUSES } from "@jobctrl/domain-types";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

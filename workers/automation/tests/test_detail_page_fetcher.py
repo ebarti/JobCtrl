@@ -11,8 +11,8 @@ verifies.
 
 from __future__ import annotations
 
-from jobctl.domain.enrichment import DetailPage
-from jobctl.domain.ports.enrichment import DetailPageFetcherPort
+from jobctrl.domain.enrichment import DetailPage
+from jobctrl.domain.ports.enrichment import DetailPageFetcherPort
 
 
 class FakeFetcher(DetailPageFetcherPort):

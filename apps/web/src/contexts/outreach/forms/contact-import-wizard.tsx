@@ -1,4 +1,4 @@
-import { ContactImportRequestSchema, type ContactImportRequest } from "@jobctl/contracts";
+import { ContactImportRequestSchema, type ContactImportRequest } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useMemo, useState } from "react";
 

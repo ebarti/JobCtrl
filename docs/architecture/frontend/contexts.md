@@ -242,7 +242,7 @@ preview the rendered resume PDF.
 **Ubiquitous language** (matches Candidate Profile):
 - **Profile** — the candidate document.
 - **Preferences** — application defaults, target-role strategy, tailoring
-  controls, and resume-rendering preferences that affect how JobCtl acts
+  controls, and resume-rendering preferences that affect how JobCtrl acts
   for the candidate.
 - **ExperienceEntry**, **EducationEntry**, **SkillCategory** — child
   entities.
@@ -473,7 +473,7 @@ the SSE subscription that fans events out to invalidate query keys.
   summary via `select`, and per-run live events are patched onto
   `applyRunsKeys.detail(...)` by the invalidation router (§7.5).
 - Re-export projection and API response types (sourced from
-  `@jobctl/domain-types` via `@jobctl/contracts`) through
+  `@jobctrl/domain-types` via `@jobctrl/contracts`) through
   `contexts/operations/types.ts` so feature contexts and views can import
   them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
 

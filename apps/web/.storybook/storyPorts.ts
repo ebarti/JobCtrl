@@ -1,4 +1,4 @@
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import { FetchApiClientAdapter } from "../src/shared/adapters/local/FetchApiClientAdapter.js";
 import type {

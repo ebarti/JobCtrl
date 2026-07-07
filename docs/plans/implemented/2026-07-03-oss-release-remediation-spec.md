@@ -192,8 +192,8 @@ PII-clean per §0.2.
   gate exists because one historical artifact is security-relevant, not
   merely private.
 - **Naming (updated 2026-07-05, supersedes the original W2.1 plan):** the
-  product's final name is `JobCtl`. The full rename — repo name, product
-  strings, console script, PyPI distribution name `jobctl`, docs sweep —
+  product's final name is `JobCtrl`. The full rename — repo name, product
+  strings, console script, PyPI distribution name `jobctrl`, docs sweep —
   is an owner-executed rename train that lands AFTER every W-item and
   BEFORE the visibility flip, deliberately last because a rename
   invalidates the path/symbol anchors this spec navigates by. Until that
@@ -1092,8 +1092,8 @@ first tag. Assemble this checklist, with links, as the final deliverable.
 - [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
 - [ ] Rename train executed (owner-side, after all W-items): full
-      `JobHunter` → `JobCtl` rename; `workers/automation/pyproject.toml`
-      distribution name `jobctl` (reserved on PyPI via owner placeholder;
+      `JobHunter` → `JobCtrl` rename; `workers/automation/pyproject.toml`
+      distribution name `jobctrl` (reserved on PyPI via owner placeholder;
       re-verify before first publish); `publish.yml` tag trigger
       re-enabled and gated on the release-check workflow; W0.3 structural
       check updated/retired.

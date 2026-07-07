@@ -21,26 +21,26 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.database import init_db
-from jobctl.discovery import smartextract, workday
-from jobctl.discovery.jobspy import DiscoveryCancelled, run_discovery
-from jobctl.domain.errors import (
+from jobctrl.database import init_db
+from jobctrl.discovery import smartextract, workday
+from jobctrl.discovery.jobspy import DiscoveryCancelled, run_discovery
+from jobctrl.domain.errors import (
     AuthenticationError,
     BrowserTransientError,
     ConfigurationError,
-    JobCtlError,
+    JobCtrlError,
     LlmTransientError,
     MissingInputError,
     SourceUnavailableError,
     TransientNetworkError,
     to_application_error,
 )
-from jobctl.enrichment.activities import EnrichActivityInput, EnrichActivityOutput, enrich_activity
-from jobctl.infrastructure.discovery import production_wiring
-from jobctl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
-from jobctl.materials.activities import TailorActivityInput, TailorActivityOutput, tailor_activity
-from jobctl.pipeline import runner as pipeline_runner
-from jobctl.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
+from jobctrl.enrichment.activities import EnrichActivityInput, EnrichActivityOutput, enrich_activity
+from jobctrl.infrastructure.discovery import production_wiring
+from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+from jobctrl.materials.activities import TailorActivityInput, TailorActivityOutput, tailor_activity
+from jobctrl.pipeline import runner as pipeline_runner
+from jobctrl.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
 
 _P1B_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
@@ -146,7 +146,7 @@ _ACTIVITY_CASES = (
 
 
 def test_error_taxonomy_maps_to_temporal_application_errors() -> None:
-    cases: tuple[tuple[type[JobCtlError], str, bool], ...] = (
+    cases: tuple[tuple[type[JobCtrlError], str, bool], ...] = (
         (ConfigurationError, "configuration", True),
         (AuthenticationError, "authentication", True),
         (MissingInputError, "missing_input", True),
@@ -186,7 +186,7 @@ async def test_activity_wrapper_configuration_error_is_non_retryable(case: _Acti
         raise ConfigurationError("missing local config")
 
     queue = f"p1b-{case.name}-config-{uuid.uuid4()}"
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -222,7 +222,7 @@ async def test_activity_wrapper_transient_error_retries_then_succeeds(case: _Act
         return _OK_OBSERVED
 
     queue = f"p1b-{case.name}-transient-{uuid.uuid4()}"
-    with patch("jobctl.pipeline.runner._run_stage_observed", side_effect=_transient_then_ok):
+    with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_transient_then_ok):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
                 env.client,
@@ -278,11 +278,11 @@ async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
     release = threading.Event()
     cancel_event = threading.Event()
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.activity.heartbeat",
+        "jobctrl.infrastructure.temporal.run_in_activity.activity.heartbeat",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "jobctl.infrastructure.temporal.run_in_activity.activity.info",
+        "jobctrl.infrastructure.temporal.run_in_activity.activity.info",
         lambda: SimpleNamespace(activity_type="p1b_test_activity"),
     )
 
@@ -299,9 +299,9 @@ async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
         )
 
     with patch(
-        "jobctl.infrastructure.temporal.run_in_activity._record_abandoned_thread_metric",
+        "jobctrl.infrastructure.temporal.run_in_activity._record_abandoned_thread_metric",
     ) as metric_mock:
-        with caplog.at_level(logging.WARNING, logger="jobctl.infrastructure.temporal.run_in_activity"):
+        with caplog.at_level(logging.WARNING, logger="jobctrl.infrastructure.temporal.run_in_activity"):
             task = asyncio.create_task(_drive())
             await asyncio.sleep(0.05)
             task.cancel()

@@ -150,14 +150,14 @@ streams from the current tail (no backfill).
 
 ### 7.2 Typed Event Schemas
 
-The event taxonomy lives in `@jobctl/domain-types` at
+The event taxonomy lives in `@jobctrl/domain-types` at
 `packages/domain-types/src/events/`. It is a **plain TypeScript
 discriminated union** — there is no Zod. `DomainEvent<T, P>` is the generic
 base interface (its `eventType` field is the discriminant); the union of
 all 69 concrete events is `DomainEventUnion`, with
 `DomainEventType = DomainEventUnion["eventType"]` and a runtime companion
 array `DOMAIN_EVENT_TYPES` (kept exhaustive against `DomainEventType` by a
-compile-time assertion). `@jobctl/domain-types` has no `zod` dependency.
+compile-time assertion). `@jobctrl/domain-types` has no `zod` dependency.
 
 The frontend's `parseDomainEvent(rawFrame)` (in
 `shared/ports/lib/parseDomainEvent.ts`) validates only that the SSE frame's
@@ -259,12 +259,12 @@ Two layers, both required:
 1. **Compile-time:** the `handlers` map is typed
    `Record<DomainEventType, InvalidationHandler>`. Adding a new
    variant to the discriminated union in
-   `@jobctl/domain-types/events/` (mirroring a new backend event type)
+   `@jobctrl/domain-types/events/` (mirroring a new backend event type)
    is a TypeScript compile error in `apps/web` until a handler is wired.
    This is the *primary* guard.
 2. **Runtime parity test:**
    `contexts/operations/every-event-has-handler.test.ts` iterates the
-   runtime `DOMAIN_EVENT_TYPES` array (from `@jobctl/domain-types`; there
+   runtime `DOMAIN_EVENT_TYPES` array (from `@jobctrl/domain-types`; there
    is no Zod schema to read `.options` from) and asserts a handler is
    registered for each. This is the *backstop* that catches the case where a
    developer adds a stub handler `() => []` (TS-passing, behaviorally wrong).

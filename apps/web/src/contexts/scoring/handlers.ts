@@ -1,4 +1,4 @@
-import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "@jobctl/domain-types";
+import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "@jobctrl/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";

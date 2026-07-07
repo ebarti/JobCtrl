@@ -3,7 +3,7 @@
  * TypeScript mirror.
  *
  * See docs/architecture/domain-model/tactical.md §4.6. The Python ``ApplyRun`` aggregate
- * (``workers/automation/src/jobctl/domain/apply/aggregate.py``) is
+ * (``workers/automation/src/jobctrl/domain/apply/aggregate.py``) is
  * the source of truth; both languages must stay structurally
  * compatible.
  *

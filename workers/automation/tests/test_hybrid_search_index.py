@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from jobctl.domain.ports.retrieval import EmbeddingSearchResult
-from jobctl.domain.scoring.retrieval import (
+from jobctrl.domain.ports.retrieval import EmbeddingSearchResult
+from jobctrl.domain.scoring.retrieval import (
     DisabledEmbeddingIndex,
     HybridSearchIndex,
     PostingDocument,

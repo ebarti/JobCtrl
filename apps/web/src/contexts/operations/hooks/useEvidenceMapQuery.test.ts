@@ -1,5 +1,5 @@
 import { waitFor } from "@testing-library/react";
-import type { EvidenceMapResponse } from "@jobctl/contracts";
+import type { EvidenceMapResponse } from "@jobctrl/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildTestPorts } from "../../../test/testPorts.js";

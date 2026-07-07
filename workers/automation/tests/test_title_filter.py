@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from jobctl.discovery.title_filter import reset_role_match_feedback_cache, title_matches_query
+from jobctrl.discovery.title_filter import reset_role_match_feedback_cache, title_matches_query
 
 
 class _FakeRoleMatcher:
@@ -167,9 +167,9 @@ def test_loose_recall_title_matching_uses_role_adjudicator() -> None:
 
 
 def test_approved_role_feedback_title_exclusions_apply(monkeypatch, tmp_path) -> None:
-    from jobctl import config
+    from jobctrl import config
 
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """

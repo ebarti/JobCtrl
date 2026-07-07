@@ -1,4 +1,4 @@
-import { JobCtlApiClient } from "@jobctl/api-client";
+import { JobCtrlApiClient } from "@jobctrl/api-client";
 import type {
   ContactCreateRequest,
   ContactDeleteRequest,
@@ -8,17 +8,17 @@ import type {
   ConfirmContactCandidateRequest,
   ContactResearchListQuery,
   RunContactResearchRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import type { ApiClientPort } from "../../ports/ApiClientPort.js";
 
 export class FetchApiClientAdapter implements ApiClientPort {
-  private readonly client: JobCtlApiClient;
+  private readonly client: JobCtrlApiClient;
 
   constructor(baseUrl?: string) {
-    this.client = new JobCtlApiClient(baseUrl);
+    this.client = new JobCtrlApiClient(baseUrl);
   }
 
-  health(): ReturnType<JobCtlApiClient["health"]> {
+  health(): ReturnType<JobCtrlApiClient["health"]> {
     return this.client.health();
   }
   dashboardSummary() {
@@ -30,10 +30,10 @@ export class FetchApiClientAdapter implements ApiClientPort {
   digest() {
     return this.client.digest();
   }
-  acknowledgeDigest(body?: Parameters<JobCtlApiClient["acknowledgeDigest"]>[0]) {
+  acknowledgeDigest(body?: Parameters<JobCtrlApiClient["acknowledgeDigest"]>[0]) {
     return this.client.acknowledgeDigest(body);
   }
-  activity(query: Parameters<JobCtlApiClient["activity"]>[0] = {}) {
+  activity(query: Parameters<JobCtrlApiClient["activity"]>[0] = {}) {
     return this.client.activity(query);
   }
   activityEvent(eventId: string) {
@@ -42,18 +42,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   discoverySettings() {
     return this.client.discoverySettings();
   }
-  updateDiscoverySettings(body: Parameters<JobCtlApiClient["updateDiscoverySettings"]>[0]) {
+  updateDiscoverySettings(body: Parameters<JobCtrlApiClient["updateDiscoverySettings"]>[0]) {
     return this.client.updateDiscoverySettings(body);
   }
   discoverySources() {
     return this.client.discoverySources();
   }
-  upsertDiscoverySource(body: Parameters<JobCtlApiClient["upsertDiscoverySource"]>[0]) {
+  upsertDiscoverySource(body: Parameters<JobCtrlApiClient["upsertDiscoverySource"]>[0]) {
     return this.client.upsertDiscoverySource(body);
   }
   patchDiscoverySourceState(
     sourceId: string,
-    body: Parameters<JobCtlApiClient["patchDiscoverySourceState"]>[1],
+    body: Parameters<JobCtrlApiClient["patchDiscoverySourceState"]>[1],
   ) {
     return this.client.patchDiscoverySourceState(sourceId, body);
   }
@@ -68,13 +68,13 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   promoteSourceLocatorCandidate(
     candidateId: string,
-    body: Parameters<JobCtlApiClient["promoteSourceLocatorCandidate"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["promoteSourceLocatorCandidate"]>[1] = {},
   ) {
     return this.client.promoteSourceLocatorCandidate(candidateId, body);
   }
   rejectSourceLocatorCandidate(
     candidateId: string,
-    body: Parameters<JobCtlApiClient["rejectSourceLocatorCandidate"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["rejectSourceLocatorCandidate"]>[1] = {},
   ) {
     return this.client.rejectSourceLocatorCandidate(candidateId, body);
   }
@@ -83,23 +83,23 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   decideDiscoveryQuarantine(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["decideDiscoveryQuarantine"]>[1],
+    body: Parameters<JobCtrlApiClient["decideDiscoveryQuarantine"]>[1],
   ) {
     return this.client.decideDiscoveryQuarantine(jobKey, body);
   }
   manualCaptureQueue() {
     return this.client.manualCaptureQueue();
   }
-  importManualCapture(itemId: string, body: Parameters<JobCtlApiClient["importManualCapture"]>[1]) {
+  importManualCapture(itemId: string, body: Parameters<JobCtrlApiClient["importManualCapture"]>[1]) {
     return this.client.importManualCapture(itemId, body);
   }
   dismissManualCapture(
     itemId: string,
-    body: Parameters<JobCtlApiClient["dismissManualCapture"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["dismissManualCapture"]>[1] = {},
   ) {
     return this.client.dismissManualCapture(itemId, body);
   }
-  recordDiscoveryFeedback(body: Parameters<JobCtlApiClient["recordDiscoveryFeedback"]>[0]) {
+  recordDiscoveryFeedback(body: Parameters<JobCtrlApiClient["recordDiscoveryFeedback"]>[0]) {
     return this.client.recordDiscoveryFeedback(body);
   }
   roleMatchFeedbackSuggestions() {
@@ -107,7 +107,7 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   decideRoleMatchFeedbackSuggestion(
     suggestionId: string,
-    body: Parameters<JobCtlApiClient["decideRoleMatchFeedbackSuggestion"]>[1],
+    body: Parameters<JobCtrlApiClient["decideRoleMatchFeedbackSuggestion"]>[1],
   ) {
     return this.client.decideRoleMatchFeedbackSuggestion(suggestionId, body);
   }
@@ -116,7 +116,7 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   decideApplyReview(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["decideApplyReview"]>[1],
+    body: Parameters<JobCtrlApiClient["decideApplyReview"]>[1],
   ) {
     return this.client.decideApplyReview(jobKey, body);
   }
@@ -125,31 +125,31 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   createResumeReviewDraft(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["createResumeReviewDraft"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["createResumeReviewDraft"]>[1] = {},
   ) {
     return this.client.createResumeReviewDraft(jobKey, body);
   }
   saveResumeReviewDraftRevision(
     draftId: string,
-    body: Parameters<JobCtlApiClient["saveResumeReviewDraftRevision"]>[1],
+    body: Parameters<JobCtrlApiClient["saveResumeReviewDraftRevision"]>[1],
   ) {
     return this.client.saveResumeReviewDraftRevision(draftId, body);
   }
   seedResumeReviewCommentThreads(
     draftId: string,
-    body: Parameters<JobCtlApiClient["seedResumeReviewCommentThreads"]>[1],
+    body: Parameters<JobCtrlApiClient["seedResumeReviewCommentThreads"]>[1],
   ) {
     return this.client.seedResumeReviewCommentThreads(draftId, body);
   }
   renderResumeReviewDraft(
     draftId: string,
-    body: Parameters<JobCtlApiClient["renderResumeReviewDraft"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["renderResumeReviewDraft"]>[1] = {},
   ) {
     return this.client.renderResumeReviewDraft(draftId, body);
   }
   replyToResumeReviewComment(
     threadId: string,
-    body: Parameters<JobCtlApiClient["replyToResumeReviewComment"]>[1],
+    body: Parameters<JobCtrlApiClient["replyToResumeReviewComment"]>[1],
   ) {
     return this.client.replyToResumeReviewComment(threadId, body);
   }
@@ -162,21 +162,21 @@ export class FetchApiClientAdapter implements ApiClientPort {
   resumeTemplate(templateId: string) {
     return this.client.resumeTemplate(templateId);
   }
-  saveResumeTemplate(body: Parameters<JobCtlApiClient["saveResumeTemplate"]>[0]) {
+  saveResumeTemplate(body: Parameters<JobCtrlApiClient["saveResumeTemplate"]>[0]) {
     return this.client.saveResumeTemplate(body);
   }
-  setDefaultResumeTemplate(body: Parameters<JobCtlApiClient["setDefaultResumeTemplate"]>[0]) {
+  setDefaultResumeTemplate(body: Parameters<JobCtrlApiClient["setDefaultResumeTemplate"]>[0]) {
     return this.client.setDefaultResumeTemplate(body);
   }
   setJobResumeTemplate(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["setJobResumeTemplate"]>[1],
+    body: Parameters<JobCtrlApiClient["setJobResumeTemplate"]>[1],
   ) {
     return this.client.setJobResumeTemplate(jobKey, body);
   }
   ensureCurrentResumeMaterials(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["ensureCurrentResumeMaterials"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["ensureCurrentResumeMaterials"]>[1] = {},
   ) {
     return this.client.ensureCurrentResumeMaterials(jobKey, body);
   }
@@ -188,17 +188,17 @@ export class FetchApiClientAdapter implements ApiClientPort {
   }
   recordManualApplicationOutcome(
     jobKey: string,
-    body: Parameters<JobCtlApiClient["recordManualApplicationOutcome"]>[1],
+    body: Parameters<JobCtrlApiClient["recordManualApplicationOutcome"]>[1],
   ) {
     return this.client.recordManualApplicationOutcome(jobKey, body);
   }
   decideOutcomeSuggestion(
     suggestionId: string,
-    body: Parameters<JobCtlApiClient["decideOutcomeSuggestion"]>[1],
+    body: Parameters<JobCtrlApiClient["decideOutcomeSuggestion"]>[1],
   ) {
     return this.client.decideOutcomeSuggestion(suggestionId, body);
   }
-  jobs(query: Parameters<JobCtlApiClient["jobs"]>[0] = {}) {
+  jobs(query: Parameters<JobCtrlApiClient["jobs"]>[0] = {}) {
     return this.client.jobs(query);
   }
   job(jobKey: string) {
@@ -207,69 +207,69 @@ export class FetchApiClientAdapter implements ApiClientPort {
   evidenceMap() {
     return this.client.evidenceMap();
   }
-  deleteJob(jobKey: string, body: Parameters<JobCtlApiClient["deleteJob"]>[1] = {}) {
+  deleteJob(jobKey: string, body: Parameters<JobCtrlApiClient["deleteJob"]>[1] = {}) {
     return this.client.deleteJob(jobKey, body);
   }
-  deleteJobs(body: Parameters<JobCtlApiClient["deleteJobs"]>[0]) {
+  deleteJobs(body: Parameters<JobCtrlApiClient["deleteJobs"]>[0]) {
     return this.client.deleteJobs(body);
   }
   permanentlyDeleteJob(jobKey: string) {
     return this.client.permanentlyDeleteJob(jobKey);
   }
-  permanentlyDeleteJobs(body: Parameters<JobCtlApiClient["permanentlyDeleteJobs"]>[0]) {
+  permanentlyDeleteJobs(body: Parameters<JobCtrlApiClient["permanentlyDeleteJobs"]>[0]) {
     return this.client.permanentlyDeleteJobs(body);
   }
   restoreJob(jobKey: string) {
     return this.client.restoreJob(jobKey);
   }
-  restoreJobs(body: Parameters<JobCtlApiClient["restoreJobs"]>[0]) {
+  restoreJobs(body: Parameters<JobCtrlApiClient["restoreJobs"]>[0]) {
     return this.client.restoreJobs(body);
   }
-  hideJob(jobKey: string, body: Parameters<JobCtlApiClient["hideJob"]>[1] = {}) {
+  hideJob(jobKey: string, body: Parameters<JobCtrlApiClient["hideJob"]>[1] = {}) {
     return this.client.hideJob(jobKey, body);
   }
-  hideJobs(body: Parameters<JobCtlApiClient["hideJobs"]>[0]) {
+  hideJobs(body: Parameters<JobCtrlApiClient["hideJobs"]>[0]) {
     return this.client.hideJobs(body);
   }
   unhideJob(jobKey: string) {
     return this.client.unhideJob(jobKey);
   }
-  unhideJobs(body: Parameters<JobCtlApiClient["unhideJobs"]>[0]) {
+  unhideJobs(body: Parameters<JobCtrlApiClient["unhideJobs"]>[0]) {
     return this.client.unhideJobs(body);
   }
-  retryFailedJobs(body: Parameters<JobCtlApiClient["retryFailedJobs"]>[0]) {
+  retryFailedJobs(body: Parameters<JobCtrlApiClient["retryFailedJobs"]>[0]) {
     return this.client.retryFailedJobs(body);
   }
-  correctScore(jobKey: string, body: Parameters<JobCtlApiClient["correctScore"]>[1]) {
+  correctScore(jobKey: string, body: Parameters<JobCtrlApiClient["correctScore"]>[1]) {
     return this.client.correctScore(jobKey, body);
   }
-  resetStaleScoresForRescore(body: Parameters<JobCtlApiClient["resetStaleScoresForRescore"]>[0]) {
+  resetStaleScoresForRescore(body: Parameters<JobCtrlApiClient["resetStaleScoresForRescore"]>[0]) {
     return this.client.resetStaleScoresForRescore(body);
   }
-  rescoreJob(jobKey: string, body: Parameters<JobCtlApiClient["rescoreJob"]>[1] = {}) {
+  rescoreJob(jobKey: string, body: Parameters<JobCtrlApiClient["rescoreJob"]>[1] = {}) {
     return this.client.rescoreJob(jobKey, body);
   }
-  refreshCompensation(jobKey: string, body: Parameters<JobCtlApiClient["refreshCompensation"]>[1] = {}) {
+  refreshCompensation(jobKey: string, body: Parameters<JobCtrlApiClient["refreshCompensation"]>[1] = {}) {
     return this.client.refreshCompensation(jobKey, body);
   }
-  refreshAllCompensation(body: Parameters<JobCtlApiClient["refreshAllCompensation"]>[0] = {}) {
+  refreshAllCompensation(body: Parameters<JobCtrlApiClient["refreshAllCompensation"]>[0] = {}) {
     return this.client.refreshAllCompensation(body);
   }
   rescoreJobsNotOnCurrentScoringPolicy(
-    body: Parameters<JobCtlApiClient["rescoreJobsNotOnCurrentScoringPolicy"]>[0],
+    body: Parameters<JobCtrlApiClient["rescoreJobsNotOnCurrentScoringPolicy"]>[0],
   ) {
     return this.client.rescoreJobsNotOnCurrentScoringPolicy(body);
   }
-  retailorJob(jobKey: string, body: Parameters<JobCtlApiClient["retailorJob"]>[1] = {}) {
+  retailorJob(jobKey: string, body: Parameters<JobCtrlApiClient["retailorJob"]>[1] = {}) {
     return this.client.retailorJob(jobKey, body);
   }
-  tailorJob(jobKey: string, body: Parameters<JobCtlApiClient["tailorJob"]>[1] = {}) {
+  tailorJob(jobKey: string, body: Parameters<JobCtrlApiClient["tailorJob"]>[1] = {}) {
     return this.client.tailorJob(jobKey, body);
   }
-  retailorCurrentPolicy(body: Parameters<JobCtlApiClient["retailorCurrentPolicy"]>[0]) {
+  retailorCurrentPolicy(body: Parameters<JobCtrlApiClient["retailorCurrentPolicy"]>[0]) {
     return this.client.retailorCurrentPolicy(body);
   }
-  workflowRuns(query: Parameters<JobCtlApiClient["workflowRuns"]>[0] = {}) {
+  workflowRuns(query: Parameters<JobCtrlApiClient["workflowRuns"]>[0] = {}) {
     return this.client.workflowRuns(query);
   }
   workflowRun(runId: string) {
@@ -278,7 +278,7 @@ export class FetchApiClientAdapter implements ApiClientPort {
   cancelWorkflowRun(runId: string) {
     return this.client.cancelWorkflowRun(runId);
   }
-  artifacts(query: Parameters<JobCtlApiClient["artifacts"]>[0] = {}) {
+  artifacts(query: Parameters<JobCtrlApiClient["artifacts"]>[0] = {}) {
     return this.client.artifacts(query);
   }
   artifact(artifactId: string) {
@@ -302,16 +302,16 @@ export class FetchApiClientAdapter implements ApiClientPort {
   profilePreviewHtmlUrl(cacheKey?: number | string): string {
     return this.client.profilePreviewHtmlUrl(cacheKey);
   }
-  updateProfile(body: Parameters<JobCtlApiClient["updateProfile"]>[0]) {
+  updateProfile(body: Parameters<JobCtrlApiClient["updateProfile"]>[0]) {
     return this.client.updateProfile(body);
   }
-  importResume(body: Parameters<JobCtlApiClient["importResume"]>[0]) {
+  importResume(body: Parameters<JobCtrlApiClient["importResume"]>[0]) {
     return this.client.importResume(body);
   }
   settings() {
     return this.client.settings();
   }
-  updateSettings(body: Parameters<JobCtlApiClient["updateSettings"]>[0]) {
+  updateSettings(body: Parameters<JobCtrlApiClient["updateSettings"]>[0]) {
     return this.client.updateSettings(body);
   }
   extensionCapabilityToken() {
@@ -320,43 +320,43 @@ export class FetchApiClientAdapter implements ApiClientPort {
   rotateExtensionCapabilityToken() {
     return this.client.rotateExtensionCapabilityToken();
   }
-  runPipelineStages(body: Parameters<JobCtlApiClient["runPipelineStages"]>[0]) {
+  runPipelineStages(body: Parameters<JobCtrlApiClient["runPipelineStages"]>[0]) {
     return this.client.runPipelineStages(body);
   }
-  runPendingPreparation(body: Parameters<JobCtlApiClient["runPendingPreparation"]>[0]) {
+  runPendingPreparation(body: Parameters<JobCtrlApiClient["runPendingPreparation"]>[0]) {
     return this.client.runPendingPreparation(body);
   }
   credentials() {
     return this.client.credentials();
   }
-  updateCredential(body: Parameters<JobCtlApiClient["updateCredential"]>[0]) {
+  updateCredential(body: Parameters<JobCtrlApiClient["updateCredential"]>[0]) {
     return this.client.updateCredential(body);
   }
-  deleteCredential(key: Parameters<JobCtlApiClient["deleteCredential"]>[0]) {
+  deleteCredential(key: Parameters<JobCtrlApiClient["deleteCredential"]>[0]) {
     return this.client.deleteCredential(key);
   }
-  retryStage(jobKey: string, body: Parameters<JobCtlApiClient["retryStage"]>[1]) {
+  retryStage(jobKey: string, body: Parameters<JobCtrlApiClient["retryStage"]>[1]) {
     return this.client.retryStage(jobKey, body);
   }
-  runJobStage(jobKey: string, body: Parameters<JobCtlApiClient["runJobStage"]>[1]) {
+  runJobStage(jobKey: string, body: Parameters<JobCtrlApiClient["runJobStage"]>[1]) {
     return this.client.runJobStage(jobKey, body);
   }
-  generateMaterials(jobKey: string, body: Parameters<JobCtlApiClient["generateMaterials"]>[1] = {}) {
+  generateMaterials(jobKey: string, body: Parameters<JobCtrlApiClient["generateMaterials"]>[1] = {}) {
     return this.client.generateMaterials(jobKey, body);
   }
-  generateInterviewPrep(jobKey: string, body: Parameters<JobCtlApiClient["generateInterviewPrep"]>[1] = {}) {
+  generateInterviewPrep(jobKey: string, body: Parameters<JobCtrlApiClient["generateInterviewPrep"]>[1] = {}) {
     return this.client.generateInterviewPrep(jobKey, body);
   }
-  applyJob(jobKey: string, body: Parameters<JobCtlApiClient["applyJob"]>[1] = {}) {
+  applyJob(jobKey: string, body: Parameters<JobCtrlApiClient["applyJob"]>[1] = {}) {
     return this.client.applyJob(jobKey, body);
   }
-  cancelJobAction(jobKey: string, body: Parameters<JobCtlApiClient["cancelJobAction"]>[1] = {}) {
+  cancelJobAction(jobKey: string, body: Parameters<JobCtrlApiClient["cancelJobAction"]>[1] = {}) {
     return this.client.cancelJobAction(jobKey, body);
   }
-  markApplied(jobKey: string, body: Parameters<JobCtlApiClient["markApplied"]>[1] = {}) {
+  markApplied(jobKey: string, body: Parameters<JobCtrlApiClient["markApplied"]>[1] = {}) {
     return this.client.markApplied(jobKey, body);
   }
-  markSkipped(jobKey: string, body: Parameters<JobCtlApiClient["markSkipped"]>[1] = {}) {
+  markSkipped(jobKey: string, body: Parameters<JobCtrlApiClient["markSkipped"]>[1] = {}) {
     return this.client.markSkipped(jobKey, body);
   }
 
@@ -394,18 +394,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.confirmContactCandidate(taskId, candidateId, body);
   }
-  outreachThread(contactId: string, query: Parameters<JobCtlApiClient["outreachThread"]>[1] = {}) {
+  outreachThread(contactId: string, query: Parameters<JobCtrlApiClient["outreachThread"]>[1] = {}) {
     return this.client.outreachThread(contactId, query);
   }
   generateOutreachDraft(
     contactId: string,
-    body: Parameters<JobCtlApiClient["generateOutreachDraft"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["generateOutreachDraft"]>[1] = {},
   ) {
     return this.client.generateOutreachDraft(contactId, body);
   }
   reviseOutreachDraft(
     threadId: string,
-    body: Parameters<JobCtlApiClient["reviseOutreachDraft"]>[1],
+    body: Parameters<JobCtrlApiClient["reviseOutreachDraft"]>[1],
   ) {
     return this.client.reviseOutreachDraft(threadId, body);
   }
@@ -415,19 +415,19 @@ export class FetchApiClientAdapter implements ApiClientPort {
   rejectOutreachDraft(
     threadId: string,
     draftId: string,
-    body: Parameters<JobCtlApiClient["rejectOutreachDraft"]>[2] = {},
+    body: Parameters<JobCtrlApiClient["rejectOutreachDraft"]>[2] = {},
   ) {
     return this.client.rejectOutreachDraft(threadId, draftId, body);
   }
   logOutreachSend(
     threadId: string,
-    body: Parameters<JobCtlApiClient["logOutreachSend"]>[1],
+    body: Parameters<JobCtrlApiClient["logOutreachSend"]>[1],
   ) {
     return this.client.logOutreachSend(threadId, body);
   }
   scheduleOutreachFollowUp(
     threadId: string,
-    body: Parameters<JobCtlApiClient["scheduleOutreachFollowUp"]>[1] = {},
+    body: Parameters<JobCtrlApiClient["scheduleOutreachFollowUp"]>[1] = {},
   ) {
     return this.client.scheduleOutreachFollowUp(threadId, body);
   }

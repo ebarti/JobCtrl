@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.interview import (
+from jobctrl.domain.interview import (
     INTERVIEW_PREP_STATUSES,
     InterviewPrep,
     InterviewPrepGateAudit,
     InterviewPrepItem,
 )
-from jobctl.domain.operations import (
+from jobctrl.domain.operations import (
     EvidenceFreshness,
     EvidenceGap,
     EvidenceMapEntry,

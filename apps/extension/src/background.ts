@@ -1,11 +1,11 @@
-import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobctl/contracts";
+import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobctrl/contracts";
 
 import { detectSupportedAts } from "./ats";
 import { getBrowserApi, type BrowserApi, type BrowserTab } from "./browser";
 import { checkLocalApiReady, getExtensionAutofillProfile, LocalApiError, postExtensionCapture } from "./local-api";
 import { clearCaptureQueue, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
 
-const TOKEN_STORAGE_KEY = "jobctlExtensionCapabilityToken";
+const TOKEN_STORAGE_KEY = "jobctrlExtensionCapabilityToken";
 
 type BackgroundMessage =
   | { type: "captureCurrentTab" }
@@ -54,7 +54,7 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
     case "saveToken": {
       const token = message.token.trim();
       if (!token) {
-        return { ok: false, error: "missing_token", message: "Paste the pairing token from JobCtl Settings." };
+        return { ok: false, error: "missing_token", message: "Paste the pairing token from JobCtrl Settings." };
       }
       await browser.storage.local.set({ [TOKEN_STORAGE_KEY]: token });
       await clearCaptureQueue(browser.storage.local);
@@ -66,7 +66,7 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
 async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> {
   const token = await readToken(browser);
   if (!token) {
-    return { ok: false, error: "not_paired", message: "Pair the extension with JobCtl before autofill." };
+    return { ok: false, error: "not_paired", message: "Pair the extension with JobCtrl before autofill." };
   }
   const tab = await activeTab(browser);
   if (!tab.id || !detectSupportedAts(tab.url)) {
@@ -75,7 +75,7 @@ async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> 
   try {
     const profile = await getExtensionAutofillProfile(token);
     const response = await browser.tabs.sendMessage<BackgroundResponse>(tab.id, {
-      type: "jobctl.autofill.review",
+      type: "jobctrl.autofill.review",
       profile,
     });
     return response;
@@ -84,7 +84,7 @@ async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> 
       return {
         ok: false,
         error: "pairing_token_rejected",
-        message: "JobCtl rejected the pairing token. Copy a fresh token from Settings.",
+        message: "JobCtrl rejected the pairing token. Copy a fresh token from Settings.",
       };
     }
     return {
@@ -98,11 +98,11 @@ async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> 
 async function captureCurrentTab(browser: BrowserApi): Promise<BackgroundResponse> {
   const token = await readToken(browser);
   if (!token) {
-    return { ok: false, error: "not_paired", message: "Pair the extension with JobCtl before capturing." };
+    return { ok: false, error: "not_paired", message: "Pair the extension with JobCtrl before capturing." };
   }
   const tab = await activeTab(browser);
   if (!tab.id || !isHttpUrl(tab.url)) {
-    return { ok: false, error: "unsupported_page", message: "JobCtl can capture only http(s) pages." };
+    return { ok: false, error: "unsupported_page", message: "JobCtrl can capture only http(s) pages." };
   }
   const snapshot = await readPageSnapshot(browser, tab.id);
   const capture = ExtensionCaptureIngestSchema.parse({
@@ -131,7 +131,7 @@ async function captureCurrentTab(browser: BrowserApi): Promise<BackgroundRespons
       return {
         ok: false,
         error: "pairing_token_rejected",
-        message: "JobCtl rejected the pairing token. Copy a fresh token from Settings.",
+        message: "JobCtrl rejected the pairing token. Copy a fresh token from Settings.",
       };
     }
     const queued = await enqueueCapture(browser.storage.local, capture);
@@ -139,7 +139,7 @@ async function captureCurrentTab(browser: BrowserApi): Promise<BackgroundRespons
       ok: true,
       status: "queued",
       queueSize: queued.queueSize,
-      message: error instanceof Error ? error.message : "Local JobCtl API is unavailable.",
+      message: error instanceof Error ? error.message : "Local JobCtrl API is unavailable.",
     };
   }
 }

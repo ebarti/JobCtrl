@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve JobCtl. This project handles job-search data,
+Thanks for helping improve JobCtrl. This project handles job-search data,
 resumes, generated application materials, browser state, local logs, and
 credentials, so contributions need to preserve privacy and local safety first.
 
@@ -8,7 +8,7 @@ credentials, so contributions need to preserve privacy and local safety first.
 
 ```bash
 pnpm dev:setup
-uv --project workers/automation run jobctl doctor
+uv --project workers/automation run jobctrl doctor
 pnpm dev
 ```
 
@@ -19,8 +19,8 @@ using the app.
 Use a disposable workspace for destructive or screenshot-oriented testing:
 
 ```bash
-pnpm qa:seed -- /tmp/jobctl-qa
-JOBCTL_DIR=/tmp/jobctl-qa pnpm dev
+pnpm qa:seed -- /tmp/jobctrl-qa
+JOBCTRL_DIR=/tmp/jobctrl-qa pnpm dev
 ```
 
 ## Pull Requests

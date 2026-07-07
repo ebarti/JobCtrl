@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobctl.infrastructure.discovery.location_filter import (
+from jobctrl.infrastructure.discovery.location_filter import (
     configured_local_location_accepts,
     configured_location_filters,
     location_matches_target,

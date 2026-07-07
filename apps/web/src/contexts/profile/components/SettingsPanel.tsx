@@ -136,7 +136,7 @@ function TemporalRuntimeSummary({
         />
         <RuntimeMetric label="Task queue" value={heartbeat?.taskQueue ?? unknown} />
         <RuntimeMetric label="Worker health" value={health?.worker.status ?? unknown} />
-        <RuntimeMetric label="Startup env" value="JOBCTL_MAX_CONCURRENT_ACTIVITIES" />
+        <RuntimeMetric label="Startup env" value="JOBCTRL_MAX_CONCURRENT_ACTIVITIES" />
       </dl>
     </div>
   );

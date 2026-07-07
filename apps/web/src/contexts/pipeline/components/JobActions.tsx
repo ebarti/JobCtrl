@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { Stage } from "@jobctl/contracts";
+import type { Stage } from "@jobctrl/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { ApplyButton } from "../../apply/components/ApplyButton.js";

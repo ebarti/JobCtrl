@@ -1,15 +1,15 @@
-# JobCtl Automation Worker
+# JobCtrl Automation Worker
 
-This package contains JobCtl's Python automation engine and CLI. It owns job
+This package contains JobCtrl's Python automation engine and CLI. It owns job
 discovery, enrichment, scoring, tailoring, cover letters, PDF generation,
 profile import, and local browser apply automation.
 
 Use it from the repository root through `uv`:
 
 ```bash
-uv --project workers/automation run jobctl doctor
-uv --project workers/automation run jobctl run
-uv --project workers/automation run jobctl worker
+uv --project workers/automation run jobctrl doctor
+uv --project workers/automation run jobctrl run
+uv --project workers/automation run jobctrl worker
 ```
 
 The full local application is normally started from the repository root with

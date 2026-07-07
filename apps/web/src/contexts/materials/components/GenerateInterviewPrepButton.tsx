@@ -35,7 +35,7 @@ export function GenerateInterviewPrepButton({
           !window.confirm(
             hasAcceptedPrep
               ? "Regenerate interview prep for this job now? The last accepted prep stays visible until a replacement is accepted."
-              : "Generate interview prep for this job now? Prep is produced before interviews from stored, grounded JobCtl data.",
+              : "Generate interview prep for this job now? Prep is produced before interviews from stored, grounded JobCtrl data.",
           )
         ) {
           return;

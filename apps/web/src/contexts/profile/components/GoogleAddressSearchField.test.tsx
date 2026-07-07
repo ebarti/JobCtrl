@@ -16,7 +16,7 @@ import {
 describe("<GoogleAddressSearchField>", () => {
   afterEach(() => {
     delete (window as { google?: unknown }).google;
-    document.getElementById("jobctl-google-maps-places")?.remove();
+    document.getElementById("jobctrl-google-maps-places")?.remove();
     resetGoogleAddressSearchForTest();
   });
 

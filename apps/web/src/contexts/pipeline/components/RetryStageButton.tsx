@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { Stage } from "@jobctl/contracts";
+import type { Stage } from "@jobctrl/contracts";
 
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 

@@ -3,8 +3,8 @@ import type {
   JobSummary,
   PaginatedResponse,
   ResetStaleScoresForRescoreResponse,
-} from "@jobctl/contracts";
-import type { TenantId } from "@jobctl/domain-types";
+} from "@jobctrl/contracts";
+import type { TenantId } from "@jobctrl/domain-types";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";

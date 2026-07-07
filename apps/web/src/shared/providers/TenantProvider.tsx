@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobctl/domain-types";
+import type { TenantId } from "@jobctrl/domain-types";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 import { usePorts } from "./PortsProvider.js";

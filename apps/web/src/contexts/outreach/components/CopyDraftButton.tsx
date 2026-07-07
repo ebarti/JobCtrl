@@ -1,4 +1,4 @@
-import type { OutreachDraftDto } from "@jobctl/contracts";
+import type { OutreachDraftDto } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -8,7 +8,7 @@ export interface CopyDraftButtonProps {
   draft: OutreachDraftDto;
 }
 
-// INV-1: an approved draft leaves JobCtl ONLY through a user-initiated
+// INV-1: an approved draft leaves JobCtrl ONLY through a user-initiated
 // clipboard copy via the ClipboardPort — never a network send, never
 // navigator.clipboard directly. Enabled only for an approved draft.
 export function CopyDraftButton({ draft }: CopyDraftButtonProps): JSX.Element {

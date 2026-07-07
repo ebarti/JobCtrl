@@ -2,7 +2,7 @@ import type {
   CredentialKey,
   ProfileUpdateRequest,
   SettingsUpdateRequest,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 import type {
   CredentialsResponse,

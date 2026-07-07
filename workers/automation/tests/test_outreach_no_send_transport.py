@@ -20,8 +20,8 @@ _REPO_ROOT = _WORKER_ROOT.parents[1]
 
 # Every directory that owns Contact & Outreach code, on both runtimes.
 _CONTACT_SRC_DIRS = (
-    _WORKER_ROOT / "src" / "jobctl" / "domain" / "contact",
-    _WORKER_ROOT / "src" / "jobctl" / "infrastructure" / "contact",
+    _WORKER_ROOT / "src" / "jobctrl" / "domain" / "contact",
+    _WORKER_ROOT / "src" / "jobctrl" / "infrastructure" / "contact",
     _REPO_ROOT / "apps" / "web" / "src" / "contexts" / "outreach",
     _REPO_ROOT / "apps" / "web" / "src" / "views" / "outreach",
 )

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
-from jobctl.domain.pipeline_types import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
+from jobctrl.domain.pipeline_types import (
     Blocked,
     Canceled,
     Failed,
@@ -17,9 +17,9 @@ from jobctl.domain.pipeline_types import (
     Stage,
     Succeeded,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
-from jobctl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
+from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 
 def _insert_job(conn, url: str = "https://example.com/job") -> None:
@@ -103,7 +103,7 @@ def test_roundtrip_failed_state(db):
             error_code="TIMEOUT",
             error_message="timed out",
             retryable=True,
-            next_action="jobctl retry enrich",
+            next_action="jobctrl retry enrich",
         ),
     )
     repo.save(agg)
@@ -114,7 +114,7 @@ def test_roundtrip_failed_state(db):
     assert isinstance(enrich, Failed)
     assert enrich.error_code == "TIMEOUT"
     assert enrich.retryable is True
-    assert enrich.next_action == "jobctl retry enrich"
+    assert enrich.next_action == "jobctrl retry enrich"
 
 
 def test_optimistic_lock_conflict(db):
@@ -411,7 +411,7 @@ def test_save_does_not_use_legacy_dual_write_path(db):
     """
     import inspect
 
-    from jobctl.infrastructure.pipeline import sqlite_repository
+    from jobctrl.infrastructure.pipeline import sqlite_repository
 
     source = inspect.getsource(sqlite_repository)
     assert "INSERT INTO job_stage_states" not in source, source

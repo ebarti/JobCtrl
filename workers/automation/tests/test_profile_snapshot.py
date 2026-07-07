@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobctl.domain.profile.aggregate import Profile
-from jobctl.domain.profile.snapshot import ProfileSnapshot
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 def _profile() -> Profile:

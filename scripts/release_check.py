@@ -129,15 +129,14 @@ PLACEHOLDER_PREFIXES = (
     "your-",
 )
 
-PROMPT_PATH = Path("workers/automation/src/jobctl/apply/prompt.py")
-TARGET_DISTRIBUTION_NAME = "jobctl"
-OLD_PRODUCT_NAME_RE = re.compile(r"jobhunter", re.IGNORECASE)
+PROMPT_PATH = Path("workers/automation/src/jobctrl/apply/prompt.py")
+TARGET_DISTRIBUTION_NAME = "jobctrl"
+OLD_PRODUCT_NAME_RE = re.compile(r"jobhunter|jobctl", re.IGNORECASE)
 OLD_PRODUCT_NAME_ALLOWLIST = (
     Path("docs/plans/implemented"),
     Path("docs/incidents"),
 )
 OLD_PRODUCT_NAME_ALLOWED_FILES = {
-    Path("docs/plans/2026-07-05-rename-jobctl-plan.md"),
     Path("scripts/release_check.py"),
 }
 

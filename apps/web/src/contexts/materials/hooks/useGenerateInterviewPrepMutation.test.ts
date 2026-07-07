@@ -1,4 +1,4 @@
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 

@@ -15,8 +15,8 @@ import type {
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
-} from "@jobctl/contracts";
-import type { TenantId } from "@jobctl/domain-types";
+} from "@jobctrl/contracts";
+import type { TenantId } from "@jobctrl/domain-types";
 import {
   useMutation,
   useQueryClient,

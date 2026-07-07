@@ -19,12 +19,12 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.infrastructure.temporal.durability_probe import (
+from jobctrl.infrastructure.temporal.durability_probe import (
     DurabilityProbeInput,
     DurabilityProbeWorkflow,
     durability_probe_workflow_id,
 )
-from jobctl.infrastructure.temporal.finalize import (
+from jobctrl.infrastructure.temporal.finalize import (
     WorkflowOutcomeInput,
     WorkflowStartedInput,
 )

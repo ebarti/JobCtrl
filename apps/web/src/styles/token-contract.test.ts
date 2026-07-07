@@ -135,7 +135,7 @@ describe("shadcn token contract", () => {
     }
   });
 
-  it("preserves JobCtl theme and density selectors", () => {
+  it("preserves JobCtrl theme and density selectors", () => {
     expect(globalsCss, "expected data-theme dark custom variant").toContain(
       '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));',
     );

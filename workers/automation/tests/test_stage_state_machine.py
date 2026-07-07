@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.pipeline_types import (
+from jobctrl.domain.pipeline_types import (
     Blocked,
     Canceled,
     Exhausted,
@@ -36,7 +36,7 @@ from jobctl.domain.pipeline_types import (
     Stale,
     Succeeded,
 )
-from jobctl.domain.pipeline.state_machine import (
+from jobctrl.domain.pipeline.state_machine import (
     StageTransition,
     TransitionRejected,
     transition,

@@ -30,7 +30,7 @@ Two features, one plan:
 2. **Daily local digest** — a once-a-day, locally-computed operator summary
    (new matches, blocked/degraded sources, review-needed materials, stale
    scores, pending apply approvals, follow-ups due, budget usage) delivered
-   **local-only** via a dashboard panel and a `jobctl digest` CLI command,
+   **local-only** via a dashboard panel and a `jobctrl digest` CLI command,
    with each item deep-linking into the relevant view.
 
 ### Product invariants (both features)
@@ -56,7 +56,7 @@ Two features, one plan:
   `apps/web/src/shared/ui/filterable-data-grid.tsx`, designed so the Discovery
   source registry table is the next adopter with no engine rework.
 - A daily digest **contract**, its **read model(s)**, a **dashboard panel**, and
-  a **`jobctl digest` CLI command**, plus a **digest watermark** ("seen"
+  a **`jobctrl digest` CLI command**, plus a **digest watermark** ("seen"
   state).
 
 **Non-goals (explicit)**
@@ -68,7 +68,7 @@ Two features, one plan:
 - **No new enabled-by-default schedule.** The digest is on-demand. Scheduled
   computation, if ever added, must follow the default-off Temporal Schedule
   posture (`docs/decisions.md` 2026-07-03 "DiscoverWorkflow And Default-Off
-  Temporal Schedules"; `workers/automation/src/jobctl/config.py:67`,
+  Temporal Schedules"; `workers/automation/src/jobctrl/config.py:67`,
   `scheduling_enabled=False`) and is an owner decision below, not part of this
   scope.
 - **No server-side / cross-device sync of saved views** in this scope (owner
@@ -164,7 +164,7 @@ memory-storage fallback for SSR/tests. Saved views reuse this exact pattern.
 | 4 | Stale scores | **EXISTS** | `job_score_staleness` (`write-model.ts:857`); per-job `scoreStaleness.isStale` (`read-model.ts:2097`, `schemas.ts:1999`); aggregate `preparation.outdatedScoreCount` (`read-model.ts:446`). |
 | 5 | Pending apply approvals | **EXISTS (queue), no count** | `listApplyReviewQueue` items with `review.state === "pending"` (`schemas.ts:701`); binding gate in `application_review_decisions` (`application-feedback.ts:357`). |
 | 6 | Follow-ups due | **MISSING** | Only `application_outcomes` / `application_outcome_suggestions` (`application-feedback.ts:146/187/405`, `GET /v1/outcomes` `server.ts:774`). No `due`/`reminder`/`snooze` concept anywhere. → define a derived read (below). |
-| 7 | Budget usage | **EXISTS** | `readLlmSpendHealth` (`worker-health.ts:148`; shape `LlmSpendHealthSnapshot` 36-46) on `GET /v1/health` (`server.ts:275-283`); Python `read_spend_budget_status` (`workers/automation/src/jobctl/llm.py:124`). Per-day already. |
+| 7 | Budget usage | **EXISTS** | `readLlmSpendHealth` (`worker-health.ts:148`; shape `LlmSpendHealthSnapshot` 36-46) on `GET /v1/health` (`server.ts:275-283`); Python `read_spend_budget_status` (`workers/automation/src/jobctrl/llm.py:124`). Per-day already. |
 
 No user-facing "digest" / "since last seen" concept exists today (only the
 internal `event_watermarks` projection cursor and SSE resume).
@@ -333,7 +333,7 @@ there is no "saved views" backend context (`structure.md` folder principle 2;
 ### Objectives
 
 - Produce a once-a-day, locally-computed summary of the seven datums, readable
-  as (a) a dashboard panel and (b) a `jobctl digest` CLI command.
+  as (a) a dashboard panel and (b) a `jobctrl digest` CLI command.
 - Track a **watermark** so "new since last digest" is meaningful, advanced only
   by an explicit acknowledge.
 - Deep-link every item into the relevant in-app view.
@@ -406,7 +406,7 @@ interface DailyDigest {
   (`docs/architecture/storage.md`: local SQLite is the local source of truth).
 - **Seen advances only on an explicit acknowledge**, never on passive panel
   load. Acknowledge = a "Mark digest reviewed" action in the panel and a
-  `jobctl digest --acknowledge` flag (default: print without acknowledging).
+  `jobctrl digest --acknowledge` flag (default: print without acknowledging).
 - **Recommended (architecturally consistent) acknowledge path:** emit a
   `DigestReviewed` domain event so the watermark updates through the standard
   event → projection path and the SSE invalidation router refreshes the digest
@@ -421,7 +421,7 @@ interface DailyDigest {
 
 On-demand only. The panel computes on view; the CLI computes on invocation
 (bootstrapping projections first, as `status` does via `_bootstrap()`
-`workers/automation/src/jobctl/cli.py:64`). Do **not** add a Temporal
+`workers/automation/src/jobctrl/cli.py:64`). Do **not** add a Temporal
 Schedule in this scope. If a scheduled daily digest is later wanted, mirror the
 default-off discovery schedule reconciled at worker startup
 (`cli.py:1378` `_reconcile_discovery_schedule`) behind a new off-by-default
@@ -449,8 +449,8 @@ Reuse the `KpiGrid` URL-builder pattern (`views/dashboard/KpiGrid.tsx`):
   `digestKeys` and re-export through `contexts/operations/queryKeys.ts`) and the
   deep-link buttons. The acknowledge control is a context-owned mutation hook if
   the event path is chosen.
-- **CLI** — a new read-only `jobctl digest` Typer subcommand
-  (`workers/automation/src/jobctl/cli.py`, registered like `status`
+- **CLI** — a new read-only `jobctrl digest` Typer subcommand
+  (`workers/automation/src/jobctrl/cli.py`, registered like `status`
   `cli.py:1137`), reusing the local read layer (`get_stats`,
   `read_spend_budget_status`, source-quality + stale-score queries,
   apply-review reads) and printing a `rich` summary. It reads local SQLite
@@ -479,7 +479,7 @@ SQLite projections independently, they can drift (cf. the triplicated
 - **Projection / read model:** new `GET /v1/digest` (TS `read-model.ts`
   `buildDigest`) + Python digest composition + `digest_state` table; additive
   jobs-list `since` filters.
-- **UI surface:** dashboard `DigestPanel` + `jobctl digest` CLI, with
+- **UI surface:** dashboard `DigestPanel` + `jobctrl digest` CLI, with
   deep-links.
 - **Approving user action:** explicit acknowledge (panel button /
   `--acknowledge`) advances the watermark; passive reads do not.
@@ -492,7 +492,7 @@ SQLite projections independently, they can drift (cf. the triplicated
   and assert `newMatches.count == 0`. Plus the TS/Python parity fixture.
 - **Local QA path:** `docs/local-reliability-qa.md` new "Digest Panel Smoke"
   (panel renders counts, deep-links navigate, acknowledge advances "since") and
-  a CLI note (`jobctl digest` prints the same numbers; `--acknowledge`
+  a CLI note (`jobctrl digest` prints the same numbers; `--acknowledge`
   advances the watermark).
 
 ### Acceptance criteria (gates)
@@ -526,7 +526,7 @@ SQLite projections independently, they can drift (cf. the triplicated
   `shared/stores` saved-views store + shared switcher control;
   `contexts/operations` `useDigestQuery` + `digestKeys`; dashboard
   `DigestPanel`; Jobs view wiring.
-- **`workers/automation`** — `jobctl digest` subcommand + Python digest read
+- **`workers/automation`** — `jobctrl digest` subcommand + Python digest read
   composition + `digest_state` read/write. (No `pyproject.toml` change unless a
   new dependency is introduced; none is anticipated.)
 
@@ -534,7 +534,7 @@ SQLite projections independently, they can drift (cf. the triplicated
 
 | Surface | Doc |
 |---|---|
-| `jobctl digest` command, local-only + no-external-delivery safety note | `README.md` (CLI Reference; Local Data And Safety) |
+| `jobctrl digest` command, local-only + no-external-delivery safety note | `README.md` (CLI Reference; Local Data And Safety) |
 | `GET /v1/digest` + acknowledge contract, jobs-list `since` params | `docs/local-ts-api.md` |
 | Saved-views state layer + digest local-only realtime/read-model behavior | `docs/architecture/frontend/state-and-ports.md` (§5.1 rows), `structure.md` (new shared store/control), `patterns.md` (density interaction), `testing.md` (new tests); `docs/decisions.md` (one ADR: saved-views state-layer choice + digest local-only) |
 | New QA gates + regression rows | `docs/local-reliability-qa.md` |
@@ -556,11 +556,11 @@ pnpm web:check
 pnpm web:build
 
 # Web unit / hook / component (saved-views store, migration fixture, DigestPanel, useDigestQuery)
-pnpm --filter @jobctl/web test
-pnpm --filter @jobctl/web test-d        # SavedTableView / DailyDigest type-level tests
+pnpm --filter @jobctrl/web test
+pnpm --filter @jobctrl/web test-d        # SavedTableView / DailyDigest type-level tests
 
 # Web e2e (saved-views survive-reload; digest panel smoke + deep-links)
-pnpm --filter @jobctl/web e2e
+pnpm --filter @jobctrl/web e2e
 
 # Storybook a11y (DigestPanel + view switcher stories; zero critical/serious)
 pnpm web:storybook:test
@@ -655,7 +655,7 @@ All seven decisions were resolved by the owner on 2026-07-06:
 - **P2 — Saved views grouping + color rules** (schema reserved in P1).
 - **P3 — Digest read model + contract + watermark + parity** (TS + Python).
 - **P4 — Digest dashboard panel + deep-links + acknowledge.**
-- **P5 — `jobctl digest` CLI + QA gates + docs.**
+- **P5 — `jobctrl digest` CLI + QA gates + docs.**
 
 Each phase is independently shippable behind its own gates; P2 is optional if
 the owner defers grouping/color rules.

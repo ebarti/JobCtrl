@@ -159,14 +159,14 @@ describe("preparation RPC contracts", () => {
   it("parses and rejects stored interview prep generation payloads", () => {
     const parsed = GenerateInterviewPrepParamsSchema.parse({
       jobUrl: "https://example.test/job/interview",
-      expectedAppDir: "/tmp/jobctl",
-      expectedDbPath: "/tmp/jobctl/jobctl.db",
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
     });
 
     expect(parsed).toEqual({
       tenantId: "local",
-      expectedAppDir: "/tmp/jobctl",
-      expectedDbPath: "/tmp/jobctl/jobctl.db",
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
       jobUrl: "https://example.test/job/interview",
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
     });

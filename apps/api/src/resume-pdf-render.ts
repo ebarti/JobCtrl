@@ -24,7 +24,7 @@ export const RESUME_HTML_PDF_SCRIPT = `
 import sys
 from pathlib import Path
 
-from jobctl.infrastructure.materials.html_resume_pdf import render_resume_html_to_pdf
+from jobctrl.infrastructure.materials.html_resume_pdf import render_resume_html_to_pdf
 
 html_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])

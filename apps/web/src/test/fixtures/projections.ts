@@ -25,14 +25,14 @@ import type {
   SettingsResponse,
   WorkflowRunDetail,
   WorkflowRunSummary,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 import type { ApiHealthResponse } from "../../shared/ports/ApiClientPort.js";
 
 export const sampleHealthResponse: ApiHealthResponse = {
   ok: true,
-  appDir: "/tmp/jobctl-test",
-  dbPath: "/tmp/jobctl-test/jobctl.db",
+  appDir: "/tmp/jobctrl-test",
+  dbPath: "/tmp/jobctrl-test/jobctrl.db",
   dbExists: true,
   dbIdentity: "1:2",
   llmSpend: {
@@ -48,18 +48,18 @@ export const sampleHealthResponse: ApiHealthResponse = {
   },
   worker: {
     status: "healthy",
-    expectedDbPath: "/tmp/jobctl-test/jobctl.db",
-    expectedAppDir: "/tmp/jobctl-test",
+    expectedDbPath: "/tmp/jobctrl-test/jobctrl.db",
+    expectedAppDir: "/tmp/jobctrl-test",
     staleAfterSeconds: 45,
-    message: "JobCtl automation worker heartbeat is current and uses the API database.",
+    message: "JobCtrl automation worker heartbeat is current and uses the API database.",
     heartbeat: {
       workerId: "worker-test",
       component: "temporal-worker",
       pid: 123,
       hostname: "localhost",
-      appDir: "/tmp/jobctl-test",
-      dbPath: "/tmp/jobctl-test/jobctl.db",
-      taskQueue: "jobctl-default",
+      appDir: "/tmp/jobctrl-test",
+      dbPath: "/tmp/jobctrl-test/jobctrl.db",
+      taskQueue: "jobctrl-default",
       startedAt: "2026-05-20T10:00:00.000Z",
       lastSeenAt: "2026-05-20T10:00:10.000Z",
       maxConcurrentActivities: 4,
@@ -890,7 +890,7 @@ export const sampleArtifact: ArtifactSummary = {
   company: "Acme Corp",
   type: "resume_pdf",
   status: "approved",
-  localPath: "/tmp/jobctl-test/artifacts/artifact-1.pdf",
+  localPath: "/tmp/jobctrl-test/artifacts/artifact-1.pdf",
   createdAt: "2026-05-02T08:00:00Z",
   sizeBytes: 65_432,
   size: "63.9 KB",
@@ -901,7 +901,7 @@ export const sampleAcceptedResumeArtifact: ArtifactSummary = {
   artifactId: "resume-text-accepted",
   type: "tailored_resume",
   status: "approved",
-  localPath: "/tmp/jobctl-test/artifacts/resume-text-accepted.md",
+  localPath: "/tmp/jobctrl-test/artifacts/resume-text-accepted.md",
   resumeTemplate: makeResumeTemplateState("classic", "Classic"),
 };
 
@@ -909,7 +909,7 @@ export const sampleDraftResumeArtifact: ArtifactSummary = {
   ...sampleAcceptedResumeArtifact,
   artifactId: "resume-text-draft",
   status: "candidate",
-  localPath: "/tmp/jobctl-test/artifacts/resume-text-draft.md",
+  localPath: "/tmp/jobctrl-test/artifacts/resume-text-draft.md",
   resumeTemplate: makeResumeTemplateState("compact", "Compact"),
 };
 
@@ -1648,13 +1648,13 @@ export const sampleSettingsResponse: SettingsResponse = {
     scoreCriteria: "Platform reliability and team leadership.",
     targetCriteria: "Director-plus infrastructure roles.",
   },
-  paths: { settingsPath: "/tmp/jobctl-test/settings.json" },
+  paths: { settingsPath: "/tmp/jobctrl-test/settings.json" },
 };
 
 export const sampleExtensionCapabilityTokenResponse = {
   ok: true as const,
   token: "jh_ext_test_token_123456789012345678901234567890",
-  tokenPath: "/tmp/jobctl-test/extension-capability-token",
+  tokenPath: "/tmp/jobctrl-test/extension-capability-token",
   created: false,
 };
 

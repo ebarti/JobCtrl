@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobctl/domain-types";
+import type { TenantId } from "@jobctrl/domain-types";
 
 import type { ArtifactsListInput } from "./types.js";
 

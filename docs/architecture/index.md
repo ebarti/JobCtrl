@@ -5,7 +5,7 @@ aside: false
 
 # System Architecture
 
-JobCtl is a local-first system: a TypeScript API and a web app (the web app
+JobCtrl is a local-first system: a TypeScript API and a web app (the web app
 talks to the API) orchestrate a Python worker over Temporal (the workflow
 engine). This is the whole machine on one map — every process, store, and
 external dependency, with the data that flows between them:
@@ -21,16 +21,16 @@ flowchart TD
     JsonRpc["JSON-RPC bridge<br/>(SubprocessJsonRpcAdapter)"]
   end
   subgraph Py["🐍 Python automation"]
-    RpcSrv["jobctl rpc<br/>(JSON-RPC server)"]
-    Cli["jobctl CLI"]
-    Worker["Python worker<br/>(queue jobctl-default)"]
+    RpcSrv["jobctrl rpc<br/>(JSON-RPC server)"]
+    Cli["jobctrl CLI"]
+    Worker["Python worker<br/>(queue jobctrl-default)"]
     Workflows["Workflows + activities<br/>Discover / JobPipeline / JobPreparation<br/>Apply / ProfileImport / CompensationRefresh"]
     Bus["InProcessEventBus"]
     Repos["Per-aggregate<br/>repositories"]
     Builder["ProjectionBuilder"]
   end
   Temporal["⏱️ Temporal dev server<br/>(gRPC :7233, UI :8233)"]
-  Db[("SQLite<br/>~/.jobctl/jobctl.db")]
+  Db[("SQLite<br/>~/.jobctrl/jobctrl.db")]
   Files[("Artifact files<br/>resumes · covers · PDFs")]
   subgraph Ext["🌍 Outside world"]
     Boards(["Job boards / ATSes"])
@@ -91,7 +91,7 @@ boundary, or you need to know which page answers a given question.
 - [Backend Domain Model (DDD)](domain-model/index.md) — How is the domain designed (bounded contexts, aggregates, ports)?
 - [Frontend](frontend/index.md) — How is the web app designed (state layers, contexts, ports, realtime)?
 
-This page is the canonical architecture reference for JobCtl. The domain
+This page is the canonical architecture reference for JobCtrl. The domain
 model this implementation realises is defined in the
 [Backend Domain Model](domain-model/index.md) section; project history lives
 under `docs/plans/`.
@@ -102,12 +102,12 @@ the [Job Pipeline](pipeline/index.md) section.
 
 ## System Shape
 
-JobCtl is a local-first job-search automation system. The product surface is
+JobCtrl is a local-first job-search automation system. The product surface is
 the web app and the TypeScript API; the automation engine remains Python because
 the existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
 flows live there. The supported runtime shape has four long-lived local
 processes — the Temporal dev server, the TypeScript API, the web app, and the
-Python worker (`jobctl worker`) — plus a `jobctl rpc` subprocess the API
+Python worker (`jobctrl worker`) — plus a `jobctrl rpc` subprocess the API
 spawns on the first JSON-RPC call and reuses for dispatch. Work-starting
 commands, from the CLI and the API alike, start Temporal workflows; the
 long-lived worker executes them.
@@ -117,15 +117,15 @@ Backend Domain Model's [strategic design](domain-model/strategic.md) (§3):
 
 | Bounded context             | Aggregate root                | Where it lives                                                    |
 |-----------------------------|-------------------------------|-------------------------------------------------------------------|
-| Job Discovery               | `Job`                         | `workers/automation/src/jobctl/domain/discovery/`              |
-| Job Enrichment              | `JobEnrichment`               | `workers/automation/src/jobctl/domain/enrichment/`             |
-| Candidate Profile           | `Profile`                     | `workers/automation/src/jobctl/domain/profile/`                |
-| Scoring                     | `JobScore`                    | `workers/automation/src/jobctl/domain/scoring/`                |
-| Materials Generation        | `MaterialsSet`                | `workers/automation/src/jobctl/domain/materials/`              |
-| Apply Automation            | `ApplyRun`                    | `workers/automation/src/jobctl/domain/apply/`                  |
-| Pipeline Orchestration      | `JobPipelineState`            | `workers/automation/src/jobctl/domain/pipeline/`               |
-| Operations / Read-Side      | _(no aggregate — projections)_| `workers/automation/src/jobctl/domain/operations/`             |
-| Contact & Outreach          | `Contact`                     | `workers/automation/src/jobctl/domain/contact/`               |
+| Job Discovery               | `Job`                         | `workers/automation/src/jobctrl/domain/discovery/`              |
+| Job Enrichment              | `JobEnrichment`               | `workers/automation/src/jobctrl/domain/enrichment/`             |
+| Candidate Profile           | `Profile`                     | `workers/automation/src/jobctrl/domain/profile/`                |
+| Scoring                     | `JobScore`                    | `workers/automation/src/jobctrl/domain/scoring/`                |
+| Materials Generation        | `MaterialsSet`                | `workers/automation/src/jobctrl/domain/materials/`              |
+| Apply Automation            | `ApplyRun`                    | `workers/automation/src/jobctrl/domain/apply/`                  |
+| Pipeline Orchestration      | `JobPipelineState`            | `workers/automation/src/jobctrl/domain/pipeline/`               |
+| Operations / Read-Side      | _(no aggregate — projections)_| `workers/automation/src/jobctrl/domain/operations/`             |
+| Contact & Outreach          | `Contact`                     | `workers/automation/src/jobctrl/domain/contact/`               |
 
 Repository ownership mirrors the runtime boundaries:
 
@@ -215,7 +215,7 @@ vanishes from the funnel.
    row to the local Temporal Web UI (`http://127.0.0.1:8233`).
 9. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions. JSON-RPC worker subprocesses inherit
-   the API runtime `JOBCTL_DIR`, so action writes land in the same
+   the API runtime `JOBCTRL_DIR`, so action writes land in the same
    database the API and web app read.
 
 ## Local Commands
@@ -223,12 +223,12 @@ vanishes from the funnel.
 Python CLI:
 
 ```bash
-uv --project workers/automation run jobctl doctor
-uv --project workers/automation run jobctl worker   # long-lived Temporal worker
-uv --project workers/automation run jobctl run
-uv --project workers/automation run jobctl action score --limit 5
-uv --project workers/automation run jobctl backup
-uv --project workers/automation run jobctl rpc      # JSON-RPC server (spawned by the API)
+uv --project workers/automation run jobctrl doctor
+uv --project workers/automation run jobctrl worker   # long-lived Temporal worker
+uv --project workers/automation run jobctrl run
+uv --project workers/automation run jobctrl action score --limit 5
+uv --project workers/automation run jobctrl backup
+uv --project workers/automation run jobctrl rpc      # JSON-RPC server (spawned by the API)
 ```
 
 TypeScript API and web app:

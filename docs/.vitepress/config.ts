@@ -2,7 +2,7 @@ import { posix } from "node:path";
 import { defineConfig, type DefaultTheme } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
-const REPO_URL = "https://github.com/ebarti/JobCtl";
+const REPO_URL = "https://github.com/ebarti/JobCtrl";
 
 // Docs that stay in the repository but are not published on the site.
 // docs/README.md is the repo-facing documentation map (GitHub renders it when
@@ -173,7 +173,7 @@ function rewriteEscapingLink(href: string, pageRelativePath: string): string | n
 
 export default withMermaid(
   defineConfig({
-    title: "JobCtl",
+    title: "JobCtrl",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
     srcExclude: ["plans/**", "incidents/**", "backlog.md", "claims-ledger.md", "delivered.md", "publish-checklist.md", "README.md"],
@@ -217,7 +217,7 @@ export default withMermaid(
       socialLinks: [{ icon: "github", link: REPO_URL }],
       footer: {
         message: "Documentation screenshots and examples use synthetic data unless noted.",
-        copyright: `Copyright © 2026 JobCtl contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>.`,
+        copyright: `Copyright © 2026 JobCtrl contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>.`,
       },
       search: {
         provider: "local",

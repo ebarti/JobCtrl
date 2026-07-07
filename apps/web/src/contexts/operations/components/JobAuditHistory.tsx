@@ -1,4 +1,4 @@
-import type { JobAuditEntry, JobAuditTone } from "@jobctl/contracts";
+import type { JobAuditEntry, JobAuditTone } from "@jobctrl/contracts";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Empty } from "../../../shared/ui/empty.js";

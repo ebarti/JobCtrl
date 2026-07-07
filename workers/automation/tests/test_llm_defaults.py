@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobctl.llm import DEFAULT_GEMINI_MODEL, _detect_provider
+from jobctrl.llm import DEFAULT_GEMINI_MODEL, _detect_provider
 
 
 def test_gemini_provider_defaults_to_stable_gemini_35(monkeypatch):

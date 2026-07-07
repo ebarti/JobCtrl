@@ -1,5 +1,5 @@
-import type { BulkRunPendingPreparationResponse } from "@jobctl/contracts";
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import type { BulkRunPendingPreparationResponse } from "@jobctrl/contracts";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";

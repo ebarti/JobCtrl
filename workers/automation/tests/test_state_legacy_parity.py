@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.state import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.state import (
     STAGE_ORDER,
     ensure_job_stage_rows,
     get_job_stage_states,

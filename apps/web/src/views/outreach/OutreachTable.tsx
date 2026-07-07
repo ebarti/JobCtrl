@@ -1,4 +1,4 @@
-import type { ContactListResponse, ContactSummary } from "@jobctl/contracts";
+import type { ContactListResponse, ContactSummary } from "@jobctrl/contracts";
 
 import { FilterableDataGrid } from "../../shared/ui/filterable-data-grid.js";
 import { contactColumns } from "./columns.js";

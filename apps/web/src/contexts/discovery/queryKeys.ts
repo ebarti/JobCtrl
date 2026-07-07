@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobctl/domain-types";
+import type { TenantId } from "@jobctrl/domain-types";
 
 export const discoveryKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "discovery"] as const,

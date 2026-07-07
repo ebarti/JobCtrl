@@ -8,7 +8,7 @@ import type { CompensationSourceRegistryResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
 
 function withTempApp() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-compensation-sources-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-compensation-sources-"));
   const app = buildApp({
     dbPath: path.join(dir, "jobs.db"),
     settingsPath: path.join(dir, "dashboard.json"),
@@ -118,7 +118,7 @@ describe("compensation source policy", () => {
 
   it("requires both permitted Levels.fyi access and explicit Europe coverage", () => {
     const missingCoverage = listCompensationSources({
-      JOBCTL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
+      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
     });
     expect(source(missingCoverage, "levels_fyi")).toMatchObject({
       availability: "unavailable",
@@ -128,8 +128,8 @@ describe("compensation source policy", () => {
     });
 
     const configured = listCompensationSources({
-      JOBCTL_LEVELS_FYI_ACCESS_MODE: "enterprise_mcp",
-      JOBCTL_LEVELS_FYI_EUROPE_COVERAGE: "true",
+      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "enterprise_mcp",
+      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "true",
     });
     expect(source(configured, "levels_fyi")).toMatchObject({
       availability: "available",
@@ -143,7 +143,7 @@ describe("compensation source policy", () => {
 
   it("requires permitted Glassdoor partner or written-permission access", () => {
     const invalid = listCompensationSources({
-      JOBCTL_GLASSDOOR_ACCESS_MODE: "public_dataset",
+      JOBCTRL_GLASSDOOR_ACCESS_MODE: "public_dataset",
     });
     expect(source(invalid, "glassdoor")).toMatchObject({
       availability: "unavailable",
@@ -153,7 +153,7 @@ describe("compensation source policy", () => {
     });
 
     const configured = listCompensationSources({
-      JOBCTL_GLASSDOOR_ACCESS_MODE: "written_permission",
+      JOBCTRL_GLASSDOOR_ACCESS_MODE: "written_permission",
     });
     expect(source(configured, "glassdoor")).toMatchObject({
       availability: "available",
@@ -166,11 +166,11 @@ describe("compensation source policy", () => {
 
   it("does not expose credentials, raw provider payloads, local paths, or scraped salary data", () => {
     const response = listCompensationSources({
-      JOBCTL_LEVELS_FYI_ACCESS_MODE: "licensed_data_feed",
-      JOBCTL_LEVELS_FYI_EUROPE_COVERAGE: "1",
-      JOBCTL_GLASSDOOR_ACCESS_MODE: "partner_api",
-      JOBCTL_LEVELS_FYI_API_KEY: "levels-secret",
-      JOBCTL_GLASSDOOR_TOKEN: "glassdoor-token",
+      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_data_feed",
+      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "1",
+      JOBCTRL_GLASSDOOR_ACCESS_MODE: "partner_api",
+      JOBCTRL_LEVELS_FYI_API_KEY: "levels-secret",
+      JOBCTRL_GLASSDOOR_TOKEN: "glassdoor-token",
     });
 
     expect(JSON.stringify(response)).not.toContain("levels-secret");
@@ -199,12 +199,12 @@ describe("compensation source policy", () => {
     vi.stubGlobal("fetch", fetch);
 
     const first = listCompensationSources({
-      JOBCTL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
-      JOBCTL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
+      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
+      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
     });
     const second = listCompensationSources({
-      JOBCTL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
-      JOBCTL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
+      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
+      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
     });
 
     expect(second).toEqual(first);

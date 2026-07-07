@@ -1,7 +1,7 @@
 import {
   WORKFLOW_RUN_SORT_FIELDS,
   type WorkflowRunSortField,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";

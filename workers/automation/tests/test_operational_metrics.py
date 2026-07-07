@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
-from jobctl.operational_metrics import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
+from jobctrl.operational_metrics import (
     FailureClassification,
     classify_failure,
     record_operational_attempt_metric,
 )
-from jobctl.pipeline import runner
+from jobctrl.pipeline import runner
 
 
 def test_failure_classification_separates_harness_runtime_and_scrape_failures() -> None:
@@ -54,7 +54,7 @@ def test_failure_classification_separates_harness_runtime_and_scrape_failures() 
 
 
 def test_record_operational_attempt_metric_is_append_only_and_structured(tmp_path: Path) -> None:
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     try:
         record_operational_attempt_metric(

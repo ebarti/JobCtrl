@@ -48,7 +48,7 @@ def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> 
         """,
     )
     _write(
-        tmp_path / "workers/automation/src/jobctl/apply/prompt.py",
+        tmp_path / "workers/automation/src/jobctrl/apply/prompt.py",
         """
         section = f"API key: {capsolver_key}"
         defaults = ["Age 18+: Yes", "Felony: No"]
@@ -97,7 +97,7 @@ def test_release_check_clean_temp_tree_passes(tmp_path: Path) -> None:
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobctl"
+        name = "jobctrl"
         """,
     )
     _write(tmp_path / "config/app.toml", 'SERVICE_API_KEY = "YOUR_SERVICE_API_KEY"')
@@ -157,7 +157,7 @@ def test_publish_tag_trigger_is_required_after_rename(tmp_path: Path) -> None:
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobctl"
+        name = "jobctrl"
         """,
     )
     _track_all(tmp_path)
@@ -171,7 +171,7 @@ def test_publish_tag_trigger_is_required_after_rename(tmp_path: Path) -> None:
 
 
 def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
-    old_name = "Job" + "Hunter"
+    old_names = ("Job" + "Hunter", "Job" + "Ctl")
     _write(
         tmp_path / ".github/workflows/publish.yml",
         """
@@ -187,10 +187,10 @@ def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobctl"
+        name = "jobctrl"
         """,
     )
-    _write(tmp_path / "README.md", f"Old name: {old_name}\n")
+    _write(tmp_path / "README.md", "\n".join(f"Old name: {old_name}" for old_name in old_names))
     _track_all(tmp_path)
 
     result = release_check.scan_tree(
@@ -203,7 +203,7 @@ def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
 
 def test_prompt_tripwires_warn_until_strict(tmp_path: Path) -> None:
     _write(
-        tmp_path / "workers/automation/src/jobctl/apply/prompt.py",
+        tmp_path / "workers/automation/src/jobctrl/apply/prompt.py",
         """
         section = f"API key: {capsolver_key}"
         defaults = ["Age 18+: Yes", "Felony: No"]
@@ -238,7 +238,7 @@ def test_cli_exit_code_is_nonzero_on_synthetic_violation(
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobctl"
+        name = "jobctrl"
         """,
     )
     _write(tmp_path / "leak.md", "SyntheticSecret")

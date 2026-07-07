@@ -8,7 +8,7 @@ import type {
   OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadResponse,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 export function makeGateResultsPassing(
   overrides: Partial<OutreachDraftGateResults> = {},

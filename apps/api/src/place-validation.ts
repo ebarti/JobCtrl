@@ -37,7 +37,7 @@ export async function validatePlaceExists(place: string): Promise<boolean> {
     const response = await fetch(url, {
       headers: {
         "Accept-Language": "en",
-        "User-Agent": "JobCtl local app place validation",
+        "User-Agent": "JobCtrl local app place validation",
       },
       signal: controller.signal,
     });

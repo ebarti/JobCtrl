@@ -1,4 +1,4 @@
-import type { ResearchSourceOutcome, ResearchTaskStatus } from "@jobctl/contracts";
+import type { ResearchSourceOutcome, ResearchTaskStatus } from "@jobctrl/contracts";
 
 export const RESEARCH_TASK_STATUS_LABELS: Record<ResearchTaskStatus, string> = {
   queued: "Queued",

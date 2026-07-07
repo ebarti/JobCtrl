@@ -1,4 +1,4 @@
-import { DEFAULT_PIPELINE_LLM_MODEL, type PipelineStageRunResponse } from "@jobctl/contracts";
+import { DEFAULT_PIPELINE_LLM_MODEL, type PipelineStageRunResponse } from "@jobctrl/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,7 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
-  it("blocks stage runs when the JobCtl automation worker heartbeat is missing", async () => {
+  it("blocks stage runs when the JobCtrl automation worker heartbeat is missing", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn();
     renderWithProviders(<StageTriggerPanel />, {
@@ -33,7 +33,7 @@ describe("StageTriggerPanel", () => {
             worker: {
               ...sampleHealthResponse.worker,
               status: "missing" as const,
-              message: "No JobCtl automation worker heartbeat has been written to the API database.",
+              message: "No JobCtrl automation worker heartbeat has been written to the API database.",
               heartbeat: null,
             },
           })),
@@ -44,7 +44,7 @@ describe("StageTriggerPanel", () => {
 
     expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "No JobCtl automation worker heartbeat has been written to the API database.",
+      "No JobCtrl automation worker heartbeat has been written to the API database.",
     );
     await user.click(screen.getByRole("button", { name: "Worker unavailable" }));
     expect(runPipelineStages).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe("StageTriggerPanel", () => {
           ...sampleHealthResponse.worker,
           status: "mismatched" as const,
           message:
-            "JobCtl automation worker runtime does not match the API runtime: worker DB /tmp/old.db, API DB /tmp/new.db.",
+            "JobCtrl automation worker runtime does not match the API runtime: worker DB /tmp/old.db, API DB /tmp/new.db.",
         },
       });
     renderWithProviders(<StageTriggerPanel />, {
@@ -81,7 +81,7 @@ describe("StageTriggerPanel", () => {
     await waitFor(() => expect(health).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "JobCtl automation worker runtime does not match the API runtime",
+      "JobCtrl automation worker runtime does not match the API runtime",
     );
     expect(runPipelineStages).not.toHaveBeenCalled();
   });

@@ -1,4 +1,4 @@
-import { ProfileImportRequestSchema, type ProfileImportRequest } from "@jobctl/contracts";
+import { ProfileImportRequestSchema, type ProfileImportRequest } from "@jobctrl/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";

@@ -3,7 +3,7 @@ import {
   serializeStageState,
   type SerializedStageState,
   type StageStateKind,
-} from "@jobctl/domain-types";
+} from "@jobctrl/domain-types";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

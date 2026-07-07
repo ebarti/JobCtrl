@@ -12,11 +12,11 @@ import ast
 import pathlib
 from types import SimpleNamespace
 
-from jobctl.domain.discovery.source_registry import SourceKind, SourcePriority
-from jobctl.infrastructure.discovery.production_wiring import _adapter_for_source
-from jobctl.infrastructure.network.http_client import GatewayHttpClient
+from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority
+from jobctrl.infrastructure.discovery.production_wiring import _adapter_for_source
+from jobctrl.infrastructure.network.http_client import GatewayHttpClient
 
-SRC_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "jobctl"
+SRC_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "jobctrl"
 
 # Files that have been rerouted through the gateway and must not import a raw
 # outbound HTTP transport. Extended per phase (P2b compensation, P2c Workday, ...).
@@ -110,7 +110,7 @@ def test_authenticated_linkedin_context_never_uses_bot_ua_at_any_site() -> None:
     -- the module-level factory and the ``scrape_site_batch`` inline construction.
     Both must present the owner's real logged-in browser identity
     (``user_agent=None``), never the honest bot UA; otherwise the authenticated
-    session self-identifies as ``JobCtl/<ver>`` on the primary batch path,
+    session self-identifies as ``JobCtrl/<ver>`` on the primary batch path,
     contradicting the module comment and the D1/D3 owner-scoped posture. This is
     the assertion that would have caught the divergence between the two sites.
     """
@@ -127,7 +127,7 @@ def test_authenticated_linkedin_context_never_uses_bot_ua_at_any_site() -> None:
 
 
 def test_linkedin_apply_resolver_factory_uses_owner_browser_identity() -> None:
-    from jobctl.enrichment import detail
+    from jobctrl.enrichment import detail
 
     resolver = detail._default_linkedin_apply_resolver_factory()
     assert resolver._user_agent is None

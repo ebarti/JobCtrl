@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jobctl.domain.discovery.scheduler import DiscoveryScheduler, SourceQualitySnapshot
-from jobctl.domain.discovery.source_registry import (
+from jobctrl.domain.discovery.scheduler import DiscoveryScheduler, SourceQualitySnapshot
+from jobctrl.domain.discovery.source_registry import (
     BROAD_BOARD_LEAD_POLICY,
     WORKDAY_API_POLICY,
     SourceKind,
@@ -9,7 +9,7 @@ from jobctl.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 def _source(

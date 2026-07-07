@@ -8,7 +8,7 @@ import {
   type JobSummary,
   type SavedTableView,
   STAGE_STATES,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";

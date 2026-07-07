@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     close_connection,
     count_ready_to_apply,
     get_connection,
@@ -19,8 +19,8 @@ from jobctl.database import (
     get_stats,
     init_db,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactType,
     JudgeVerdict,
@@ -28,10 +28,10 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import SqliteMaterialsRepository
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 
 
 @pytest.fixture()

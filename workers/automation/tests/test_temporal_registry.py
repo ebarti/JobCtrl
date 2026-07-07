@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobctl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 
 
 def test_registry_exports_non_empty_workflows_and_activities():

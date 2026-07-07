@@ -1,4 +1,4 @@
-import type { ProfileImportRequest, ProfileImportResponse } from "@jobctl/contracts";
+import type { ProfileImportRequest, ProfileImportResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";

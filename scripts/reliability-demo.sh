@@ -8,7 +8,7 @@
 # the reliability demo — it stays true as the code evolves, unlike a recording.
 #
 # WHAT IT PROVES (and asserts, failing loudly otherwise)
-#   A JobCtl workflow that is in flight on one worker survives that worker
+#   A JobCtrl workflow that is in flight on one worker survives that worker
 #   being killed and is resumed to a terminal state by a fresh worker, from
 #   Temporal history, with the SAME workflow id AND the SAME run id — exactly
 #   once. Nothing is lost, and nothing is double-applied, when a worker crashes.
@@ -25,8 +25,8 @@
 #
 # SAFETY GUARANTEES (read before running)
 #   * ISOLATED STACK ONLY. Its own Temporal dev server on free, non-default
-#     ports, its own JOBCTL_DIR under a throwaway temp dir, its own SQLite db.
-#     It never touches ~/.jobctl or your real stack.
+#     ports, its own JOBCTRL_DIR under a throwaway temp dir, its own SQLite db.
+#     It never touches ~/.jobctrl or your real stack.
 #   * NO REAL SPEND, NO CRAWL, NO SUBMISSION, NO NETWORK EGRESS. Only the
 #     durable-timer probe workflow runs; `apply` is never invoked.
 #   * KILLS ONLY ITS OWN PROCESS TREES. Every process it starts is tracked by
@@ -54,9 +54,9 @@ free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",
 
 # Isolated, canonicalised workspace (macOS resolves /tmp -> /private/tmp; the
 # worker heartbeat compares resolved paths, so canonicalise up front).
-WORKDIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/jobctl-reliability-demo.XXXXXX")" && pwd -P)"
-export JOBCTL_DIR="$WORKDIR/home"
-mkdir -p "$JOBCTL_DIR"
+WORKDIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/jobctrl-reliability-demo.XXXXXX")" && pwd -P)"
+export JOBCTRL_DIR="$WORKDIR/home"
+mkdir -p "$JOBCTRL_DIR"
 
 # Draw two distinct ephemeral ports; never collide with the standard local
 # stack (Temporal 7233 / UI 8233, API 8766, web 5173).
@@ -69,11 +69,11 @@ for reserved in 7233 8233 8766 5173; do
   fi
 done
 export TEMPORAL_ADDRESS="127.0.0.1:$TEMPORAL_PORT"
-export JOBCTL_SKIP_BROWSER_PREFLIGHT=1   # the probe needs no browser
+export JOBCTRL_SKIP_BROWSER_PREFLIGHT=1   # the probe needs no browser
 export PLAYWRIGHT_SKIP_BROWSER_GC=1         # never GC other worktrees' browsers
 export LANGFUSE_DISABLE=1                   # no telemetry leaves the machine
 
-DB_PATH="$JOBCTL_DIR/jobctl.db"
+DB_PATH="$JOBCTRL_DIR/jobctrl.db"
 TAG="$(date +%s)-$$"
 
 TEMPORAL_PID=""; WORKER_PID=""
@@ -102,7 +102,7 @@ trap cleanup EXIT INT TERM
 jh_python() { uv --project "$AUTOMATION" run python "$@"; }
 
 # Resolve the task queue from the code so the demo never drifts from the worker.
-TASK_QUEUE="$(jh_python -c 'from jobctl.infrastructure.temporal.task_queues import JOBCTL_TASK_QUEUE; print(JOBCTL_TASK_QUEUE)')"
+TASK_QUEUE="$(jh_python -c 'from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE; print(JOBCTRL_TASK_QUEUE)')"
 
 tctl() { temporal --address "$TEMPORAL_ADDRESS" "$@"; }
 
@@ -144,7 +144,7 @@ print(int(d.get("count", 0) or 0))
 fail() { echo "DEMO FAIL — $*" >&2; exit 1; }
 
 echo "=== Isolated durable-execution reliability demo ==="
-echo "workspace:        $JOBCTL_DIR"
+echo "workspace:        $JOBCTRL_DIR"
 echo "temporal address: $TEMPORAL_ADDRESS  (ui: 127.0.0.1:$TEMPORAL_UI_PORT)"
 echo "task queue:       $TASK_QUEUE"
 echo "burst:            $BURST probe workflow(s), hold ${HOLD_SECONDS}s each"
@@ -163,7 +163,7 @@ done
 [[ "$temporal_up" -eq 1 ]] || fail "Temporal dev server did not become ready."
 
 echo "--- 2/8 start worker A (init_db runs on bootstrap; no interactive wizard) ---"
-uv --project "$AUTOMATION" run jobctl worker >"$WORKDIR/worker-a.log" 2>&1 &
+uv --project "$AUTOMATION" run jobctrl worker >"$WORKDIR/worker-a.log" 2>&1 &
 WORKER_PID=$!
 disown "$WORKER_PID" 2>/dev/null || true   # suppress job-control "Killed" noise on crash
 worker_up=0
@@ -204,7 +204,7 @@ echo "--- 5/8 CRASH worker A by its captured PID tree ($WORKER_PID) ---"
 kill_tree "$WORKER_PID" KILL
 WORKER_PID=""
 sleep 3
-if pgrep -f "$AUTOMATION/.venv/bin/jobctl worker" >/dev/null 2>&1; then
+if pgrep -f "$AUTOMATION/.venv/bin/jobctrl worker" >/dev/null 2>&1; then
   fail "worker A process survived the kill."
 fi
 
@@ -215,7 +215,7 @@ echo "    Running with no worker: $still_running / $BURST"
 tctl workflow list --query 'ExecutionStatus="Running"' 2>/dev/null || true
 
 echo "--- 7/8 start worker B — it must resume the in-flight runs from history ---"
-uv --project "$AUTOMATION" run jobctl worker >"$WORKDIR/worker-b.log" 2>&1 &
+uv --project "$AUTOMATION" run jobctrl worker >"$WORKDIR/worker-b.log" 2>&1 &
 WORKER_PID=$!
 disown "$WORKER_PID" 2>/dev/null || true
 for _ in $(seq 1 60); do
@@ -256,7 +256,7 @@ completed_readmodel="$(sqlite3 "$DB_PATH" \
 echo
 echo "final workflow states (Temporal):"
 tctl workflow list --query 'WorkflowType="DurabilityProbeWorkflow"' 2>/dev/null || true
-echo "runs as JobCtl's read model sees them:"
+echo "runs as JobCtrl's read model sees them:"
 sqlite3 -header -column "$DB_PATH" \
   "SELECT workflow_id, status, temporal_run_id FROM workflow_run_projections
    WHERE workflow_type='DurabilityProbeWorkflow' ORDER BY workflow_id;" 2>/dev/null || true

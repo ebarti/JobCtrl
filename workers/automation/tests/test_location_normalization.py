@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.infrastructure.projections.location_normalization import (
+from jobctrl.infrastructure.projections.location_normalization import (
     normalize_job_location,
 )
 

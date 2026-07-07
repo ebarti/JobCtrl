@@ -1,4 +1,4 @@
-import type { ArtifactSortField } from "@jobctl/contracts";
+import type { ArtifactSortField } from "@jobctrl/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";

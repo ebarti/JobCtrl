@@ -134,7 +134,7 @@ import type {
   WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 export interface ApiHealthResponse {
   ok: true;

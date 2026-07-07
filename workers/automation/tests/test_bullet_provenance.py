@@ -17,9 +17,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from jobctl.database import close_connection, init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.analysis import (
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -27,8 +27,8 @@ from jobctl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctl.domain.materials.coverage_audit import compute_keyword_coverage
-from jobctl.domain.materials.fabrication_detector import (
+from jobctrl.domain.materials.coverage_audit import compute_keyword_coverage
+from jobctrl.domain.materials.fabrication_detector import (
     build_evidence_corpus,
     build_skill_evidence_corpus,
     build_skill_vocabulary,
@@ -37,20 +37,20 @@ from jobctl.domain.materials.fabrication_detector import (
     scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
-from jobctl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
-from jobctl.domain.materials.provenance_builder import (
+from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
+from jobctrl.domain.materials.provenance_builder import (
     ProvenanceBindingError,
     build_bullet_provenance,
 )
-from jobctl.domain.materials.quality import build_tailoring_plan
-from jobctl.domain.materials.services import ResumeAssembler
-from jobctl.domain.materials.value_objects import ControlRule, TransformType
-from jobctl.infrastructure.materials.bullet_provenance_repository import (
+from jobctrl.domain.materials.quality import build_tailoring_plan
+from jobctrl.domain.materials.services import ResumeAssembler
+from jobctrl.domain.materials.value_objects import ControlRule, TransformType
+from jobctrl.infrastructure.materials.bullet_provenance_repository import (
     SqliteBulletProvenanceRepository,
 )
-from jobctl.infrastructure.materials.html_resume_pdf import build_resume_document
-from jobctl.infrastructure.materials.latex_pdf import build_latex
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
+from jobctrl.infrastructure.materials.latex_pdf import build_latex
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/senior-backend"
 
@@ -831,7 +831,7 @@ def test_fabricated_requirement_id_is_rejected_before_any_row_is_built() -> None
     # must be rejected by the builder's FK validation. We simulate by validating
     # directly: the builder only ever emits ids it resolved, so we assert the
     # guard rejects an injected fabricated id.
-    from jobctl.domain.materials.provenance_builder import (
+    from jobctrl.domain.materials.provenance_builder import (
         _sources,
         _validated_requirement_ids,
     )
@@ -846,7 +846,7 @@ def test_fabricated_requirement_id_is_rejected_before_any_row_is_built() -> None
 
 
 def test_fabricated_evidence_id_is_rejected() -> None:
-    from jobctl.domain.materials.provenance_builder import (
+    from jobctrl.domain.materials.provenance_builder import (
         _sources,
         _validated_evidence_ids,
     )

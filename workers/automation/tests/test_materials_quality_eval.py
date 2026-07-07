@@ -8,24 +8,24 @@ from typing import Any
 
 import pytest
 
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials.adversarial import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials.adversarial import (
     AdversarialReviewResult,
     normalized_job_fit_score,
     should_run_adversarial_review,
 )
-from jobctl.domain.materials.analysis import (
+from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
     ReasonedKeyword,
     compute_snapshot_hash,
 )
-from jobctl.domain.materials.quality import (
+from jobctrl.domain.materials.quality import (
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "resume_tailoring_quality_eval.json"

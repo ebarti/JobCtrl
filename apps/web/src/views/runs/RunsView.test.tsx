@@ -88,7 +88,7 @@ describe("<RunsView>", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     await waitFor(() =>
-      expect(screen.getByText(/JobCtl API request failed: 500/i)).toBeInTheDocument(),
+      expect(screen.getByText(/JobCtrl API request failed: 500/i)).toBeInTheDocument(),
     );
   });
 });

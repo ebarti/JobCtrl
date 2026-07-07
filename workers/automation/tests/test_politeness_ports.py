@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.ports.politeness import (
+from jobctrl.domain.ports.politeness import (
     PROJECT_REPOSITORY_URL,
     HonestUserAgent,
     PolitenessDecision,
@@ -19,15 +19,15 @@ from jobctl.domain.ports.politeness import (
 
 
 def test_honest_user_agent_renders_product_version_and_contact() -> None:
-    ua = HonestUserAgent(product="JobCtl", version="1.2.3", contact_url="https://example.com")
-    assert ua.header_value() == "JobCtl/1.2.3 (+https://example.com)"
+    ua = HonestUserAgent(product="JobCtrl", version="1.2.3", contact_url="https://example.com")
+    assert ua.header_value() == "JobCtrl/1.2.3 (+https://example.com)"
 
 
 def test_honest_user_agent_omits_empty_contact() -> None:
-    ua = HonestUserAgent(product="JobCtl", version="1.2.3", contact_url=None)
-    assert ua.header_value() == "JobCtl/1.2.3"
-    assert HonestUserAgent(product="JobCtl", version="1.2.3", contact_url="  ").header_value() == (
-        "JobCtl/1.2.3"
+    ua = HonestUserAgent(product="JobCtrl", version="1.2.3", contact_url=None)
+    assert ua.header_value() == "JobCtrl/1.2.3"
+    assert HonestUserAgent(product="JobCtrl", version="1.2.3", contact_url="  ").header_value() == (
+        "JobCtrl/1.2.3"
     )
 
 
@@ -35,17 +35,17 @@ def test_honest_user_agent_rejects_empty_components() -> None:
     with pytest.raises(ValueError, match="product"):
         HonestUserAgent(product="  ", version="1.0")
     with pytest.raises(ValueError, match="version"):
-        HonestUserAgent(product="JobCtl", version="")
+        HonestUserAgent(product="JobCtrl", version="")
 
 
 def test_default_honest_user_agent_is_honest_and_carries_repo_contact() -> None:
     ua = default_honest_user_agent()
     rendered = ua.header_value()
-    assert ua.product == "JobCtl"
+    assert ua.product == "JobCtrl"
     # Never impersonate a browser on a surface we control.
     assert "Mozilla" not in rendered
     assert "AppleWebKit" not in rendered
-    assert rendered.startswith("JobCtl/")
+    assert rendered.startswith("JobCtrl/")
     assert f"(+{PROJECT_REPOSITORY_URL})" in rendered
 
 
@@ -64,7 +64,7 @@ def test_politeness_decision_carries_outcome_and_user_agent() -> None:
     decision = PolitenessDecision(
         allowed=False,
         outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
-        user_agent="JobCtl/0 (+https://example.com)",
+        user_agent="JobCtrl/0 (+https://example.com)",
         reason="Disallow: /jobs",
     )
     assert decision.allowed is False

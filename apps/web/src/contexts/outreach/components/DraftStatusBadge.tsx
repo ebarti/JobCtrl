@@ -1,4 +1,4 @@
-import type { OutreachDraftStatus } from "@jobctl/contracts";
+import type { OutreachDraftStatus } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { outreachDraftStatusLabel } from "../lib/draft-copy.js";

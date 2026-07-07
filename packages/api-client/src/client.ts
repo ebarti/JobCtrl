@@ -138,18 +138,18 @@ import type {
   WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
-export class JobCtlApiError extends Error {
+export class JobCtrlApiError extends Error {
   readonly status: number;
   readonly statusText: string;
 
   constructor(status: number, statusText: string) {
-    super(`JobCtl API request failed: ${status} ${statusText}`);
-    this.name = "JobCtlApiError";
+    super(`JobCtrl API request failed: ${status} ${statusText}`);
+    this.name = "JobCtrlApiError";
     this.status = status;
     this.statusText = statusText;
   }
@@ -196,7 +196,7 @@ export interface HealthResponse {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
-export class JobCtlApiClient {
+export class JobCtrlApiClient {
   readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
 
@@ -715,7 +715,7 @@ export class JobCtlApiClient {
 
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -724,7 +724,7 @@ export class JobCtlApiClient {
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.html`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -741,7 +741,7 @@ export class JobCtlApiClient {
 
   profilePreviewPdfUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.pdf";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -750,7 +750,7 @@ export class JobCtlApiClient {
 
   profilePreviewHtmlUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.html";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -853,7 +853,7 @@ export class JobCtlApiClient {
     path: string,
     options: { body?: unknown; query?: Record<string, QueryValue> } = {},
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
     for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined && value !== null && value !== "") {
         url.searchParams.set(key, String(value));
@@ -874,21 +874,21 @@ export class JobCtlApiClient {
       response = await fetch(href, { ...init, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(`JobCtl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
+        throw new Error(`JobCtrl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
       }
       throw error;
     } finally {
       clearTimeout(timeout);
     }
     if (!response.ok) {
-      throw new JobCtlApiError(response.status, response.statusText);
+      throw new JobCtrlApiError(response.status, response.statusText);
     }
     return (await response.json()) as T;
   }
 }
 
-export function createJobCtlApiClient(baseUrl?: string): JobCtlApiClient {
-  return new JobCtlApiClient(baseUrl);
+export function createJobCtrlApiClient(baseUrl?: string): JobCtrlApiClient {
+  return new JobCtrlApiClient(baseUrl);
 }
 
 function defaultBaseUrl(): string {

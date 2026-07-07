@@ -1,6 +1,6 @@
 # Observability
 
-JobCtl exports OpenTelemetry spans for LLM calls, Temporal workflows, and the
+JobCtrl exports OpenTelemetry spans for LLM calls, Temporal workflows, and the
 TS↔Python JSON-RPC boundary to Langfuse — opt-in, off until configured.
 
 **Read this if** you want to trace an LLM call, workflow, or JSON-RPC dispatch,
@@ -31,7 +31,7 @@ not instrumented yet (see [Out of Scope](#out-of-scope) below).
 
 The Python worker exports OpenTelemetry spans over OTLP/HTTP to a
 Langfuse instance for LLM tracing. The wiring lives under
-`workers/automation/src/jobctl/infrastructure/observability/`:
+`workers/automation/src/jobctrl/infrastructure/observability/`:
 
 - `otel.py` — `init_otel()` configures a global `TracerProvider` with a
   `BatchSpanProcessor` feeding an `OTLPSpanExporter`. Endpoint:
@@ -54,13 +54,13 @@ These sources emit spans:
 
 | Source | Span name | `langfuse.observation.type` |
 | --- | --- | --- |
-| Every LLM call (`jobctl.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
-| Each employer-analysis ensemble draft leg (scopes `jobctl.analysis.claude` / `.codex` / `.antigravity`) | `llm.<model>` | `generation` |
-| The employer-analysis synthesizer (scope `jobctl.analysis.synthesizer`) | `llm.<model>` | `generation` |
-| The resume voice pass (scope `jobctl.materials.voice`) | `llm.<model>` | `generation` |
+| Every LLM call (`jobctrl.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
+| Each employer-analysis ensemble draft leg (scopes `jobctrl.analysis.claude` / `.codex` / `.antigravity`) | `llm.<model>` | `generation` |
+| The employer-analysis synthesizer (scope `jobctrl.analysis.synthesizer`) | `llm.<model>` | `generation` |
+| The resume voice pass (scope `jobctrl.materials.voice`) | `llm.<model>` | `generation` |
 | Every Temporal workflow + activity (via `temporalio.contrib.opentelemetry.TracingInterceptor`) | workflow / activity name | `span` (default) |
-| Every JSON-RPC dispatch (`jobctl.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
-| Every pipeline stage (`jobctl.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
+| Every JSON-RPC dispatch (`jobctrl.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
+| Every pipeline stage (`jobctrl.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
 | Every score use-case call (`ScoreJobUseCase`) | `scoring.score_job` | `span` |
 | Discover source steps (`jobspy`, `workday`, `smartextract`) | `pipeline.source.discover.<source>` | `span` |
 | Scheduled discovery runs | `discovery.run` | `span` |
@@ -115,12 +115,12 @@ The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/worker.py`) so trace context propagates from the
 JSON-RPC handler that starts a workflow into the worker that runs it.
 
-`init_otel()` is called from `jobctl.cli._bootstrap()`, so every CLI
-command (notably `jobctl worker` and `jobctl rpc`) configures
+`init_otel()` is called from `jobctrl.cli._bootstrap()`, so every CLI
+command (notably `jobctrl worker` and `jobctrl rpc`) configures
 exporting on startup. The `worker` command calls `shutdown_otel()` on
 exit so the `BatchSpanProcessor` flushes any in-flight spans.
 
-`jobctl doctor` includes a `Langfuse` row that probes the OTLP endpoint
+`jobctrl doctor` includes a `Langfuse` row that probes the OTLP endpoint
 with a `HEAD` request — `OK reachable`, `MISSING (set
 LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
 

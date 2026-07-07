@@ -15,10 +15,10 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
-from jobctl.cli import _reconcile_workflow_runs, _record_reconciled_outcome
-from jobctl.database import get_connection
-from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctl.state import record_job_event
+from jobctrl.cli import _reconcile_workflow_runs, _record_reconciled_outcome
+from jobctrl.database import get_connection
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.state import record_job_event
 
 
 class _FakeDescribe:

@@ -26,9 +26,9 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import init_db
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.database import init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -38,10 +38,10 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
-from jobctl.domain.materials.value_objects import ControlRule, TransformType
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.materials import (
+from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
+from jobctrl.domain.materials.value_objects import ControlRule, TransformType
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import (
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
     SqliteUnitOfWork,
@@ -57,7 +57,7 @@ JOB_URL = "https://example.com/job/uow"
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    connection = init_db(tmp_path / "jobctl.db")
+    connection = init_db(tmp_path / "jobctrl.db")
     connection.execute(
         "INSERT INTO jobs (url, title, site, full_description, fit_score, discovered_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -278,7 +278,7 @@ def test_flip_holds_one_explicit_transaction_and_locks_out_competitors(
 
     # A second connection to the SAME database file, set to fail fast instead of
     # waiting the production busy_timeout, standing in for a concurrent worker.
-    competitor = sqlite3.connect(str(tmp_path / "jobctl.db"), timeout=0.2)
+    competitor = sqlite3.connect(str(tmp_path / "jobctrl.db"), timeout=0.2)
     try:
         assert conn.in_transaction is False  # eager gen-1 save already committed
         with uow:

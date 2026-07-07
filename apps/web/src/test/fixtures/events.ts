@@ -91,7 +91,7 @@ import {
   createFollowUpDismissed,
   LOCAL_TENANT,
   type DomainEventUnion,
-} from "@jobctl/domain-types";
+} from "@jobctrl/domain-types";
 
 const NOW = "2026-05-06T08:00:00Z";
 
@@ -297,7 +297,7 @@ export const eventByType = {
     staleReason: "scoring_policy_changed",
     oldPolicyVersion: 1,
     newPolicyVersion: 2,
-    nextAction: "jobctl run score --rescore",
+    nextAction: "jobctrl run score --rescore",
   }),
   ResumeApproved: createResumeApproved(LOCAL_TENANT, {
     jobId: JOB_ID,

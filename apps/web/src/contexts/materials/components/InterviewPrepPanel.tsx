@@ -1,4 +1,4 @@
-import type { InterviewPrep, InterviewPrepItem, InterviewPrepItemKind } from "@jobctl/contracts";
+import type { InterviewPrep, InterviewPrepItem, InterviewPrepItemKind } from "@jobctrl/contracts";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 

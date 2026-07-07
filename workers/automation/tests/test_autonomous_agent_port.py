@@ -1,13 +1,13 @@
 """Phase 8 (S-29): AutonomousAgentPort contract — exercised via a fake."""
 
-from jobctl.domain.apply.value_objects import (
+from jobctrl.domain.apply.value_objects import (
     Applied,
     ApplyPrompt,
     BrowserWorkerConfig,
     Failed,
     TokenUsage,
 )
-from jobctl.domain.ports.apply import (
+from jobctrl.domain.ports.apply import (
     AgentResult,
     AutonomousAgentPort,
     BrowserSession,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from jobctl import cli
-from jobctl.cli import app
-from jobctl.workflow_specs import StartedWorkflowResult
+from jobctrl import cli
+from jobctrl.cli import app
+from jobctrl.workflow_specs import StartedWorkflowResult
 
 
 def _started(result: dict | None = None) -> StartedWorkflowResult:

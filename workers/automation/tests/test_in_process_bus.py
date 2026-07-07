@@ -1,8 +1,8 @@
 """Tests for InProcessEventBus — §6.3 in-process synchronous bus."""
 
-from jobctl.domain.events.base import create_domain_event
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.domain.events.base import create_domain_event
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 
 
 def _event(event_type: str = "StageStarted"):

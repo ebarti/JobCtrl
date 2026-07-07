@@ -1,4 +1,4 @@
-import { ReviseOutreachDraftRequestSchema } from "@jobctl/contracts";
+import { ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import type { JSX } from "react";
 

@@ -2,7 +2,7 @@ import type {
   ProfileImported,
   ProfileUpdated,
   TailoringPolicyUpdated,
-} from "@jobctl/domain-types";
+} from "@jobctrl/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";

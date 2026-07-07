@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     count_ready_to_apply,
     ensure_posting_snapshot_tables,
     get_jobs_by_stage,
@@ -31,7 +31,7 @@ from jobctl.database import (
     init_db,
     load_job_with_enrichment,
 )
-from jobctl.domain.enrichment import (
+from jobctrl.domain.enrichment import (
     ActiveState,
     PostingSnapshotSet,
     QuarantineReason,
@@ -39,8 +39,8 @@ from jobctl.domain.enrichment import (
     SnapshotConfidence,
     SnapshotDescriptionHash,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.materials import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.materials import (
     Artifact,
     ArtifactType,
     JudgeVerdict,
@@ -48,19 +48,19 @@ from jobctl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctl.domain.scoring import (
+from jobctrl.domain.scoring import (
     EligibilityAssessment,
     FitScore,
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.enrichment.sqlite_repository import (
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
-from jobctl.infrastructure.materials import SqliteMaterialsRepository
-from jobctl.infrastructure.scoring import SqliteScoreRepository
+from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.infrastructure.scoring import SqliteScoreRepository
 
 NOW = "2026-05-13T00:00:00+00:00"
 _DESCRIPTION = "Need Python and SQL. " * 20
@@ -68,7 +68,7 @@ _DESCRIPTION = "Need Python and SQL. " * 20
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
@@ -343,7 +343,7 @@ def test_migration_backfills_latest_snapshot_quality(tmp_path: Path) -> None:
 def test_snapshot_captured_event_records_confidence_and_quarantine(
     conn: sqlite3.Connection,
 ) -> None:
-    from jobctl.enrichment.detail import _record_posting_snapshot_from_cascade
+    from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 
     url = "https://example.com/job/event"
     _seed_enriched_job(conn, url)

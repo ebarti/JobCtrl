@@ -1,4 +1,4 @@
-import type { ContactDeleteRequest, ContactDeleteResponse } from "@jobctl/contracts";
+import type { ContactDeleteRequest, ContactDeleteResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";

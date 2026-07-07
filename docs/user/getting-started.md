@@ -4,7 +4,7 @@ pageClass: jh-user-guide-page
 
 # Getting Started
 
-JobCtl runs entirely on your own computer. This guide takes you from an
+JobCtrl runs entirely on your own computer. This guide takes you from an
 empty machine to the app open in your browser. Today that means **installing
 from source** — there is no packaged installer yet, so setup is
 developer-shaped even though daily use is not. It is local-first: your data
@@ -17,8 +17,8 @@ zoomable screenshots — no install required.
 
 ## What You'll Have When You're Done
 
-- JobCtl running locally, open in your browser at a local web address.
-- A local workspace under `~/.jobctl/` holding your database, settings, and
+- JobCtrl running locally, open in your browser at a local web address.
+- A local workspace under `~/.jobctrl/` holding your database, settings, and
   generated files.
 - At least one LLM (large language model) provider connected for scoring and
   materials, plus vendor auth for any enabled employer-analysis ensemble legs.
@@ -26,7 +26,7 @@ zoomable screenshots — no install required.
 
 ## 1. Install Requirements
 
-JobCtl builds on a handful of standard developer tools. Installing them is
+JobCtrl builds on a handful of standard developer tools. Installing them is
 the bulk of the setup — expect roughly 15–30 minutes end to end, mostly
 downloads. Each line says what the tool is for.
 
@@ -38,7 +38,7 @@ downloads. Each line says what the tool is for.
 - **uv** — a fast installer and environment manager for Python.
 - **Temporal CLI** — runs a local Temporal (the workflow engine) with
   `temporal server start-dev`.
-- **Chrome or Chromium** — the browser JobCtl automates and uses to render
+- **Chrome or Chromium** — the browser JobCtrl automates and uses to render
   PDFs.
 - **Playwright Chromium** — a browser build that Playwright controls to turn
   tailored resumes into PDFs.
@@ -47,7 +47,7 @@ downloads. Each line says what the tool is for.
 
 ::: details Optional tools — skip these on a first install
 - **TeX / `pdflatex`** — only if you switch the resume renderer to
-  `JOBCTL_RESUME_RENDERER=latex_pdf`.
+  `JOBCTRL_RESUME_RENDERER=latex_pdf`.
 - **Google Maps API key** — enables address autocomplete in the Profile form.
 - **Gmail OAuth Desktop client** — enables read-only scans for verification
   codes and application outcomes.
@@ -57,14 +57,14 @@ downloads. Each line says what the tool is for.
 ## 2. Install Dependencies
 
 ```bash
-git clone https://github.com/ebarti/JobCtl.git
-cd JobCtl
+git clone https://github.com/ebarti/JobCtrl.git
+cd JobCtrl
 pnpm install:interactive
 ```
 
 Downloads the project and runs the guided first-run installer: it checks your
 system tools, installs the JavaScript and Python dependencies, and downloads the
-Playwright Chromium browser. It also runs `jobctl setup`, which detects
+Playwright Chromium browser. It also runs `jobctrl setup`, which detects
 Claude/Codex/Antigravity auth and persists any intentionally enabled or skipped
 analysis legs. Expect a few minutes on the first run.
 
@@ -88,33 +88,33 @@ Downloads the Chromium build that Playwright uses for PDF rendering.
 ## 3. Create Local Configuration
 
 ```bash
-uv --project workers/automation run jobctl init
-uv --project workers/automation run jobctl setup
-uv --project workers/automation run jobctl doctor
+uv --project workers/automation run jobctrl init
+uv --project workers/automation run jobctrl setup
+uv --project workers/automation run jobctrl doctor
 ```
 
 The first command creates your local workspace and configuration under
-`~/.jobctl/`. The second checks your setup and reports which features are
+`~/.jobctrl/`. The second checks your setup and reports which features are
 available: local database, LLM provider, Temporal, browser automation, the
 Gmail connector, and telemetry.
 
 At minimum, connect one general LLM provider. Start from the example file:
 
 ```bash
-cp .env.example ~/.jobctl/.env
+cp .env.example ~/.jobctrl/.env
 ```
 
 Copies the example environment file into your local workspace so you can fill in
 your own keys.
 
-Then open `~/.jobctl/.env` in any editor and set one of:
+Then open `~/.jobctrl/.env` in any editor and set one of:
 
 - `GEMINI_API_KEY` — a Google Gemini key.
 - `OPENAI_API_KEY` — an OpenAI key.
 - `LLM_URL` — the address of a local, OpenAI-compatible model server.
 
-The employer-analysis ensemble is checked separately by `jobctl setup` and
-`jobctl doctor`:
+The employer-analysis ensemble is checked separately by `jobctrl setup` and
+`jobctrl doctor`:
 
 - Claude uses `ANTHROPIC_API_KEY` or local Claude credentials
   (`CLAUDE_CODE_OAUTH_TOKEN` / existing Claude login) as a local convenience.
@@ -123,7 +123,7 @@ The employer-analysis ensemble is checked separately by `jobctl setup` and
 - Antigravity uses `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env.
 
 Every run reconciles the ensemble with a Claude synthesis pass, so Claude auth is
-required even if you disable the `claude` leg via `JOBCTL_ANALYSIS_LEGS`. When
+required even if you disable the `claude` leg via `JOBCTRL_ANALYSIS_LEGS`. When
 it is missing, `setup` reports analysis as not ready and `doctor` shows a red
 `Claude synthesis auth` row.
 
@@ -140,7 +140,7 @@ Starts everything and keeps it running in the foreground. The launcher starts:
 - **Temporal** (the workflow engine) — keeps each pipeline stage running
   reliably.
 - **the TypeScript API** — the local service the web app talks to.
-- **the web app** — the page you open in your browser to use JobCtl.
+- **the web app** — the page you open in your browser to use JobCtrl.
 - **the Python worker** — a Temporal worker process that does the actual
   pipeline work.
 
@@ -148,7 +148,7 @@ Keep the terminal open while you use the app. The launcher prints the web
 address; it is normally `http://127.0.0.1:5173/`, but Vite may pick another port
 if 5173 is busy. Opening that address lands you on the dashboard.
 
-![JobCtl dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
+![JobCtrl dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
 *The dashboard summarizes pipeline progress, job counts, source health, and recent apply runs.*
 
 To watch the stack from a second terminal:
@@ -171,7 +171,7 @@ pnpm extension:build
 ```
 
 Then load `dist/extension/` as an unpacked Chrome/Chromium extension, open
-JobCtl Settings, copy the browser-extension pairing token into the extension
+JobCtrl Settings, copy the browser-extension pairing token into the extension
 popup, and click **Save job** on an http(s) job page. On supported ATS
 application pages, **Review autofill** opens deterministic profile-backed
 suggestions that you accept before fields are filled. The extension talks only
@@ -180,11 +180,11 @@ to the local API. It cannot submit applications.
 ## 5. Use A Disposable Workspace For Testing
 
 Use a throwaway workspace when testing risky flows, taking screenshots, or
-preparing a bug report — never your real `~/.jobctl` data.
+preparing a bug report — never your real `~/.jobctrl` data.
 
 ```bash
-pnpm qa:seed -- /tmp/jobctl-qa
-JOBCTL_DIR=/tmp/jobctl-qa pnpm dev
+pnpm qa:seed -- /tmp/jobctrl-qa
+JOBCTRL_DIR=/tmp/jobctrl-qa pnpm dev
 ```
 
 The first command fills a separate folder with synthetic profile, job, score,
@@ -193,14 +193,14 @@ instead of your real one.
 
 ::: warning
 The seeded workspace is synthetic and safe to share. Keep it separate from your
-real `~/.jobctl` workspace so real data never mixes in.
+real `~/.jobctrl` workspace so real data never mixes in.
 :::
 
 ## 6. First Useful Checks
 
 ```bash
-uv --project workers/automation run jobctl status
-uv --project workers/automation run jobctl runs
+uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl runs
 curl http://127.0.0.1:8766/v1/health
 ```
 

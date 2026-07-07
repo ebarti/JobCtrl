@@ -1,5 +1,5 @@
-import type { ContactResearchDetailResponse } from "@jobctl/contracts";
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import type { ContactResearchDetailResponse } from "@jobctrl/contracts";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";

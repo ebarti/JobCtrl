@@ -1,4 +1,4 @@
-import type { OutreachThreadResponse } from "@jobctl/contracts";
+import type { OutreachThreadResponse } from "@jobctrl/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

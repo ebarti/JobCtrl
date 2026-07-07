@@ -1,4 +1,4 @@
-import type { ArtifactSummary, ArtifactTailoringExplanation } from "@jobctl/contracts";
+import type { ArtifactSummary, ArtifactTailoringExplanation } from "@jobctrl/contracts";
 import {
   createMemoryHistory,
   createRootRoute,

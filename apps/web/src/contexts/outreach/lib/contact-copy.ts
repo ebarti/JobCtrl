@@ -3,7 +3,7 @@ import {
   type ContactAttributeKind,
   type ContactRole,
   type ContactSourceKind,
-} from "@jobctl/contracts";
+} from "@jobctrl/contracts";
 
 export const CONTACT_ROLE_LABELS: Record<ContactRole, string> = {
   recruiter: "Recruiter",

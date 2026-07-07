@@ -572,7 +572,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jobctl"
+name = "jobctrl"
 version = "0.3.0"
 source = { editable = "." }
 dependencies = [

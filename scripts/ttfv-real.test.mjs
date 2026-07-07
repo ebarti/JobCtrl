@@ -3,14 +3,14 @@ import test from "node:test";
 
 import { discoveryProvenance, gateableRecordRejectionReasons, summarizeMeasurementRecords } from "./ttfv-real.mjs";
 
-const WORK_COMMAND = "uv --project workers/automation run jobctl run discover score tailor --limit 1 --workers 1";
+const WORK_COMMAND = "uv --project workers/automation run jobctrl run discover score tailor --limit 1 --workers 1";
 const JOB_HASH = "jobhash00000001";
 
 function validRecord(overrides = {}) {
   const jobHash = overrides.jobHash ?? JOB_HASH;
   return {
     schemaVersion: 1,
-    kind: "jobctl.realPathTtfvMeasurement",
+    kind: "jobctrl.realPathTtfvMeasurement",
     mode: "run",
     status: "passed",
     gateable: true,
@@ -44,7 +44,7 @@ function validRecord(overrides = {}) {
     },
     phases: [
       { name: "install", command: "corepack pnpm install:interactive", exitCode: 0 },
-      { name: "workspace_init", command: "uv --project workers/automation run jobctl init", exitCode: 0 },
+      { name: "workspace_init", command: "uv --project workers/automation run jobctrl init", exitCode: 0 },
       { name: "stack_start", command: "corepack pnpm dev", status: "healthy" },
       {
         name: "real_job_pipeline",
@@ -223,7 +223,7 @@ test("rejects old tailor-only work-command records", () => {
   assert.match(
     reasons(
       validRecord({
-        workCommand: "uv --project workers/automation run jobctl job <redacted-real-job-url> --tailor",
+        workCommand: "uv --project workers/automation run jobctrl job <redacted-real-job-url> --tailor",
       }),
     ).join("\n"),
     /discovery-inclusive real job command did not succeed/,

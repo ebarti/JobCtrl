@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from jobctl.domain.materials.claim_grounding import (
+from jobctrl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     bullet_id_for_claim_location,
     enrich_provenance_requirements,
     ground_claim_mappings,
 )
-from jobctl.domain.materials.provenance import BulletProvenance
-from jobctl.domain.materials.requirement_coverage import GeneratedClaimMapping
-from jobctl.domain.materials.value_objects import ControlRule, TransformType
+from jobctrl.domain.materials.provenance import BulletProvenance
+from jobctrl.domain.materials.requirement_coverage import GeneratedClaimMapping
+from jobctrl.domain.materials.value_objects import ControlRule, TransformType
 
 
 def _mapping(

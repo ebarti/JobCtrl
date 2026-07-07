@@ -101,7 +101,7 @@ interface Fixture {
 const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-audit-parity-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-audit-parity-"));
   const dbPath = path.join(dir, "jobs.db");
   return {
     dbPath,
@@ -299,7 +299,7 @@ function seedSchema(dbPath: string): void {
       position INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (job_url, generation, item_id)
     );
-    CREATE TABLE jobctl_hidden_jobs (
+    CREATE TABLE jobctrl_hidden_jobs (
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
       reason TEXT,
@@ -499,7 +499,7 @@ function seedRows(dbPath: string): void {
      VALUES (@job_url, 1, 'local', @fit_score, @breakdown_json, '[]', @scored_at, NULL, '{}', '{}')`,
   );
   const insertHidden = db.prepare(
-    `INSERT INTO jobctl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+    `INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
      VALUES (?, ?, 'parity', NULL)`,
   );
   for (const agg of fixture.dashboardAggregateJobs) {

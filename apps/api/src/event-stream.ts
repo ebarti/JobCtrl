@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import { databaseExists, openDatabase, type SqliteDatabase } from "./db.js";
 import { resolveLoopbackCorsOrigin } from "./local-origin.js";
@@ -36,7 +36,7 @@ interface Subscriber {
 
 export function registerEventStreamRoute(app: FastifyInstance, options: EventStreamOptions): void {
   const pollIntervalMs = clampPositive(
-    parseEnvInt(process.env.JOBCTL_API_SSE_POLL_MS, options.pollIntervalMs ?? POLL_DEFAULT_MS),
+    parseEnvInt(process.env.JOBCTRL_API_SSE_POLL_MS, options.pollIntervalMs ?? POLL_DEFAULT_MS),
   );
   const keepaliveIntervalMs = clampPositive(options.keepaliveIntervalMs ?? KEEPALIVE_DEFAULT_MS);
   const heartbeatIntervalMs = clampPositive(options.heartbeatIntervalMs ?? HEARTBEAT_DEFAULT_MS);
@@ -63,7 +63,7 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     }
     try {
       // The `job_events` table is created by the Python worker
-      // (`workers/automation/src/jobctl/database.py`); the API may
+      // (`workers/automation/src/jobctrl/database.py`); the API may
       // start before any worker run materialises it.  The CREATE INDEX
       // requires the base table — we swallow the error and retry on
       // the next subscriber connect so the SSE route still serves

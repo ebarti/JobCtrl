@@ -12,7 +12,7 @@ The system SHALL derive append-only feedback signals from saved resume edit delt
 - **THEN** the system records a factual or claim-policy feedback signal tied to the affected source pin or missing provenance state
 
 ### Requirement: Comment replies produce feedback signals
-The system SHALL derive feedback signals from user replies to JobCtl comments. A reply signal MUST preserve whether the user accepted, rejected, clarified, or requested a rewrite of the comment while retaining the original comment and audit context.
+The system SHALL derive feedback signals from user replies to JobCtrl comments. A reply signal MUST preserve whether the user accepted, rejected, clarified, or requested a rewrite of the comment while retaining the original comment and audit context.
 
 #### Scenario: User rejects a warning
 - **WHEN** the user replies that a warning is not valid for the selected resume line

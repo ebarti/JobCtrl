@@ -131,7 +131,9 @@ function processExists(pid: number): boolean {
 function devScriptEnv(devDir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    JOBCTL_DEV_DIR: devDir,
+    HOME: join(devDir, "home"),
+    JOBCTRL_DIR: join(devDir, "app"),
+    JOBCTRL_DEV_DIR: devDir,
     ...extra,
   };
 }
@@ -147,7 +149,7 @@ describe("dev launcher contract", () => {
   });
 
   it("advertises foreground run mode and a direct web port override", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const env = devScriptEnv(join(tempDir, "dev-state"));
 
     try {
@@ -157,9 +159,9 @@ describe("dev launcher contract", () => {
       expect(help).toContain("scripts/dev run [name...]");
 
       const list = execFileSync(devScript, ["list"], { cwd: repoRoot, encoding: "utf8", env });
-      expect(list).toContain('temporal   temporal server start-dev --db-filename "$JOBCTL_TEMPORAL_DB"');
+      expect(list).toContain('temporal   temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"');
       expect(list).toContain(
-        'web        pnpm --filter @jobctl/web exec vite --host 127.0.0.1 --port "$JOBCTL_WEB_PORT"',
+        'web        pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"',
       );
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
@@ -167,7 +169,7 @@ describe("dev launcher contract", () => {
   });
 
   it("reports worker heartbeat health in status output", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const pidDir = join(devDir, "pids");
 
@@ -187,7 +189,7 @@ echo '{"worker":{"status":"stale"}}'
         encoding: "utf8",
         env: devScriptEnv(devDir, {
           PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-          JOBCTL_API_PORT: "9988",
+          JOBCTRL_API_PORT: "9988",
         }),
       });
 
@@ -198,8 +200,37 @@ echo '{"worker":{"status":"stale"}}'
     }
   });
 
+  it("reports status without requiring default workspace migration", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const home = join(tempDir, "home");
+    const devDir = join(tempDir, "dev-state");
+    const legacyDirname = ".job" + "ctl";
+
+    try {
+      mkdirSync(join(home, ".jobctrl"), { recursive: true });
+      mkdirSync(join(home, legacyDirname), { recursive: true });
+
+      const output = execFileSync(devScript, ["status"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          JOBCTRL_DEV_DIR: devDir,
+        },
+      });
+
+      expect(output).toContain("NAME");
+      expect(output).toContain("temporal");
+      expect(existsSync(join(home, ".jobctrl"))).toBe(true);
+      expect(existsSync(join(home, legacyDirname))).toBe(true);
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("replaces a tracked process before starting a fresh detached process", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/api.pid");
@@ -218,23 +249,23 @@ while true; do sleep 1; done
       chmodSync(join(tempDir, "pnpm"), 0o755);
       const env = devScriptEnv(devDir, {
         PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-        JOBCTL_STOP_WAIT_TICKS: "10",
-        JOBCTL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_STOP_WAIT_TICKS: "10",
+        JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
       });
 
       execFileSync(devScript, ["start", "api"], { cwd: repoRoot, env });
       firstPid = await waitForPidFile(pidFile);
-      await waitForFileText(callsLog, "fake pnpm --filter @jobctl/api dev");
+      await waitForFileText(callsLog, "fake pnpm --filter @jobctrl/api dev");
       expect(processExists(firstPid)).toBe(true);
 
       execFileSync(devScript, ["start", "api"], { cwd: repoRoot, env });
       secondPid = await waitForPidFile(pidFile);
-      await waitForFileMatchCount(callsLog, /fake pnpm --filter @jobctl\/api dev/g, 2);
+      await waitForFileMatchCount(callsLog, /fake pnpm --filter @jobctrl\/api dev/g, 2);
 
       expect(secondPid).not.toBe(firstPid);
       expect(processExists(firstPid)).toBe(false);
       expect(processExists(secondPid)).toBe(true);
-      expect(readFileSync(callsLog, "utf8").match(/fake pnpm --filter @jobctl\/api dev/g)).toHaveLength(2);
+      expect(readFileSync(callsLog, "utf8").match(/fake pnpm --filter @jobctrl\/api dev/g)).toHaveLength(2);
     } finally {
       try {
         execFileSync(devScript, ["stop", "api"], { cwd: repoRoot, env: devScriptEnv(devDir) });
@@ -252,7 +283,7 @@ while true; do sleep 1; done
   });
 
   it("prints the actual Vite binding observed from detached web logs", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/web.pid");
@@ -272,11 +303,11 @@ while true; do sleep 1; done
       chmodSync(join(tempDir, "pnpm"), 0o755);
       env = devScriptEnv(devDir, {
         PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-        JOBCTL_BINDING_WAIT_TICKS: "20",
-        JOBCTL_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
-        JOBCTL_STOP_WAIT_TICKS: "10",
-        JOBCTL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
-        JOBCTL_WEB_PORT: "5173",
+        JOBCTRL_BINDING_WAIT_TICKS: "20",
+        JOBCTRL_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_STOP_WAIT_TICKS: "10",
+        JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_WEB_PORT: "5173",
       });
 
       const output = execFileSync(devScript, ["start", "web"], {
@@ -285,7 +316,7 @@ while true; do sleep 1; done
         env,
       });
       webPid = await waitForPidFile(pidFile);
-      await waitForFileText(callsLog, "fake pnpm --filter @jobctl/web exec vite --host 127.0.0.1 --port 5173");
+      await waitForFileText(callsLog, "fake pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port 5173");
 
       expect(output).toContain("dev: bindings");
       expect(output).toContain("web: http://127.0.0.1:5175/");
@@ -307,7 +338,7 @@ while true; do sleep 1; done
   });
 
   it("loads user-local frontend env before starting the web process", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/web.pid");
@@ -315,8 +346,8 @@ while true; do sleep 1; done
     let env: NodeJS.ProcessEnv | undefined;
 
     try {
-      mkdirSync(join(tempDir, "JobCtl"), { recursive: true });
-      writeFileSync(join(tempDir, "JobCtl", ".env"), "VITE_GOOGLE_MAPS_API_KEY=maps-test-key\n");
+      mkdirSync(join(tempDir, "JobCtrl"), { recursive: true });
+      writeFileSync(join(tempDir, "JobCtrl", ".env"), "VITE_GOOGLE_MAPS_API_KEY=maps-test-key\n");
       writeFileSync(
         join(tempDir, "pnpm"),
         `#!/usr/bin/env bash
@@ -331,10 +362,10 @@ while true; do sleep 1; done
       env = devScriptEnv(devDir, {
         HOME: tempDir,
         PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-        JOBCTL_BINDING_WAIT_TICKS: "20",
-        JOBCTL_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
-        JOBCTL_STOP_WAIT_TICKS: "10",
-        JOBCTL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_BINDING_WAIT_TICKS: "20",
+        JOBCTRL_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_STOP_WAIT_TICKS: "10",
+        JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
       });
 
       execFileSync(devScript, ["start", "web"], { cwd: repoRoot, env });
@@ -359,7 +390,7 @@ while true; do sleep 1; done
   });
 
   it("runs attached processes and cleans PID files on termination", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const childPidFile = join(tempDir, "child.pid");
@@ -392,10 +423,12 @@ while true; do sleep 1; done
         cwd: repoRoot,
         env: {
           ...process.env,
+          HOME: join(devDir, "home"),
+          JOBCTRL_DIR: join(devDir, "app"),
           PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-          JOBCTL_DEV_DIR: devDir,
-          JOBCTL_STOP_WAIT_TICKS: "2",
-          JOBCTL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+          JOBCTRL_DEV_DIR: devDir,
+          JOBCTRL_STOP_WAIT_TICKS: "2",
+          JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -403,7 +436,7 @@ while true; do sleep 1; done
 
       await waitForOutput(runningChild, "dev: foreground run active");
       expect(existsSync(pidFile)).toBe(true);
-      await waitForFileText(callsLog, "fake pnpm --filter @jobctl/api dev");
+      await waitForFileText(callsLog, "fake pnpm --filter @jobctrl/api dev");
       spawnedChildPid = await waitForPidFile(childPidFile);
       spawnedGrandchildPid = await waitForPidFile(grandchildPidFile);
       expect(processExists(spawnedChildPid)).toBe(true);
@@ -432,7 +465,7 @@ while true; do sleep 1; done
   });
 
   it("starts Temporal with a persistent dev-store filename", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctl-dev-launcher-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/temporal.pid");
@@ -451,8 +484,8 @@ while true; do sleep 1; done
       chmodSync(join(tempDir, "temporal"), 0o755);
       env = devScriptEnv(devDir, {
         PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-        JOBCTL_STOP_WAIT_TICKS: "10",
-        JOBCTL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBCTRL_STOP_WAIT_TICKS: "10",
+        JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
       });
 
       execFileSync(devScript, ["start", "temporal"], { cwd: repoRoot, env });

@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-from jobctl.profile.activities import (
+from jobctrl.profile.activities import (
     ProfileImportActivityInput,
     ProfileImportActivityOutput,
     profile_import_activity,
@@ -41,7 +41,7 @@ async def test_profile_import_activity_returns_draft_from_importer():
     queue = f"profile-{uuid.uuid4()}"
 
     with patch(
-        "jobctl.profile.importer.import_profile_pdf",
+        "jobctrl.profile.importer.import_profile_pdf",
         return_value=fake_result,
     ) as import_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:

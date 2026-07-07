@@ -318,7 +318,7 @@ describe("Scoring events", () => {
       staleReason: "scoring_policy_changed",
       oldPolicyVersion: 1,
       newPolicyVersion: 2,
-      nextAction: "jobctl run score --rescore",
+      nextAction: "jobctrl run score --rescore",
     });
     expect(event.eventType).toBe("ScoreRescoreRequested");
     expect(event.payload.oldPolicyVersion).toBe(1);

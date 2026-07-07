@@ -1,4 +1,4 @@
-import type { ApplyRunStatus } from "@jobctl/domain-types";
+import type { ApplyRunStatus } from "@jobctrl/domain-types";
 
 import { assertNever } from "../../../shared/lib/exhaustive.js";
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";

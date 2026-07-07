@@ -11,8 +11,8 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
-from jobctl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
-from jobctl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctrl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
+from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 
 
 class _FakeHandle:
@@ -66,17 +66,17 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path) -> None:
 
     first = await reconcile_auto_apply_loop(
         client,
-        task_queue="jobctl-test",
+        task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctl",
-        expected_db_path="/tmp/jobctl/jobctl.db",
+        expected_app_dir="/tmp/jobctrl",
+        expected_db_path="/tmp/jobctrl/jobctrl.db",
     )
     second = await reconcile_auto_apply_loop(
         client,
-        task_queue="jobctl-test",
+        task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctl",
-        expected_db_path="/tmp/jobctl/jobctl.db",
+        expected_app_dir="/tmp/jobctrl",
+        expected_db_path="/tmp/jobctrl/jobctrl.db",
     )
 
     assert first.action == "started"
@@ -92,8 +92,8 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path) -> None:
     assert payload.min_score == 9
     assert payload.workers == 3
     assert payload.approval_required is True
-    assert payload.expected_app_dir == "/tmp/jobctl"
-    assert payload.expected_db_path == "/tmp/jobctl/jobctl.db"
+    assert payload.expected_app_dir == "/tmp/jobctrl"
+    assert payload.expected_db_path == "/tmp/jobctrl/jobctrl.db"
     assert start["kwargs"]["id"] == auto_apply_workflow_id("local")
     assert start["kwargs"]["id_conflict_policy"] is WorkflowIDConflictPolicy.USE_EXISTING
     assert start["kwargs"]["id_reuse_policy"] is WorkflowIDReusePolicy.ALLOW_DUPLICATE
@@ -110,12 +110,12 @@ async def test_auto_apply_off_cancels_the_standing_loop(tmp_path) -> None:
 
     first = await reconcile_auto_apply_loop(
         client,
-        task_queue="jobctl-test",
+        task_queue="jobctrl-test",
         settings_path=settings_path,
     )
     second = await reconcile_auto_apply_loop(
         client,
-        task_queue="jobctl-test",
+        task_queue="jobctrl-test",
         settings_path=settings_path,
     )
 
@@ -129,7 +129,7 @@ async def test_auto_apply_off_cancels_the_standing_loop(tmp_path) -> None:
 async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(tmp_path) -> None:
     settings_path = tmp_path / "dashboard.json"
     _write_settings(settings_path, auto_apply=True, daily_budget_usd=1.0)
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     today = datetime.now(timezone.utc).date().isoformat()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -169,7 +169,7 @@ async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(tmp_path) -
 
     result = await reconcile_auto_apply_loop(
         client,
-        task_queue="jobctl-test",
+        task_queue="jobctrl-test",
         settings_path=settings_path,
         expected_db_path=str(db_path),
     )

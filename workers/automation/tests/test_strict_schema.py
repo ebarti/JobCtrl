@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from jobctl.domain.materials.analysis import JobAnalysis
-from jobctl.infrastructure.analysis.strict_schema import strict_json_schema
+from jobctrl.domain.materials.analysis import JobAnalysis
+from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
 
 
 def _walk_objects(node: Any):

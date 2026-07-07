@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jobctl.database import init_db
-from jobctl.domain.scoring import ScoringPolicy
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.scoring.eval import (
+from jobctrl.database import init_db
+from jobctrl.domain.scoring import ScoringPolicy
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.scoring.eval import (
     ScoringEvalPrediction,
     ScoringPolicyEvalCase,
     build_scoring_governance_report,
@@ -119,7 +119,7 @@ def test_policy_resolution_eval_is_independent_from_raw_llm_score() -> None:
 
 
 def test_governance_report_does_not_initialize_policy_rows(tmp_path: Path) -> None:
-    conn = init_db(tmp_path / "jobctl.db")
+    conn = init_db(tmp_path / "jobctrl.db")
     before = conn.execute("SELECT COUNT(*) FROM scoring_policies").fetchone()[0]
 
     report = build_scoring_governance_report(conn)

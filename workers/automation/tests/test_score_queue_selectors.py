@@ -27,27 +27,27 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import (
+from jobctrl.database import (
     get_jobs_by_stage,
     get_stats,
     init_db,
 )
-from jobctl.domain.identifiers import JobId
-from jobctl.domain.scoring import (
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.scoring import (
     EligibilityAssessment,
     FitScore,
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.infrastructure.scoring import SqliteScoreRepository
-from jobctl.state import ensure_job_stage_rows, set_stage_state, utc_now
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.scoring import SqliteScoreRepository
+from jobctrl.state import ensure_job_stage_rows, set_stage_state, utc_now
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
@@ -183,7 +183,7 @@ def test_count_pending_score_uses_same_attempt_cap_as_selector(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl.pipeline import runner as pipeline_runner
 
     capped_url = "https://example.com/job/count-score-capped"
     eligible_url = "https://example.com/job/count-score-under-cap"
@@ -206,8 +206,8 @@ def test_count_pending_score_uses_same_attempt_cap_as_selector(
 def test_closed_postings_are_excluded_from_score_and_tailor_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     score_url = "https://example.com/job/closed-score"
     tailor_url = "https://example.com/job/closed-tailor"
@@ -300,8 +300,8 @@ def test_pending_cover_includes_jobs_scored_through_repository(
 def test_closed_postings_are_excluded_from_cover_queue(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/closed-cover"
     _seed_enriched_job(conn, url)
@@ -452,8 +452,8 @@ def test_pipeline_count_pending_score_excludes_repository_rows(
     """``pipeline._count_pending('score')`` must mirror
     ``get_jobs_by_stage('pending_score')`` — the streaming runner's
     progress counter would otherwise be permanently off-by-N."""
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline"
     _seed_enriched_job(conn, url)
@@ -467,8 +467,8 @@ def test_pipeline_count_pending_score_excludes_repository_rows(
 def test_pipeline_count_pending_tailor_picks_repository_scores(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor"
     _seed_enriched_job(conn, url)
@@ -481,8 +481,8 @@ def test_pipeline_count_pending_tailor_picks_repository_scores(
 def test_pipeline_count_pending_tailor_excludes_pending_rescore(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
-    from jobctl import pipeline
-    from jobctl.pipeline import runner as pipeline_runner
+    from jobctrl import pipeline
+    from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor-pending-rescore"
     _seed_enriched_job(conn, url)

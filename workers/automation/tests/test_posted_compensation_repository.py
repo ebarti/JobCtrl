@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from jobctl.database import ensure_posted_compensation_tables, init_db
-from jobctl.domain.compensation import parse_posted_compensation
-from jobctl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.database import ensure_posted_compensation_tables, init_db
+from jobctrl.domain.compensation import parse_posted_compensation
+from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctl.db")
+    return init_db(tmp_path / "jobctrl.db")
 
 
 def _seed_job(

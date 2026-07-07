@@ -22,13 +22,13 @@ let options: BuildAppOptions;
 let actionDispatcher: ReturnType<typeof vi.fn> & ActionDispatcher;
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-feedback-api-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-feedback-api-"));
   actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
     status: "queued",
     runId: "unexpected-run",
   })) as ReturnType<typeof vi.fn> & ActionDispatcher;
   options = {
-    dbPath: path.join(tempDir, "jobctl.db"),
+    dbPath: path.join(tempDir, "jobctrl.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     actionDispatcher,
   };
@@ -488,7 +488,7 @@ describe("application feedback API", () => {
        WHERE job_url = ?
          AND stage = 'cover'
       `,
-    ).run(staleConflict, `jobctl retry cover ${READY_JOB}`, READY_JOB);
+    ).run(staleConflict, `jobctrl retry cover ${READY_JOB}`, READY_JOB);
     db.close();
     const app = buildApp(options);
 

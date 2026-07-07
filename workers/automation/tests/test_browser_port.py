@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from jobctl.domain.apply.value_objects import BrowserWorkerConfig
-from jobctl.domain.ports.apply import BrowserPort, BrowserSession
+from jobctrl.domain.apply.value_objects import BrowserWorkerConfig
+from jobctrl.domain.ports.apply import BrowserPort, BrowserSession
 
 
 class _FakeBrowserAdapter:

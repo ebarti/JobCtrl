@@ -1,6 +1,6 @@
 # Code of Conduct
 
-JobCtl contributors are expected to keep collaboration professional,
+JobCtrl contributors are expected to keep collaboration professional,
 specific, and respectful.
 
 ## Expected Behavior

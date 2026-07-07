@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { Stage, StageState } from "@jobctl/contracts";
+import type { Stage, StageState } from "@jobctrl/contracts";
 
 import { StageBadge } from "./StageBadge.js";
 

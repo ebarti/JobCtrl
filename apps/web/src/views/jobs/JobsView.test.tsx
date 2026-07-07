@@ -12,8 +12,8 @@ import type {
   JobListQuery,
   JobSummary,
   Stage,
-} from "@jobctl/contracts";
-import { LOCAL_TENANT } from "@jobctl/domain-types";
+} from "@jobctrl/contracts";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -1156,7 +1156,7 @@ describe("<JobsView> bulk delete integration", () => {
             ok: true,
             count: body.jobKeys?.length ?? 0,
             jobKeys: body.jobKeys ?? [],
-            nextAction: "jobctl run score --rescore",
+            nextAction: "jobctrl run score --rescore",
           });
         },
       ),

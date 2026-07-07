@@ -2,13 +2,13 @@ from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
-from jobctl.cli import app
+from jobctrl.cli import app
 
 
 def test_doctor_reports_temporal_reachable():
     sentinel = object()
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(return_value=sentinel),
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -20,7 +20,7 @@ def test_doctor_reports_temporal_reachable():
 
 def test_doctor_reports_temporal_unreachable():
     with patch(
-        "jobctl.infrastructure.temporal.client.Client.connect",
+        "jobctrl.infrastructure.temporal.client.Client.connect",
         new=AsyncMock(side_effect=RuntimeError("connection refused")),
     ):
         result = CliRunner().invoke(app, ["doctor"])

@@ -15,17 +15,17 @@ from __future__ import annotations
 
 import pytest
 
-from jobctl.domain.profile.aggregate import (
+from jobctrl.domain.profile.aggregate import (
     DEFAULT_PROFILE_ID,
     InvalidProfileError,
     Profile,
 )
-from jobctl.domain.profile.value_objects import (
+from jobctrl.domain.profile.value_objects import (
     TailoringPolicy,
     WritingStyle,
 )
-from jobctl.domain.tenant import LOCAL_TENANT
-from jobctl.resume_profile import (
+from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.resume_profile import (
     get_achievement_evidence,
     get_auto_approvable_claim_modes,
     get_claim_mode,

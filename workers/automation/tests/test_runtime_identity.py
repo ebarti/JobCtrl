@@ -5,17 +5,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jobctl.infrastructure import runtime_identity
+from jobctrl.infrastructure import runtime_identity
 
 
 def test_worker_heartbeat_writes_runtime_identity(monkeypatch, tmp_path):
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
-    monkeypatch.setenv("JOBCTL_MAX_CONCURRENT_ACTIVITIES", "8")
+    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "8")
 
     worker_id = runtime_identity.write_worker_heartbeat(
-        task_queue="jobctl-default",
+        task_queue="jobctrl-default",
         worker_id="worker-test",
         now=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
     )
@@ -35,7 +35,7 @@ def test_worker_heartbeat_writes_runtime_identity(monkeypatch, tmp_path):
         "temporal-worker",
         str(tmp_path.resolve()),
         str(db_path.resolve()),
-        "jobctl-default",
+        "jobctrl-default",
         "2026-05-20T10:00:00+00:00",
         8,
         10,
@@ -43,7 +43,7 @@ def test_worker_heartbeat_writes_runtime_identity(monkeypatch, tmp_path):
 
 
 def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path):
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
 
@@ -69,7 +69,7 @@ def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path)
         conn.close()
 
     runtime_identity.write_worker_heartbeat(
-        task_queue="jobctl-default",
+        task_queue="jobctrl-default",
         worker_id="worker-test",
         now=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
     )
@@ -90,7 +90,7 @@ def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path)
 
 
 def test_runtime_identity_mismatch_fails_before_worker_writes(monkeypatch, tmp_path):
-    db_path = tmp_path / "jobctl.db"
+    db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
 

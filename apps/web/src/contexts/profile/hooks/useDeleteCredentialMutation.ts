@@ -1,4 +1,4 @@
-import type { CredentialKey } from "@jobctl/contracts";
+import type { CredentialKey } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";

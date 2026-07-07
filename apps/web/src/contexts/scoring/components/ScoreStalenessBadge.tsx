@@ -1,4 +1,4 @@
-import type { ScoreStaleness } from "@jobctl/contracts";
+import type { ScoreStaleness } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 export interface ScoreStalenessBadgeProps {

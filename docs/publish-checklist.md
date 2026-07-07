@@ -34,7 +34,7 @@ to the rename train / post-rename launch assets (R7b).
 
 ### 9.1 — Repository visibility flip (owner-only)
 
-- **Action.** Owner flips `github.com/ebarti/JobCtl` from private to public.
+- **Action.** Owner flips `github.com/ebarti/JobCtrl` from private to public.
 - **Verification.**
   - `release-check` (`.github/workflows/release-check.yml`) is green on `main`
     for every commit since W0.4 landed (it triggers on every `push` to `main`
@@ -42,7 +42,7 @@ to the rename train / post-rename launch assets (R7b).
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
-    (`jobctl doctor` clean; seeded `/apply-review` approval → dry-run
+    (`jobctrl doctor` clean; seeded `/apply-review` approval → dry-run
     evidence → gated submit; one harness dry-run showing blocked-channel
     evidence; no real applications).
 - **Rollback.** Flip back to private. **Honest limitation:** anything fetched
@@ -54,7 +54,7 @@ to the rename train / post-rename launch assets (R7b).
 ### 9.2 — Docs-site deploy (owner-only)
 
 - **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
-  public `jobctl-docs` Cloudflare project is itself a going-public act, so it
+  public `jobctrl-docs` Cloudflare project is itself a going-public act, so it
   carries the **same OSS spec §5 gate as 9.1**. The `deploy` job in
   `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED`, `main`, and
   non-`pull_request` — **not** on `release-check` — so this checklist is the
@@ -74,7 +74,7 @@ to the rename train / post-rename launch assets (R7b).
   `deploy` job in `.github/workflows/docs-site.yml` runs from `main` (it is
   gated on `vars.DOCS_DEPLOY_ENABLED == 'true'`, `main`, and non-`pull_request`;
   it deploys `docs/.vitepress/dist` to the Cloudflare Pages project
-  `jobctl-docs`).
+  `jobctrl-docs`).
 - **Verification.** On the next `main` push the `deploy` job runs (not skipped),
   the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on
   the built artifact.
@@ -85,7 +85,7 @@ to the rename train / post-rename launch assets (R7b).
 ### 9.3 — Repository-rename redirect (owner-only; RENAME-GATED — deferred to R7b)
 
 > **Deferred.** This step runs only after the pre-publication rename train
-> ([`docs/plans/2026-07-05-rename-jobctl-plan.md`](plans/2026-07-05-rename-jobctl-plan.md))
+> ([`docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`](plans/implemented/2026-07-05-rename-jobctrl-plan.md))
 > merges. It is **out of scope for R7a** and is not prepared or executed here.
 
 - **Action (for reference).** After the GitHub repository rename, verify GitHub's
