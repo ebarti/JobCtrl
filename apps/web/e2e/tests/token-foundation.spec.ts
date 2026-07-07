@@ -195,10 +195,10 @@ async function expectThemeIconDimensions(themeButton: Locator): Promise<void> {
 async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
   const layout = await page.evaluate(() => {
     const root = document.documentElement;
-    const nav = document.querySelector(".nav");
+    const rail = document.querySelector(".side-rail");
     return {
       clientWidth: root.clientWidth,
-      navWidth: nav?.getBoundingClientRect().width ?? 0,
+      railWidth: rail?.getBoundingClientRect().width ?? 0,
       scrollWidth: root.scrollWidth,
     };
   });
@@ -206,7 +206,9 @@ async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
   expect(layout.scrollWidth, "shell should not create horizontal document overflow").toBeLessThanOrEqual(
     layout.clientWidth + 1,
   );
-  expect(layout.navWidth, "main nav should stay within the viewport").toBeLessThanOrEqual(layout.clientWidth);
+  expect(layout.railWidth, "navigation rail should stay within the viewport").toBeLessThanOrEqual(
+    layout.clientWidth,
+  );
 }
 
 async function expectShellChromePainted(page: Page, route: string, activeLink: string): Promise<void> {
@@ -334,16 +336,24 @@ test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) =
   await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 });
 
-test("shell chrome does not overflow the mobile viewport", async ({ page }) => {
+test("shell chrome collapses navigation into a sheet on the mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/jobs");
 
   await expect(page.locator(".topbar")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
+  await expect(page.locator(".side-rail")).toBeHidden();
   await expect(page.getByRole("textbox", { name: "Global search" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Row density" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeVisible();
   await expectNoDocumentInlineOverflow(page);
+
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const navSheet = page.getByRole("dialog");
+  await expect(navSheet).toBeVisible();
+  await expect(navSheet.getByRole("link", { name: "Jobs" })).toBeVisible();
+  await expect(navSheet.getByRole("link", { name: "Apply review" })).toBeVisible();
+  await navSheet.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page).toHaveURL(/\/dashboard\b/);
 });
 
 test("domain status surfaces use painted semantic token classes", async ({ page }) => {
