@@ -30,11 +30,10 @@ APP_DIRNAME = ".jobctrl"
 DB_FILENAME = "jobctrl.db"
 _LEGACY_TOKEN = "job" + "hunter"
 _LEGACY_TOKENS = ("job" + "ctl", _LEGACY_TOKEN)
-WORKSPACE_MIGRATION_NOTICE: str | None = None
 
 
 class WorkspaceMigrationError(RuntimeError):
-    """Raised when the one-time local workspace rename cannot proceed safely."""
+    """Raised when a legacy database schema migration cannot proceed safely."""
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -178,124 +177,21 @@ def _assert_no_lifecycle_migration_conflicts(
             seen[job_url] = source
 
 
-def migrate_legacy_job_tables_at_path(db_path: Path) -> list[str]:
-    if not db_path.exists():
-        return []
-    conn = sqlite3.connect(db_path)
-    try:
-        return migrate_legacy_job_tables(conn)
-    finally:
-        conn.close()
+def resolve_default_workspace(home: Path | None = None) -> Path:
+    """Resolve the local workspace directory.
 
-
-def _verify_copied_tree(source: Path, destination: Path) -> None:
-    for source_path in source.rglob("*"):
-        relative = source_path.relative_to(source)
-        destination_path = destination / relative
-        if source_path.is_dir():
-            if not destination_path.is_dir():
-                raise WorkspaceMigrationError(f"workspace copy verification failed for {relative}")
-            continue
-        if source_path.is_symlink():
-            if not destination_path.is_symlink() or os.readlink(source_path) != os.readlink(destination_path):
-                raise WorkspaceMigrationError(f"workspace symlink verification failed for {relative}")
-            continue
-        if not destination_path.is_file() or destination_path.stat().st_size != source_path.stat().st_size:
-            raise WorkspaceMigrationError(f"workspace copy verification failed for {relative}")
-
-
-def _move_workspace(source: Path, destination: Path) -> None:
-    try:
-        source.rename(destination)
-        return
-    except OSError as exc:
-        if getattr(exc, "errno", None) != 18:  # EXDEV on POSIX; keep portable for tests.
-            raise
-    shutil.copytree(source, destination, symlinks=True)
-    _verify_copied_tree(source, destination)
-    shutil.rmtree(source)
-
-
-def _assert_no_legacy_db_rename_conflict(app_dir: Path, legacy_db_filename: str) -> None:
-    for suffix in ("", "-wal", "-shm"):
-        legacy = app_dir / f"{legacy_db_filename}{suffix}"
-        current = app_dir / f"{DB_FILENAME}{suffix}"
-        if legacy.exists() and current.exists():
-            raise WorkspaceMigrationError(f"refusing to overwrite existing database file: {current}")
-
-
-def _rename_legacy_db_files(app_dir: Path, legacy_db_filename: str) -> None:
-    for suffix in ("", "-wal", "-shm"):
-        legacy = app_dir / f"{legacy_db_filename}{suffix}"
-        current = app_dir / f"{DB_FILENAME}{suffix}"
-        if not legacy.exists():
-            continue
-        if current.exists():
-            raise WorkspaceMigrationError(f"refusing to overwrite existing database file: {current}")
-        legacy.rename(current)
-
-
-def migrate_default_workspace(home: Path | None = None) -> Path:
-    """Move the default local workspace to the JobCtrl directory once.
-
-    Explicit ``JOBCTRL_DIR`` disables this default-path migration.
+    Legacy default-directory migration was a one-time rename bridge and is no
+    longer performed during runtime startup.
     """
-    global WORKSPACE_MIGRATION_NOTICE
     if os.environ.get("JOBCTRL_DIR"):
         return Path(os.environ["JOBCTRL_DIR"]).expanduser()
 
     root = Path.home() if home is None else home
-    legacy_workspaces = [(root / f".{token}", f"{token}.db") for token in _LEGACY_TOKENS]
-    existing_legacy_workspaces = [
-        (legacy_dir, legacy_db_filename)
-        for legacy_dir, legacy_db_filename in legacy_workspaces
-        if legacy_dir.exists()
-    ]
-    current_dir = root / APP_DIRNAME
-    lock_dir = root / ".jobctrl-migration.lock"
-
-    if current_dir.exists():
-        if existing_legacy_workspaces:
-            raise WorkspaceMigrationError(
-                f"refusing to move legacy workspace because {current_dir} already exists"
-            )
-        return current_dir
-    if not existing_legacy_workspaces:
-        return current_dir
-    legacy_dir, legacy_db_filename = existing_legacy_workspaces[0]
-
-    try:
-        lock_dir.mkdir()
-    except FileExistsError as exc:
-        if current_dir.exists():
-            return current_dir
-        raise WorkspaceMigrationError(
-            "another JobCtrl workspace migration is in progress; retry after it completes"
-        ) from exc
-
-    try:
-        if current_dir.exists():
-            return current_dir
-        if not legacy_dir.exists():
-            return current_dir
-        _assert_no_legacy_db_rename_conflict(legacy_dir, legacy_db_filename)
-        _move_workspace(legacy_dir, current_dir)
-        _rename_legacy_db_files(current_dir, legacy_db_filename)
-        renamed_tables = migrate_legacy_job_tables_at_path(current_dir / DB_FILENAME)
-        table_note = f"; renamed tables {', '.join(renamed_tables)}" if renamed_tables else ""
-        WORKSPACE_MIGRATION_NOTICE = (
-            f"migrated legacy local workspace to {current_dir}{table_note}"
-        )
-        return current_dir
-    finally:
-        try:
-            lock_dir.rmdir()
-        except OSError:
-            log.debug("Failed to remove workspace migration lock %s", lock_dir, exc_info=True)
+    return root / APP_DIRNAME
 
 
 # User data directory — all user-specific files live here
-APP_DIR = migrate_default_workspace()
+APP_DIR = resolve_default_workspace()
 
 # Core paths
 DB_PATH = APP_DIR / DB_FILENAME
@@ -513,8 +409,6 @@ def ensure_dirs():
     """Create all required directories."""
     for d in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR]:
         d.mkdir(parents=True, exist_ok=True)
-    if WORKSPACE_MIGRATION_NOTICE:
-        log.warning(WORKSPACE_MIGRATION_NOTICE)
 
 
 def load_search_config() -> dict:

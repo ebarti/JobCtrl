@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from jobctrl import config
-from jobctrl.config import WorkspaceMigrationError, migrate_default_workspace
+from jobctrl.config import WorkspaceMigrationError, resolve_default_workspace
 
 
 def _legacy_token() -> str:
@@ -79,35 +79,62 @@ def _table_columns(db_path, table_name: str) -> set[str]:
 
 
 @pytest.mark.parametrize("legacy_token", _legacy_tokens())
-def test_default_workspace_migration_moves_files_and_renames_db_tables(
+def test_default_workspace_resolution_ignores_legacy_only_workspace(
     tmp_path,
     monkeypatch,
     legacy_token: str,
 ) -> None:
     monkeypatch.delenv("JOBCTRL_DIR", raising=False)
-    monkeypatch.setattr(config, "WORKSPACE_MIGRATION_NOTICE", None)
     legacy, _ = _seed_legacy_workspace(tmp_path, legacy_token)
 
-    current = migrate_default_workspace(tmp_path)
+    current = resolve_default_workspace(tmp_path)
 
     assert current == tmp_path / ".jobctrl"
-    assert not legacy.exists()
-    assert (current / ".env").is_file()
-    assert (current / "gmail" / "token.json").is_file()
-    assert (current / "backups" / "backup.db").is_file()
-    assert (current / "jobctrl.db").is_file()
-    assert not (current / f"{legacy_token}.db").exists()
-    assert not (current / f"{legacy_token}.db-wal").exists()
-    assert not (current / f"{legacy_token}.db-shm").exists()
+    assert legacy.exists()
+    assert not current.exists()
+    assert (legacy / ".env").is_file()
+    assert (legacy / "gmail" / "token.json").is_file()
+    assert (legacy / "backups" / "backup.db").is_file()
+    assert (legacy / f"{legacy_token}.db").is_file()
+    assert (legacy / f"{legacy_token}.db-wal").is_file()
+    assert (legacy / f"{legacy_token}.db-shm").is_file()
 
-    tables = _table_names(current / "jobctrl.db")
-    assert "jobctrl_deleted_jobs" in tables
-    assert "jobctrl_hidden_jobs" in tables
-    assert f"{legacy_token}_deleted_jobs" not in tables
-    assert f"{legacy_token}_hidden_jobs" not in tables
+    assert resolve_default_workspace(tmp_path) == current
 
-    conn = sqlite3.connect(current / "jobctrl.db")
+
+def test_default_workspace_resolution_uses_current_dir_when_legacy_dir_also_exists(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("JOBCTRL_DIR", raising=False)
+    legacy, _ = _seed_legacy_workspace(tmp_path, _immediate_legacy_token())
+    current = tmp_path / ".jobctrl"
+    current.mkdir()
+    (current / "sentinel").write_text("keep", encoding="utf-8")
+
+    assert resolve_default_workspace(tmp_path) == current
+    assert legacy.exists()
+    assert (current / "sentinel").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("legacy_token", _legacy_tokens())
+def test_legacy_table_migration_moves_legacy_rows_to_current_tables(
+    tmp_path,
+    legacy_token: str,
+) -> None:
+    _, db_path = _seed_legacy_workspace(tmp_path, legacy_token)
+    conn = sqlite3.connect(db_path)
     try:
+        assert set(config.migrate_legacy_job_tables(conn)) == {
+            "jobctrl_deleted_jobs",
+            "jobctrl_hidden_jobs",
+        }
+
+        tables = _table_names(db_path)
+        assert "jobctrl_deleted_jobs" in tables
+        assert "jobctrl_hidden_jobs" in tables
+        assert f"{legacy_token}_deleted_jobs" not in tables
+        assert f"{legacy_token}_hidden_jobs" not in tables
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM jobctrl_deleted_jobs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM jobctrl_hidden_jobs").fetchone()[0] == 1
@@ -115,17 +142,15 @@ def test_default_workspace_migration_moves_files_and_renames_db_tables(
         assert conn.execute("SELECT unhidden_at FROM jobctrl_hidden_jobs").fetchone()[0] is None
     finally:
         conn.close()
+
     assert {"job_url", "deleted_at", "reason", "restored_at"} <= _table_columns(
-        current / "jobctrl.db",
+        db_path,
         "jobctrl_deleted_jobs",
     )
     assert {"job_url", "hidden_at", "reason", "unhidden_at"} <= _table_columns(
-        current / "jobctrl.db",
+        db_path,
         "jobctrl_hidden_jobs",
     )
-    assert config.WORKSPACE_MIGRATION_NOTICE is not None
-
-    assert migrate_default_workspace(tmp_path) == current
 
 
 def test_legacy_table_migration_normalizes_previously_renamed_tables(tmp_path) -> None:
@@ -171,21 +196,7 @@ def test_legacy_table_migration_normalizes_previously_renamed_tables(tmp_path) -
     )
 
 
-def test_default_workspace_migration_refuses_existing_current_dir(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("JOBCTRL_DIR", raising=False)
-    legacy, _ = _seed_legacy_workspace(tmp_path, _immediate_legacy_token())
-    current = tmp_path / ".jobctrl"
-    current.mkdir()
-    (current / "sentinel").write_text("keep", encoding="utf-8")
-
-    with pytest.raises(WorkspaceMigrationError):
-        migrate_default_workspace(tmp_path)
-
-    assert legacy.exists()
-    assert (current / "sentinel").read_text(encoding="utf-8") == "keep"
-
-
-def test_default_workspace_migration_refuses_db_rename_conflict_before_move(
+def test_default_workspace_resolution_does_not_inspect_legacy_db_conflicts(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -193,8 +204,7 @@ def test_default_workspace_migration_refuses_db_rename_conflict_before_move(
     legacy, _ = _seed_legacy_workspace(tmp_path, _immediate_legacy_token())
     (legacy / "jobctrl.db").write_text("new", encoding="utf-8")
 
-    with pytest.raises(WorkspaceMigrationError, match="refusing to overwrite existing database file"):
-        migrate_default_workspace(tmp_path)
+    assert resolve_default_workspace(tmp_path) == tmp_path / ".jobctrl"
 
     assert legacy.exists()
     assert not (tmp_path / ".jobctrl").exists()
@@ -242,11 +252,14 @@ def test_legacy_table_migration_refuses_duplicate_job_urls_without_dropping_lega
         conn.close()
 
 
-def test_jobctrl_dir_override_suppresses_default_workspace_migration(tmp_path, monkeypatch) -> None:
+def test_jobctrl_dir_override_selects_explicit_workspace_without_moving_legacy_dir(
+    tmp_path,
+    monkeypatch,
+) -> None:
     legacy, _ = _seed_legacy_workspace(tmp_path, _immediate_legacy_token())
     override = tmp_path / "custom-jobctrl"
     monkeypatch.setenv("JOBCTRL_DIR", str(override))
 
-    assert migrate_default_workspace(tmp_path) == override
+    assert resolve_default_workspace(tmp_path) == override
     assert legacy.exists()
     assert not (tmp_path / ".jobctrl").exists()

@@ -100,65 +100,6 @@ is_alive_pid() {
   [[ "$stat" != *Z* ]]
 }
 
-migrate_default_workspace() {
-  [[ -z "${JOBCTRL_DIR:-}" ]] || return 0
-  local legacy_token legacy_dir current_dir lock_dir suffix legacy_db current_db candidate_token candidate_dir
-  local legacy_tokens=("job""ctl" "job""hunter")
-  current_dir="$HOME/.jobctrl"
-  lock_dir="$HOME/.jobctrl-migration.lock"
-  legacy_token=""
-  legacy_dir=""
-
-  for candidate_token in "${legacy_tokens[@]}"; do
-    candidate_dir="$HOME/.${candidate_token}"
-    [[ -e "$candidate_dir" ]] || continue
-    legacy_token="$candidate_token"
-    legacy_dir="$candidate_dir"
-    break
-  done
-
-  if [[ -e "$current_dir" && -n "$legacy_dir" ]]; then
-    echo "dev: refusing to move legacy workspace because $current_dir already exists" >&2
-    return 1
-  fi
-  if [[ -e "$current_dir" || -z "$legacy_dir" ]]; then
-    return 0
-  fi
-
-  for suffix in "" "-wal" "-shm"; do
-    legacy_db="$legacy_dir/${legacy_token}.db${suffix}"
-    current_db="$legacy_dir/jobctrl.db${suffix}"
-    [[ -e "$legacy_db" && -e "$current_db" ]] || continue
-    echo "dev: refusing to overwrite existing database file: $current_db" >&2
-    return 1
-  done
-
-  if ! mkdir "$lock_dir" 2>/dev/null; then
-    if [[ -e "$current_dir" ]]; then
-      return 0
-    fi
-    echo "dev: another JobCtrl workspace migration is in progress; retry after it completes" >&2
-    return 1
-  fi
-
-  if [[ ! -e "$current_dir" && -e "$legacy_dir" ]]; then
-    mv "$legacy_dir" "$current_dir"
-    for suffix in "" "-wal" "-shm"; do
-      legacy_db="$current_dir/${legacy_token}.db${suffix}"
-      current_db="$current_dir/jobctrl.db${suffix}"
-      [[ -e "$legacy_db" ]] || continue
-      if [[ -e "$current_db" ]]; then
-        rmdir "$lock_dir" 2>/dev/null || true
-        echo "dev: refusing to overwrite existing database file: $current_db" >&2
-        return 1
-      fi
-      mv "$legacy_db" "$current_db"
-    done
-    echo "dev: migrated legacy local workspace to $current_dir"
-  fi
-  rmdir "$lock_dir" 2>/dev/null || true
-}
-
 wait_pids_gone() {
   local pids="$1" ticks="$2" interval="$3"
   local i target alive
@@ -432,7 +373,6 @@ stop_one() {
 }
 
 cmd_start() {
-  migrate_default_workspace
   load_env_file
   set_default_env
   local targets=("$@")
@@ -444,7 +384,6 @@ cmd_start() {
 }
 
 cmd_run() {
-  migrate_default_workspace
   load_env_file
   set_default_env
   local targets=("$@")
