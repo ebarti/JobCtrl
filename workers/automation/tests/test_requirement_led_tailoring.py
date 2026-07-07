@@ -543,6 +543,27 @@ def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> 
         )
         == ()
     )
+    assert (
+        _claim_mapping_validation_errors(
+            payload={
+                "generated_claim_mappings": [
+                    {
+                        "claim_id": "degree_section_claim",
+                        "location": "education",
+                        "text": "BSc CS",
+                        "claim_label": "verified",
+                        "coverage_edge_ids": ("edge_req_degree_education_edu_state_direct",),
+                        "requirement_ids": ("req_degree",),
+                        "evidence_ids": ("education:edu_state",),
+                        "non_requirement_reason": "",
+                        "review_required": False,
+                    }
+                ]
+            },
+            tailoring_plan=plan,
+        )
+        == ()
+    )
 
 
 def test_build_coverage_planner_prompt_constrains_ids_and_output() -> None:

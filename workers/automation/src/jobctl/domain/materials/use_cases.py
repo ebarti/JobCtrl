@@ -498,16 +498,23 @@ def _claim_mappings_from_payload(
             errors.append(f"generated_claim_mappings[{index}] must be an object")
             continue
         try:
+            coverage_edge_ids = tuple(
+                str(item) for item in raw.get("coverage_edge_ids", ()) or ()
+            )
+            non_requirement_reason = str(raw.get("non_requirement_reason") or "")
+            if coverage_edge_ids and non_requirement_reason:
+                raw["non_requirement_reason"] = ""
+                non_requirement_reason = ""
             mappings.append(
                 GeneratedClaimMapping(
                     claim_id=str(raw.get("claim_id") or ""),
                     location=str(raw.get("location") or ""),
                     text=str(raw.get("text") or ""),
                     claim_label=str(raw.get("claim_label") or ""),
-                    coverage_edge_ids=tuple(str(item) for item in raw.get("coverage_edge_ids", ()) or ()),
+                    coverage_edge_ids=coverage_edge_ids,
                     requirement_ids=tuple(str(item) for item in raw.get("requirement_ids", ()) or ()),
                     evidence_ids=tuple(str(item) for item in raw.get("evidence_ids", ()) or ()),
-                    non_requirement_reason=str(raw.get("non_requirement_reason") or ""),
+                    non_requirement_reason=non_requirement_reason,
                     review_required=bool(raw.get("review_required", False)),
                 )
             )
@@ -611,6 +618,13 @@ def _generated_claim_surfaces(
             for item in tailoring_plan.evidence_items
             if str(item.evidence_id).startswith("education:")
         ]
+        education_section_text = " ".join(
+            str(item.source_text or "").strip()
+            for item in education_items
+            if str(item.source_text or "").strip()
+        )
+        if education_section_text:
+            surfaces["education"] = education_section_text
         for index, item in enumerate(education_items):
             entry_id = item.evidence_id.split(":", 1)[1]
             text = str(item.source_text or "").strip()

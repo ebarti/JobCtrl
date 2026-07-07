@@ -43,6 +43,7 @@ from jobctl.domain.materials.use_cases import (
     TailoringLlmPolicy,
     TailorResumeUseCase,
     _bullet_limit_overflow_metadata,
+    _claim_mappings_from_payload,
 )
 from jobctl.domain.ports.events import EventPublisher
 from jobctl.domain.ports.llm import LlmMessage, LlmPort
@@ -702,6 +703,21 @@ def test_tailored_resume_schema_constrains_non_requirement_reason_enum() -> None
     ]["properties"]["non_requirement_reason"]
 
     assert mapping_schema["enum"] == ["", "pinned", "positioning", "structure"]
+
+
+def test_claim_mapping_parser_clears_redundant_non_requirement_reason() -> None:
+    payload = _good_json_payload_dict()
+    payload["generated_claim_mappings"][0]["coverage_edge_ids"] = ["edge_req_latency"]
+    payload["generated_claim_mappings"][0]["requirement_ids"] = ["req_latency"]
+    payload["generated_claim_mappings"][0]["evidence_ids"] = ["ev_latency"]
+    payload["generated_claim_mappings"][0]["non_requirement_reason"] = "positioning"
+
+    mappings, errors = _claim_mappings_from_payload(payload)
+
+    assert errors == ()
+    assert mappings[0].coverage_edge_ids == ("edge_req_latency",)
+    assert mappings[0].non_requirement_reason == ""
+    assert payload["generated_claim_mappings"][0]["non_requirement_reason"] == ""
 
 
 def test_tailoring_policy_defaults_to_pipeline_gemini_flash() -> None:
