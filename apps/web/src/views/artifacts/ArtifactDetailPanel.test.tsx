@@ -423,7 +423,7 @@ describe("<ArtifactDetailPanel>", () => {
     );
 
     expect(await screen.findByText("Artifact comparison")).toBeInTheDocument();
-    expect(screen.getByLabelText("Compare with")).toHaveValue("artifact-template-b");
+    expect(await screen.findByLabelText("Compare with")).toHaveValue("artifact-template-b");
     expect(screen.getByRole("option", { name: /candidate/ })).toBeInTheDocument();
   });
 });
