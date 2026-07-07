@@ -7,8 +7,8 @@ import sqlite3
 
 import pytest
 
-from jobhunter import config
-from jobhunter.domain.discovery.source_registry import (
+from jobctl import config
+from jobctl.domain.discovery.source_registry import (
     ATS_API_POLICY,
     WORKDAY_API_POLICY,
     LocatorPolicy,
@@ -25,7 +25,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceState,
     validate_locator_candidate,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 def test_source_policy_rejects_third_party_control_bypass() -> None:
@@ -209,7 +209,7 @@ def test_resolve_jobspy_boards_prefers_boards_and_warns_for_legacy_sites(caplog)
 
 
 def test_load_source_registry_generates_entries_from_packaged_yaml_shapes(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobhunter.db")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctl.db")
 
     registry = config.load_source_registry(
         search_cfg={"boards": ["linkedin", "indeed"]},
@@ -267,7 +267,7 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes(tmp_pa
 
 
 def test_load_source_registry_applies_local_product_control_overrides(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """
@@ -356,7 +356,7 @@ def test_load_source_registry_applies_local_product_control_overrides(tmp_path, 
 
 
 def test_load_source_registry_coalesces_known_workday_host_aliases(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """
@@ -439,7 +439,7 @@ def test_load_source_registry_coalesces_known_workday_host_aliases(tmp_path, mon
 
 
 def test_system_source_registry_rows_keep_packaged_seed_url_updates(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
         """

@@ -2,7 +2,7 @@
 
 import pytest
 
-from jobhunter.domain.apply.services import ApplyEligibilityChecker
+from jobctl.domain.apply.services import ApplyEligibilityChecker
 
 
 @pytest.fixture()

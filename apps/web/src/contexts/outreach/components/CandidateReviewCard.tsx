@@ -1,4 +1,4 @@
-import type { ContactCandidateDto } from "@jobhunter/contracts";
+import type { ContactCandidateDto } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

@@ -6,7 +6,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from jobhunter.infrastructure.compensation.sqlite_market_repository import (
+from jobctl.infrastructure.compensation.sqlite_market_repository import (
     COMPENSATION_FEED_POLICY,
     load_default_reported_compensation_observations,
     load_euro_top_tech_observations,
@@ -94,9 +94,9 @@ def test_licensed_feed_url_fetched_with_honest_user_agent() -> None:
     ).encode("utf-8")
     with _FeedServer(feed) as server:
         env = {
-            "JOBHUNTER_LEVELS_FYI_ACCESS_MODE": "licensed_data_feed",
-            "JOBHUNTER_LEVELS_FYI_EUROPE_COVERAGE": "true",
-            "JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL": f"{server.base_url}/levels.json",
+            "JOBCTL_LEVELS_FYI_ACCESS_MODE": "licensed_data_feed",
+            "JOBCTL_LEVELS_FYI_EUROPE_COVERAGE": "true",
+            "JOBCTL_LEVELS_FYI_OBSERVATIONS_URL": f"{server.base_url}/levels.json",
         }
         load_default_reported_compensation_observations(
             include_eurotoptech=False,
@@ -104,5 +104,5 @@ def test_licensed_feed_url_fetched_with_honest_user_agent() -> None:
         )
     # The licensed URL feed was fetched through the gateway with the honest UA.
     assert server.seen_user_agents, "licensed feed URL was never fetched"
-    assert all(ua.startswith("JobHunter/") for ua in server.seen_user_agents)
+    assert all(ua.startswith("JobCtl/") for ua in server.seen_user_agents)
     assert all("Mozilla" not in ua for ua in server.seen_user_agents)

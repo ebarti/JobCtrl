@@ -8,7 +8,7 @@ import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
 
 function withTempApp(options: { estimateTable?: boolean } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-market-compensation-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-market-compensation-"));
   const dbPath = path.join(dir, "jobs.db");
   seedDatabase(dbPath, options);
   const app = buildApp({

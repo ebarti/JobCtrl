@@ -22,11 +22,11 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
-from jobhunter.cli import _reconcile_workflow_runs
-from jobhunter.database import get_connection
-from jobhunter.domain.rpc.messages import WorkflowStartSpec
-from jobhunter.infrastructure.rpc import workflow_starter as ws
-from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
+from jobctl.cli import _reconcile_workflow_runs
+from jobctl.database import get_connection
+from jobctl.domain.rpc.messages import WorkflowStartSpec
+from jobctl.infrastructure.rpc import workflow_starter as ws
+from jobctl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 
 
 class _FakeWorkflow:

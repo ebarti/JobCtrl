@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from jobhunter.cli import app
+from jobctl.cli import app
 
-_CHECK_TARGET = "jobhunter.infrastructure.preflight.check_playwright_chromium"
+_CHECK_TARGET = "jobctl.infrastructure.preflight.check_playwright_chromium"
 _CHECK_LABEL = "playwright chromium (scraping + PDF)"
 
 
@@ -53,7 +53,7 @@ def test_doctor_playwright_check_runs_under_latex_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The scraping browser check runs even when the resume renderer is LaTeX."""
-    monkeypatch.setenv("JOBHUNTER_RESUME_RENDERER", "latex_pdf")
+    monkeypatch.setenv("JOBCTL_RESUME_RENDERER", "latex_pdf")
     monkeypatch.setattr(
         _CHECK_TARGET,
         lambda: (True, "Playwright Chromium available at /opt/ms-playwright/chrome"),

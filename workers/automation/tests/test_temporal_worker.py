@@ -1,19 +1,20 @@
 import pytest
 from temporalio.testing import WorkflowEnvironment
 
-from jobhunter.infrastructure.temporal import (
-    JOBHUNTER_TASK_QUEUE,
+from jobctl.infrastructure.temporal import (
+    JOBCTL_TASK_QUEUE,
     build_worker,
 )
-from jobhunter.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+from jobctl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 
 
 @pytest.mark.asyncio
-async def test_build_worker_binds_to_jobhunter_task_queue():
+async def test_build_worker_binds_to_jobctl_task_queue():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         worker = build_worker(env.client, workflows=[], activities=[])
 
-        assert worker.task_queue == JOBHUNTER_TASK_QUEUE
+        assert JOBCTL_TASK_QUEUE == "jobctl-default"
+        assert worker.task_queue == JOBCTL_TASK_QUEUE
 
 
 @pytest.mark.asyncio
@@ -35,7 +36,7 @@ async def test_build_worker_validates_real_registry_under_production_sandbox():
 
     Uses the production ``SandboxedWorkflowRunner`` (not the unsandboxed
     runner the per-workflow tests use) so any future narrowing of the
-    ``with_passthrough_modules("jobhunter")`` scope, or any new workflow
+    ``with_passthrough_modules("jobctl")`` scope, or any new workflow
     module that imports something the proxy cannot handle, surfaces as a
     test failure here instead of a boot-time ``RuntimeError`` against a live
     Temporal server.
@@ -47,4 +48,4 @@ async def test_build_worker_validates_real_registry_under_production_sandbox():
             activities=ACTIVITIES,
         )
 
-        assert worker.task_queue == JOBHUNTER_TASK_QUEUE
+        assert worker.task_queue == JOBCTL_TASK_QUEUE

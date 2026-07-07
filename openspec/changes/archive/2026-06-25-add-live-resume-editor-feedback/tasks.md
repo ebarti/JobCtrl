@@ -22,8 +22,8 @@
 
 ## 4. Comment Threads And Replies
 
-- [x] 4.1 Seed persisted comment threads from JobHunter audit pins and risk labels when the selected material has audit data.
-- [x] 4.2 Add UI for replying to a JobHunter line comment without suppressing the original source pointer or risk label.
+- [x] 4.1 Seed persisted comment threads from JobCtl audit pins and risk labels when the selected material has audit data.
+- [x] 4.2 Add UI for replying to a JobCtl line comment without suppressing the original source pointer or risk label.
 - [x] 4.3 Persist reply body or structured decision with thread id, draft revision id, author, timestamp, and bounded text.
 - [x] 4.4 Track comment lifecycle states for open, user-replied, resolved, superseded-by-edit, and residual-after-acceptance.
 - [x] 4.5 Add tests proving comment anchors survive draft revisions and unresolved anchors are shown honestly.
@@ -39,7 +39,7 @@
 ## 6. Feedback Capture (Machine Learning Deferred)
 
 - [x] 6.1 Tag saved edit deltas with deterministic/manual feedback signal kinds such as style preference, factual correction, claim-policy correction, keyword strategy, and provenance dispute.
-- [x] 6.2 Tag comment replies as feedback signals while preserving the original JobHunter comment and audit context.
+- [x] 6.2 Tag comment replies as feedback signals while preserving the original JobCtl comment and audit context.
 - [x] 6.3 Add a reviewable feedback read model that can later feed writing-style controls, profile correction suggestions, or tailoring policy changes.
 - [x] 6.4 Ensure feedback signals are append-only and do not silently mutate profile data, tailoring policy, prompts, model routing, or model behavior.
 - [x] 6.5 Document that model training, fine-tuning, machine-learning inference for feedback classification, automatic prompt adaptation, and automatic policy/profile mutation are deferred to a later proposal.
@@ -50,7 +50,7 @@
 - [x] 7.1 Update README, local TypeScript API docs, architecture docs, frontend target docs, and local reliability QA docs for the new draft/edit/comment/learning lifecycle.
 - [x] 7.2 Add or update Apply Review Vitest coverage, API persistence tests, Python materials tests, and MSW fixtures for the new editor path.
 - [x] 7.3 Add browser QA for `/apply-review` covering the live editor load, seeded comments, final-file link, and no visible API errors; edit/save, comment reply, validation block, and replacement render are covered by the route/API/Python test set to avoid mutating real local materials during handoff.
-- [x] 7.4 Run the relevant verification set: `pnpm api:test`, `pnpm web:check`, `pnpm --filter @jobhunter/web test`, focused Python materials tests, `git diff --check`, and a browser smoke path.
+- [x] 7.4 Run the relevant verification set: `pnpm api:test`, `pnpm web:check`, `pnpm --filter @jobctl/web test`, focused Python materials tests, `git diff --check`, and a browser smoke path.
 
 ## 8. Post-QA Regression Fixes
 

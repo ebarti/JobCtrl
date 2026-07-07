@@ -1,5 +1,5 @@
 {
-  "name": "@jobhunter/api",
+  "name": "@jobctl/api",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -13,15 +13,15 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
-    "@jobhunter/contracts": "workspace:*",
-    "@jobhunter/domain-types": "workspace:*",
+    "@jobctl/contracts": "workspace:*",
+    "@jobctl/domain-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "fastify": "^5.8.5",
     "zod": "^4.4.1"
   },
   "devDependencies": {
-    "@jobhunter/api-client": "workspace:*",
-    "@jobhunter/tsconfig": "workspace:*",
+    "@jobctl/api-client": "workspace:*",
+    "@jobctl/tsconfig": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "tsx": "^4.22.4",

@@ -1,4 +1,4 @@
-import { LOCAL_TENANT, createApplyRunEventRecorded } from "@jobhunter/domain-types";
+import { LOCAL_TENANT, createApplyRunEventRecorded } from "@jobctl/domain-types";
 import { describe, expect, it } from "vitest";
 
 import { appendApplyRunEvent, type ApplyRunWithEvents } from "./applyRunSelectors.js";

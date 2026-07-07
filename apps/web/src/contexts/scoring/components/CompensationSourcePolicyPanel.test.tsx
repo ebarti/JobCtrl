@@ -75,7 +75,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Europe coverage is not configured.",
         },
         notes: [
-          "Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
+          "Refresh automatically loads configured licensed rows from JOBCTL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
         ],
       },
       {
@@ -98,7 +98,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Coverage is not configured.",
         },
         notes: [
-          "Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
+          "Refresh automatically loads configured permitted rows from JOBCTL_GLASSDOOR_OBSERVATIONS_PATH or JOBCTL_GLASSDOOR_OBSERVATIONS_URL when access is permitted.",
         ],
       },
     ],

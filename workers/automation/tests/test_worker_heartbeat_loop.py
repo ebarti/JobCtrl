@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jobhunter import cli
+from jobctl import cli
 
 
 def test_worker_heartbeat_loop_retries_after_iteration_failure(monkeypatch):
@@ -38,7 +38,7 @@ def test_worker_heartbeat_loop_retries_after_iteration_failure(monkeypatch):
     with pytest.raises(StopLoop):
         asyncio.run(
             cli._worker_heartbeat_loop(
-                "jobhunter-default",
+                "jobctl-default",
                 "worker-test",
                 worker_started_at=started_at,
                 interval_seconds=0,
@@ -46,7 +46,7 @@ def test_worker_heartbeat_loop_retries_after_iteration_failure(monkeypatch):
         )
 
     assert calls == [
-        ("jobhunter-default", "worker-test", started_at),
-        ("jobhunter-default", "worker-test", started_at),
-        ("jobhunter-default", "worker-test", started_at),
+        ("jobctl-default", "worker-test", started_at),
+        ("jobctl-default", "worker-test", started_at),
+        ("jobctl-default", "worker-test", started_at),
     ]

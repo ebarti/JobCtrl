@@ -1,4 +1,4 @@
-import type { RunContactResearchRequest } from "@jobhunter/contracts";
+import type { RunContactResearchRequest } from "@jobctl/contracts";
 import { useState, type FormEvent, type JSX } from "react";
 
 import { useRunResearchMutation } from "../hooks/useRunResearchMutation.js";

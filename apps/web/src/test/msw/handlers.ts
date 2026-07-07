@@ -2,7 +2,7 @@ import type {
   ContactAttributeDto,
   ContactCreateRequest,
   ContactUpdateRequest,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { http, HttpResponse } from "msw";
 
 import {
@@ -164,7 +164,7 @@ const sampleCompensationSourcePolicy = {
         regions: [],
         notes: "Europe coverage is not configured.",
       },
-      notes: ["Refresh automatically loads configured licensed rows from JOBHUNTER_LEVELS_FYI_OBSERVATIONS_PATH or JOBHUNTER_LEVELS_FYI_OBSERVATIONS_URL when access is permitted."],
+      notes: ["Refresh automatically loads configured licensed rows from JOBCTL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted."],
     },
     {
       sourceId: "glassdoor",
@@ -185,7 +185,7 @@ const sampleCompensationSourcePolicy = {
         regions: [],
         notes: "Coverage is not configured.",
       },
-      notes: ["Refresh automatically loads configured permitted rows from JOBHUNTER_GLASSDOOR_OBSERVATIONS_PATH or JOBHUNTER_GLASSDOOR_OBSERVATIONS_URL when access is permitted."],
+      notes: ["Refresh automatically loads configured permitted rows from JOBCTL_GLASSDOOR_OBSERVATIONS_PATH or JOBCTL_GLASSDOOR_OBSERVATIONS_URL when access is permitted."],
     },
   ],
 };
@@ -644,7 +644,7 @@ export const handlers = [
       ok: true,
       count: body.jobKeys?.length ?? 0,
       jobKeys: body.jobKeys ?? [],
-      nextAction: "jobhunter run score --rescore",
+      nextAction: "jobctl run score --rescore",
     });
   }),
   http.post("*/v1/jobs/:jobKey/actions/rescore-current-policy", ({ params }) =>
@@ -728,7 +728,7 @@ export const handlers = [
         artifactId: String(params["artifactId"]),
       },
       opened: true,
-      path: `/tmp/jobhunter-test/artifacts/${String(params["artifactId"])}.pdf`,
+      path: `/tmp/jobctl-test/artifacts/${String(params["artifactId"])}.pdf`,
     }),
   ),
 

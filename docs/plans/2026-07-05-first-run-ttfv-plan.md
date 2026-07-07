@@ -3,7 +3,7 @@
 - **Date:** 2026-07-05
 - **Status:** Proposed — plan only, nothing implemented.
 - **Anchors verified against main @ a488e4e9.** Every path, symbol, command, and fixture cited below was checked against this worktree's HEAD. Per repo practice, machine-re-verify every anchor against the implementation base ref before handing any phase to an implementer. Content attributed to PR #254 is cited by PR number only; that plan is not yet on `main`.
-- **Owner-facing goal:** make the first ten and thirty minutes of a fresh JobHunter install *provably* valuable, measure that value on clean environments as a recurring regression discipline, ship a safe synthetic sample experience that demonstrates the product before any real data or auth, and define — with evidence, not guesswork — when a packaged desktop install becomes worth building.
+- **Owner-facing goal:** make the first ten and thirty minutes of a fresh JobCtl install *provably* valuable, measure that value on clean environments as a recurring regression discipline, ship a safe synthetic sample experience that demonstrates the product before any real data or auth, and define — with evidence, not guesswork — when a packaged desktop install becomes worth building.
 
 ---
 
@@ -37,9 +37,9 @@ gate are retained for historical context only and are void.
 
 ## 0. Context and scope boundary
 
-Today JobHunter installs from source. `docs/user/getting-started.md:9` states plainly that "there is no packaged installer yet, so setup is developer-shaped," and estimates "roughly 15–30 minutes end to end, mostly downloads" for the toolchain alone (`docs/user/getting-started.md:27-31`). The documented path is `pnpm install:interactive` (→ `scripts/install`, `package.json:13`), then `jobhunter init` + `jobhunter doctor` (`docs/user/getting-started.md:86-96`), then `pnpm dev` (→ `scripts/dev`, `package.json:12`). Value only appears after a real Discover run (`discover → enrich → score → tailor → cover`, `docs/user/normal-flows.md`) that needs LLM auth and network access to job sources.
+Today JobCtl installs from source. `docs/user/getting-started.md:9` states plainly that "there is no packaged installer yet, so setup is developer-shaped," and estimates "roughly 15–30 minutes end to end, mostly downloads" for the toolchain alone (`docs/user/getting-started.md:27-31`). The documented path is `pnpm install:interactive` (→ `scripts/install`, `package.json:13`), then `jobctl init` + `jobctl doctor` (`docs/user/getting-started.md:86-96`), then `pnpm dev` (→ `scripts/dev`, `package.json:12`). Value only appears after a real Discover run (`discover → enrich → score → tailor → cover`, `docs/user/normal-flows.md`) that needs LLM auth and network access to job sources.
 
-**This plan is the measurement-and-demonstration layer that sits on top of the install/auth foundation. It builds on, and never re-specifies, the low-friction install plan (PR #254).** PR #254 owns: the one-command bootstrap (`scripts/install.sh` → a new `jobhunter setup` command), per-leg ensemble auth detection/enrollment, the extended `doctor` ensemble checks (its S1, aligning with OSS spec §W2.6), leg enable/disable config (its S4), and the glibc-Linux Codex wheel-gap remediation (its S5). This plan assumes that foundation and adds only what PR #254 explicitly does not cover:
+**This plan is the measurement-and-demonstration layer that sits on top of the install/auth foundation. It builds on, and never re-specifies, the low-friction install plan (PR #254).** PR #254 owns: the one-command bootstrap (`scripts/install.sh` → a new `jobctl setup` command), per-leg ensemble auth detection/enrollment, the extended `doctor` ensemble checks (its S1, aligning with OSS spec §W2.6), leg enable/disable config (its S4), and the glibc-Linux Codex wheel-gap remediation (its S5). This plan assumes that foundation and adds only what PR #254 explicitly does not cover:
 
 | This plan owns | PR #254 owns (do not duplicate) |
 |---|---|
@@ -48,7 +48,7 @@ Today JobHunter installs from source. `docs/user/getting-started.md:9` states pl
 | A safe synthetic *sample dataset* surfaced in-product on first run, with a never-mix guarantee | The dependency sync, toolchain, and vendor-binary bundling stance |
 | The evidence-based decision framework for whether to build a packaged desktop install | The documented platform coverage and the Linux wheel-gap remediation (an *input* to this plan's packaging decision) |
 
-Non-negotiable inheritances from PR #254 that constrain this plan: **no vendor binaries are redistributed in any JobHunter artifact** (the Claude Code CLI is proprietary/no-redistribution; the Codex and Antigravity binaries arrive only as pinned PyPI wheels). This directly bounds what any future package (§3) may contain.
+Non-negotiable inheritances from PR #254 that constrain this plan: **no vendor binaries are redistributed in any JobCtl artifact** (the Claude Code CLI is proprietary/no-redistribution; the Codex and Antigravity binaries arrive only as pinned PyPI wheels). This directly bounds what any future package (§3) may contain.
 
 Three goals follow, each with objectives, invariants, explicit acceptance gates, and verification.
 
@@ -84,11 +84,11 @@ Each stop condition must be encoded as an automated probe (a read-model query pl
 
 The number is meaningless without a defined environment. The protocol must specify, and the harness must enforce or record:
 
-- **Environment.** A fresh VM image or ephemeral container with none of the JobHunter toolchain pre-installed and no repository checkout present. Record OS, architecture, CPU class, RAM, and a coarse network-bandwidth class in the measurement record.
-- **Cold caches (enumerated, must all be empty at T0).** The pnpm store; the uv/pip cache; the Playwright browser cache (`~/Library/Caches/ms-playwright` on macOS, the platform equivalent elsewhere — the shared-cache GC hazard is already documented at `README.md:90-97`); any existing Python virtualenv under `workers/automation`; any `node_modules`; the vendor SDK wheels; and the local workspace `~/.jobhunter` (or the `JOBHUNTER_DIR` in use). A warm cache invalidates the run.
+- **Environment.** A fresh VM image or ephemeral container with none of the JobCtl toolchain pre-installed and no repository checkout present. Record OS, architecture, CPU class, RAM, and a coarse network-bandwidth class in the measurement record.
+- **Cold caches (enumerated, must all be empty at T0).** The pnpm store; the uv/pip cache; the Playwright browser cache (`~/Library/Caches/ms-playwright` on macOS, the platform equivalent elsewhere — the shared-cache GC hazard is already documented at `README.md:90-97`); any existing Python virtualenv under `workers/automation`; any `node_modules`; the vendor SDK wheels; and the local workspace `~/.jobctl` (or the `JOBCTL_DIR` in use). A warm cache invalidates the run.
 - **Allowed vs disallowed network.** Package/tool/browser downloads are allowed (they are the setup cost being measured). For the synthetic path, LLM provider calls and job-source crawling are disallowed — the sample data supplies value without them. For the real path, exactly one scored job and one tailored resume may use real providers, with spend bounded and recorded.
 - **Auth precondition, stated per scenario.** Because PR #254 makes setup *reuse existing* vendor auth, "clean" must declare whether vendor credential stores are present or absent. Define at least two scenarios: **cold-auth** (no vendor logins/keys present — the true worst case) and **warm-auth** (existing logins present, PR #254's zero-prompt path). The synthetic-path gate runs cold-auth because it needs no real auth; the real-path observation records both.
-- **Timestamping and phase breakdown.** The wrapper records T0, the stop timestamps, and a per-phase breakdown so a regression localizes to a phase rather than to an opaque total. Minimum phases: toolchain install; dependency sync; browser install; workspace init (`jobhunter init`); sample-data load; stack start (`pnpm dev` to worker-healthy per `GET /v1/health` — `docs/local-reliability-qa.md:45-50`); navigation-to-value (per stop probe).
+- **Timestamping and phase breakdown.** The wrapper records T0, the stop timestamps, and a per-phase breakdown so a regression localizes to a phase rather than to an opaque total. Minimum phases: toolchain install; dependency sync; browser install; workspace init (`jobctl init`); sample-data load; stack start (`pnpm dev` to worker-healthy per `GET /v1/health` — `docs/local-reliability-qa.md:45-50`); navigation-to-value (per stop probe).
 - **Statistics and reference class.** Run each scenario N times (N defined in the harness, small but > 1). The gate asserts against an agreed statistic on a named reference-machine class — for example median under budget with a defined worst-case ceiling — so one slow cold download does not flake the gate. Both the statistic and the reference class are recorded in the doc.
 - **Platform coverage, honestly recorded.** Measure on every platform that resolves today (macOS arm64/x86_64, Windows, musllinux). Record glibc-Linux as a known non-passing platform until PR #254's S5 wheel-gap remediation lands, rather than silently omitting it. Platform coverage is also a direct input to Goal C.
 
@@ -117,7 +117,7 @@ Add first-run TTFV to `docs/local-reliability-qa.md` as recurring regression che
 
 ## 2. Goal B — Synthetic sample data as the first-run experience — **WITHDRAWN 2026-07-06 (owner amendment above; PR #330 closed unmerged)**
 
-**Objective.** On a fresh workspace, JobHunter demonstrates end-to-end value — a scored job and a reviewable tailored resume PDF — using safe synthetic data, *before* the user imports a real profile or configures any auth, with an absolute guarantee that sample data never mixes into real records or reaches a real employer.
+**Objective.** On a fresh workspace, JobCtl demonstrates end-to-end value — a scored job and a reviewable tailored resume PDF — using safe synthetic data, *before* the user imports a real profile or configures any auth, with an absolute guarantee that sample data never mixes into real records or reaches a real employer.
 
 ### 2.1 What synthetic assets exist today (grounded inventory)
 
@@ -131,11 +131,11 @@ All current synthetic fixtures live on the **test/tooling surface**, not the pro
 
 **Critical caveat the implementer must confront:** `qa-seed.ts` is a *test* fixture, not a polished demo. It deliberately embeds redaction tripwires — `"RAW PROMPT SECRET"`, `"FULL PROFILE SECRET"`, `"/private/secret-resume.pdf"` (`apps/api/test/qa-seed.ts:733-739`) — that API redaction tests assert are stripped from responses. A product-facing sample experience must not surface those sentinels. This forces an explicit data-source decision (§2.3).
 
-Today's "never mixes" guarantee is **workspace-level separation only**: the seed targets a disposable `JOBHUNTER_DIR`, never `~/.jobhunter` (`docs/user/getting-started.md:163-166`, `docs/user/data-and-safety.md:123`). That is safe but it is not an in-product first-run experience — it requires the user to run a test tool and point the app at a throwaway directory.
+Today's "never mixes" guarantee is **workspace-level separation only**: the seed targets a disposable `JOBCTL_DIR`, never `~/.jobctl` (`docs/user/getting-started.md:163-166`, `docs/user/data-and-safety.md:123`). That is safe but it is not an in-product first-run experience — it requires the user to run a test tool and point the app at a throwaway directory.
 
 ### 2.2 Product invariants
 
-1. **Value before commitment.** A fresh workspace (empty DB, no profile — the `jobhunter doctor` "candidate profile MISSING → run 'jobhunter init'" state at `workers/automation/src/jobhunter/cli.py:1804-1809`) can present a scored job and a reviewable tailored resume PDF via a labeled sample dataset, before real profile import or auth.
+1. **Value before commitment.** A fresh workspace (empty DB, no profile — the `jobctl doctor` "candidate profile MISSING → run 'jobctl init'" state at `workers/automation/src/jobctl/cli.py:1804-1809`) can present a scored job and a reviewable tailored resume PDF via a labeled sample dataset, before real profile import or auth.
 2. **Representative rendering.** Sample data flows through the *same* projections and read model as real data, so what the user sees is faithful — no bespoke mock surface.
 3. **Unmistakable labeling.** Every sample record is visibly marked as sample/demo wherever it renders (list, detail, dashboard, Apply Review). A user can never confuse a sample job for a real one.
 4. **Explicit, reversible, user-approved.** Loading sample data is an opt-in action; clearing it is a single confirmed action that removes all sample records and leaves real records untouched.
@@ -166,11 +166,11 @@ Either way, the sample dataset becomes the **synthetic regression fixture** refe
 
 Two mechanisms, presented for an explicit owner choice because this is a safety property, not a UX preference:
 
-- **Option 1 — separate demo workspace (partition by `JOBHUNTER_DIR`).** The first-run experience provisions or points at a disposable demo workspace distinct from `~/.jobhunter`, extending today's proven separation (`docs/user/getting-started.md:163-166`). Strongest isolation (sample data physically never touches the real DB); weaker UX (the demo lives in a separate workspace the user visits).
+- **Option 1 — separate demo workspace (partition by `JOBCTL_DIR`).** The first-run experience provisions or points at a disposable demo workspace distinct from `~/.jobctl`, extending today's proven separation (`docs/user/getting-started.md:163-166`). Strongest isolation (sample data physically never touches the real DB); weaker UX (the demo lives in a separate workspace the user visits).
 - **Option 2 — in-workspace partition by explicit provenance marker.** Sample records live in the real workspace but carry a persisted sample/demo marker (a flag or reserved namespace/source) that travels source → events → projections → read model. Richer UX (demo appears in the real app); higher risk, so it must satisfy every clause below:
   - **Live apply is hard-blocked for sample jobs** — the highest-severity clause; no real employer can ever receive a sample application. This composes with the existing default apply-approval gate (`README.md:33-38`), it does not replace it.
   - Discovery dedup, scoring-policy learning, spend accounting, and outcome funnels all **exclude** sample records.
-  - `jobhunter backup` / export and any bug-report capture either exclude sample data or mark it unambiguously.
+  - `jobctl backup` / export and any bug-report capture either exclude sample data or mark it unambiguously.
   - A real record can never acquire the sample marker, and a sample record can never lose it.
 
 Whichever option is chosen, the guarantee must be proven by regression fixtures (§2.7), not asserted.
@@ -179,7 +179,7 @@ Whichever option is chosen, the guarantee must be proven by regression fixtures 
 
 | Template field | Answer for the sample-data experience |
 |---|---|
-| **Source of truth** | The curated synthetic sample dataset (the §2.3 fixture). Real data's source of truth remains SQLite `~/.jobhunter/jobhunter.db` (`README.md:122-124`). |
+| **Source of truth** | The curated synthetic sample dataset (the §2.3 fixture). Real data's source of truth remains SQLite `~/.jobctl/jobctl.db` (`README.md:122-124`). |
 | **Owning bounded context** | `operations` for the onboarding/read-side load-and-clear seam; `profile` for the sample candidate profile. Sample provenance, if in-workspace (D2 Option 2), is a cross-context marker owned at the persistence/event layer. |
 | **Projection / read model** | The same `job_list_projections` / `job_detail_projections` / `dashboard_projections` and audit projections real data uses — sample rows must render through them unchanged, with the sample marker carried if D2 Option 2 is chosen. |
 | **UI surface** | Dashboard and Jobs empty-state load affordance; `/jobs` (scored sample job); `/apply-review` (reviewable tailored resume PDF); sample labeling everywhere a sample record renders. |
@@ -205,7 +205,7 @@ Whichever option is chosen, the guarantee must be proven by regression fixtures 
 
 A packaged desktop install is a roadmap candidate (`README.md:53` points hosted/packaged futures to `ROADMAP.md`; `docs/user/getting-started.md:9` confirms none exists). The decision must not be taken before both preconditions hold:
 
-- **Gate C-precondition-1:** PR #254 has landed (its `jobhunter setup`, `doctor` ensemble checks, and S5 Linux wheel-gap remediation are the baseline the packaging question is asked *against*).
+- **Gate C-precondition-1:** PR #254 has landed (its `jobctl setup`, `doctor` ensemble checks, and S5 Linux wheel-gap remediation are the baseline the packaging question is asked *against*).
 - **Gate C-precondition-2:** at least one full clean-environment TTFV measurement cycle (§1) has been recorded across the supported platforms.
 
 ### 3.2 Decision inputs (criteria and measurements)
@@ -219,7 +219,7 @@ The decision weighs measured evidence, not intuition:
 
 ### 3.3 Hard constraint inherited from PR #254
 
-**A package cannot solve the vendor-binary distribution problem.** PR #254 establishes that no JobHunter artifact may redistribute vendor binaries (the Claude Code CLI is proprietary/no-redistribution; Codex/Antigravity binaries arrive only as pinned PyPI wheels). Any packaged desktop app must therefore still orchestrate the *same* PyPI-delivered dependency install at first launch rather than embedding those runtimes. This materially weakens the packaging case — a package wraps the existing install, it does not replace it — and the decision artifact must state this explicitly so the option is not overvalued.
+**A package cannot solve the vendor-binary distribution problem.** PR #254 establishes that no JobCtl artifact may redistribute vendor binaries (the Claude Code CLI is proprietary/no-redistribution; Codex/Antigravity binaries arrive only as pinned PyPI wheels). Any packaged desktop app must therefore still orchestrate the *same* PyPI-delivered dependency install at first launch rather than embedding those runtimes. This materially weakens the packaging case — a package wraps the existing install, it does not replace it — and the decision artifact must state this explicitly so the option is not overvalued.
 
 ### 3.4 Decision artifact
 
@@ -248,7 +248,7 @@ pnpm web:check
 pnpm web:build
 pnpm web:test
 pnpm web:test-d
-pnpm qa:seed -- /tmp/jobhunter-ttfv-qa   # baseline disposable synthetic workspace
+pnpm qa:seed -- /tmp/jobctl-ttfv-qa   # baseline disposable synthetic workspace
 pnpm qa:test                              # destructive-UI QA against a seeded workspace
 ```
 
@@ -277,7 +277,7 @@ git diff --check
 
 For this documentation PR specifically: confirm the plan renders and its references resolve (paths are given in backticks precisely so they are not treated as site links; PR #254 is referenced by number, not as an in-repo link).
 
-**Prohibited during all TTFV/sample-data verification:** auto-apply, browser submission, mailbox scans, real crawling, real LLM calls, and any write to a real `~/.jobhunter` workspace — consistent with every existing QA gate note.
+**Prohibited during all TTFV/sample-data verification:** auto-apply, browser submission, mailbox scans, real crawling, real LLM calls, and any write to a real `~/.jobctl` workspace — consistent with every existing QA gate note.
 
 ---
 
@@ -336,10 +336,10 @@ All four were resolved by the owner on 2026-07-06:
 - Committed synthetic screenshots: `docs/assets/screenshots/{dashboard,jobs,apply-review,profile,discovery,pipelines,runs,job-detail}.png`.
 - Onboarding + safety docs: `docs/user/getting-started.md:9,27-31,86-96,149-166`; `docs/user/normal-flows.md`; `docs/user/data-and-safety.md:114-123`; `docs/local-development.md:211-247`; `README.md:33-38,53,90-97,122-124`.
 - QA matrix: `docs/local-reliability-qa.md:18-36,45-50,69,124,140,165`.
-- CLI/config: `workers/automation/src/jobhunter/cli.py:651` (`init`), `:1781` (`doctor`), `:1804-1809` (empty-profile state); `workers/automation/src/jobhunter/config.py:1192` (`TIER_LABELS`), `:1205-1210` (tiers), `:1231` (`check_tier`).
+- CLI/config: `workers/automation/src/jobctl/cli.py:651` (`init`), `:1781` (`doctor`), `:1804-1809` (empty-profile state); `workers/automation/src/jobctl/config.py:1192` (`TIER_LABELS`), `:1205-1210` (tiers), `:1231` (`check_tier`).
 - Scripts + env: `scripts/install`, `scripts/dev`, `.env.example`.
 - Decision-record home: `docs/decisions.md`; plan conventions: `docs/plans/README.md`.
-- PR #254 (open, not on `main`): low-friction install and auth-reuse plan — `jobhunter setup`, `scripts/install.sh` bootstrap, `doctor` ensemble checks (S1), leg enable/disable (S4), glibc-Linux Codex wheel-gap remediation (S5), and the no-vendor-binary-redistribution stance.
+- PR #254 (open, not on `main`): low-friction install and auth-reuse plan — `jobctl setup`, `scripts/install.sh` bootstrap, `doctor` ensemble checks (S1), leg enable/disable (S4), glibc-Linux Codex wheel-gap remediation (S5), and the no-vendor-binary-redistribution stance.
 
 ## Delivery Model: Stacked PRs On This Plan
 

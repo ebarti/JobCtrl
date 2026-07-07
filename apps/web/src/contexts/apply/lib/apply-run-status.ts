@@ -3,4 +3,4 @@ export {
   APPLY_RUN_TERMINAL_STATUSES,
   isApplyRunStatus,
   type ApplyRunStatus,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";

@@ -16,8 +16,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from jobhunter import cli
-from jobhunter.infrastructure.preflight import (
+from jobctl import cli
+from jobctl.infrastructure.preflight import (
     PLAYWRIGHT_INSTALL_COMMAND,
     PLAYWRIGHT_WORKTREE_GC_WARNING,
     check_playwright_chromium,
@@ -27,7 +27,7 @@ from jobhunter.infrastructure.preflight import (
 # rather than erroring on the monkeypatch target if playwright is not installed.
 pytest.importorskip("playwright.sync_api")
 
-_CHECK_TARGET = "jobhunter.infrastructure.preflight.check_playwright_chromium"
+_CHECK_TARGET = "jobctl.infrastructure.preflight.check_playwright_chromium"
 
 
 class _FakeBrowser:
@@ -160,7 +160,7 @@ def test_check_reports_failure_when_driver_raises(
 
 
 def test_worker_gate_raises_when_browser_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("JOBHUNTER_SKIP_BROWSER_PREFLIGHT", raising=False)
+    monkeypatch.delenv("JOBCTL_SKIP_BROWSER_PREFLIGHT", raising=False)
     monkeypatch.setattr(_CHECK_TARGET, lambda: (False, "boom"))
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -170,7 +170,7 @@ def test_worker_gate_raises_when_browser_missing(monkeypatch: pytest.MonkeyPatch
 
 
 def test_worker_gate_passes_when_browser_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("JOBHUNTER_SKIP_BROWSER_PREFLIGHT", raising=False)
+    monkeypatch.delenv("JOBCTL_SKIP_BROWSER_PREFLIGHT", raising=False)
     monkeypatch.setattr(_CHECK_TARGET, lambda: (True, "ok"))
 
     # Should not raise.
@@ -181,7 +181,7 @@ def test_worker_gate_passes_when_browser_available(monkeypatch: pytest.MonkeyPat
 def test_worker_gate_skipped_by_escape_hatch(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    monkeypatch.setenv("JOBHUNTER_SKIP_BROWSER_PREFLIGHT", value)
+    monkeypatch.setenv("JOBCTL_SKIP_BROWSER_PREFLIGHT", value)
 
     def _must_not_run() -> tuple[bool, str]:
         raise AssertionError("preflight must not run when the escape hatch is set")
@@ -196,7 +196,7 @@ def test_worker_command_aborts_before_temporal_when_browser_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The gate runs after bootstrap but before any Temporal connection."""
-    monkeypatch.delenv("JOBHUNTER_SKIP_BROWSER_PREFLIGHT", raising=False)
+    monkeypatch.delenv("JOBCTL_SKIP_BROWSER_PREFLIGHT", raising=False)
     monkeypatch.setattr(
         _CHECK_TARGET,
         lambda: (False, "Playwright Chromium binary is missing at /nope"),
@@ -208,4 +208,4 @@ def test_worker_command_aborts_before_temporal_when_browser_missing(
     # Rich may soft-wrap; collapse whitespace before asserting.
     normalized = " ".join(result.output.split())
     assert "Worker preflight failed" in normalized
-    assert "JOBHUNTER_SKIP_BROWSER_PREFLIGHT=1" in normalized
+    assert "JOBCTL_SKIP_BROWSER_PREFLIGHT=1" in normalized

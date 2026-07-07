@@ -15,17 +15,17 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.profile.aggregate import (
+from jobctl.domain.profile.aggregate import (
     DEFAULT_PROFILE_ID,
     InvalidProfileError,
     Profile,
 )
-from jobhunter.domain.profile.value_objects import (
+from jobctl.domain.profile.value_objects import (
     TailoringPolicy,
     WritingStyle,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.resume_profile import (
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.resume_profile import (
     get_achievement_evidence,
     get_auto_approvable_claim_modes,
     get_claim_mode,

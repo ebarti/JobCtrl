@@ -71,7 +71,7 @@ const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
   location_mismatch: "Reported compensation locations did not strongly match the job location.",
   low_sample_count: "Reported compensation sample support is low.",
   reported_compensation_sample: "The estimate uses reported compensation rows for the job company and role.",
-  posted_salary_sample: "The estimate uses employer-posted salary text captured by JobHunter.",
+  posted_salary_sample: "The estimate uses employer-posted salary text captured by JobCtl.",
   source_conflict_with_posted_salary: "Reported compensation diverges materially from the posted salary.",
   stale_source_snapshot: "A reported compensation source snapshot is stale under the freshness policy.",
   trimodal_tier_inferred: "The company tier was inferred from reported compensation amounts.",
@@ -151,10 +151,10 @@ const SOURCE_DEFAULTS: Record<
   posted_salary_text: {
     displayName: "Job posting salary text",
     sourceType: "posted_salary",
-    snapshotVersion: "jobhunter-posted-compensation-v1",
+    snapshotVersion: "jobctl-posted-compensation-v1",
     geographyScope: "reported",
     aggregateBucket: "employer-posted company-role compensation",
-    attribution: "Employer-posted salary text captured by JobHunter",
+    attribution: "Employer-posted salary text captured by JobCtl",
   },
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([

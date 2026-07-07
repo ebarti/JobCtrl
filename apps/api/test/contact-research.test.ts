@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 function withTempApp(starter?: ContactResearchStarter) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-research-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-research-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.exec(`

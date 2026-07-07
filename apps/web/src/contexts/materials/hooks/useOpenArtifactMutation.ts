@@ -1,4 +1,4 @@
-import type { ArtifactOpenResponse } from "@jobhunter/contracts";
+import type { ArtifactOpenResponse } from "@jobctl/contracts";
 import { useMutation, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

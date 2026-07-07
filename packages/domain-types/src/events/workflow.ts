@@ -1,7 +1,7 @@
 /**
  * Workflow lifecycle domain events (Temporal loop closure — P0).
  *
- * Mirror of `workers/automation/src/jobhunter/domain/events/workflow.py`.
+ * Mirror of `workers/automation/src/jobctl/domain/events/workflow.py`.
  * Every Temporal workflow durably records a `WorkflowStarted` marker plus
  * exactly one terminal event; together they drive `workflow_run_projections`
  * and the Workflow Runs UI without a trigger-coupled reaper.
@@ -15,8 +15,8 @@ import { type DomainEvent, createDomainEvent } from "./base.js";
 
 /**
  * The subset of the 12-state `WORKFLOW_RUN_STATUSES` contract that a
- * lifecycle event can carry. Kept as a local union so `@jobhunter/domain-types`
- * stays free of a `@jobhunter/contracts` dependency.
+ * lifecycle event can carry. Kept as a local union so `@jobctl/domain-types`
+ * stays free of a `@jobctl/contracts` dependency.
  */
 export type WorkflowLifecycleStatus =
   | "in_progress"

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
-from jobhunter.domain.pipeline_types import (
+from jobctl.database import close_connection, init_db
+from jobctl.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
+from jobctl.domain.pipeline_types import (
     Blocked,
     Canceled,
     Failed,
@@ -17,9 +17,9 @@ from jobhunter.domain.pipeline_types import (
     Stage,
     Succeeded,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
-from jobhunter.state import ensure_job_stage_rows, set_stage_state
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
+from jobctl.state import ensure_job_stage_rows, set_stage_state
 
 
 def _insert_job(conn, url: str = "https://example.com/job") -> None:
@@ -103,7 +103,7 @@ def test_roundtrip_failed_state(db):
             error_code="TIMEOUT",
             error_message="timed out",
             retryable=True,
-            next_action="jobhunter retry enrich",
+            next_action="jobctl retry enrich",
         ),
     )
     repo.save(agg)
@@ -114,7 +114,7 @@ def test_roundtrip_failed_state(db):
     assert isinstance(enrich, Failed)
     assert enrich.error_code == "TIMEOUT"
     assert enrich.retryable is True
-    assert enrich.next_action == "jobhunter retry enrich"
+    assert enrich.next_action == "jobctl retry enrich"
 
 
 def test_optimistic_lock_conflict(db):
@@ -411,7 +411,7 @@ def test_save_does_not_use_legacy_dual_write_path(db):
     """
     import inspect
 
-    from jobhunter.infrastructure.pipeline import sqlite_repository
+    from jobctl.infrastructure.pipeline import sqlite_repository
 
     source = inspect.getsource(sqlite_repository)
     assert "INSERT INTO job_stage_states" not in source, source

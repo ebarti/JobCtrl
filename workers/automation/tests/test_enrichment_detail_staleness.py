@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.enrichment import detail
-from jobhunter.enrichment.detail import (
+from jobctl.database import close_connection, init_db
+from jobctl.enrichment import detail
+from jobctl.enrichment.detail import (
     _detail_failure_retryable,
     _record_posting_snapshot_from_cascade,
     scrape_detail_page,
@@ -198,7 +198,7 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
 
         # Force the anonymous browser path so the gate uses the injected offline
         # gateway (deterministic, no authenticated-session shared limiter).
-        monkeypatch.setenv("JOBHUNTER_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setenv("JOBCTL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
         monkeypatch.setattr(
             detail,
@@ -270,7 +270,7 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
 
 
 def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jobhunter.enrichment.activities import EnrichActivityInput, _run_selected_enrichment
+    from jobctl.enrichment.activities import EnrichActivityInput, _run_selected_enrichment
 
     calls: list[dict[str, object]] = []
 
@@ -281,7 +281,7 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
         "error": 0,
         "tiers": {1: 1},
     })
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: object())
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: object())
 
     result = _run_selected_enrichment(
         EnrichActivityInput(

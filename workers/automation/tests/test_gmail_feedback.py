@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from jobhunter.infrastructure.gmail.feedback import (
+from jobctl.infrastructure.gmail.feedback import (
     classify_outcome,
     ensure_application_feedback_tables,
     scan_gmail_feedback,
@@ -384,7 +384,7 @@ def test_raw_body_is_not_written_to_events_or_summary(tmp_path: Path) -> None:
 
 
 def seed_feedback_db(tmp_path: Path) -> Path:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(

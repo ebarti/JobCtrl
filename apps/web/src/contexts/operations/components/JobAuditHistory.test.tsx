@@ -1,4 +1,4 @@
-import { JOB_AUDIT_TONES, type JobAuditEntry } from "@jobhunter/contracts";
+import { JOB_AUDIT_TONES, type JobAuditEntry } from "@jobctl/contracts";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

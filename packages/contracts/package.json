@@ -1,5 +1,5 @@
 {
-  "name": "@jobhunter/contracts",
+  "name": "@jobctl/contracts",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
     "check": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
-    "@jobhunter/domain-types": "workspace:*",
+    "@jobctl/domain-types": "workspace:*",
     "zod": "^4.4.1"
   },
   "devDependencies": {
-    "@jobhunter/tsconfig": "workspace:*",
+    "@jobctl/tsconfig": "workspace:*",
     "typescript": "^6.0.3"
   }
 }

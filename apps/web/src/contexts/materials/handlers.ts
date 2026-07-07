@@ -15,7 +15,7 @@ import type {
   TailoredArtifactsSuppressed,
   TailorRetailorRequested,
   JobResumeTemplateAssigned,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { artifactsKeys } from "../operations/artifactsKeys.js";

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from jobhunter.infrastructure.apply_tools.mcp_server import (
+from jobctl.infrastructure.apply_tools.mcp_server import (
     ApplyToolsMcpServer,
     CaptchaChallenge,
     CaptchaSolveResult,
@@ -118,13 +118,13 @@ def test_type_credential_resolves_password_from_profile_db(monkeypatch, tmp_path
         conn.commit()
     finally:
         conn.close()
-    monkeypatch.setenv("JOBHUNTER_APPLY_PROFILE_DB_PATH", str(db_path))
+    monkeypatch.setenv("JOBCTL_APPLY_PROFILE_DB_PATH", str(db_path))
 
     assert _profile_credential("job_site_password") == "SyntheticProfilePassword"
 
 
 def test_type_credential_refuses_missing_profile_db(monkeypatch, tmp_path):
-    monkeypatch.setenv("JOBHUNTER_APPLY_PROFILE_DB_PATH", str(tmp_path / "missing.db"))
+    monkeypatch.setenv("JOBCTL_APPLY_PROFILE_DB_PATH", str(tmp_path / "missing.db"))
 
     response = _call(
         ApplyToolsMcpServer(cdp_endpoint="http://localhost:9222"),

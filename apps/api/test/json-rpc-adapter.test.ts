@@ -60,7 +60,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         model: "default",
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toHaveLength(1);
@@ -68,7 +68,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.params).toMatchObject({
       tenantId: "local",
       expectedAppDir: "/tmp",
-      expectedDbPath: "/tmp/jobhunter.db",
+      expectedDbPath: "/tmp/jobctl.db",
       jobUrl: "https://example.com/jobs/x",
       limit: 1,
       dryRun: true,
@@ -91,7 +91,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         limit: 1,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]?.method).toBe("apply");
@@ -112,7 +112,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         limit: 1,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]).toEqual({
@@ -120,7 +120,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       params: expect.objectContaining({
         tenantId: "local",
         expectedAppDir: "/tmp",
-        expectedDbPath: "/tmp/jobhunter.db",
+        expectedDbPath: "/tmp/jobctl.db",
         jobUrl: "https://example.com/jobs/x",
         stage: "enrich",
         stages: ["enrich", "score", "tailor", "cover"],
@@ -144,7 +144,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         limit: 1,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]).toEqual({
@@ -185,7 +185,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         rescore: true,
         retailor: false,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toHaveLength(1);
@@ -194,7 +194,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       params: {
         tenantId: "local",
         expectedAppDir: "/tmp",
-        expectedDbPath: "/tmp/jobhunter.db",
+        expectedDbPath: "/tmp/jobctl.db",
         stage: "score",
         stages: ["score"],
         limit: 20,
@@ -224,7 +224,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
   it("maps preparation maintenance actions to current-policy RPC methods", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
-    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobctl.db" };
 
     await dispatcher(
       {
@@ -286,7 +286,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           jobUrl: "https://example.com/jobs/current",
           dryRun: true,
           reason: "policy refresh",
@@ -297,7 +297,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           limit: 10,
           jobUrls: ["https://example.com/jobs/stale"],
           dryRun: true,
@@ -308,7 +308,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           jobUrl: "https://example.com/jobs/current",
           dryRun: true,
           allowLowFitOverride: true,
@@ -323,7 +323,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           jobUrl: "https://example.com/jobs/current",
           dryRun: true,
           suppressExistingArtifacts: false,
@@ -337,7 +337,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           limit: 5,
           jobUrls: ["https://example.com/jobs/current"],
           dryRun: false,
@@ -350,7 +350,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
   it("surfaces workflow start identifiers for preparation maintenance actions", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
-    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobctl.db" };
     const commands: ActionCommandPayload[] = [
       {
         action: "rescore_job",
@@ -417,7 +417,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       observationsJsonPath: "/tmp/reported-compensation.json",
     };
 
-    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" });
+    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobctl.db" });
 
     expect(fake.calls).toEqual([
       {
@@ -425,7 +425,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           jobUrl: "https://example.com/jobs/current",
           observationsJsonPath: "/tmp/reported-compensation.json",
         },
@@ -462,7 +462,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         includeEuroTopTech: false,
         euroTopTechMaxPages: 3,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toEqual([
@@ -471,7 +471,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           allJobs: true,
           includeEuroTopTech: false,
           euroTopTechMaxPages: 3,
@@ -494,7 +494,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         jobKey: "https://example.com/jobs/current",
         llmModel: "gpt-test",
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toEqual([
@@ -503,7 +503,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         params: {
           tenantId: "local",
           expectedAppDir: "/tmp",
-          expectedDbPath: "/tmp/jobhunter.db",
+          expectedDbPath: "/tmp/jobctl.db",
           jobUrl: "https://example.com/jobs/current",
           llmModel: "gpt-test",
         },
@@ -519,7 +519,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           .readFileSync(
             path.join(
               REPO_ROOT,
-              "workers/automation/src/jobhunter/infrastructure/rpc/handlers.py",
+              "workers/automation/src/jobctl/infrastructure/rpc/handlers.py",
             ),
             "utf8",
           )
@@ -528,7 +528,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     );
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
-    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobctl.db" };
 
     await dispatcher({ action: "run_stage", jobKey: "pipeline", stage: "score" }, context);
     await dispatcher(
@@ -572,12 +572,12 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         stage: "discover",
         dryRun: false,
       },
-      { appDir: "/tmp/jobhunter-runtime", dbPath: "/tmp/jobhunter-runtime/jobhunter.db" },
+      { appDir: "/tmp/jobctl-runtime", dbPath: "/tmp/jobctl-runtime/jobctl.db" },
     );
 
     expect(factory).toHaveBeenCalledWith({
-      appDir: "/tmp/jobhunter-runtime",
-      dbPath: "/tmp/jobhunter-runtime/jobhunter.db",
+      appDir: "/tmp/jobctl-runtime",
+      dbPath: "/tmp/jobctl-runtime/jobctl.db",
     });
     expect(fake.calls[0]?.method).toBe("run_stage");
   });
@@ -596,7 +596,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 2,
         workers: 14,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]).toEqual({
@@ -624,7 +624,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 25,
         sourceIds: ["jobspy:linkedin"],
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]).toEqual({
@@ -653,7 +653,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         tailorJudgeMinScore: 0.9,
         model: "sonnet",
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls[0]?.method).toBe("run_stage");
@@ -694,7 +694,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       dryRun: true,
     };
 
-    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" });
+    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobctl.db" });
     const response = buildActionResponse(command, result);
 
     expect(result).toMatchObject({
@@ -744,7 +744,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       dryRun: false,
     };
 
-    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" });
+    const result = await dispatcher(command, { appDir: "/tmp", dbPath: "/tmp/jobctl.db" });
     const response = buildActionResponse(command, result);
 
     expect(result).toMatchObject({
@@ -785,7 +785,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         headless: true,
         continuous: true,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toHaveLength(1);
@@ -793,7 +793,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.params).toEqual({
       tenantId: "local",
       expectedAppDir: "/tmp",
-      expectedDbPath: "/tmp/jobhunter.db",
+      expectedDbPath: "/tmp/jobctl.db",
       limit: 10,
       workers: 2,
       minScore: 9,
@@ -817,7 +817,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         limit: 1,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toHaveLength(0);
@@ -836,7 +836,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 1,
         dryRun: true,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(fake.calls).toHaveLength(0);
@@ -862,7 +862,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 1,
         dryRun: true,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(result).toMatchObject({
@@ -887,7 +887,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 1,
         dryRun: true,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
 
     expect(result.status).toBe("queued");
@@ -904,7 +904,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 1,
         dryRun: true,
       },
-      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctl.db" },
     );
     expect(fake.calls[0]?.params).toHaveProperty("tenantId", "local");
   });
@@ -914,7 +914,7 @@ describe("SubprocessJsonRpcAdapter per-request timeout", () => {
   it("rejects a call whose worker never responds", async () => {
     const { SubprocessJsonRpcAdapter } = await import("../src/json-rpc-adapter.js");
     const os = await import("node:os");
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-rpc-timeout-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-rpc-timeout-"));
     // A worker stand-in that reads stdin forever and never writes a response.
     const script = path.join(dir, "hang.sh");
     fs.writeFileSync(script, "#!/bin/sh\nexec cat >/dev/null\n", { mode: 0o755 });

@@ -255,7 +255,7 @@ export function rejectOutreachDraft(
 // ---------------------------------------------------------------------------
 // Send log (user-attested — the ONLY path to "sent", INV-1) + follow-ups
 //
-// JobHunter NEVER sends. `logOutreachSend` records a fact the USER asserts, only
+// JobCtl NEVER sends. `logOutreachSend` records a fact the USER asserts, only
 // over an APPROVED draft; "approve draft" and "log send" are distinct actions. No
 // function here opens any transport. Follow-ups are surfaced-only: scheduling
 // derives a suggested date the user can edit, and the due list is a projected

@@ -1,4 +1,4 @@
-import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
+import type { ArtifactTailoringExplanation } from "@jobctl/contracts";
 import type { ReactNode } from "react";
 
 import { BulletProvenanceList } from "./BulletProvenanceList.js";

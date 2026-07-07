@@ -4,21 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter import config
-from jobhunter.database import close_connection, init_db
-from jobhunter.discovery import smartextract
-from jobhunter.domain.discovery import (
+from jobctl import config
+from jobctl.database import close_connection, init_db
+from jobctl.discovery import smartextract
+from jobctl.domain.discovery import (
     AtsKind,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
     Source,
 )
-from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
-from jobhunter.domain.ports.discovery import ScrapedJobPosting
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.discovery import SqliteJobRepository
-from jobhunter.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+from jobctl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctl.domain.ports.discovery import ScrapedJobPosting
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.discovery import SqliteJobRepository
+from jobctl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
 
 def _ats_posting(
@@ -47,7 +47,7 @@ def test_smart_extract_store_filters_title_and_location(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -91,7 +91,7 @@ def test_smart_extract_static_site_filters_against_all_target_queries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -129,7 +129,7 @@ def test_smart_extract_static_site_uses_recall_match_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -226,7 +226,7 @@ def test_smart_extract_store_filters_jobs_without_descriptions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -285,7 +285,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -309,7 +309,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
                 job_url TEXT PRIMARY KEY,
                 deleted_at TEXT NOT NULL,
                 reason TEXT,
@@ -320,7 +320,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
         )
         conn.execute(
             """
-            INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
             VALUES (?, ?, ?, NULL)
             """,
             (url, "2026-05-20T00:00:00+00:00", "missing_description"),
@@ -348,7 +348,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
             """
             SELECT j.description, d.restored_at
             FROM jobs j
-            JOIN jobhunter_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctl_deleted_jobs d ON d.job_url = j.url
             WHERE j.url = ?
             """,
             (url,),
@@ -363,7 +363,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -387,7 +387,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
                 job_url TEXT PRIMARY KEY,
                 deleted_at TEXT NOT NULL,
                 reason TEXT,
@@ -398,7 +398,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         )
         conn.execute(
             """
-            INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
             VALUES (?, ?, ?, NULL)
             """,
             (url, "2026-05-20T00:00:00+00:00", "title/location mismatch"),
@@ -427,7 +427,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
             """
             SELECT j.title, j.company, j.description, j.location, d.restored_at
             FROM jobs j
-            JOIN jobhunter_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctl_deleted_jobs d ON d.job_url = j.url
             WHERE j.url = ?
             """,
             (url,),
@@ -448,7 +448,7 @@ def test_smart_extract_store_normalizes_relative_urls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -491,7 +491,7 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
     from a different URL. Without a content-owner check the direct-SQL insert
     would create a second aggregate (double scoring/tailoring spend).
     """
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -552,7 +552,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The reverse direction: a later ATS scrape must merge onto a Smart Extract owner."""
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:
@@ -620,7 +620,7 @@ def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
     description would fingerprint- or shingle-match and wrongly collapse the two
     roles into one aggregate. Regression guard for the direct-SQL skip-insert path.
     """
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(config, "DB_PATH", db_path)
     conn = init_db(db_path)
     try:

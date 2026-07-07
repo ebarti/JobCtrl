@@ -1630,17 +1630,17 @@ textarea:focus-visible {
   cursor: text;
 }
 
-.resume-plate-document [data-resume-line-number].jobhunter-selected-line {
+.resume-plate-document [data-resume-line-number].jobctl-selected-line {
   outline: 1px solid #111;
   outline-offset: 1px;
   background: rgb(0 0 0 / 6%);
 }
 
-.resume-plate-document [data-resume-line-number].has-jobhunter-comment {
+.resume-plate-document [data-resume-line-number].has-jobctl-comment {
   position: relative;
 }
 
-.resume-plate-document [data-resume-line-number].has-jobhunter-comment::before {
+.resume-plate-document [data-resume-line-number].has-jobctl-comment::before {
   position: absolute;
   inset-block: 0;
   inset-inline-start: -5px;

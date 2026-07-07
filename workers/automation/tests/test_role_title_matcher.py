@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jobhunter.discovery.role_title_matcher import RoleTitleMatcher
-from jobhunter.domain.ports.llm import LlmMessage
+from jobctl.discovery.role_title_matcher import RoleTitleMatcher
+from jobctl.domain.ports.llm import LlmMessage
 
 
 class _FakeLlm:

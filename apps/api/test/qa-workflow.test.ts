@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { CredentialKey, CredentialsResponse } from "@jobhunter/contracts";
-import { CredentialKeys } from "@jobhunter/contracts";
+import type { CredentialKey, CredentialsResponse } from "@jobctl/contracts";
+import { CredentialKeys } from "@jobctl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CredentialStore } from "../src/credentials.js";

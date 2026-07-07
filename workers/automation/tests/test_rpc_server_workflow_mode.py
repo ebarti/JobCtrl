@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.rpc.messages import (
+from jobctl.domain.rpc.messages import (
     INTERNAL_ERROR,
     JsonRpcRequest,
     WorkflowStartSpec,
 )
-from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobctl.infrastructure.rpc.server import JsonRpcServer
 
 
 class _FakeWorkflow:

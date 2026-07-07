@@ -1,4 +1,4 @@
-import { LOCAL_TENANT, createApplyRunEventRecorded } from "@jobhunter/domain-types";
+import { LOCAL_TENANT, createApplyRunEventRecorded } from "@jobctl/domain-types";
 import { render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it } from "vitest";

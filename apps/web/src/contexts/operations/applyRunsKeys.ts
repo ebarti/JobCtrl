@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobhunter/domain-types";
+import type { TenantId } from "@jobctl/domain-types";
 
 // The backend bundles apply runs in `DashboardSummary.applyRuns` rather than
 // exposing a dedicated `/v1/apply-runs` endpoint. Today's `useApplyRunsListQuery`

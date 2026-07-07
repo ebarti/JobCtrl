@@ -27,27 +27,27 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import (
+from jobctl.database import (
     get_jobs_by_stage,
     get_stats,
     init_db,
 )
-from jobhunter.domain.enrichment import (
+from jobctl.domain.enrichment import (
     ApplicationUrl,
     EnrichmentError,
     ExtractionTier,
     FullDescription,
     JobEnrichment,
 )
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
-from jobhunter.state import utc_now
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctl.state import utc_now
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobhunter.db")
+    return init_db(tmp_path / "jobctl.db")
 
 
 def _seed_discovered(conn: sqlite3.Connection, url: str) -> None:
@@ -142,8 +142,8 @@ def test_pending_detail_excludes_jobs_with_enrichment_row(conn: sqlite3.Connecti
 def test_closed_postings_are_excluded_from_enrichment_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobhunter import pipeline
-    from jobhunter.pipeline import runner as pipeline_runner
+    from jobctl import pipeline
+    from jobctl.pipeline import runner as pipeline_runner
 
     pending_url = "https://example.com/jobs/closed-pending-detail"
     enriched_url = "https://example.com/jobs/closed-enriched"
@@ -249,7 +249,7 @@ def test_reset_job_stage_enrich_clears_job_enrichments_aggregate(
     must re-pick the job. Pre-fix, ``current_status`` stays
     ``'enriched'`` and ``_ENRICHMENT_PENDING`` permanently excludes the
     row."""
-    from jobhunter.state import reset_job_stage
+    from jobctl.state import reset_job_stage
 
     url = "https://example.com/jobs/RESET"
     _seed_discovered(conn, url)
@@ -283,7 +283,7 @@ def test_reset_job_stage_enrich_is_noop_when_no_aggregate_exists(
     """Reset for a job whose enrichment row was never written must not
     crash — the next pipeline run creates the row when it starts the
     first attempt."""
-    from jobhunter.state import reset_job_stage
+    from jobctl.state import reset_job_stage
 
     url = "https://example.com/jobs/NO_AGG"
     _seed_discovered(conn, url)
@@ -307,7 +307,7 @@ def test_pending_sql_enrich_excludes_new_path_enriched_jobs(
     """``pipeline._PENDING_SQL['enrich']`` must read through
     ``_ENRICHMENT_JOIN`` so jobs enriched via the repository drop out
     of the count."""
-    from jobhunter.pipeline import _PENDING_SQL
+    from jobctl.pipeline import _PENDING_SQL
 
     _seed_discovered(conn, "https://example.com/jobs/A")
     _seed_discovered(conn, "https://example.com/jobs/B")
@@ -323,8 +323,8 @@ def test_pending_detail_excludes_legacy_stage_succeeded_without_aggregate(
     """Live local DBs may have canonical succeeded stage rows before a
     ``job_enrichments`` aggregate exists. Those rows must not be
     re-enriched unless the stage is reset to pending."""
-    from jobhunter.pipeline import _PENDING_SQL
-    from jobhunter.state import ensure_job_stage_rows, set_stage_state
+    from jobctl.pipeline import _PENDING_SQL
+    from jobctl.state import ensure_job_stage_rows, set_stage_state
 
     legacy_url = "https://example.com/jobs/LEGACY"
     pending_url = "https://example.com/jobs/PENDING"
@@ -358,8 +358,8 @@ def test_run_detail_scraper_skips_legacy_stage_succeeded_without_aggregate(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jobhunter.enrichment import detail
-    from jobhunter.state import ensure_job_stage_rows, set_stage_state
+    from jobctl.enrichment import detail
+    from jobctl.state import ensure_job_stage_rows, set_stage_state
 
     legacy_url = "https://example.com/jobs/LEGACY-RUNNER"
     pending_url = "https://example.com/jobs/PENDING-RUNNER"
@@ -412,7 +412,7 @@ def test_pending_sql_score_includes_new_path_enriched_jobs(
     ``_EFFECTIVE_FULL_DESCRIPTION`` so newly-enriched jobs surface as
     scorable. Pre-fix the bare ``full_description`` column is NULL on
     the new path and the count stays at 0 forever."""
-    from jobhunter.pipeline import _PENDING_SQL
+    from jobctl.pipeline import _PENDING_SQL
 
     _seed_discovered(conn, "https://example.com/jobs/A")
     _save_enriched(conn, "https://example.com/jobs/A")
@@ -427,7 +427,7 @@ def test_pending_sql_tailor_sees_new_path_enriched_scored_jobs(
     """The ``tailor`` predicate also reads
     ``_EFFECTIVE_FULL_DESCRIPTION`` — a job enriched via the repository
     AND scored via the legacy column should surface for tailoring."""
-    from jobhunter.pipeline import _PENDING_SQL
+    from jobctl.pipeline import _PENDING_SQL
 
     _seed_discovered(conn, "https://example.com/jobs/A")
     _save_enriched(conn, "https://example.com/jobs/A")

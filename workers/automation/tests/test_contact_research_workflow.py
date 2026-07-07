@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.contact import workflow as contact_workflow
-from jobhunter.domain.contact import (
+from jobctl.contact import workflow as contact_workflow
+from jobctl.domain.contact import (
     CandidateStatus,
     ContactLink,
     ContactResearchService,
@@ -27,16 +27,16 @@ from jobhunter.domain.contact import (
     ResearchTaskStatus,
     RunContactResearchUseCase,
 )
-from jobhunter.domain.ports.contact import ResearchPageFetch
-from jobhunter.domain.ports.llm import LlmMessage, LlmPort
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.contact import (
+from jobctl.domain.ports.contact import ResearchPageFetch
+from jobctl.domain.ports.llm import LlmMessage, LlmPort
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.contact import (
     GatewayContactResearchFetcher,
     SqliteContactRepository,
     SqliteContactResearchTaskRepository,
 )
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 _HOST = "acme.example"
 _TEAM_URL = f"https://{_HOST}/team"
@@ -78,9 +78,9 @@ def _counter():
 
 
 def _setup(tmp_path: Path):
-    from jobhunter.database import init_db
+    from jobctl.database import init_db
 
-    conn = init_db(tmp_path / "jobhunter.db")
+    conn = init_db(tmp_path / "jobctl.db")
     conn.row_factory = sqlite3.Row
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
@@ -244,7 +244,7 @@ def test_candidate_values_never_leak_into_events(tmp_path: Path) -> None:
 
 
 def test_workflow_reuses_the_shared_spend_preflight() -> None:
-    from jobhunter.llm import check_spend_budget
+    from jobctl.llm import check_spend_budget
 
     # The workflow imports the existing preflight activity — no second spend system.
     assert contact_workflow.check_spend_budget is check_spend_budget
@@ -254,15 +254,15 @@ class _BlockedSession:
     """Fake PolitenessSession yielding a blocked decision (gateway routing test)."""
 
     def __init__(self, outcome: str) -> None:
-        from jobhunter.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
+        from jobctl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
 
         self._decision = PolitenessDecision(
-            allowed=False, outcome=PolitenessOutcome(outcome), user_agent="JobHunter/test"
+            allowed=False, outcome=PolitenessOutcome(outcome), user_agent="JobCtl/test"
         )
 
     @property
     def user_agent(self) -> str:
-        return "JobHunter/test"
+        return "JobCtl/test"
 
     def guard(self, url: str):  # noqa: ARG002
         from contextlib import contextmanager

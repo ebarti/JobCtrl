@@ -1,4 +1,4 @@
-import { DOMAIN_EVENT_TYPES, LOCAL_TENANT } from "@jobhunter/domain-types";
+import { DOMAIN_EVENT_TYPES, LOCAL_TENANT } from "@jobctl/domain-types";
 import { describe, expect, it } from "vitest";
 
 import { eventByType } from "../../../test/fixtures/events.js";

@@ -4,8 +4,8 @@ import {
   type ContactAttributeKind,
   type ContactCreateRequest,
   type ContactRole,
-} from "@jobhunter/contracts";
-import { CONTACT_ROLES } from "@jobhunter/domain-types";
+} from "@jobctl/contracts";
+import { CONTACT_ROLES } from "@jobctl/domain-types";
 import { useForm } from "@tanstack/react-form";
 
 import { contactAttributeKindLabel, contactRoleLabel } from "../lib/contact-copy.js";

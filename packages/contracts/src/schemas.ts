@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobhunter/domain-types";
+import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -4673,7 +4673,7 @@ export interface OutreachThreadResponse {
 // ---------------------------------------------------------------------------
 // Contact & Outreach (R6 Phase 4 — user-attested send log + follow-ups)
 //
-// INV-1: JobHunter NEVER sends. A thread reaches a "sent" state ONLY via a
+// INV-1: JobCtl NEVER sends. A thread reaches a "sent" state ONLY via a
 // user-attested `OutreachSendLog` over an APPROVED draft — a recorded fact, not a
 // transmission. `channel` is a controlled label ("email", "linkedin_message"),
 // never an address. Follow-ups are surfaced-only: a derived suggested date, fully

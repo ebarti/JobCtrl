@@ -1,6 +1,6 @@
 ## Why
 
-JobHunter can already render HTML/CSS resume artifacts through Plate-backed review surfaces, but users cannot define reusable resume templates or choose which template a job should use. Template edits also need to update current materials lazily when those materials are actually needed, instead of forcing expensive bulk regeneration or requiring users to remember manual re-tailoring.
+JobCtl can already render HTML/CSS resume artifacts through Plate-backed review surfaces, but users cannot define reusable resume templates or choose which template a job should use. Template edits also need to update current materials lazily when those materials are actually needed, instead of forcing expensive bulk regeneration or requiring users to remember manual re-tailoring.
 
 ## What Changes
 

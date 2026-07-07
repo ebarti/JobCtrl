@@ -1,4 +1,4 @@
-import type { ResumeTemplateSummary, ResumeTemplateState } from "@jobhunter/contracts";
+import type { ResumeTemplateSummary, ResumeTemplateState } from "@jobctl/contracts";
 import type { JSX } from "react";
 import { useId } from "react";
 

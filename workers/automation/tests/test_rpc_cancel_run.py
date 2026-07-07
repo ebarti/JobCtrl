@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.rpc.messages import INVALID_PARAMS, JsonRpcRequest
-from jobhunter.infrastructure.rpc.handlers import register_default_handlers
-from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobctl.domain.rpc.messages import INVALID_PARAMS, JsonRpcRequest
+from jobctl.infrastructure.rpc.handlers import register_default_handlers
+from jobctl.infrastructure.rpc.server import JsonRpcServer
 
 
 async def _stub_starter(_spec):  # pragma: no cover — not invoked in cancel tests

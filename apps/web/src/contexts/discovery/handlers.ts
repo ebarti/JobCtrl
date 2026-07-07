@@ -16,7 +16,7 @@ import type {
   SourceRegistryEntryCreated,
   SourceRegistryEntryUpdated,
   SourceStateChanged,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { discoveryKeys } from "./queryKeys.js";

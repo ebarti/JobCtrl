@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import ensure_materials_tables
-from jobhunter.infrastructure.materials.resume_html_migration import (
+from jobctl.database import ensure_materials_tables
+from jobctl.infrastructure.materials.resume_html_migration import (
     build_legacy_resume_html,
     migrate_legacy_resume_pdfs,
 )

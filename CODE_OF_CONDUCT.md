@@ -1,6 +1,6 @@
 # Code of Conduct
 
-JobHunter contributors are expected to keep collaboration professional,
+JobCtl contributors are expected to keep collaboration professional,
 specific, and respectful.
 
 ## Expected Behavior

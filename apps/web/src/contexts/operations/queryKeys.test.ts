@@ -1,4 +1,4 @@
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { describe, expect, it } from "vitest";
 
 import { applyRunsKeys } from "./applyRunsKeys.js";

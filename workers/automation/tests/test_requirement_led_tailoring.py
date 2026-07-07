@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -13,18 +13,18 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobhunter.domain.materials.policy import (
+from jobctl.domain.materials.policy import (
     DEFAULT_REQUIREMENT_LED_REVISION_GATES,
     REQUIREMENT_LED_TAILORING_POLICY_VERSION,
     RevisionGatePolicy,
     adapt_requirement_led_controls,
 )
-from jobhunter.domain.materials.claim_grounding import (
+from jobctl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     ground_claim_mappings,
 )
-from jobhunter.domain.materials.quality import build_tailoring_plan
-from jobhunter.domain.materials.requirement_coverage import (
+from jobctl.domain.materials.quality import build_tailoring_plan
+from jobctl.domain.materials.requirement_coverage import (
     AchievementNode,
     CoverageEdge,
     CoverageGraph,
@@ -47,7 +47,7 @@ from jobhunter.domain.materials.requirement_coverage import (
     validate_pinned_content_preserved,
     validate_prohibited_claims,
 )
-from jobhunter.domain.scoring import (
+from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -56,7 +56,7 @@ from jobhunter.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 def _employer_analysis(*keywords: str) -> EmployerAnalysis:

@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from jobhunter.domain.discovery import AtsKind
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.discovery import (
+from jobctl.domain.discovery import AtsKind
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.discovery import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
     LeverBoardAdapter,

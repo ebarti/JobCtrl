@@ -40,10 +40,10 @@ importers:
       '@fastify/cors':
         specifier: ^11.2.0
         version: 11.2.0
-      '@jobhunter/contracts':
+      '@jobctl/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@jobhunter/domain-types':
+      '@jobctl/domain-types':
         specifier: workspace:*
         version: link:../../packages/domain-types
       better-sqlite3:
@@ -56,10 +56,10 @@ importers:
         specifier: ^4.4.1
         version: 4.4.3
     devDependencies:
-      '@jobhunter/api-client':
+      '@jobctl/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/better-sqlite3':
@@ -80,11 +80,11 @@ importers:
 
   apps/extension:
     dependencies:
-      '@jobhunter/contracts':
+      '@jobctl/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
     devDependencies:
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@playwright/test':
@@ -114,13 +114,13 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: 5.2.8
         version: 5.2.8
-      '@jobhunter/api-client':
+      '@jobctl/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
-      '@jobhunter/contracts':
+      '@jobctl/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@jobhunter/domain-types':
+      '@jobctl/domain-types':
         specifier: workspace:*
         version: link:../../packages/domain-types
       '@platejs/basic-nodes':
@@ -226,7 +226,7 @@ importers:
         specifier: ^5.0.13
         version: 5.0.13(@types/react@19.2.14)(immer@10.2.0)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@playwright/test':
@@ -331,11 +331,11 @@ importers:
 
   packages/api-client:
     dependencies:
-      '@jobhunter/contracts':
+      '@jobctl/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
@@ -344,14 +344,14 @@ importers:
 
   packages/contracts:
     dependencies:
-      '@jobhunter/domain-types':
+      '@jobctl/domain-types':
         specifier: workspace:*
         version: link:../domain-types
       zod:
         specifier: ^4.4.1
         version: 4.4.3
     devDependencies:
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
@@ -360,7 +360,7 @@ importers:
 
   packages/domain-types:
     devDependencies:
-      '@jobhunter/tsconfig':
+      '@jobctl/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       typescript:

@@ -1,4 +1,4 @@
-import { STAGES } from "@jobhunter/contracts";
+import { STAGES } from "@jobctl/contracts";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 

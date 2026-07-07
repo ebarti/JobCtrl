@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     EnsembleOutcome,
@@ -20,8 +20,8 @@ from jobhunter.domain.materials.analysis import (
     ReasonedKeyword,
     Requirement,
 )
-from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase, build_jd_snapshot
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.materials.analyze_use_case import AnalyzeJobUseCase, build_jd_snapshot
+from jobctl.domain.tenant import LOCAL_TENANT
 
 JOB = {
     "url": "https://example.com/jobs/staff",
@@ -172,7 +172,7 @@ class TestAnalyzeJobUseCase:
         assert repo.load(LOCAL_TENANT, JobId(JOB["url"]), generation=1) is not None
 
     async def test_degraded_ensemble_is_persisted_with_completeness(self) -> None:
-        from jobhunter.domain.materials.analysis import AnalysisFailure
+        from jobctl.domain.materials.analysis import AnalysisFailure
 
         repo = _InMemoryRepo()
         runner, _ = _runner_returning(
@@ -210,7 +210,7 @@ class TestAnalyzeJobUseCase:
         runner, _ = _runner_returning(outcome)
         use_case = _use_case(repo=repo, runner=runner)
 
-        from jobhunter.domain.materials.analysis_grounding import GroundingError
+        from jobctl.domain.materials.analysis_grounding import GroundingError
 
         with pytest.raises(GroundingError):
             await use_case.execute_async(job=JOB, tenant_id=LOCAL_TENANT)

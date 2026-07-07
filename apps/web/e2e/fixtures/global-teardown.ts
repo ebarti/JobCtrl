@@ -25,7 +25,7 @@ export default async function globalTeardown(): Promise<void> {
   if (!repoRoot) {
     return;
   }
-  const stateFile = path.join(repoRoot, ".jobhunter-e2e-state.json");
+  const stateFile = path.join(repoRoot, ".jobctl-e2e-state.json");
   try {
     const raw = fs.readFileSync(stateFile, "utf-8");
     const state = JSON.parse(raw) as State;

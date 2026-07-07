@@ -4,9 +4,9 @@ import json
 
 from typer.testing import CliRunner
 
-from jobhunter import cli, digest as digest_module
-from jobhunter.cli import app
-from jobhunter.infrastructure.scoring import criteria_provider
+from jobctl import cli, digest as digest_module
+from jobctl.cli import app
+from jobctl.infrastructure.scoring import criteria_provider
 
 
 def _sample_digest() -> dict:
@@ -59,7 +59,7 @@ def test_digest_cli_prints_read_only_summary(monkeypatch) -> None:
     acknowledge_calls: list[str] = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: object())
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 7)
     monkeypatch.setattr(
         digest_module,
@@ -86,7 +86,7 @@ def test_digest_cli_json_acknowledges_generated_digest(monkeypatch) -> None:
     acknowledge_calls: list[str] = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: object())
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 7)
     monkeypatch.setattr(
         digest_module,
@@ -119,7 +119,7 @@ def test_digest_cli_allows_one_off_threshold_override(monkeypatch) -> None:
     build_calls: list[int] = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("jobhunter.database.get_connection", lambda: object())
+    monkeypatch.setattr("jobctl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 3)
     monkeypatch.setattr(
         digest_module,

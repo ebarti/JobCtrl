@@ -1,0 +1,334 @@
+"""Cover letter generation runner — wires the Materials use case into the worker.
+
+See ddd-target.md §3.5 / §4.5 / §5.5. After Phase 6 the cover-letter
+module is a thin adapter around :class:`GenerateCoverLetterUseCase`
+(``domain/materials/use_cases.py``):
+
+  * Domain logic (prompt assembly, validation, MaterialsSet composition)
+    lives in the use case + ``ContentValidator`` / ``MaterialsSet``.
+  * Persistence goes through :class:`MaterialsRepository` — the legacy
+    ``UPDATE jobs SET cover_letter_path = …`` writes are GONE per the
+    no-strangler directive. Readers fall back to
+    ``jobs.cover_letter_path`` only for historical rows.
+  * The LLM call is mediated by :class:`LlmPort`; the cloud LLM gateway
+    swap-out is a constructor-only change.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+
+from jobctl.config import COVER_LETTER_DIR
+from jobctl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
+from jobctl.domain.materials.services import ContentValidator
+from jobctl.domain.materials.use_cases import (
+    CoverLetterOutcome,
+    GenerateCoverLetterUseCase,
+)
+from jobctl.domain.ports.events import EventPublisher
+from jobctl.domain.ports.llm import LlmPort
+from jobctl.domain.ports.materials import (
+    EmployerAnalysisRepository,
+    MaterialsRepository,
+    PdfRendererPort,
+)
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctl.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobctl.infrastructure.materials import (
+    PlaywrightHtmlPdfAdapter,
+    SqliteEmployerAnalysisRepository,
+    SqliteMaterialsRepository,
+)
+from jobctl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctl.state import (
+    ensure_job_stage_rows,
+    record_job_event,
+    set_stage_state,
+    utc_now,
+)
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Use-case construction (DI seam)
+# ---------------------------------------------------------------------------
+
+
+def _build_use_case(
+    *,
+    repository: MaterialsRepository | None = None,
+    llm_port: LlmPort | None = None,
+    llm_model: str | None = None,
+    publisher: EventPublisher | None = None,
+    validator: ContentValidator | None = None,
+    analysis_repository: EmployerAnalysisRepository | None = None,
+) -> GenerateCoverLetterUseCase:
+    if repository is None:
+        repository = SqliteMaterialsRepository(get_connection())
+    if llm_port is None:
+        llm_port = (
+            LlmAdapter(default_model=llm_model)
+            if llm_model
+            else get_llm_adapter()
+        )
+    if validator is None:
+        validator = ContentValidator()
+    if analysis_repository is None:
+        analysis_repository = SqliteEmployerAnalysisRepository(get_connection())
+    return GenerateCoverLetterUseCase(
+        repository=repository,
+        llm=llm_port,
+        validator=validator,
+        publisher=publisher,
+        analysis_repository=analysis_repository,
+    )
+
+
+def _build_pdf_renderer() -> PdfRendererPort:
+    return PlaywrightHtmlPdfAdapter()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible helpers — preserved so callers / tests keep working
+# ---------------------------------------------------------------------------
+
+
+def _get_resume_text_for_job(job: dict, base_resume_text: str) -> str:
+    """Read the tailored resume required for cover generation.
+
+    Kept for backward compatibility (a regression test asserts the
+    behaviour). ``base_resume_text`` is unused and retained for the
+    legacy signature.
+    """
+    _ = base_resume_text
+    tailored_path = job.get("tailored_resume_path")
+    if not tailored_path:
+        raise FileNotFoundError("Cover letter generation requires a tailored resume.")
+
+    path = Path(tailored_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Tailored resume missing on disk: {path}")
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise FileNotFoundError(f"Could not read tailored resume {path}: {e}") from e
+
+
+def generate_cover_letter(
+    resume_text: str,
+    job: dict,
+    snapshot: ProfileSnapshot,
+    max_retries: int = 3,
+    validation_mode: str = "normal",
+) -> str:
+    """Generate a cover letter — kept for callers that want raw text out.
+
+    Single-job entry point preserved so the manual ``apply_jobs`` flow
+    keeps its single-call ergonomics. New callers should construct
+    :class:`GenerateCoverLetterUseCase` directly.
+    """
+    _ = resume_text  # use case reads the tailored resume from the repo
+    use_case = _build_use_case()
+    use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        cover_letter_dir=COVER_LETTER_DIR,
+        validation_mode=validation_mode,
+    )
+    if outcome.text_path:
+        try:
+            return Path(outcome.text_path).read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return ""
+
+
+def cover_letter_by_url(
+    job_url: str,
+    *,
+    min_score: int = 7,
+    validation_mode: str = "normal",
+    snapshot: ProfileSnapshot | None = None,
+    repository: MaterialsRepository | None = None,
+    llm_port: LlmPort | None = None,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    publisher: EventPublisher | None = None,
+    pdf_renderer: PdfRendererPort | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> dict:
+    """Generate one cover letter by URL and commit its state immediately."""
+    if snapshot is None:
+        from jobctl.infrastructure.profile import get_profile_repository
+
+        snapshot = get_profile_repository().load_snapshot(tenant_id)
+
+    conn = get_connection()
+    if repository is None:
+        repository = SqliteMaterialsRepository(conn)
+    min_score = effective_tailoring_min_score(min_score)
+
+    jobs = get_jobs_by_stage(
+        conn=conn,
+        stage="pending_cover",
+        min_score=min_score,
+        limit=0,
+    )
+    job = next((item for item in jobs if str(item.get("url") or "") == str(job_url)), None)
+    already_done = _cover_stage_succeeded(conn, job_url)
+    if job is None:
+        log.info("No cover letter work is currently eligible for %s.", job_url)
+        return {
+            "url": job_url,
+            "status": "already_done" if already_done else "skipped",
+            "reason": "already_done" if already_done else "not_eligible",
+            "generated": 0,
+            "errors": 0,
+            "elapsed": 0.0,
+        }
+
+    COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
+    log.info("Generating cover letter for %s (score >= %d)...", job_url, min_score)
+    t0 = time.time()
+    use_case = _build_use_case(
+        repository=repository,
+        llm_port=llm_port,
+        llm_model=llm_model,
+        publisher=publisher,
+    )
+    if pdf_renderer is None:
+        pdf_renderer = _build_pdf_renderer()
+
+    url = str(job["url"])
+    ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
+    started_at = utc_now()
+    # Runner owns the restart policy: failed-cover jobs are re-selected for
+    # retry, so allow Failed -> Running. Canonical state machine table only
+    # permits Failed -> Pending via explicit reset.
+    set_stage_state(
+        conn,
+        url,
+        "cover",
+        "running",
+        started_at=started_at,
+        validate_transition=False,
+    )
+    record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
+    conn.commit()
+
+    try:
+        outcome = use_case.execute(
+            job=job,
+            profile_snapshot=snapshot,
+            cover_letter_dir=COVER_LETTER_DIR,
+            validation_mode=validation_mode,
+            tenant_id=tenant_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        outcome = CoverLetterOutcome(
+            materials=None,
+            status="error",
+            error=str(exc),
+        )
+        log.error("[ERROR] %s -- %s", str(job.get("title", ""))[:40], exc)
+
+    finished_at = utc_now()
+    elapsed = time.time() - t0
+    if outcome.status == "ok":
+        # Best-effort PDF render. Failure is non-fatal: the cover letter text
+        # is the canonical artifact and the PDF is an optional sibling.
+        if outcome.text_path and outcome.materials is not None:
+            try:
+                text_path = Path(outcome.text_path)
+                pdf_path = text_path.with_suffix(".pdf")
+                pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
+                    cover_letter_text=text_path.read_text(encoding="utf-8"),
+                    output_path=str(pdf_path),
+                    created_at=utc_now(),
+                )
+                materials = outcome.materials.with_cover_letter_pdf(
+                    pdf_artifact, updated_at=utc_now()
+                )
+                repository.save(materials)
+            except Exception:
+                log.debug("PDF generation failed for cover letter", exc_info=True)
+
+        set_stage_state(
+            conn,
+            url,
+            "cover",
+            "succeeded",
+            attempt_count=1,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        record_job_event(
+            conn,
+            url,
+            "cover",
+            "StageCompleted",
+            message="Cover letter generated",
+        )
+        conn.commit()
+        log.info("Cover letter done in %.1fs: generated for %s", elapsed, url)
+        return {
+            "url": url,
+            "status": "ok",
+            "generated": 1,
+            "errors": 0,
+            "elapsed": elapsed,
+            "materialsGeneration": getattr(outcome.materials, "generation", None),
+        }
+
+    set_stage_state(
+        conn,
+        url,
+        "cover",
+        "failed",
+        attempt_count=1,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_code="COVER_FAILED",
+        error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+        retryable=True,
+        next_action=f"jobctl retry cover {url}",
+    )
+    record_job_event(
+        conn,
+        url,
+        "cover",
+        "StageFailed",
+        level="error",
+        message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+    )
+    conn.commit()
+    return {
+        "url": url,
+        "status": outcome.status,
+        "generated": 0,
+        "errors": 1 if outcome.status == "error" else 0,
+        "elapsed": elapsed,
+        "error": outcome.error,
+    }
+
+
+def _cover_stage_succeeded(conn, job_url: str) -> bool:
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'cover'",
+        (job_url,),
+    ).fetchone()
+    if row is None:
+        return False
+    return str(row["state"] if hasattr(row, "keys") else row[0]) == "succeeded"
+
+
+__all__ = [
+    "_get_resume_text_for_job",
+    "cover_letter_by_url",
+    "generate_cover_letter",
+]

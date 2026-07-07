@@ -38,9 +38,9 @@ function watchProhibitedProductPathRequests(page: Page): string[] {
 }
 
 function seedSyntheticCompensationData(): void {
-  const dbPath = process.env["JOBHUNTER_E2E_DB_PATH"];
+  const dbPath = process.env["JOBCTL_E2E_DB_PATH"];
   if (!dbPath) {
-    throw new Error("JOBHUNTER_E2E_DB_PATH is required for Jobs compensation e2e data.");
+    throw new Error("JOBCTL_E2E_DB_PATH is required for Jobs compensation e2e data.");
   }
   const db = new Database(dbPath);
   try {

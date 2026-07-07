@@ -1,6 +1,6 @@
 # 9. Cloud Deployment Architecture
 
-The hosted-future seams: what changes when JobHunter runs multi-tenant in the
+The hosted-future seams: what changes when JobCtl runs multi-tenant in the
 cloud, and the fitness functions that guard the path. Part of the
 [Domain Model](index.md) reference.
 
@@ -26,7 +26,7 @@ deployment model that ships to production.
 | Concern | Local-First (validation) | Cloud (target) | Concrete Technology |
 |---|---|---|---|
 | **Database** | SQLite with WAL mode | Postgres with connection pooling | **AWS RDS Postgres 16** + **pgbouncer**. Tenant isolation via Row-Level Security (RLS) with `tenant_id` column on every table. Schema migrations via **Flyway**. |
-| **File storage** | Local filesystem (`~/.jobhunter/`) | Object storage with tenant-prefixed keys | **AWS S3** with bucket `jobhunter-artifacts`. Key pattern: `{tenantId}/{jobId}/{artifactType}/{filename}`. Presigned URLs for browser download (1-hour TTL). Lifecycle policy: move to Glacier after 90 days. |
+| **File storage** | Local filesystem (`~/.jobctl/`) | Object storage with tenant-prefixed keys | **AWS S3** with bucket `jobctl-artifacts`. Key pattern: `{tenantId}/{jobId}/{artifactType}/{filename}`. Presigned URLs for browser download (1-hour TTL). Lifecycle policy: move to Glacier after 90 days. |
 | **Event bus** | In-process synchronous dispatcher | Durable message queue with transactional outbox | **AWS SQS FIFO** queues (one per bounded context). Transactional outbox in Postgres (same DB as aggregate). Outbox poller runs as a sidecar process. Message group ID = `tenantId` for per-tenant ordering. Dead-letter queue for failed events. |
 | **Browser automation** | Local Chrome on CDP ports | Managed browser fleet | **Browserbase** managed sessions (primary). Fallback: headless Chromium in **Kubernetes pods** with Playwright, one pod per apply run, auto-scaled. Per-tenant concurrency cap enforced by Billing entitlements. |
 | **LLM calls** | Direct API calls (Gemini, OpenAI) | Managed LLM gateway | Internal **LLM Gateway Service** (FastAPI). Fronts Anthropic Claude API, Google Gemini, OpenAI. Per-tenant token metering, rate limiting, cost attribution. Gateway publishes `LlmUsageRecorded` events to Billing context. |
@@ -129,7 +129,7 @@ SecretPort.get(tenantId, secretName: "greenhouse_login") -> SecretValue
 
 Local adapter reads from `.env` / macOS Keychain. Cloud adapter reads from
 AWS Secrets Manager with tenant-scoped paths
-(`/jobhunter/{tenantId}/{secretName}`).
+(`/jobctl/{tenantId}/{secretName}`).
 
 **Technology:** AWS Secrets Manager with IAM-based access control. Secrets
 cached in-memory for 5 minutes (configurable TTL). Never logged or persisted
@@ -183,7 +183,7 @@ cloud" (circular), but measurable conditions.
 |---|---|---|---|
 | SQLite with WAL mode | AWS RDS Postgres 16 + pgbouncer | Concurrent active users > 1 **OR** DB size > 10 GB **OR** multi-process writes required | SQLite's single-writer lock is the hard limit. 10 GB is a practical performance ceiling for WAL mode with full-text queries. |
 | In-process synchronous event bus | Transactional outbox + SQS FIFO | Multi-process deployment (> 1 API instance **OR** > 1 worker instance) | In-process dispatch cannot cross process boundaries. The outbox pattern is the minimum viable distributed event bus. |
-| Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC to a Python worker service | TypeScript API and worker deployed as separate services **OR** worker fleet > 1 machine | Only the JSON-RPC *transport* changes (subprocess stdio → HTTP POST); the message shapes are identical. Durable workflow execution is already provided locally by Temporal. |
+| Subprocess JSON-RPC (`uv run jobctl rpc`) | HTTP JSON-RPC to a Python worker service | TypeScript API and worker deployed as separate services **OR** worker fleet > 1 machine | Only the JSON-RPC *transport* changes (subprocess stdio → HTTP POST); the message shapes are identical. Durable workflow execution is already provided locally by Temporal. |
 | Local Chrome on CDP ports | Browserbase managed sessions | **Any** cloud deployment | Chrome requires elevated container privileges or `--no-sandbox` (security risk). Browserbase eliminates this entirely. This is a day-1 cloud blocker, not a gradual migration. |
 | SQLite Candidate Profile tables | Postgres `profiles` + child profile tables | Multi-tenant deployment **OR** concurrent profile editors | Local SQLite has a single-writer limit; hosted profile editing needs tenant-scoped concurrency control. |
 | `LocalFilesystemAdapter` (tailored resumes, PDFs) | S3 with tenant-prefixed keys | Multi-node deployment (no shared filesystem) **OR** artifact size > 1 GB per tenant | Local filesystem doesn't span nodes. |
@@ -198,7 +198,7 @@ cloud" (circular), but measurable conditions.
 
 When the cloud trigger fires (per §9.4), bounded contexts migrate to their
 cloud adapters in a defined order. Migration is **incremental for
-reviewability**, not for parallel-path safety: JobHunter is a single-user
+reviewability**, not for parallel-path safety: JobCtl is a single-user
 product, so each context cutover is "stop the worker, migrate data, restart
 on the new adapter." There is no parallel old/new traffic.
 

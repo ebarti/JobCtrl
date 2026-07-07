@@ -1,4 +1,4 @@
-import type { PolitenessOutcomeReason, SourcePolitenessOutcomes } from "@jobhunter/contracts";
+import type { PolitenessOutcomeReason, SourcePolitenessOutcomes } from "@jobctl/contracts";
 
 // Neutral, factual labels for the three crawl-politeness outcomes. These are
 // NON-error outcomes recorded by the R10 gateway (a robots.txt disallow, a

@@ -23,7 +23,7 @@ function findRepoRoot(start: string): string {
 }
 
 function loadDbPath(): string {
-  const stateFile = path.join(findRepoRoot(process.cwd()), ".jobhunter-e2e-state.json");
+  const stateFile = path.join(findRepoRoot(process.cwd()), ".jobctl-e2e-state.json");
   const raw = fs.readFileSync(stateFile, "utf-8");
   const state = JSON.parse(raw) as State;
   if (!state.workspace?.dbPath) {

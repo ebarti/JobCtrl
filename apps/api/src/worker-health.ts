@@ -76,7 +76,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
       expectedDbPath,
       expectedAppDir,
       staleAfterSeconds,
-      message: `No JobHunter database found at ${expectedDbPath}.`,
+      message: `No JobCtl database found at ${expectedDbPath}.`,
       heartbeat: null,
     };
   }
@@ -90,7 +90,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: "No JobHunter automation worker heartbeat has been written to the API database.",
+        message: "No JobCtl automation worker heartbeat has been written to the API database.",
         heartbeat: null,
       };
     }
@@ -110,7 +110,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: "No JobHunter automation worker heartbeat has been written to the API database.",
+        message: "No JobCtl automation worker heartbeat has been written to the API database.",
         heartbeat: null,
       };
     }
@@ -123,7 +123,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: `JobHunter automation worker runtime does not match the API runtime: ${mismatches.join("; ")}.`,
+        message: `JobCtl automation worker runtime does not match the API runtime: ${mismatches.join("; ")}.`,
         heartbeat,
       };
     }
@@ -136,8 +136,8 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
       expectedAppDir,
       staleAfterSeconds,
       message: stale
-        ? `JobHunter automation worker heartbeat is stale; last seen at ${heartbeat.lastSeenAt}.`
-        : "JobHunter automation worker heartbeat is current and uses the API database.",
+        ? `JobCtl automation worker heartbeat is stale; last seen at ${heartbeat.lastSeenAt}.`
+        : "JobCtl automation worker heartbeat is current and uses the API database.",
       heartbeat,
     };
   } finally {

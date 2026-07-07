@@ -8,21 +8,21 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import init_db
-from jobhunter.domain.scoring import (
+from jobctl.database import init_db
+from jobctl.domain.scoring import (
     CorrectionSignal,
     FitBandThreshold,
     FitScore,
     ScoreBreakdown,
     ScoringPolicy,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.scoring import SqliteScoringPolicyRepository
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.scoring import SqliteScoringPolicyRepository
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobhunter.db")
+    return init_db(tmp_path / "jobctl.db")
 
 
 def test_default_policy_resolves_score_from_weighted_dimensions() -> None:

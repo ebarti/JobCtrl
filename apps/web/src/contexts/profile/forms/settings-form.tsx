@@ -1,7 +1,7 @@
 import {
   SettingsUpdateRequestSchema,
   type SettingsUpdateRequest,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useRef, useState } from "react";
 

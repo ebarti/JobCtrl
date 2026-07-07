@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.scoring import (
+from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,

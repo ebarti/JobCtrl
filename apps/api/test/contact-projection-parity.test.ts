@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 function seededDb(): Database.Database {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-contact-parity-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-contact-parity-"));
   const db = new Database(path.join(dir, "jobs.db"));
   cleanups.push(() => {
     db.close();

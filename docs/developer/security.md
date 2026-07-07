@@ -1,13 +1,13 @@
 # Security
 
-JobHunter is a local-first application, and its security model follows from that:
+JobCtl is a local-first application, and its security model follows from that:
 the trust boundary is the developer's or user's own machine, not a network
 perimeter. Ordinary web and CLI API access is intentionally protected by
 locality rather than identity; browser-extension routes add a scoped local
 capability token without changing the loopback posture. This page explains what
 enforces that boundary, how the highest-risk path (apply) is contained, which
 integrity gates double as security controls, the hygiene rules that keep private
-data out of the repository, and which seams change the posture if JobHunter is
+data out of the repository, and which seams change the posture if JobCtl is
 ever hosted.
 
 **Read this if** you are changing the API surface, the apply path, or credential
@@ -20,7 +20,7 @@ local data inventory is in [Data & Safety](../user/data-and-safety.md).
 ## Trust Boundary And Threat Model
 
 The threat model is "a local process reading and writing local data on a
-single-user machine." The adversaries JobHunter defends against are other
+single-user machine." The adversaries JobCtl defends against are other
 processes on the same host reaching the API, a browser page reaching the API via
 DNS rebinding or CSRF, an untrusted job posting steering the apply agent, and
 private data accidentally leaving the machine (committed to git or exported to
@@ -32,10 +32,10 @@ For ordinary local callers, locality is enforced structurally:
 
 | Control | Mechanism | Where |
 | --- | --- | --- |
-| Loopback bind | The API binds `127.0.0.1` by default and refuses to start on a non-loopback host unless `JOBHUNTER_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
+| Loopback bind | The API binds `127.0.0.1` by default and refuses to start on a non-loopback host unless `JOBCTL_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
 | Host-header allowlist | Every request whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` is rejected `403 forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
 | Origin/Referer check | Mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) with a non-loopback `Origin` or `Referer` are rejected `403 cross_site_request`. | `apps/api/src/server.ts` |
-| Extension capability token | Authenticated `/v1/extension/*` routes require `Authorization: Bearer <token>` from the token file under `~/.jobhunter/`, accept trusted `chrome-extension://` CORS only for those routes, and still require the loopback Host gate. Capture uses `POST /v1/extension/captures`; deterministic autofill uses the sanitized `GET /v1/extension/autofill/profile`; the extension has no submit/apply route. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts`, `apps/api/src/profile-store.ts`, `apps/extension/` |
+| Extension capability token | Authenticated `/v1/extension/*` routes require `Authorization: Bearer <token>` from the token file under `~/.jobctl/`, accept trusted `chrome-extension://` CORS only for those routes, and still require the loopback Host gate. Capture uses `POST /v1/extension/captures`; deterministic autofill uses the sanitized `GET /v1/extension/autofill/profile`; the extension has no submit/apply route. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts`, `apps/api/src/profile-store.ts`, `apps/extension/` |
 | Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists, so actions cannot dispatch into a missing or mismatched runtime. | `apps/api/src/server.ts`, `GET /v1/health` |
 
 ::: warning The loopback assumption is load-bearing
@@ -95,7 +95,7 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   matching Apply Review approval.
 
 The product-level no-bypass rule (BR-001) is the policy behind these mechanisms:
-JobHunter must never bypass CAPTCHA, paywall, login, rate-limit, or bot-control
+JobCtl must never bypass CAPTCHA, paywall, login, rate-limit, or bot-control
 gates without explicit user authorization.
 
 ## Truthfulness And Integrity Gates
@@ -114,7 +114,7 @@ preserved. Full detail is in [Resume Tailoring](../architecture/tailoring.md).
 ## Secrets And Data Hygiene
 
 **Never commit** local secrets or generated user data: `.env` files or API keys,
-`jobhunter.db` or any copied SQLite database, resumes, cover letters, PDFs,
+`jobctl.db` or any copied SQLite database, resumes, cover letters, PDFs,
 screenshots with real profile data, browser profiles, Gmail OAuth tokens,
 apply-worker state, or raw logs and traces. Use synthetic fixtures or
 `pnpm qa:seed` for reproduction cases. This mirrors the rules in

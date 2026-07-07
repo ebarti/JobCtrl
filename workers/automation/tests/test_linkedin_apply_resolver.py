@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
+from jobctl.infrastructure.enrichment.linkedin_apply_resolver import (
     _extract_external_from_redirect_url,
     _is_external_apply_url,
 )

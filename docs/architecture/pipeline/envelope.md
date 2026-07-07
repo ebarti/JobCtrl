@@ -14,7 +14,7 @@ terminalizes, what activities exist, or why a given failure retried or stopped.
 Every workflow — all six — wraps its business logic in the same envelope so a
 run is always visible in the read model and always terminalizes, even on crash.
 The helpers live in
-`workers/automation/src/jobhunter/infrastructure/temporal/finalize.py`.
+`workers/automation/src/jobctl/infrastructure/temporal/finalize.py`.
 
 1. **`record_workflow_started`** emits a `WorkflowStarted` marker at the top of
    `run`, with a compact camelCase input summary.
@@ -71,7 +71,7 @@ path.
 
 ### Deterministic Workflow IDs
 
-Deterministic IDs plus `WorkflowIDConflictPolicy.USE_EXISTING` are how JobHunter
+Deterministic IDs plus `WorkflowIDConflictPolicy.USE_EXISTING` are how JobCtl
 gets idempotent starts: re-requesting the same work attaches to the in-flight
 execution instead of spawning a duplicate.
 
@@ -173,7 +173,7 @@ severed mid-write. The tiny marker activities (`plan_discovery_sources`,
 
 ### The Runtime Guard
 
-Because multiple JobHunter checkouts can point at different app dirs and DBs,
+Because multiple JobCtl checkouts can point at different app dirs and DBs,
 every activity that writes calls `assert_activity_runtime`
 (`infrastructure/temporal/runtime_guard.py`) with the expected app dir and DB
 path carried in its input. A mismatch raises a **non-retryable**
@@ -183,7 +183,7 @@ the wrong worker fails fast instead of writing to the wrong database.
 ## Error Taxonomy → Temporal Retry
 
 Retry behavior is driven by a small error taxonomy in
-`workers/automation/src/jobhunter/domain/errors.py`. `JobHunterError` carries a
+`workers/automation/src/jobctl/domain/errors.py`. `JobCtlError` carries a
 `code` and a `retryable` flag; `to_application_error` converts it to a Temporal
 `ApplicationError(type=code, non_retryable=not retryable)`.
 

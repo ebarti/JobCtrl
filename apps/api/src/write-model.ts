@@ -21,7 +21,7 @@ import {
   isValidTransition,
   deserializeStageStateKind,
   type StageStateKind,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
 
@@ -478,7 +478,7 @@ export function resetStaleScoresForRescore(
         staleReason: String(row.stale_reason ?? ""),
         oldPolicyVersion: Number(row.old_policy_version ?? 0),
         newPolicyVersion: Number(row.new_policy_version ?? 0),
-        nextAction: "jobhunter run score --rescore",
+        nextAction: "jobctl run score --rescore",
       },
     });
   }
@@ -486,7 +486,7 @@ export function resetStaleScoresForRescore(
     ok: true,
     count: jobKeys.length,
     jobKeys,
-    nextAction: "jobhunter run score --rescore",
+    nextAction: "jobctl run score --rescore",
   };
 }
 
@@ -499,7 +499,7 @@ export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationReque
   const deletedAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
   const statement = db.prepare(`
-    INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+    INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at)
     VALUES (?, ?, ?, NULL)
     ON CONFLICT(job_url) DO UPDATE SET
       deleted_at = excluded.deleted_at,
@@ -532,7 +532,7 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   const restoredAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
   const statement = db.prepare(
-    "UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+    "UPDATE jobctl_deleted_jobs SET restored_at = ? WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
   );
   const transaction = db.transaction((keys: string[]) => {
     for (const jobUrl of keys) {
@@ -560,7 +560,7 @@ export function hideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): J
   const hiddenAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
   const statement = db.prepare(`
-    INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+    INSERT INTO jobctl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
     VALUES (?, ?, ?, NULL)
     ON CONFLICT(job_url) DO UPDATE SET
       hidden_at = excluded.hidden_at,
@@ -592,7 +592,7 @@ export function unhideJobs(db: SqliteDatabase, request: BulkJobMutationRequest):
   ensureHiddenJobsTable(db);
   const unhiddenAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
-  const statement = db.prepare("UPDATE jobhunter_hidden_jobs SET unhidden_at = ? WHERE job_url = ? AND unhidden_at IS NULL");
+  const statement = db.prepare("UPDATE jobctl_hidden_jobs SET unhidden_at = ? WHERE job_url = ? AND unhidden_at IS NULL");
   const transaction = db.transaction((keys: string[]) => {
     for (const jobUrl of keys) {
       statement.run(unhiddenAt, jobUrl);
@@ -720,7 +720,7 @@ function updateLegacyJobColumnsForReset(
  * for one job back to the ``pending`` lifecycle state.
  *
  * Mirror of Python's ``state.py::_reset_enrichment_aggregate`` — both
- * paths (CLI ``jobhunter retry enrich URL`` and API
+ * paths (CLI ``jobctl retry enrich URL`` and API
  * ``POST /v1/jobs/{key}/retry?stage=enrich``) MUST clear the
  * aggregate's terminal-state fields, otherwise the worker's
  * ``_ENRICHMENT_PENDING`` predicate excludes the row and retry is a
@@ -749,7 +749,7 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
 
 function ensureDeletedJobsTable(db: SqliteDatabase): void {
   db.prepare(
-    `CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+    `CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
       job_url TEXT PRIMARY KEY,
       deleted_at TEXT NOT NULL,
       reason TEXT,
@@ -761,7 +761,7 @@ function ensureDeletedJobsTable(db: SqliteDatabase): void {
 
 function ensureHiddenJobsTable(db: SqliteDatabase): void {
   db.prepare(
-    `CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+    `CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
       reason TEXT,
@@ -785,8 +785,8 @@ function uniqueJobKeys(jobKeys: string[]): string[] {
 }
 
 function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
-  deleteWhere(db, "jobhunter_deleted_jobs", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "jobhunter_hidden_jobs", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "jobctl_deleted_jobs", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "jobctl_hidden_jobs", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);

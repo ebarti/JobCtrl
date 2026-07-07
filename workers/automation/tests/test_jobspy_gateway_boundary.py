@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from jobhunter.discovery import jobspy
-from jobhunter.domain.discovery.source_registry import SourcePolicy, SourcePolicyMethod
-from jobhunter.infrastructure.network.rate_limiter import HostRateLimiter
-from jobhunter.operational_metrics import ensure_operational_metric_tables
+from jobctl.discovery import jobspy
+from jobctl.domain.discovery.source_registry import SourcePolicy, SourcePolicyMethod
+from jobctl.infrastructure.network.rate_limiter import HostRateLimiter
+from jobctl.operational_metrics import ensure_operational_metric_tables
 
 
 class _VirtualClock:

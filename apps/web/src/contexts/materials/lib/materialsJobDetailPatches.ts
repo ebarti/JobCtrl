@@ -1,4 +1,4 @@
-import type { MaterialStage } from "@jobhunter/contracts";
+import type { MaterialStage } from "@jobctl/contracts";
 
 import type { JobDetail } from "../../operations/types.js";
 

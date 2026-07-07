@@ -58,7 +58,7 @@ describe("<DebugView>", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     await waitFor(() =>
-      expect(screen.getByText(/JobHunter API request failed: 500/i)).toBeInTheDocument(),
+      expect(screen.getByText(/JobCtl API request failed: 500/i)).toBeInTheDocument(),
     );
   });
 

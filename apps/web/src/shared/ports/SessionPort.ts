@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobhunter/domain-types";
+import type { TenantId } from "@jobctl/domain-types";
 
 export interface Session {
   tenantId: TenantId;

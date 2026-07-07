@@ -5,10 +5,10 @@ import json
 import pytest
 import sys
 
-from jobhunter.apply import prompt as prompt_mod
-from jobhunter.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
-from jobhunter.domain.apply.value_objects import ApplyPrompt
-from jobhunter.infrastructure.apply import claude_code_cli
+from jobctl.apply import prompt as prompt_mod
+from jobctl.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
+from jobctl.domain.apply.value_objects import ApplyPrompt
+from jobctl.infrastructure.apply import claude_code_cli
 
 
 class _FakeSnapshot:
@@ -63,7 +63,7 @@ def test_build_returns_apply_prompt(monkeypatch, builder):
     # Stub out the legacy prompt.build_prompt — the builder is the
     # seam, not the underlying string assembly.
     monkeypatch.setattr(
-        "jobhunter.apply.prompt.build_prompt",
+        "jobctl.apply.prompt.build_prompt",
         lambda **_kwargs: "rendered prompt body",
     )
     prompt = builder.build(
@@ -92,7 +92,7 @@ def test_build_passes_dry_run_through_to_legacy_builder(monkeypatch, builder):
         seen.update(kwargs)
         return "rendered"
 
-    monkeypatch.setattr("jobhunter.apply.prompt.build_prompt", fake_build)
+    monkeypatch.setattr("jobctl.apply.prompt.build_prompt", fake_build)
     builder.build(
         job={"url": "u", "tailored_resume_path": "/tmp/r.pdf"},
         tailored_resume="rt",
@@ -121,7 +121,7 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     monkeypatch.setattr(
         prompt_mod.config,
         "gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
+        lambda: (False, "missing OAuth client at /tmp/.jobctl/gmail/oauth-client.json"),
     )
 
     rendered = prompt_mod.build_prompt(
@@ -260,15 +260,15 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert playwright["args"][0] == "@playwright/mcp@0.0.77"
     gmail = config["mcpServers"]["gmail"]
     assert gmail["command"] == sys.executable
-    assert gmail["args"] == ["-m", "jobhunter.infrastructure.gmail.mcp_server"]
-    assert gmail["env"]["JOBHUNTER_GMAIL_ALLOWED_DOMAINS"] == "example.com"
-    assert gmail["env"]["JOBHUNTER_GMAIL_TO_EMAIL"] == "test@example.com"
+    assert gmail["args"] == ["-m", "jobctl.infrastructure.gmail.mcp_server"]
+    assert gmail["env"]["JOBCTL_GMAIL_ALLOWED_DOMAINS"] == "example.com"
+    assert gmail["env"]["JOBCTL_GMAIL_TO_EMAIL"] == "test@example.com"
     apply_tools = config["mcpServers"]["apply_tools"]
     assert apply_tools["command"] == sys.executable
-    assert apply_tools["args"] == ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"]
-    assert apply_tools["env"]["JOBHUNTER_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
-    assert apply_tools["env"]["JOBHUNTER_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
-    assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert apply_tools["args"] == ["-m", "jobctl.infrastructure.apply_tools.mcp_server"]
+    assert apply_tools["env"]["JOBCTL_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
+    assert apply_tools["env"]["JOBCTL_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
+    assert "JOBCTL_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])

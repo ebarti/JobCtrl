@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jobhunter.domain.discovery.scheduler import DiscoveryScheduler, SourceQualitySnapshot
-from jobhunter.domain.discovery.source_registry import (
+from jobctl.domain.discovery.scheduler import DiscoveryScheduler, SourceQualitySnapshot
+from jobctl.domain.discovery.source_registry import (
     BROAD_BOARD_LEAD_POLICY,
     WORKDAY_API_POLICY,
     SourceKind,
@@ -9,7 +9,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 def _source(

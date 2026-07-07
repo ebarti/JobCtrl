@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import init_db
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.preparation import PreparationWorkItemKind
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.preparation import SqlitePreparationWorkItemRepository
+from jobctl.database import init_db
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.preparation import PreparationWorkItemKind
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.preparation import SqlitePreparationWorkItemRepository
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobhunter.db")
+    return init_db(tmp_path / "jobctl.db")
 
 
 def test_enqueue_is_idempotent_for_work_item_key(conn: sqlite3.Connection) -> None:

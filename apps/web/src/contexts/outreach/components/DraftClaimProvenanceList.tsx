@@ -1,4 +1,4 @@
-import type { OutreachClaimProvenanceDto } from "@jobhunter/contracts";
+import type { OutreachClaimProvenanceDto } from "@jobctl/contracts";
 import type { JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";

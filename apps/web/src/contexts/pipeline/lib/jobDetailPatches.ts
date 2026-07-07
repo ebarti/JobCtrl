@@ -1,4 +1,4 @@
-import type { Stage, StageState } from "@jobhunter/contracts";
+import type { Stage, StageState } from "@jobctl/contracts";
 
 import type { JobDetail, JobSummary, PaginatedResponse } from "../../operations/types.js";
 

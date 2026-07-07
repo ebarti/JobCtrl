@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jobhunter.infrastructure.analysis.codex_analysis_adapter import (
+from jobctl.infrastructure.analysis.codex_analysis_adapter import (
     CODEX_ANALYSIS_MODEL,
     CodexAnalysisAdapter,
 )

@@ -9,16 +9,16 @@ from typing import Iterator
 
 import pytest
 
-from jobhunter.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
-from jobhunter.database import close_connection, init_db
-from jobhunter.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
-from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.infrastructure.events.watermark import SqliteEventWatermarkRepository
-from jobhunter.infrastructure.projections.projection_builder import (
+from jobctl.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
+from jobctl.database import close_connection, init_db
+from jobctl.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
+from jobctl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctl.infrastructure.events.watermark import SqliteEventWatermarkRepository
+from jobctl.infrastructure.projections.projection_builder import (
     PROJECTION_NAME,
     ProjectionBuilder,
 )
-from jobhunter.state import record_job_event, utc_now
+from jobctl.state import record_job_event, utc_now
 
 
 @pytest.fixture
@@ -278,7 +278,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     conn: sqlite3.Connection,
 ) -> None:
     """Regression for the R5 evidence-usage index: soft delete only writes a
-    jobhunter_deleted_jobs tombstone (and hide only writes jobhunter_hidden_jobs),
+    jobctl_deleted_jobs tombstone (and hide only writes jobctl_hidden_jobs),
     leaving the job_bullet_provenance / job_requirement_fit_items /
     artifact_list_projections rows in place. Those rows must not re-surface a
     removed job's title, employer, generated-text preview, usages, or gaps.
@@ -327,12 +327,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         """
     )
 
-    # jobhunter_deleted_jobs / jobhunter_hidden_jobs are owned by the TS
+    # jobctl_deleted_jobs / jobctl_hidden_jobs are owned by the TS
     # write-model; create them here so the Python builder's _table_exists-guarded
     # exclusion joins engage.
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+        CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
             job_url TEXT PRIMARY KEY,
             deleted_at TEXT NOT NULL,
             reason TEXT,
@@ -342,7 +342,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+        CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
             job_url TEXT PRIMARY KEY,
             hidden_at TEXT NOT NULL,
             reason TEXT,
@@ -481,12 +481,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     )
 
     conn.execute(
-        "INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at) "
+        "INSERT INTO jobctl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
         "VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)",
         (deleted_url,),
     )
     conn.execute(
-        "INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at) "
+        "INSERT INTO jobctl_hidden_jobs (job_url, hidden_at, reason, unhidden_at) "
         "VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)",
         (hidden_url,),
     )
@@ -991,8 +991,8 @@ def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
     # Publish via the bus AFTER recording the event in the table.
     record_job_event(conn, "https://example.com/bus", "discover", "JobDiscovered")
     conn.commit()
-    from jobhunter.domain.events.base import create_domain_event
-    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobctl.domain.events.base import create_domain_event
+    from jobctl.domain.tenant import LOCAL_TENANT
 
     bus.publish(create_domain_event("JobDiscovered", LOCAL_TENANT, {"job_url": "https://example.com/bus"}))
 
@@ -1010,8 +1010,8 @@ def test_unsubscribe_stops_refreshes(conn: sqlite3.Connection) -> None:
     sub = builder.subscribe_to(bus)
     sub.unsubscribe()
 
-    from jobhunter.domain.events.base import create_domain_event
-    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobctl.domain.events.base import create_domain_event
+    from jobctl.domain.tenant import LOCAL_TENANT
 
     bus.publish(create_domain_event("JobDiscovered", LOCAL_TENANT, {"job_url": "https://example.com/sub"}))
 

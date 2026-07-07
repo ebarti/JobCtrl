@@ -16,7 +16,7 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Historical Spec Ledger
 
-The full inventory of every plan or spec that has shaped JobHunter — both the
+The full inventory of every plan or spec that has shaped JobCtl — both the
 plans tracked in this repository and the private planning corpus that was
 untracked before the open-source release. Dates are each plan's authored/landed
 date (the filename convention). Delivery detail also lives in each plan's status
@@ -41,7 +41,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-05-07 | [Temporal + Worker Reliability Stack](implemented/2026-05-07-temporal-and-worker-reliability-stack.md) | Implemented — #34–#42; ADR 2026-05-07 |
 | 2026-05-10 | [Job Scoring Intelligence](implemented/2026-05-10-job-scoring-intelligence.md) | Implemented — #46 (plan), #47, #48, #55, #60 |
 | 2026-05-12 | [Ideal Job Search Discovery (RFC)](implemented/2026-05-12-job-search-discovery-rfc.md) | Implemented — #50 (plan), #51–#61 |
-| 2026-05-17 | [Add Root-Level Web Test Aliases](implemented/2026-05-17-jobhunter-backlog-item-add-root.md) | Implemented — #70 |
+| 2026-05-17 | [Add Root-Level Web Test Aliases](implemented/2026-05-17-jobctl-backlog-item-add-root.md) | Implemented — #70 |
 | 2026-05-19 | [Calibrated Scoring Policy (RFC)](implemented/2026-05-19-calibrated-scoring-policy-rfc.md) | Implemented — #76 (plan), #77–#81 |
 | 2026-05-24 | [Target Search Recall](implemented/2026-05-24-target-search-recall.md) | Implemented — #95, #97 |
 | 2026-05-26 | [Single Discovery Preparation Stage](implemented/2026-05-26-single-discovery-preparation-stage.md) | Implemented — #101 (plan), #102–#107 |

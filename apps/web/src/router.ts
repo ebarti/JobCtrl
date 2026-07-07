@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobhunter/domain-types";
+import type { TenantId } from "@jobctl/domain-types";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 

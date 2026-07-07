@@ -34,7 +34,7 @@ to the rename train / post-rename launch assets (R7b).
 
 ### 9.1 — Repository visibility flip (owner-only)
 
-- **Action.** Owner flips `github.com/ebarti/JobHunter` from private to public.
+- **Action.** Owner flips `github.com/ebarti/JobCtl` from private to public.
 - **Verification.**
   - `release-check` (`.github/workflows/release-check.yml`) is green on `main`
     for every commit since W0.4 landed (it triggers on every `push` to `main`
@@ -42,7 +42,7 @@ to the rename train / post-rename launch assets (R7b).
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
-    (`jobhunter doctor` clean; seeded `/apply-review` approval → dry-run
+    (`jobctl doctor` clean; seeded `/apply-review` approval → dry-run
     evidence → gated submit; one harness dry-run showing blocked-channel
     evidence; no real applications).
 - **Rollback.** Flip back to private. **Honest limitation:** anything fetched

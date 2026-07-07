@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.apply import chrome
+from jobctl.apply import chrome
 
 
 class _HostileEmployerHandler(BaseHTTPRequestHandler):
@@ -261,7 +261,7 @@ def _navigate_and_read_blocked_flag(port: int, url: str) -> bool:
                         "(() => { try { "
                         "document.getElementById('application-form')?.requestSubmit(); "
                         "} catch (error) {} "
-                        "return Boolean(window.__jobhunter_dryrun_blocked); })()"
+                        "return Boolean(window.__jobctl_dryrun_blocked); })()"
                     ),
                     "returnByValue": True,
                 },
@@ -273,7 +273,7 @@ def _navigate_and_read_blocked_flag(port: int, url: str) -> bool:
                 send(
                     "Runtime.evaluate",
                     {
-                        "expression": "Boolean(window.__jobhunter_dryrun_blocked)",
+                        "expression": "Boolean(window.__jobctl_dryrun_blocked)",
                         "returnByValue": True,
                     },
                 )
@@ -289,7 +289,7 @@ def _navigate_and_read_blocked_flag(port: int, url: str) -> bool:
 def _wait_for_dry_run_guard(port: int) -> None:
     deadline = time.time() + 5
     while time.time() < deadline:
-        if _evaluate_boolean(port, "Boolean(window.__jobhunter_dryrun_installed)"):
+        if _evaluate_boolean(port, "Boolean(window.__jobctl_dryrun_installed)"):
             return
         time.sleep(0.1)
     raise AssertionError("dry-run guard did not install on Chrome target")

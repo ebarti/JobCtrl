@@ -5,8 +5,8 @@ import json
 import pytest
 from temporalio.exceptions import ApplicationError
 
-from jobhunter.database import init_db
-from jobhunter.llm import (
+from jobctl.database import init_db
+from jobctl.llm import (
     check_spend_budget,
     read_llm_spend,
     read_spend_budget_status,
@@ -15,9 +15,9 @@ from jobhunter.llm import (
 
 
 def _isolate_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
-    import jobhunter.database as database
+    import jobctl.database as database
 
-    db_path = tmp_path / "jobhunter.db"
+    db_path = tmp_path / "jobctl.db"
     monkeypatch.setattr(database, "DB_PATH", db_path)
     init_db(db_path)
     return db_path
@@ -79,7 +79,7 @@ async def test_check_spend_budget_raises_non_retryable_budget_exceeded(
     settings_path = tmp_path / "dashboard.json"
     settings_path.write_text(json.dumps({"daily_budget_usd": 1.0}), encoding="utf-8")
     monkeypatch.setattr(
-        "jobhunter.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
+        "jobctl.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
         settings_path,
     )
     record_llm_spend(input_tokens=1, output_tokens=1, estimated_usd=1.0)

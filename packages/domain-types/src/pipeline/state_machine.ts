@@ -1,5 +1,5 @@
 /**
- * StageStateMachine — TS port of `workers/automation/src/jobhunter/domain/pipeline/state_machine.py`.
+ * StageStateMachine — TS port of `workers/automation/src/jobctl/domain/pipeline/state_machine.py`.
  *
  * Pure functions, no I/O, no runtime dependencies. Parity with the Python
  * implementation is enforced by `test/state_machine_parity.test.ts` plus the

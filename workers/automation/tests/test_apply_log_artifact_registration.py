@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jobhunter import config
-from jobhunter.apply.launcher import SqliteApplyRunRepository, mark_result
-from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.domain.apply import ApplyRun, ApplyRunId, DryRunComplete
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.state import ensure_job_stage_rows, set_stage_state
+from jobctl import config
+from jobctl.apply.launcher import SqliteApplyRunRepository, mark_result
+from jobctl.database import close_connection, get_connection, init_db
+from jobctl.domain.apply import ApplyRun, ApplyRunId, DryRunComplete
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.state import ensure_job_stage_rows, set_stage_state
 
 
 def _insert_running_apply_job(
@@ -74,7 +74,7 @@ def test_mark_result_applied_registers_apply_log_artifact(
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         mark_result(
@@ -126,7 +126,7 @@ def test_mark_result_failed_registers_apply_log_artifact(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         mark_result(
@@ -168,7 +168,7 @@ def test_mark_result_dry_run_registers_apply_log_artifact(
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         mark_result(
@@ -204,7 +204,7 @@ def test_repository_persists_dry_run_blocked_channel_artifact(
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         run = ApplyRun.start(
@@ -288,7 +288,7 @@ def test_mark_result_without_worker_id_skips_artifact_registration(
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         # No run_ctx -> worker_id is None.
@@ -329,7 +329,7 @@ def test_mark_result_apply_log_registration_is_idempotent(
 
     try:
         monkeypatch.setattr(
-            "jobhunter.apply.launcher.get_connection",
+            "jobctl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
         mark_result(

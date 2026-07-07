@@ -10,12 +10,12 @@ is not a false positive.
 
 from __future__ import annotations
 
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.materials.analysis import (
     JobAnalysis,
     ReasonedKeyword,
     Requirement,
 )
-from jobhunter.domain.materials.analysis_eeo_screen import (
+from jobctl.domain.materials.analysis_eeo_screen import (
     EeoScreenHit,
     find_eeo_hits,
     screen_eeo_red_flags,

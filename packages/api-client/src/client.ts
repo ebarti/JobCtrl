@@ -138,18 +138,18 @@ import type {
   WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
-export class JobHunterApiError extends Error {
+export class JobCtlApiError extends Error {
   readonly status: number;
   readonly statusText: string;
 
   constructor(status: number, statusText: string) {
-    super(`JobHunter API request failed: ${status} ${statusText}`);
-    this.name = "JobHunterApiError";
+    super(`JobCtl API request failed: ${status} ${statusText}`);
+    this.name = "JobCtlApiError";
     this.status = status;
     this.statusText = statusText;
   }
@@ -196,7 +196,7 @@ export interface HealthResponse {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
-export class JobHunterApiClient {
+export class JobCtlApiClient {
   readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
 
@@ -715,7 +715,7 @@ export class JobHunterApiClient {
 
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -724,7 +724,7 @@ export class JobHunterApiClient {
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.html`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -741,7 +741,7 @@ export class JobHunterApiClient {
 
   profilePreviewPdfUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.pdf";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -750,7 +750,7 @@ export class JobHunterApiClient {
 
   profilePreviewHtmlUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.html";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -853,7 +853,7 @@ export class JobHunterApiClient {
     path: string,
     options: { body?: unknown; query?: Record<string, QueryValue> } = {},
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctl.local");
     for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined && value !== null && value !== "") {
         url.searchParams.set(key, String(value));
@@ -874,21 +874,21 @@ export class JobHunterApiClient {
       response = await fetch(href, { ...init, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(`JobHunter API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
+        throw new Error(`JobCtl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
       }
       throw error;
     } finally {
       clearTimeout(timeout);
     }
     if (!response.ok) {
-      throw new JobHunterApiError(response.status, response.statusText);
+      throw new JobCtlApiError(response.status, response.statusText);
     }
     return (await response.json()) as T;
   }
 }
 
-export function createJobHunterApiClient(baseUrl?: string): JobHunterApiClient {
-  return new JobHunterApiClient(baseUrl);
+export function createJobCtlApiClient(baseUrl?: string): JobCtlApiClient {
+  return new JobCtlApiClient(baseUrl);
 }
 
 function defaultBaseUrl(): string {

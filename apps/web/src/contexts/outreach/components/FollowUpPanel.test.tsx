@@ -11,7 +11,7 @@ describe("<FollowUpPanel>", () => {
     const view = renderWithProviders(
       <FollowUpPanel threadId="thread-1" contactId="contact-1" followUp={null} />,
     );
-    expect(view.getByText(/JobHunter never sends it or acts on it/i)).toBeInTheDocument();
+    expect(view.getByText(/JobCtl never sends it or acts on it/i)).toBeInTheDocument();
   });
 
   it("schedules from the server-derived application lifecycle when no custom date is entered", async () => {

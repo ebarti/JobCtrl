@@ -11,20 +11,20 @@ from typing import Any
 
 import pytest
 
-from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter.domain.events import (
+from jobctl.database import close_connection, get_connection, init_db
+from jobctl.domain.events import (
     InterviewPrepGeneratedPayload,
     create_interview_prep_generated,
 )
-from jobhunter.domain.interview import GenerateInterviewPrepUseCase
-from jobhunter.domain.interview.use_cases import INTERVIEW_PREP_RESPONSE_SCHEMA
-from jobhunter.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
-from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
-from jobhunter.infrastructure.interview import SqliteInterviewPrepRepository
-from jobhunter.interview import activities as interview_activities
-from jobhunter.interview.activities import (
+from jobctl.domain.interview import GenerateInterviewPrepUseCase
+from jobctl.domain.interview.use_cases import INTERVIEW_PREP_RESPONSE_SCHEMA
+from jobctl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
+from jobctl.domain.ports.llm import LlmMessage
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctl.infrastructure.interview import SqliteInterviewPrepRepository
+from jobctl.interview import activities as interview_activities
+from jobctl.interview.activities import (
     GenerateInterviewPrepActivityInput,
     GenerateInterviewPrepActivityOutput,
     InterviewPrepEventRecorder,

@@ -1,6 +1,6 @@
 # Tailoring Contract
 
-This page explains how JobHunter generates a tailored resume for one job,
+This page explains how JobCtl generates a tailored resume for one job,
 what question it asks the model, what the model is allowed to change, and which
 checks decide whether the result becomes an approved artifact.
 
@@ -36,7 +36,7 @@ Approval must clear every gate below (each detailed under
 | Fabrication gate | never-fabricate token scan + prose skill/tool allowlist; re-run after the voice pass; fails closed | deterministic |
 
 Tailoring is owned by the Materials bounded context. The main implementation is
-in `workers/automation/src/jobhunter/domain/materials/use_cases.py`, supported
+in `workers/automation/src/jobctl/domain/materials/use_cases.py`, supported
 by deterministic quality checks in `quality.py`, content validation and assembly
 in `services.py`, profile helpers in `resume_profile.py`, provenance
 construction in `provenance_builder.py`, the requirement coverage graph in
@@ -684,7 +684,7 @@ page documents for resumes — exactly as the **cover-letter path** already does
 (`scan_cover_letter` runs the resume never-fabricate and prose skill/tool gates
 verbatim over first-person prose). Outreach adds no parallel gate machinery; it
 wraps the materials gates in
-`workers/automation/src/jobhunter/domain/contact/outreach_gates.py`.
+`workers/automation/src/jobctl/domain/contact/outreach_gates.py`.
 
 Every gate runs against the **actual draft text** (`OutreachDraft.body_text`),
 never inferred from the recipient or the target company. The recipient's own facts

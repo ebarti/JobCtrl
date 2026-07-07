@@ -102,7 +102,7 @@ function runWorkerScan(
         "run",
         "python",
         "-m",
-        "jobhunter.infrastructure.gmail.feedback",
+        "jobctl.infrastructure.gmail.feedback",
         "--db-path",
         options.dbPath,
       ],
@@ -110,7 +110,7 @@ function runWorkerScan(
         cwd: options.appDir,
         env: {
           ...process.env,
-          JOBHUNTER_DIR: options.appDir,
+          JOBCTL_DIR: options.appDir,
         },
         stdio: ["pipe", "pipe", "pipe"],
       },

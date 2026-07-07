@@ -1,6 +1,6 @@
 """Phase 6 / S-23 + S-24: Materials use case happy / fail / judge-rejected paths.
 
-Three use cases live under ``jobhunter.domain.materials.use_cases``:
+Three use cases live under ``jobctl.domain.materials.use_cases``:
 
   * :class:`TailorResumeUseCase`        — generate, validate, judge, persist.
   * :class:`GenerateCoverLetterUseCase` — generate, validate, persist.
@@ -19,8 +19,8 @@ from typing import Any, Iterable
 
 import pytest
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
@@ -30,11 +30,11 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobhunter.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
-from jobhunter.domain.materials.aggregate import MaterialsLifecycle
-from jobhunter.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
-from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
-from jobhunter.domain.materials.use_cases import (
+from jobctl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
+from jobctl.domain.materials.aggregate import MaterialsLifecycle
+from jobctl.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
+from jobctl.domain.materials.services import ContentValidator, ResumeAssembler
+from jobctl.domain.materials.use_cases import (
     COVER_LETTER_COMPLETION_MARKER,
     GenerateCoverLetterUseCase,
     RenderPdfUseCase,
@@ -43,12 +43,12 @@ from jobhunter.domain.materials.use_cases import (
     TailoringLlmPolicy,
     TailorResumeUseCase,
 )
-from jobhunter.domain.ports.events import EventPublisher
-from jobhunter.domain.ports.llm import LlmMessage, LlmPort
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctl.domain.ports.events import EventPublisher
+from jobctl.domain.ports.llm import LlmMessage, LlmPort
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +166,14 @@ class _FakeAnalyzeUseCase:
     """
 
     def execute(self, *, job: dict, tenant_id=LOCAL_TENANT, force: bool = False):
-        from jobhunter.domain.materials.analysis import (
+        from jobctl.domain.materials.analysis import (
             AnalysisAgreement,
             EmployerAnalysis,
             JobAnalysis,
             ReasonedKeyword,
             compute_snapshot_hash,
         )
-        from jobhunter.domain.materials.analyze_use_case import AnalyzeJobOutcome
+        from jobctl.domain.materials.analyze_use_case import AnalyzeJobOutcome
 
         canonical = JobAnalysis(
             role_framing="Backend ownership.",
@@ -206,7 +206,7 @@ def _analysis_with_keywords(job: dict, keywords: list[str]):
     of job-target skill/tool keywords (the terms the generator is tempted to
     insert) without a live ensemble call.
     """
-    from jobhunter.domain.materials.analysis import (
+    from jobctl.domain.materials.analysis import (
         AnalysisAgreement,
         EmployerAnalysis,
         JobAnalysis,

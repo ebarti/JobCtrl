@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobhunter/domain-types";
+import type { TenantId } from "@jobctl/domain-types";
 
 export const evidenceMapKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "evidence-map"] as const,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.compensation import ReportedCompensationObservation, estimate_market_compensation
+from jobctl.domain.compensation import ReportedCompensationObservation, estimate_market_compensation
 
 
 def _levels(
@@ -105,7 +105,7 @@ def _posted_salary(
         period="year",
         component="base_salary",
         sample_count=1,
-        attribution="Employer-posted salary text captured by JobHunter",
+        attribution="Employer-posted salary text captured by JobCtl",
     )
 
 

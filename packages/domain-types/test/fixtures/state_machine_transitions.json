@@ -73,7 +73,7 @@
         "errorCode": "TIMEOUT",
         "errorMessage": "stage timed out",
         "retryable": true,
-        "nextAction": "jobhunter retry score"
+        "nextAction": "jobctl retry score"
       },
       "expected": {
         "kind": "Failed",
@@ -82,7 +82,7 @@
         "errorCode": "TIMEOUT",
         "errorMessage": "stage timed out",
         "retryable": true,
-        "nextAction": "jobhunter retry score"
+        "nextAction": "jobctl retry score"
       }
     },
     {
@@ -107,12 +107,12 @@
         "retryable": true
       },
       "trigger": "Reset",
-      "inputs": { "resetAttempts": false, "nextAction": "jobhunter retry tailor" },
+      "inputs": { "resetAttempts": false, "nextAction": "jobctl retry tailor" },
       "expected": {
         "kind": "Pending",
         "attemptCount": 2,
         "maxAttempts": 5,
-        "nextAction": "jobhunter retry tailor"
+        "nextAction": "jobctl retry tailor"
       }
     },
     {

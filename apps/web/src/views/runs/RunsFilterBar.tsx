@@ -1,4 +1,4 @@
-import { WORKFLOW_RUN_STATUS_FILTERS, type WorkflowRunStatusFilter } from "@jobhunter/contracts";
+import { WORKFLOW_RUN_STATUS_FILTERS, type WorkflowRunStatusFilter } from "@jobctl/contracts";
 import type { ChangeEvent } from "react";
 
 export interface RunsFilterBarProps {

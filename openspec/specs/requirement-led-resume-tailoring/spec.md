@@ -34,7 +34,7 @@ achievement.
 - **THEN** deterministic validation rejects that edge before generation
 
 ### Requirement: Target profile adapter for writing and scoring
-The system SHALL adapt JobHunter's employer analysis, requirement fit report,
+The system SHALL adapt JobCtl's employer analysis, requirement fit report,
 job text, and profile evidence into a target-profile-style contract consumed by
 the writer and scorer prompts.
 

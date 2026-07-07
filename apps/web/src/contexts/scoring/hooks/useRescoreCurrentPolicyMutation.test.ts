@@ -1,5 +1,5 @@
-import type { ActionRunResponse } from "@jobhunter/contracts";
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import type { ActionRunResponse } from "@jobctl/contracts";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";

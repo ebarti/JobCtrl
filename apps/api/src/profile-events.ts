@@ -2,7 +2,7 @@ import {
   createProfileUpdated,
   LOCAL_TENANT,
   type ProfileUpdated,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import {
   MIN_TAILORING_FIT_SCORE,

@@ -6,7 +6,7 @@ import type {
   JobEnriched,
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
-} from "@jobhunter/domain-types";
+} from "@jobctl/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";

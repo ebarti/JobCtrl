@@ -1,4 +1,4 @@
-import type { OutreachThreadResponse } from "@jobhunter/contracts";
+import type { OutreachThreadResponse } from "@jobctl/contracts";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

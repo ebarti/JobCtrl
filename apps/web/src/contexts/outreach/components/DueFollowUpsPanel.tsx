@@ -5,7 +5,7 @@ import { Empty } from "../../../shared/ui/empty.js";
 import { useDueFollowUpsQuery } from "../hooks/useDueFollowUpsQuery.js";
 
 // Context-owned surface listing the outreach follow-ups that are due. These are
-// surfaced-only reminders for the user to act on — JobHunter never sends them
+// surfaced-only reminders for the user to act on — JobCtl never sends them
 // (INV-1). Empty-safe and loading-safe.
 export function DueFollowUpsPanel(): JSX.Element {
   const query = useDueFollowUpsQuery();
@@ -18,7 +18,7 @@ export function DueFollowUpsPanel(): JSX.Element {
         <h2>Follow-ups due</h2>
         <span className="meta">{query.isPending ? "loading" : `${followUps.length} shown`}</span>
       </header>
-      <p className="muted">Reminders surfaced for you to act on. JobHunter never sends them.</p>
+      <p className="muted">Reminders surfaced for you to act on. JobCtl never sends them.</p>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {query.isPending && !errorMessage ? <Empty title="Loading follow-ups." /> : null}
       {!query.isPending && followUps.length === 0 && !errorMessage ? (

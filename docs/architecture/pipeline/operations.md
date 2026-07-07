@@ -70,7 +70,7 @@ same place as manually-started runs.
 ## Discovery Schedule
 
 Scheduled discovery is **off by default**. A single Temporal Schedule,
-`jobhunter-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
+`jobctl-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
 it is reconciled from settings only at **worker startup**
 (`_reconcile_discovery_schedule` in `cli.py`, before `worker.run()`):
 
@@ -145,7 +145,7 @@ The authoritative event catalog is the TypeScript `DomainEventType` union in
 `packages/domain-types/src/events/` — **68 event types**, guarded by an
 exhaustiveness assertion and by the frontend's `every-event-has-handler` parity
 test. The Python worker emits 55 of them through `create_domain_event` factories
-in `workers/automation/src/jobhunter/domain/events/`; the remaining types
+in `workers/automation/src/jobctl/domain/events/`; the remaining types
 (preparation work-item, resume-template, `TailorRetailorRequested`,
 `TailoredArtifactsSuppressed`, `TailoringPolicyUpdated`,
 `CompensationFactsUpdated`) originate on other code paths. Both sides fold the

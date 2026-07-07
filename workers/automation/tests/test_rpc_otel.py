@@ -10,8 +10,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode, set_tracer_provider
 
-from jobhunter.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
-from jobhunter.infrastructure.rpc.server import JsonRpcServer, _LockedWriter
+from jobctl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
+from jobctl.infrastructure.rpc.server import JsonRpcServer, _LockedWriter
 
 
 @pytest.fixture

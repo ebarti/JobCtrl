@@ -1,5 +1,5 @@
 import { waitFor } from "@testing-library/react";
-import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { http, HttpResponse } from "msw";
 import { act } from "react";
 import { describe, expect, it } from "vitest";

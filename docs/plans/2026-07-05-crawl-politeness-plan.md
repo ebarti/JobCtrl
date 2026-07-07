@@ -29,7 +29,7 @@ four inventory lanes confirmed the gap is total across every outbound client.
 ### What already exists (the substrate this plan builds on)
 
 1. **A fail-closed source policy.** `SourcePolicy`
-   (`workers/automation/src/jobhunter/domain/discovery/source_registry.py:104-127`)
+   (`workers/automation/src/jobctl/domain/discovery/source_registry.py:104-127`)
    is a frozen value object carrying `allowed_methods`, `authentication`,
    `max_pages_per_run` (default 100), `max_run_frequency` ("PT24H"),
    `locator_max_requests_per_domain` (5), `manual_intervention`, and the
@@ -38,7 +38,7 @@ four inventory lanes confirmed the gap is total across every outbound client.
    The TS mirror `packages/domain-types/src/discovery/source.ts:86-97` types the
    flag as the literal `readonly thirdPartyControlBypass: false` and re-asserts it
    in `createSourcePolicy` (`source.ts:115-117`). The design record is explicit:
-   "If a source cannot be accessed without evasion, JobHunter should switch to a
+   "If a source cannot be accessed without evasion, JobCtl should switch to a
    permissioned API, licensed feed, manual import, or user-mediated capture flow."
    (`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md:462,465-467,936`).
 2. **First-class manual-action reasons.** `ManualActionReason`
@@ -46,8 +46,8 @@ four inventory lanes confirmed the gap is total across every outbound client.
    `CAPTCHA`, `PAYWALL`, `LOGIN_REQUIRED`, `PROTECTED_INTERNAL_SITE`. There is
    **no `ROBOTS_DISALLOWED` reason** yet.
 3. **An honest user-agent — modelled but not used at the fetch layer.**
-   `LocatorPolicy.user_agent = "JobHunter Source Locator (local)"`
-   (`source_registry.py:262-279`) and the compensation feeds' `"JobHunter/0.3"`
+   `LocatorPolicy.user_agent = "JobCtl Source Locator (local)"`
+   (`source_registry.py:262-279`) and the compensation feeds' `"JobCtl/0.3"`
    (`infrastructure/compensation/sqlite_market_repository.py:676,725`) identify
    honestly, and the ATS adapter fetcher (`ats_adapters.py:90-94`) already embeds
    the project repository URL as contact information. But the live crawl paths
@@ -121,7 +121,7 @@ four inventory lanes confirmed the gap is total across every outbound client.
 | 6 | Enrichment detail (port ref impl) | `PlaywrightDetailPageFetcher.fetch` `infrastructure/enrichment/playwright_fetcher.py:72` | Playwright | one detail URL | defined/exported but **not wired live**; spoofed UA `:34`; no rate/robots |
 | 7 | WTTJ Algolia bootstrap | `resolve_wttj_urls:182`, `page.goto:207` | Playwright | WTTJ + its Algolia backend | spoofed UA; 60s timeout; no rate/robots |
 | 8 | LinkedIn apply resolver | `LinkedInApplyUrlResolver:109`, `resolve:200`, retry loop `_reset_authenticated_linkedin_retry_candidates:1370` | Playwright persistent-context (real Chrome) | LinkedIn + external apply redirects to arbitrary ATS hosts | attempt cap 3 only; no rate/robots |
-| 9 | Compensation feeds | `load_euro_top_tech_observations:692` (paginates `max_pages=10`), `_fetch_json:724`, `_fetch_text:675` | raw `urllib.request` | hardcoded eurotoptech API (`:70`); operator-configured licensed feeds | honest UA `"JobHunter/0.3"`; page cap only; no rate/robots |
+| 9 | Compensation feeds | `load_euro_top_tech_observations:692` (paginates `max_pages=10`), `_fetch_json:724`, `_fetch_text:675` | raw `urllib.request` | hardcoded eurotoptech API (`:70`); operator-configured licensed feeds | honest UA `"JobCtl/0.3"`; page cap only; no rate/robots |
 | 10 | Apply browser | `apply/chrome.py` (localhost CDP `:328`); real apply nav is CDP/agent-driven elsewhere | Playwright/CDP | localhost CDP + (elsewhere) employer apply pages | dry-run blocks non-local mutating requests (`:383`); no rate/robots on GETs |
 
 **Thesis.** The declarative half of politeness already exists and is fail-closed.
@@ -233,7 +233,7 @@ added (Python `domain/discovery/__init__.py` + `domain/events/__init__.py`; TS
   (c) `ManualActionReason.ROBOTS_DISALLOWED` is a member and a default trigger.
 - *Local QA path:* type/lint only — `uv --project workers/automation run --extra dev pytest -q`,
   `uv --project workers/automation run --extra dev ruff check .`,
-  `pnpm --filter @jobhunter/contracts check`, `pnpm --filter @jobhunter/web test-d`.
+  `pnpm --filter @jobctl/contracts check`, `pnpm --filter @jobctl/web test-d`.
 
 ---
 
@@ -337,7 +337,7 @@ Delete the per-caller UA literals and ad-hoc transports they replace.
 3. **Compensation.** Route `_fetch_json` (`sqlite_market_repository.py:724`) and
    `_fetch_text` (`:675`) through the gateway; the eurotoptech pagination
    (`load_euro_top_tech_observations:692`, `max_pages=10`) counts against the run
-   budget and paces via the limiter. Keep the already-honest `"JobHunter/0.3"`
+   budget and paces via the limiter. Keep the already-honest `"JobCtl/0.3"`
    behavior by sourcing it from the honest-UA policy.
 4. **`jobspy` invocation boundary.** The `python-jobspy` library owns its own
    transport (`tls-client`/`requests`) and cannot be robots-gated per internal
@@ -490,9 +490,9 @@ stay green. robots-blocked reads as an *outcome*, never as an error badge.
   read-model row exposes the reason + counts; a web component fixture asserting the
   registry row and dashboard card render "blocked by robots" / "rate-limited" from
   that read model (reproduce the bad state from data, not a shallow snapshot).
-- *Local QA path:* `pnpm api:check`, `pnpm api:test`, `pnpm --filter @jobhunter/web test`,
-  `pnpm --filter @jobhunter/web test-d`, `pnpm web:check`, and
-  `pnpm --filter @jobhunter/web e2e` for the discovery source view if the E2E
+- *Local QA path:* `pnpm api:check`, `pnpm api:test`, `pnpm --filter @jobctl/web test`,
+  `pnpm --filter @jobctl/web test-d`, `pnpm web:check`, and
+  `pnpm --filter @jobctl/web e2e` for the discovery source view if the E2E
   surface changes.
 
 ---
@@ -569,10 +569,10 @@ each PR.
 | TS API tests | `pnpm api:test` | all pass |
 | API QA harness | `pnpm qa:test` | all pass (for P3/P4 product-path changes) |
 | Web typecheck | `pnpm web:check` | zero errors |
-| Web unit/hook/component | `pnpm --filter @jobhunter/web test` | all pass |
-| Web type-level | `pnpm --filter @jobhunter/web test-d` | all pass |
-| Web E2E (discovery view) | `pnpm --filter @jobhunter/web e2e` | pass (P4 if UI changes) |
-| Contracts typecheck | `pnpm --filter @jobhunter/contracts check` | zero errors |
+| Web unit/hook/component | `pnpm --filter @jobctl/web test` | all pass |
+| Web type-level | `pnpm --filter @jobctl/web test-d` | all pass |
+| Web E2E (discovery view) | `pnpm --filter @jobctl/web e2e` | pass (P4 if UI changes) |
+| Contracts typecheck | `pnpm --filter @jobctl/contracts check` | zero errors |
 | Full check | `pnpm check` | zero errors |
 | Full sweep (pre-PR) | `pnpm test` | all pass |
 | Privacy (always) | `python3 scripts/release_check.py` | zero findings |
@@ -676,15 +676,15 @@ web knobs (D4).
 - **D1 — Honest UA string + contact.** The exact outbound user-agent and whether
   to include a contact/project URL. An existing example already embeds the project
   repository URL as contact (`ats_adapters.py:90-94`); the honest locator UA is
-  `"JobHunter Source Locator (local)"` and the compensation UA is `"JobHunter/0.3"`.
+  `"JobCtl Source Locator (local)"` and the compensation UA is `"JobCtl/0.3"`.
   Owner picks the single canonical value. (Blocks P0 modelling / P5 finalization.)
   - **Resolved (2026-07-06, implemented):** Canonical honest UA
-    `JobHunter/<version> (+https://github.com/ebarti/JobHunter)`, produced by
+    `JobCtl/<version> (+https://github.com/ebarti/JobCtl)`, produced by
     `default_honest_user_agent()` and funnelled through the single resolution point
     `resolve_honest_user_agent()` (`infrastructure/network/politeness.py:63`), which
     every `PolitenessGateway` uses for its default UA (`politeness.py:122`). Owner
-    env overrides `JOBHUNTER_CRAWL_UA_PRODUCT` (`politeness.py:56`) and
-    `JOBHUNTER_CRAWL_UA_CONTACT` (`politeness.py:59`); an empty contact drops the
+    env overrides `JOBCTL_CRAWL_UA_PRODUCT` (`politeness.py:56`) and
+    `JOBCTL_CRAWL_UA_CONTACT` (`politeness.py:59`); an empty contact drops the
     `(+contact)` suffix (`politeness.py:78`). The identity is stamped at call time
     on the three Playwright surfaces — `PlaywrightDetailPageFetcher`
     (`infrastructure/enrichment/playwright_fetcher.py:128`),
@@ -693,7 +693,7 @@ web knobs (D4).
     proven by `tests/test_browser_ua_propagation.py` (robots identity == fetch
     identity == owner override). It never impersonates a browser on surfaces we
     control. **Owner-pending:** the final contact-string value, surfaced in
-    `docs/user/configuration.md` and `jobhunter doctor` (`cli.py:1819`) for the
+    `docs/user/configuration.md` and `jobctl doctor` (`cli.py:1819`) for the
     owner to review before real crawls.
 - **D2 — robots scope by method.** Whether documented public JSON APIs
   (`SourcePolicyMethod.api`/`feed`: Greenhouse/Lever/Ashby/Workday CXS,

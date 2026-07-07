@@ -6,7 +6,7 @@ import type {
   ContactListResponse,
   ContactMutationResponse,
   ContactSummary,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 export function makeContactProvenance(
   overrides: Partial<ContactFactProvenance> = {},

@@ -1,6 +1,6 @@
 ## Context
 
-JobHunter already has the raw ingredients for requirement-led tailoring:
+JobCtl already has the raw ingredients for requirement-led tailoring:
 
 - `RequirementFitReport` records job requirements, fit kind, evidence IDs,
   tailoring directives, prohibited claims, weights, and confidence.

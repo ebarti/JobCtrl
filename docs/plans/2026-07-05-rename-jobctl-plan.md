@@ -107,8 +107,8 @@ Files containing the name, by area (`rg -il jobhunter <area> | wc -l`):
 
 ### 2.1 pnpm packages (enumerated from every `package.json` `name`)
 
-Seven manifests total: `package.json` (root, `name: "jobhunter"`, private
-workspace root) plus six scoped packages —
+Eight manifests total: `package.json` (root, `name: "jobhunter"`, private
+workspace root) plus seven scoped packages —
 
 | Package `name` | Path | Inbound refs (`@jobhunter/<x>` count) |
 | --- | --- | --- |
@@ -118,6 +118,7 @@ workspace root) plus six scoped packages —
 | `@jobhunter/api-client` | `packages/api-client/package.json` | 28 |
 | `@jobhunter/api` | `apps/api/package.json` | 14 |
 | `@jobhunter/tsconfig` | `packages/tsconfig/package.json` | 11 |
+| `@jobhunter/extension` | `apps/extension/package.json` | 5 |
 
 All become `@jobctl/*`. Every `dependencies` / `devReferences`,
 `tsconfig` `extends`, `pnpm --filter @jobhunter/<x>` script invocation, and TS
@@ -239,7 +240,7 @@ prescribes exact edits.
 ### R1 — pnpm workspace rename (`@jobhunter/*` → `@jobctl/*`)
 
 - **Variants:** `jobhunter` (lowercase, in scoped names) + `JobHunter` (only the `JobHunterApiClient` symbol, deferred to R7 if preferred; keep consistent).
-- **Surface:** the 7 `package.json` `name` fields (§2.1); all inbound `@jobhunter/*` refs (408); `pnpm --filter @jobhunter/*` invocations in root `package.json` scripts (`check`, `test`, `api:*`, `web:*`, `qa:test`, `docs:screenshots`) and in `scripts/dev` (lines 37–38); `tsconfig` `extends: "@jobhunter/tsconfig"`; `pnpm-lock.yaml` regeneration.
+- **Surface:** the 8 `package.json` `name` fields (§2.1); all inbound `@jobhunter/*` refs (408); `pnpm --filter @jobhunter/*` invocations in root `package.json` scripts (`check`, `test`, `api:*`, `web:*`, `extension:*`, `qa:test`, `docs:screenshots`) and in `scripts/dev` (lines 37–38); `tsconfig` `extends: "@jobhunter/tsconfig"`; `pnpm-lock.yaml` regeneration.
 - **Invariants:** workspace resolves after rename (`pnpm install` clean, no unresolved `@jobhunter/*`); no scoped package keeps the old name; lockfile regenerated deterministically.
 - **Done:** `pnpm install` clean; `pnpm check` passes; zero `@jobhunter/` in tracked files outside §8 exceptions.
 
@@ -640,7 +641,7 @@ Key file:line anchors an implementer will need first (re-verify by symbol at
 execution HEAD, per repo discipline — line numbers drift):
 
 - `package.json` root name + `pnpm --filter @jobhunter/*` scripts (lines 21–47).
-- `apps/api/package.json`, `apps/web/package.json`,
+- `apps/api/package.json`, `apps/web/package.json`, `apps/extension/package.json`,
   `packages/{contracts,domain-types,api-client,tsconfig}/package.json` — `name`.
 - `workers/automation/pyproject.toml:2,61,64-66,73,76`.
 - `apps/api/src/config.ts:13,25` — data dir + DB default.

@@ -130,9 +130,9 @@ Out of scope for the local stack (tracked under
 ### Data Model Cleanup
 
 - Cut the `jobs` table over from URL primary key to `JobId`. Domain has
-  `JobId` (`workers/automation/src/jobhunter/domain/identifiers.py:12`) and
+  `JobId` (`workers/automation/src/jobctl/domain/identifiers.py:12`) and
   the projections expose `jobKey`, but the storage layer still uses
-  `jobs.url TEXT PRIMARY KEY` (`workers/automation/src/jobhunter/database.py`)
+  `jobs.url TEXT PRIMARY KEY` (`workers/automation/src/jobctl/database.py`)
   with cross-aggregate FKs on `job_url`. The read-model and projections still
   use URL-shaped `job_id` / `jobKey` values.
   Until the cut-over, `jobKey` is a projection alias for the URL, not a
@@ -143,7 +143,7 @@ Out of scope for the local stack (tracked under
   follow.
 - Stop projection BUILDERS from sourcing legacy nullable `jobs.*` columns.
   `apps/api/src/projections.ts` and the Python builder at
-  `workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`
+  `workers/automation/src/jobctl/infrastructure/projections/projection_builder.py`
   still fall back to `jobs.fit_score`, `jobs.application_url`,
   `jobs.tailored_resume_path`, `jobs.cover_letter_path`, `jobs.applied_at`,
   `jobs.apply_status`. The read-side already moved to projections in
@@ -159,7 +159,7 @@ Out of scope for the local stack (tracked under
   persisted. Until the storage layer captures both, "filter by board" +
   "filter by employer" cannot be separated.
 - Index normalized scoring keywords per job. `keywords_json` is written
-  and read in `workers/automation/src/jobhunter/infrastructure/scoring/sqlite_repository.py`
+  and read in `workers/automation/src/jobctl/infrastructure/scoring/sqlite_repository.py`
   and is projected through typed `scoreKeywords`, but it is unindexed and has
   no API filter/search or aggregate view. The web still parses keywords out of
   legacy free-text reasoning as a compatibility path. Promote keywords to a
@@ -345,7 +345,7 @@ and are tracked here per the migration plan §"Deferred follow-ups":
 - **ESLint + dependency-boundary setup** — no ESLint config, lint script, or
   dependency-cruiser config exists today. Add `no-restricted-imports` /
   dependency-cruiser rules for the frontend architecture boundaries, then
-  reconcile the currently direct `@jobhunter/contracts` imports in feature
+  reconcile the currently direct `@jobctl/contracts` imports in feature
   code with the intended Operations ACL before making the rule blocking
   (deferred from Phase 3, S-15).
 - **CI grep guards for cut-over invariants** — `grep` rules in CI to fail
@@ -363,7 +363,7 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   `apps/web/src/contexts/operations/types.ts` exports
   `type JobId = string` rather than re-exporting the branded
   `string & { readonly [__jobIdBrand]: "JobId" }` from
-  `@jobhunter/domain-types`. Intentional ACL simplification today (every
+  `@jobctl/domain-types`. Intentional ACL simplification today (every
   user input flows through Zod schemas anyway), but the brand becomes
   load-bearing once tenants have multiple users — promote the ACL alias
   to the branded type then.
@@ -373,7 +373,7 @@ and are tracked here per the migration plan §"Deferred follow-ups":
 - **`apps/api/test/qa-seed.ts` remaining schema parity** — The seed now covers
   core score, materials, artifact, employer-analysis, requirement-fit,
   projection, worker-heartbeat, and screenshot surfaces. Remaining parity gaps
-  are `job_enrichments`, `jobhunter_deleted_jobs`, source-registry rows, and
+  are `job_enrichments`, `jobctl_deleted_jobs`, source-registry rows, and
   resume-review draft/comment tables when new E2E flows need those exact
   production schemas.
 - **`DryRunCompleted` event addition to `DomainEventUnion`** — Phase 6

@@ -77,7 +77,7 @@ function runWorkerImport(
         "run",
         "python",
         "-m",
-        "jobhunter.discovery.manual_capture_import",
+        "jobctl.discovery.manual_capture_import",
         "--db-path",
         options.dbPath,
       ],
@@ -85,7 +85,7 @@ function runWorkerImport(
         cwd: options.appDir,
         env: {
           ...process.env,
-          JOBHUNTER_DIR: options.appDir,
+          JOBCTL_DIR: options.appDir,
         },
         stdio: ["pipe", "pipe", "pipe"],
       },

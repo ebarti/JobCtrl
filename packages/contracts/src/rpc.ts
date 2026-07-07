@@ -1,7 +1,7 @@
 /**
- * JSON-RPC 2.0 wire envelope + JobHunter method schemas.
+ * JSON-RPC 2.0 wire envelope + JobCtl method schemas.
  *
- * TypeScript mirror of `workers/automation/src/jobhunter/domain/rpc/messages.py`.
+ * TypeScript mirror of `workers/automation/src/jobctl/domain/rpc/messages.py`.
  * The TS API uses these schemas to validate requests it sends to the Python
  * worker over the local subprocess transport (target §6.5).
  */

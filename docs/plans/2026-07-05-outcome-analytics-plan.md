@@ -15,7 +15,7 @@
 
 ## 1. Goal
 
-Turn data JobHunter **already persists** into decision-useful, auditable
+Turn data JobCtl **already persists** into decision-useful, auditable
 analytics, and close the loop on recorded application outcomes that are currently
 written but never read back into product value.
 
@@ -45,7 +45,7 @@ An outcome-conversion funnel is already computed and shipped:
 
 - **Canonical fact rows** live in `application_outcomes`
   (`apps/api/src/application-feedback.ts:146`, and the Python/Gmail writer
-  `workers/automation/src/jobhunter/infrastructure/gmail/feedback.py:265`),
+  `workers/automation/src/jobctl/infrastructure/gmail/feedback.py:265`),
   columns: `tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
   recorded_at, suggestion_id, evidence_id, created_by`. Outcome `kind` enum
   (`packages/contracts/src/schemas.ts:1008`): `applied_confirmation,
@@ -56,7 +56,7 @@ An outcome-conversion funnel is already computed and shipped:
 - **The funnel projection** `dashboard_projections.outcome_conversion_json` is
   built **twice, byte-identically**: TypeScript `buildOutcomeConversion`
   (`apps/api/src/projections.ts:2448`) and Python `_build_outcome_conversion`
-  (`workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py:1653`).
+  (`workers/automation/src/jobctl/infrastructure/projections/projection_builder.py:1653`).
   Shape: `{version:1, totals, bySource:[{source,…}], byBand:[{band,…}]}` with
   integer counts `{applied, reply, interview, offer, rejection}`. Denominator =
   jobs where `applied_at` is set OR `apply_status == "applied"` (dry-runs are
@@ -121,9 +121,9 @@ An outcome-conversion funnel is already computed and shipped:
 ### 2.3 Two divergent band vocabularies (must be resolved, see D2)
 
 - Domain scoring: `FIT_BANDS = (excellent, strong, plausible, stretch, poor)`,
-  `fit_band_for_score` (`workers/automation/src/jobhunter/domain/scoring/value_objects.py:48,130`).
+  `fit_band_for_score` (`workers/automation/src/jobctl/domain/scoring/value_objects.py:48,130`).
   A first-class `fit_band` column exists on `job_requirement_fit_reports`
-  (`workers/automation/src/jobhunter/database.py:1392`).
+  (`workers/automation/src/jobctl/database.py:1392`).
 - Projection/funnel: `SCORE_BAND_ORDER = (perfect, strong, moderate, weak, poor,
   unscored)`, `_score_band` (`projection_builder.py:267,280`; TS mirror
   `projections.ts:2394,2417`). The existing funnel groups by **this** vocabulary.
@@ -201,7 +201,7 @@ model **and** the UI. Rendering rules:
 | **Apply mode** | `apply_run_projections.dry_run` + `_derive_apply_status` (`projection_builder.py:2990`); MarkApplied transition; `applied_confirmation` outcome | Not grouped | Derive `apply_mode` (D4) |
 | **Resume template** | `job_materials.metadata_json.resume_template.{templateId,templateVersionId,templateHash}` (`use_cases.py:1648`); artifact `metadata_json`; `artifact_list_projections.metadata_json` | Snapshotted, not grouped | Project applied generation's template; join to outcomes (Phase 4) |
 | **Tailoring policy** | `job_materials.metadata_json.{tailoring_policy_id,tailoring_policy_version}` (`use_cases.py:1645`); `tailoring_policies` (`database.py:1509`) | Snapshotted, not grouped | Project + join (Phase 4) |
-| **Role family** | Only `ROLE_FAMILY_MARKERS` (`workers/automation/src/jobhunter/domain/compensation/market.py:190`) and `role_title_matcher.py` — **not persisted per job as a groupable dimension** | Absent | Net-new derivation + persistence (D3, owner-gated) |
+| **Role family** | Only `ROLE_FAMILY_MARKERS` (`workers/automation/src/jobctl/domain/compensation/market.py:190`) and `role_title_matcher.py` — **not persisted per job as a groupable dimension** | Absent | Net-new derivation + persistence (D3, owner-gated) |
 | **Cost / cost-per-interview** | No cost column on any run projection; `costPerInterview` stubbed `null` | Absent | Owner-gated; project per-run apply cost (D5) |
 
 Time-to-response uses `application_outcomes.occurred_at` minus the job's
@@ -323,7 +323,7 @@ rendered exactly per §3.1.
   `too few to rate` and no `%`; Storybook stories (loading / populated / empty /
   small-sample) with the a11y addon; a copy test asserting no denied words appear
   in rendered headings/captions.
-- **Local QA path.** `pnpm --filter @jobhunter/web test`, `test-d`, `build`,
+- **Local QA path.** `pnpm --filter @jobctl/web test`, `test-d`, `build`,
   `web:storybook:test`; an e2e smoke (`apps/web/e2e/tests/analytics.spec.ts`):
   navigate to `/analytics`, confirm a small group shows counts without a
   percentage and the non-causal caption is present.
@@ -387,7 +387,7 @@ coverage rows (no re-inference). Outcomes are **not** joined yet (Phase 4).
   asserts `coverage not recorded` (not `0%`); a template-A-vs-B fixture across two
   accepted generations with different `templateId`. Selector unit tests +
   component test + Storybook per state.
-- **Local QA path.** `pnpm --filter @jobhunter/web test` + `web:storybook:test`;
+- **Local QA path.** `pnpm --filter @jobctl/web test` + `web:storybook:test`;
   e2e in apply-review: open comparison, verify deltas and risk labels; confirm the
   currently-accepted artifact stays visible while a draft is compared.
 - **Phase gate.** Comparison renders accurate coverage deltas + risk/verdict
@@ -471,11 +471,11 @@ phase done.
 - API tests (parity, projections, read model, new endpoint):
   `pnpm api:test`
 - Web unit/hook/component (new hooks, view, comparison, small-sample):
-  `pnpm --filter @jobhunter/web test`
-- Web type-level: `pnpm --filter @jobhunter/web test-d`
-- Web build: `pnpm --filter @jobhunter/web build`
+  `pnpm --filter @jobctl/web test`
+- Web type-level: `pnpm --filter @jobctl/web test-d`
+- Web build: `pnpm --filter @jobctl/web build`
 - Storybook + a11y: `pnpm web:storybook:test`
-- Web e2e (analytics + comparison smoke): `pnpm --filter @jobhunter/web e2e`
+- Web e2e (analytics + comparison smoke): `pnpm --filter @jobctl/web e2e`
 - Python tests (outcome conversion + parity + new derivation):
   `uv --project workers/automation run --extra dev pytest -q`
 - Python lint: `uv --project workers/automation run --extra dev ruff check .`
@@ -635,7 +635,7 @@ Per `CLAUDE.md` doc table — update only the owning documents, narrowly:
   `workers/automation/tests/test_dashboard_projection.py:400`.
 
 **Backend — materials, coverage, scoring**
-- `workers/automation/src/jobhunter/database.py` — `job_materials:1623`,
+- `workers/automation/src/jobctl/database.py` — `job_materials:1623`,
   `job_materials_artifacts:1640`, resume-template tables `:1724`,
   `job_bullet_provenance` (+`coverage_json`) `:2095,2140`,
   `job_requirement_fit_reports.fit_band:1392`, `tailoring_policies:1509`.

@@ -1,7 +1,7 @@
 import {
   WORKFLOW_RUN_SORT_FIELDS,
   WORKFLOW_RUN_STATUS_FILTERS,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { z } from "zod";
 
 export const runsSearchSchema = z.object({

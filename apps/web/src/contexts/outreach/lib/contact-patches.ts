@@ -4,7 +4,7 @@ import type {
   ContactListResponse,
   ContactSummary,
   ContactUpdateRequest,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 function isContactListResponse(value: unknown): value is ContactListResponse {
   return (

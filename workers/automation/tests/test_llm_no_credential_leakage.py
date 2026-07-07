@@ -42,7 +42,7 @@ def in_memory_exporter(monkeypatch):
 def test_gemini_native_path_does_not_leak_api_key(in_memory_exporter, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", _TEST_KEY)
 
-    from jobhunter.llm import LLMClient
+    from jobctl.llm import LLMClient
 
     # Replace the LLMClient's internal httpx.Client with one we can instrument
     # individually and whose transport is a MockTransport (so no network is hit).

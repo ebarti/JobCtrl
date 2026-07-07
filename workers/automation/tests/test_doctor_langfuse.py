@@ -1,4 +1,4 @@
-"""Tests for the Langfuse row in ``jobhunter doctor``."""
+"""Tests for the Langfuse row in ``jobctl doctor``."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from typer.testing import CliRunner
 
-from jobhunter.cli import app
+from jobctl.cli import app
 
 
 def _set_creds(monkeypatch):
@@ -29,7 +29,7 @@ def _stub_temporal():
     # cli.py imports ``get_temporal_client`` lazily from the package export
     # inside the doctor command, so patch the same exported binding.
     return patch(
-        "jobhunter.infrastructure.temporal.get_temporal_client",
+        "jobctl.infrastructure.temporal.get_temporal_client",
         new=AsyncMock(return_value=object()),
     )
 
@@ -39,7 +39,7 @@ def test_doctor_reports_langfuse_reachable(monkeypatch):
     response = httpx.Response(status_code=405, request=httpx.Request("HEAD", "https://example.test"))
 
     with _stub_temporal(), patch(
-        "jobhunter.cli.httpx.head",
+        "jobctl.cli.httpx.head",
         return_value=response,
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -54,7 +54,7 @@ def test_doctor_reports_langfuse_missing_when_creds_absent(monkeypatch):
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
 
-    with _stub_temporal(), patch("jobhunter.config.load_env", lambda: None):
+    with _stub_temporal(), patch("jobctl.config.load_env", lambda: None):
         result = CliRunner().invoke(app, ["doctor"])
 
     assert result.exit_code == 0, result.output
@@ -67,7 +67,7 @@ def test_doctor_reports_langfuse_unreachable(monkeypatch):
     _set_creds(monkeypatch)
 
     with _stub_temporal(), patch(
-        "jobhunter.cli.httpx.head",
+        "jobctl.cli.httpx.head",
         side_effect=httpx.ConnectError("refused"),
     ):
         result = CliRunner().invoke(app, ["doctor"])
@@ -84,7 +84,7 @@ def test_doctor_langfuse_row_when_disabled(monkeypatch):
 
     # head() must not be called when disabled — patch to blow up if it is.
     with _stub_temporal(), patch(
-        "jobhunter.cli.httpx.head",
+        "jobctl.cli.httpx.head",
         side_effect=AssertionError("network probe must not run when disabled"),
     ):
         result = CliRunner().invoke(app, ["doctor"])

@@ -12,7 +12,7 @@ what can leave, and which actions to treat with care.
 
 ## Privacy Quick Answer
 
-JobHunter has no hosted backend and no account system. Your database and files
+JobCtl has no hosted backend and no account system. Your database and files
 stay local by default. Privacy-sensitive content can still leave your machine
 when you deliberately run steps that need outside services: LLM calls, job-board
 fetches, Gmail lookups or approved email application sends, Google Maps
@@ -25,14 +25,14 @@ not simulations.
 Default local directory:
 
 ```text
-~/.jobhunter/
+~/.jobctl/
 ```
 
 Common files and directories:
 
 | Path | Contents |
 | --- | --- |
-| `jobhunter.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, contacts, and workflow state. |
+| `jobctl.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, contacts, and workflow state. |
 | `.env` | Provider keys and runtime settings. |
 | `tailored_resumes/` | Generated resumes and related HTML/PDF outputs. |
 | `cover_letters/` | Generated cover letters. |
@@ -40,25 +40,25 @@ Common files and directories:
 | `chrome-workers/` | Browser profiles and state for local browser tasks. |
 | `apply-workers/` | Apply-run worker state. |
 | `codex_home/` | Isolated SDK state used by local agent integrations when configured. |
-| `backups/` | Timestamped SQLite snapshots written by `jobhunter backup`; restore steps are in the README. |
+| `backups/` | Timestamped SQLite snapshots written by `jobctl backup`; restore steps are in the README. |
 | `resume.txt`, `resume.pdf`, `resume_style.json`, `resume_template.tex` | Baseline resume inputs and style templates. |
 | `gmail/` | Gmail OAuth client and token (`oauth-client.json`, `token.json`). |
-| `jobhunter.db-wal`, `jobhunter.db-shm` | SQLite write-ahead sidecars; treat them as part of the database. |
+| `jobctl.db-wal`, `jobctl.db-shm` | SQLite write-ahead sidecars; treat them as part of the database. |
 
 The development launcher also writes PIDs and process logs under the repo's
 `.dev/` directory — treat those logs as sensitive too.
 
 Contact records you keep — recruiter, hiring-manager, and referrer names, emails,
-phone numbers, and notes — are stored only in that local `jobhunter.db`, and each
+phone numbers, and notes — are stored only in that local `jobctl.db`, and each
 fact is tagged with its provenance (where it came from). Their values never appear
-in the event log, read-model projections, logs, or telemetry, and JobHunter never
+in the event log, read-model projections, logs, or telemetry, and JobCtl never
 sends anything to a contact: it keeps records only, with no email, message, or
 outreach sending.
 
 **Supervised contact research** is conservative and opt-in. It only ever looks at
 three source kinds: what you type, a list you import, and a public web page you
 explicitly point it at. No public page is fetched automatically — you supply each
-URL, and JobHunter fetches it politely (respecting the site's `robots.txt` and
+URL, and JobCtl fetches it politely (respecting the site's `robots.txt` and
 rate limits) through its one shared fetch path. Any login-walled, paywalled, or
 bot-protected page is never auto-fetched — it is routed to a manual-capture step
 instead. Research only **proposes** contacts for your review; nothing it finds
@@ -70,30 +70,30 @@ scoring or apply decisions.
 your resumes and cover letters: every draft is checked against your profile and the
 confirmed contact record, and a draft that invents a metric, employer, or
 relationship is blocked from approval. Drafts are yours — the message body, its
-gate results, and its provenance stay in the local `jobhunter.db` and never enter
+gate results, and its provenance stay in the local `jobctl.db` and never enter
 the event log, projections, logs, or telemetry. A draft terminates at
 **copy/export**: there is no send transport of any kind, so you send every message
 yourself through your own channel.
 
-**Logging a send** is a record you enter, not an action JobHunter takes. After you
+**Logging a send** is a record you enter, not an action JobCtl takes. After you
 have sent an approved draft yourself, you can note the date and the channel you
-used; that is the only way a thread is ever marked "sent". JobHunter never sends
+used; that is the only way a thread is ever marked "sent". JobCtl never sends
 and has no send capability — the send-log records a fact. The logged event stores
 only ids, the channel label, and timestamps; it never stores a contact's name or
-email. **Follow-ups** are surfaced-only reminders: JobHunter suggests a
+email. **Follow-ups** are surfaced-only reminders: JobCtl suggests a
 conservative next date you can edit, shows it when it is due, and never acts on it
 or sends it. Any optional recurring follow-up reminder is off by default. Send and
 follow-up data are advisory and never affect scoring or apply decisions.
 
 ::: warning Never commit your local data
-Do not commit `~/.jobhunter/` (or the repo's `.dev/` logs), or any copy of those
+Do not commit `~/.jobctl/` (or the repo's `.dev/` logs), or any copy of those
 files. They hold your database, provider keys, and generated resumes and cover
 letters.
 :::
 
 ## External Services
 
-Depending on configuration, JobHunter can call:
+Depending on configuration, JobCtl can call:
 
 - LLM providers for scoring, employer analysis, tailoring, cover letters, and
   stored interview prep;
@@ -111,7 +111,7 @@ honors `robots.txt` (failing closed on an inconclusive fetch — a `5xx` or time
 — but failing open with a warning when the host has no robots endpoint at all — a
 DNS failure or refused connection), paces requests per host, bounds each run's
 request budget, and stamps a single honest
-`User-Agent` — `JobHunter/<version> (+<repo url>)` by default, never a spoofed
+`User-Agent` — `JobCtl/<version> (+<repo url>)` by default, never a spoofed
 browser. Blocked fetches become recorded outcomes (robots-disallowed /
 rate-limited / budget-exhausted), visible per source in the Source Health card,
 not scrape errors. See [Security → Crawl Politeness](security.md#crawl-politeness)
@@ -127,7 +127,7 @@ These boundaries are the operator's responsibility:
   specific reason to disable it, rehearse with dry runs, and target one job or
   site at a time while validating behavior.
 - **Email applications:** sending an application by email is still a live
-  employer submission. JobHunter sends only through the owned Gmail connector
+  employer submission. JobCtl sends only through the owned Gmail connector
   after a dry-run records the recipient and attachment candidate and Apply
   Review approves that exact binding; without Gmail `gmail.send` or a matching
   approval, the path fails closed.
@@ -149,7 +149,7 @@ These boundaries are the operator's responsibility:
   default host is `127.0.0.1`; opting into a non-loopback bind or exposing it
   through a tunnel can expose private profile, job, artifact, and
   credential-adjacent metadata. Browser-extension routes add a local capability
-  token stored under `~/.jobhunter/`, but that token does not make a remote bind
+  token stored under `~/.jobctl/`, but that token does not make a remote bind
   safe.
 - **Browser-extension captures:** the optional extension stores its pairing
   token and any stack-down capture queue in browser extension storage. Queued
@@ -163,10 +163,10 @@ These boundaries are the operator's responsibility:
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
-- **Interview prep:** JobHunter can generate stored pre-interview notes for a
+- **Interview prep:** JobCtl can generate stored pre-interview notes for a
   job from grounded profile/job/material evidence. Post-interview reflection
   notes can be linked to an accepted prep generation, but they stay local manual
-  outcome notes. JobHunter is not a live interview assistant and has no
+  outcome notes. JobCtl is not a live interview assistant and has no
   transcript upload, microphone input, streaming, websocket, in-session state, or
   real-time answer surface.
 
@@ -179,7 +179,7 @@ and application URL, a browser-level guard during dry runs, no application
 submitted twice, and a daily spend ceiling. Apply Review allows a partial
 dry-run override only when it names the specific partial run and shows the
 blocked channels you are accepting. Email-only applications use the same
-approval model: the agent can report the posted recipient, but JobHunter records
+approval model: the agent can report the posted recipient, but JobCtl records
 the deterministic email candidate locally and sends only after approval binds
 that recipient and attachment. The apply agent also reads untrusted job pages,
 so prompt injection is a real exposure. The full gate model, the apply agent's
@@ -202,7 +202,7 @@ an application is submitted, you cannot undo it.
 ## Scoring Safety
 
 Scores are applicant-side triage aids. They are not employer-side candidate
-screening or hiring decisions. Do not use JobHunter to rank people for hiring
+screening or hiring decisions. Do not use JobCtl to rank people for hiring
 without separate legal, bias-audit, validation, notice, and human-review
 processes.
 
@@ -213,9 +213,9 @@ LLM usage is metered locally. A daily budget (`dailyBudgetUsd`, default `25`;
 preflight runs before the heavy activity and stops the workflow with a
 non-retryable budget error once the estimated daily spend reaches the
 ceiling. Current spend versus budget is visible on `GET /v1/health` and in
-the web app's health surface. This ceiling controls JobHunter workflow starts;
+the web app's health surface. This ceiling controls JobCtl workflow starts;
 it is not the provider's bill and it does not stop provider usage outside
-JobHunter.
+JobCtl.
 
 ## Telemetry
 

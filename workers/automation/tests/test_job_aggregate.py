@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.discovery import (
+from jobctl.domain.discovery import (
     Employer,
     Job,
     JobMetadata,
@@ -18,8 +18,8 @@ from jobhunter.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 # ---------------------------------------------------------------------------

@@ -129,7 +129,17 @@ PLACEHOLDER_PREFIXES = (
     "your-",
 )
 
-PROMPT_PATH = Path("workers/automation/src/jobhunter/apply/prompt.py")
+PROMPT_PATH = Path("workers/automation/src/jobctl/apply/prompt.py")
+TARGET_DISTRIBUTION_NAME = "jobctl"
+OLD_PRODUCT_NAME_RE = re.compile(r"jobhunter", re.IGNORECASE)
+OLD_PRODUCT_NAME_ALLOWLIST = (
+    Path("docs/plans/implemented"),
+    Path("docs/incidents"),
+)
+OLD_PRODUCT_NAME_ALLOWED_FILES = {
+    Path("docs/plans/2026-07-05-rename-jobctl-plan.md"),
+    Path("scripts/release_check.py"),
+}
 
 
 @dataclass(frozen=True)
@@ -255,6 +265,7 @@ def scan_tree(
             continue
         result.findings.extend(scan_text(str(rel), text, rel, needles=needles))
 
+    result.findings.extend(scan_old_product_name_gate(root, file_paths))
     result.findings.extend(scan_structural_checks(root, tracked))
     result.extend(scan_prompt_tripwires(root, strict_prompt=strict_prompt))
     result.findings.extend(scan_dist_archives(root, needles=needles))
@@ -345,22 +356,52 @@ def scan_structural_checks(root: Path, tracked: Iterable[Path]) -> list[str]:
         if rel.parts and rel.parts[0] == ".planning":
             findings.append(f"{rel}: private planning corpus must not be tracked")
 
-    if _blocked_distribution_name(root) and _publish_has_tag_trigger(root):
+    distribution_name = _project_distribution_name(root)
+    if distribution_name is not None and distribution_name != TARGET_DISTRIBUTION_NAME:
         findings.append(
-            ".github/workflows/publish.yml: tag publishing is enabled "
-            "before the blocked distribution name is renamed"
+            "workers/automation/pyproject.toml: distribution name must be "
+            f"{TARGET_DISTRIBUTION_NAME!r} before publication"
+        )
+    if distribution_name == TARGET_DISTRIBUTION_NAME and not _publish_has_tag_trigger(root):
+        findings.append(
+            ".github/workflows/publish.yml: tag publishing is disabled after the rename train"
         )
     return findings
 
 
-def _blocked_distribution_name(root: Path) -> bool:
+def _project_distribution_name(root: Path) -> str | None:
     pyproject = root / "workers/automation/pyproject.toml"
     try:
         text = pyproject.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return False
+        return None
     match = PROJECT_NAME_RE.search(text)
-    return bool(match and match.group(1) == "jobhunter")
+    return match.group(1) if match else None
+
+
+def scan_old_product_name_gate(root: Path, paths: Iterable[Path]) -> list[str]:
+    findings: list[str] = []
+    for rel in paths:
+        if _old_product_name_allowed(rel):
+            continue
+        if OLD_PRODUCT_NAME_RE.search(rel.as_posix()):
+            findings.append(f"{rel}: contains old product name in path")
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        except FileNotFoundError:
+            continue
+        if OLD_PRODUCT_NAME_RE.search(text):
+            findings.append(f"{rel}: contains old product name")
+    return findings
+
+
+def _old_product_name_allowed(rel: Path) -> bool:
+    if rel in OLD_PRODUCT_NAME_ALLOWED_FILES:
+        return True
+    return any(rel == prefix or rel.is_relative_to(prefix) for prefix in OLD_PRODUCT_NAME_ALLOWLIST)
 
 
 def _publish_has_tag_trigger(root: Path) -> bool:

@@ -1,1 +1,1 @@
-export * from "@jobhunter/contracts";
+export * from "@jobctl/contracts";

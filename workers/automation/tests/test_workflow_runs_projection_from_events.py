@@ -16,25 +16,25 @@ from typing import Iterator
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.domain.events import (
+from jobctl.database import close_connection, init_db
+from jobctl.domain.events import (
     create_workflow_canceled,
     create_workflow_completed,
     create_workflow_failed,
     create_workflow_started,
     create_workflow_terminated,
 )
-from jobhunter.domain.events.workflow import (
+from jobctl.domain.events.workflow import (
     WorkflowCanceledPayload,
     WorkflowCompletedPayload,
     WorkflowFailedPayload,
     WorkflowStartedPayload,
     WorkflowTerminatedPayload,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.infrastructure.projections.sqlite_projection_store import _ensure_column
-from jobhunter.state import record_job_event
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctl.infrastructure.projections.sqlite_projection_store import _ensure_column
+from jobctl.state import record_job_event
 
 
 @pytest.fixture

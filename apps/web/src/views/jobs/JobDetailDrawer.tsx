@@ -1,5 +1,5 @@
-import { JobHunterApiError } from "@jobhunter/api-client";
-import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
+import { JobCtlApiError } from "@jobctl/api-client";
+import type { JobAuditEntry, StageSummary } from "@jobctl/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
@@ -33,7 +33,7 @@ export interface JobDetailDrawerProps {
 }
 
 function detailErrorTitle(error: unknown): string {
-  if (error instanceof JobHunterApiError && error.status === 404) {
+  if (error instanceof JobCtlApiError && error.status === 404) {
     return "Job not found.";
   }
   return error instanceof Error ? error.message : "";

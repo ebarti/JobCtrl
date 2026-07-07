@@ -1,5 +1,5 @@
 {
-  "name": "@jobhunter/domain-types",
+  "name": "@jobctl/domain-types",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "test": "vitest run test"
   },
   "devDependencies": {
-    "@jobhunter/tsconfig": "workspace:*",
+    "@jobctl/tsconfig": "workspace:*",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   }

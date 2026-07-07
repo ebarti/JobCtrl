@@ -1,9 +1,9 @@
-import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobhunter/contracts";
+import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobctl/contracts";
 
 import type { BrowserStorageArea } from "./browser";
 import { postExtensionCapture } from "./local-api";
 
-export const CAPTURE_QUEUE_STORAGE_KEY = "jobhunterCaptureQueue";
+export const CAPTURE_QUEUE_STORAGE_KEY = "jobctlCaptureQueue";
 export const MAX_CAPTURE_QUEUE_SIZE = 25;
 export const CAPTURE_QUEUE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 

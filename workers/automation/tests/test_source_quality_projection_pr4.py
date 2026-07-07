@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.projections.source_quality import EventRow, project_source_quality
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.projections.source_quality import EventRow, project_source_quality
 
 
 def test_source_quality_aggregates_run_and_downstream_events() -> None:

@@ -44,8 +44,8 @@
 - [x] 6.1 Update `README.md`, `docs/local-ts-api.md`, `docs/architecture.md`, and `docs/frontend-target.md` for template editing, assignment, effective-template resolution, and lazy regeneration behavior.
 - [x] 6.2 Update `docs/local-reliability-qa.md` with regression rows for template editing, profile-data isolation, per-job override precedence, render-only lazy refresh, and Apply Review draft gating.
 - [x] 6.3 Run targeted API, worker, and web tests for the changed surfaces.
-- [x] 6.4 Run `pnpm api:check`, `pnpm web:check`, `pnpm --filter @jobhunter/web test`, and relevant Python tests for renderer/materials changes.
+- [x] 6.4 Run `pnpm api:check`, `pnpm web:check`, `pnpm --filter @jobctl/web test`, and relevant Python tests for renderer/materials changes.
 - [x] 6.5 Browser-QA `/preferences`, the job template override flow, `/apply-review` lazy refresh, and final PDF/HTML preview parity against a seeded HTML-rendered resume.
 - [x] 6.6 Document any skipped verification with a concrete reason before requesting implementation review.
 
-Verification note: Browser QA ran against a disposable seeded workspace at `/tmp/jobhunter-template-qa` on ports `18866`/`15173`. DOM, console, edit/default, per-job override, lazy-refresh draft, and HTML preview checks passed. Browser screenshot capture repeatedly timed out with `Page.captureScreenshot`, and the Browser viewport override did not change `innerWidth`; desktop rendered QA is covered, mobile screenshot QA is not.
+Verification note: Browser QA ran against a disposable seeded workspace at `/tmp/jobctl-template-qa` on ports `18866`/`15173`. DOM, console, edit/default, per-job override, lazy-refresh draft, and HTML preview checks passed. Browser screenshot capture repeatedly timed out with `Page.captureScreenshot`, and the Browser viewport override did not change `innerWidth`; desktop rendered QA is covered, mobile screenshot QA is not.

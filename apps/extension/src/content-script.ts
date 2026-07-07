@@ -1,7 +1,7 @@
 import type {
   ExtensionAutofillProfileField,
   ExtensionAutofillProfileResponse,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
@@ -164,11 +164,11 @@ export function applyAcceptedSuggestions(suggestions: readonly AutofillSuggestio
 }
 
 function renderOverlay(doc: Document, suggestions: AutofillSuggestion[], emptyMessage: string | null): void {
-  doc.getElementById("jobhunter-autofill-root")?.remove();
+  doc.getElementById("jobctl-autofill-root")?.remove();
   const root = doc.createElement("aside");
-  root.id = "jobhunter-autofill-root";
+  root.id = "jobctl-autofill-root";
   root.setAttribute("role", "dialog");
-  root.setAttribute("aria-label", "JobHunter autofill suggestions");
+  root.setAttribute("aria-label", "JobCtl autofill suggestions");
   Object.assign(root.style, {
     position: "fixed",
     top: "16px",
@@ -186,7 +186,7 @@ function renderOverlay(doc: Document, suggestions: AutofillSuggestion[], emptyMe
     font: "14px system-ui, sans-serif",
   });
   const title = doc.createElement("h2");
-  title.textContent = "JobHunter autofill";
+  title.textContent = "JobCtl autofill";
   Object.assign(title.style, { margin: "0 0 8px", fontSize: "16px" });
   root.append(title);
 
@@ -574,13 +574,13 @@ function detectSupportedAts(urlText: string | undefined): boolean {
 }
 
 function isAutofillMessage(value: unknown): value is {
-  type: "jobhunter.autofill.review";
+  type: "jobctl.autofill.review";
   profile: ExtensionAutofillProfileResponse;
 } {
   return Boolean(
     value &&
       typeof value === "object" &&
-      (value as Record<string, unknown>).type === "jobhunter.autofill.review" &&
+      (value as Record<string, unknown>).type === "jobctl.autofill.review" &&
       isProfileResponse((value as Record<string, unknown>).profile),
   );
 }

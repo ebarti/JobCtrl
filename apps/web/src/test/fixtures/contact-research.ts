@@ -6,7 +6,7 @@ import type {
   ContactResearchSourceAttempt,
   ContactResearchTaskDetail,
   ContactResearchTaskSummary,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 
 import { makeContactDetail } from "./contacts.js";
 

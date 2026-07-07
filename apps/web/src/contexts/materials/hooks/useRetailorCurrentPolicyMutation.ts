@@ -3,7 +3,7 @@ import type {
   BulkRetailorCurrentPolicyRequest,
   RetailorJobRequest,
   TailorJobRequest,
-} from "@jobhunter/contracts";
+} from "@jobctl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

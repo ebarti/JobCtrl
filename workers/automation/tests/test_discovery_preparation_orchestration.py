@@ -9,20 +9,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from jobhunter.database import init_db
-from jobhunter.domain.discovery.scheduler import ScheduledSource
-from jobhunter.domain.preparation import PreparationWorkItemKind
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.discovery.workflow import DiscoverWorkflow
-from jobhunter.infrastructure.temporal.registry import WORKFLOWS
-from jobhunter.pipeline import preparation, runner
-from jobhunter.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
-from jobhunter.workflow_specs import build_run_stage_workflow_spec
+from jobctl.database import init_db
+from jobctl.domain.discovery.scheduler import ScheduledSource
+from jobctl.domain.preparation import PreparationWorkItemKind
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.discovery.workflow import DiscoverWorkflow
+from jobctl.infrastructure.temporal.registry import WORKFLOWS
+from jobctl.pipeline import preparation, runner
+from jobctl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+from jobctl.workflow_specs import build_run_stage_workflow_spec
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobhunter.db")
+    return init_db(tmp_path / "jobctl.db")
 
 
 def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explicit() -> None:
@@ -378,12 +378,12 @@ def test_discover_runs_internal_preparation_after_enrichment(
     monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
     monkeypatch.setitem(
         sys.modules,
-        "jobhunter.discovery.workday",
+        "jobctl.discovery.workday",
         SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
     )
     monkeypatch.setitem(
         sys.modules,
-        "jobhunter.discovery.smartextract",
+        "jobctl.discovery.smartextract",
         SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 

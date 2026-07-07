@@ -1,15 +1,15 @@
-# JobHunter Automation Worker
+# JobCtl Automation Worker
 
-This package contains JobHunter's Python automation engine and CLI. It owns job
+This package contains JobCtl's Python automation engine and CLI. It owns job
 discovery, enrichment, scoring, tailoring, cover letters, PDF generation,
 profile import, and local browser apply automation.
 
 Use it from the repository root through `uv`:
 
 ```bash
-uv --project workers/automation run jobhunter doctor
-uv --project workers/automation run jobhunter run
-uv --project workers/automation run jobhunter worker
+uv --project workers/automation run jobctl doctor
+uv --project workers/automation run jobctl run
+uv --project workers/automation run jobctl worker
 ```
 
 The full local application is normally started from the repository root with

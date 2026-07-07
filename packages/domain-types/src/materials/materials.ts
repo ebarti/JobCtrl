@@ -2,7 +2,7 @@
  * Materials Generation aggregate + value objects — TypeScript mirror.
  *
  * See docs/architecture/domain-model/tactical.md §4.5. The Python ``MaterialsSet`` aggregate
- * (``workers/automation/src/jobhunter/domain/materials/aggregate.py``) is
+ * (``workers/automation/src/jobctl/domain/materials/aggregate.py``) is
  * the source of truth; both languages must stay structurally compatible.
  *
  * Wire-format invariants reflected here at the type level:

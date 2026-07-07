@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 function withTempApp(generator?: OutreachDraftGenerator) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-outreach-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctl-api-outreach-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.exec(`

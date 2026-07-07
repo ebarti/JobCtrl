@@ -215,7 +215,7 @@ describe("Discovery types", () => {
           evidence: { ...baseCandidate.evidence, employerDomainMatched: false },
         },
         {
-          userAgent: "JobHunter Source Locator (local)",
+          userAgent: "JobCtl Source Locator (local)",
           maxRequestsPerDomain: 5,
           minPromotionConfidence: 0.75,
           minManualReviewConfidence: 0.4,

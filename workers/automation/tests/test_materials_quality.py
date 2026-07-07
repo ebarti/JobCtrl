@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -11,12 +11,12 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobhunter.domain.materials.quality import (
+from jobctl.domain.materials.quality import (
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
-from jobhunter.domain.scoring import (
+from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -25,7 +25,7 @@ from jobhunter.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senior-backend") -> EmployerAnalysis:

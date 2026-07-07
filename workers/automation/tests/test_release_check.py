@@ -28,6 +28,7 @@ def test_public_byline_files_do_not_trigger_default_needles() -> None:
 
 
 def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> None:
+    blocked_distribution = "job" + "hunter"
     _write(
         tmp_path / ".github/workflows/publish.yml",
         """
@@ -41,13 +42,13 @@ def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> 
     )
     _write(
         tmp_path / "workers/automation/pyproject.toml",
-        """
+        f"""
         [project]
-        name = "jobhunter"
+        name = "{blocked_distribution}"
         """,
     )
     _write(
-        tmp_path / "workers/automation/src/jobhunter/apply/prompt.py",
+        tmp_path / "workers/automation/src/jobctl/apply/prompt.py",
         """
         section = f"API key: {capsolver_key}"
         defaults = ["Age 18+: Yes", "Felony: No"]
@@ -74,43 +75,13 @@ def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> 
     assert "browser profile artifact" in findings
     assert "non-placeholder SERVICE_API_KEY assignment" in findings
     assert ".planning/notes.md: private planning corpus" in findings
-    assert "tag publishing is enabled" in findings
+    assert "distribution name must be" in findings
     assert "CapSolver key is interpolated" in findings
     assert "hardcoded attestation defaults remain" in findings
     assert "profile password is interpolated" in findings
 
 
 def test_release_check_clean_temp_tree_passes(tmp_path: Path) -> None:
-    _write(
-        tmp_path / ".github/workflows/publish.yml",
-        """
-        name: Publish
-        on:
-          workflow_dispatch:
-        jobs: {}
-        """,
-    )
-    _write(
-        tmp_path / "workers/automation/pyproject.toml",
-        """
-        [project]
-        name = "jobhunter"
-        """,
-    )
-    _write(tmp_path / "config/app.toml", 'SERVICE_API_KEY = "YOUR_SERVICE_API_KEY"')
-    _write(tmp_path / "docs/readme.md", "Synthetic public docs.")
-    _track_all(tmp_path)
-
-    result = release_check.scan_tree(
-        tmp_path,
-        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
-    )
-
-    assert result.findings == []
-    assert result.warnings == []
-
-
-def test_publish_tag_trigger_fails_under_blocked_distribution_name(tmp_path: Path) -> None:
     _write(
         tmp_path / ".github/workflows/publish.yml",
         """
@@ -126,7 +97,40 @@ def test_publish_tag_trigger_fails_under_blocked_distribution_name(tmp_path: Pat
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobhunter"
+        name = "jobctl"
+        """,
+    )
+    _write(tmp_path / "config/app.toml", 'SERVICE_API_KEY = "YOUR_SERVICE_API_KEY"')
+    _write(tmp_path / "docs/readme.md", "Synthetic public docs.")
+    _track_all(tmp_path)
+
+    result = release_check.scan_tree(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+    )
+
+    assert result.findings == []
+    assert result.warnings == []
+
+
+def test_publish_tag_trigger_fails_under_wrong_distribution_name(tmp_path: Path) -> None:
+    blocked_distribution = "job" + "hunter"
+    _write(
+        tmp_path / ".github/workflows/publish.yml",
+        """
+        name: Publish
+        on:
+          push:
+            tags:
+              - "v*"
+        jobs: {}
+        """,
+    )
+    _write(
+        tmp_path / "workers/automation/pyproject.toml",
+        f"""
+        [project]
+        name = "{blocked_distribution}"
         """,
     )
     _track_all(tmp_path)
@@ -136,12 +140,70 @@ def test_publish_tag_trigger_fails_under_blocked_distribution_name(tmp_path: Pat
         needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
     )
 
-    assert any("tag publishing is enabled" in finding for finding in result.findings)
+    assert any("distribution name must be" in finding for finding in result.findings)
+
+
+def test_publish_tag_trigger_is_required_after_rename(tmp_path: Path) -> None:
+    _write(
+        tmp_path / ".github/workflows/publish.yml",
+        """
+        name: Publish
+        on:
+          workflow_dispatch:
+        jobs: {}
+        """,
+    )
+    _write(
+        tmp_path / "workers/automation/pyproject.toml",
+        """
+        [project]
+        name = "jobctl"
+        """,
+    )
+    _track_all(tmp_path)
+
+    result = release_check.scan_tree(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+    )
+
+    assert any("tag publishing is disabled" in finding for finding in result.findings)
+
+
+def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
+    old_name = "Job" + "Hunter"
+    _write(
+        tmp_path / ".github/workflows/publish.yml",
+        """
+        name: Publish
+        on:
+          push:
+            tags:
+              - "v*"
+        jobs: {}
+        """,
+    )
+    _write(
+        tmp_path / "workers/automation/pyproject.toml",
+        """
+        [project]
+        name = "jobctl"
+        """,
+    )
+    _write(tmp_path / "README.md", f"Old name: {old_name}\n")
+    _track_all(tmp_path)
+
+    result = release_check.scan_tree(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+    )
+
+    assert any("contains old product name" in finding for finding in result.findings)
 
 
 def test_prompt_tripwires_warn_until_strict(tmp_path: Path) -> None:
     _write(
-        tmp_path / "workers/automation/src/jobhunter/apply/prompt.py",
+        tmp_path / "workers/automation/src/jobctl/apply/prompt.py",
         """
         section = f"API key: {capsolver_key}"
         defaults = ["Age 18+: Yes", "Felony: No"]
@@ -166,7 +228,9 @@ def test_cli_exit_code_is_nonzero_on_synthetic_violation(
         """
         name: Publish
         on:
-          workflow_dispatch:
+          push:
+            tags:
+              - "v*"
         jobs: {}
         """,
     )
@@ -174,7 +238,7 @@ def test_cli_exit_code_is_nonzero_on_synthetic_violation(
         tmp_path / "workers/automation/pyproject.toml",
         """
         [project]
-        name = "jobhunter"
+        name = "jobctl"
         """,
     )
     _write(tmp_path / "leak.md", "SyntheticSecret")

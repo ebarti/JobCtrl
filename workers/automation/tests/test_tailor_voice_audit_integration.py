@@ -23,9 +23,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.aggregate import MaterialsSet
-from jobhunter.domain.materials.analysis import (
+from jobctl.domain.identifiers import JobId
+from jobctl.domain.materials.aggregate import MaterialsSet
+from jobctl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
     JobAnalysis,
@@ -33,20 +33,20 @@ from jobhunter.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobhunter.domain.materials.analyze_use_case import AnalyzeJobOutcome
-from jobhunter.domain.materials.provenance import BulletProvenanceSet
-from jobhunter.domain.materials.services import (
+from jobctl.domain.materials.analyze_use_case import AnalyzeJobOutcome
+from jobctl.domain.materials.provenance import BulletProvenanceSet
+from jobctl.domain.materials.services import (
     ContentValidator,
     ResumeAssembler,
     sanitize_text,
 )
-from jobhunter.domain.materials.use_cases import TailorResumeUseCase
-from jobhunter.domain.materials.value_objects import TransformType
-from jobhunter.domain.materials.voice import VoiceRequest, VoiceResult
-from jobhunter.domain.profile.aggregate import Profile
-from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.scoring import (
+from jobctl.domain.materials.use_cases import TailorResumeUseCase
+from jobctl.domain.materials.value_objects import TransformType
+from jobctl.domain.materials.voice import VoiceRequest, VoiceResult
+from jobctl.domain.profile.aggregate import Profile
+from jobctl.domain.profile.snapshot import ProfileSnapshot
+from jobctl.domain.ports.llm import LlmMessage
+from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
     RequirementFitReport,
@@ -55,8 +55,8 @@ from jobhunter.domain.scoring import (
     RequirementScoreContribution,
     RequirementTailoringDirective,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.materials.latex_pdf import (
+from jobctl.domain.tenant import LOCAL_TENANT
+from jobctl.infrastructure.materials.latex_pdf import (
     _escape_latex_light,
     build_latex,
 )

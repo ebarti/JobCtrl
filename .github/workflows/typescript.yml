@@ -53,25 +53,25 @@ jobs:
         run: pnpm -r check
 
       - name: Test
-        run: pnpm --filter @jobhunter/api test
+        run: pnpm --filter @jobctl/api test
 
       - name: Test web
-        run: pnpm --filter @jobhunter/web test
+        run: pnpm --filter @jobctl/web test
 
       - name: Test web types
-        run: pnpm --filter @jobhunter/web test-d
+        run: pnpm --filter @jobctl/web test-d
 
       - name: Build web
-        run: pnpm --filter @jobhunter/web build
+        run: pnpm --filter @jobctl/web build
 
       - name: Build web storybook
-        run: pnpm --filter @jobhunter/web storybook:build
+        run: pnpm --filter @jobctl/web storybook:build
 
       - name: Install Playwright Chromium
-        run: pnpm --filter @jobhunter/web exec playwright install --with-deps chromium
+        run: pnpm --filter @jobctl/web exec playwright install --with-deps chromium
 
       - name: Test web e2e
-        run: pnpm --filter @jobhunter/web e2e
+        run: pnpm --filter @jobctl/web e2e
 
       - name: Test web storybook
-        run: pnpm --filter @jobhunter/web storybook:test
+        run: pnpm --filter @jobctl/web storybook:test

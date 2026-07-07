@@ -22,7 +22,7 @@ group in order:
 Then the [System Architecture](../architecture/index.md) sidebar section takes
 you from the runtime shape down through the pipeline, stage by stage.
 
-::: tip Here to use JobHunter, not change it?
+::: tip Here to use JobCtl, not change it?
 Start with the [User Guide](../user/getting-started.md) instead: it covers
 setup, everyday flows, configuration, and exactly what data stays on your
 machine — no contributor tooling required.
@@ -173,7 +173,7 @@ form when the tier calls for it.
 | Canonical | Avoid | First use (Tier 1–2 pages) |
 | --- | --- | --- |
 | the TypeScript API | TS API, local API, product API | "the local TypeScript API (the process the web app talks to)" |
-| the Python worker | automation worker, JobHunter worker | "the Python worker (a Temporal worker process that executes workflows)"; "Temporal worker" is reserved for that parenthetical |
+| the Python worker | automation worker, JobCtl worker | "the Python worker (a Temporal worker process that executes workflows)"; "Temporal worker" is reserved for that parenthetical |
 | the web app | web UI, React app, frontend app | "frontend" stays correct for the architecture layer ("frontend architecture") |
 | Temporal | — | "Temporal (the workflow engine)" |
 | the JSON-RPC bridge | — | the TS↔Python protocol; bare "JSON-RPC" is fine after first use |

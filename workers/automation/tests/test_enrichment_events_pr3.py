@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobhunter.domain.events import (
+from jobctl.domain.events import (
     ContentDuplicateCandidateDetectedPayload,
     JobActiveStateChangedPayload,
     PostingContentSnapshotCapturedPayload,
@@ -12,7 +12,7 @@ from jobhunter.domain.events import (
     create_posting_content_snapshot_captured,
     create_posting_content_snapshot_failed,
 )
-from jobhunter.domain.tenant import LOCAL_TENANT
+from jobctl.domain.tenant import LOCAL_TENANT
 
 
 NOW = "2026-05-13T00:00:00+00:00"

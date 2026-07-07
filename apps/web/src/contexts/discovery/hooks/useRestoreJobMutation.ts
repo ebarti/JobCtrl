@@ -1,4 +1,4 @@
-import type { JobMutationResponse } from "@jobhunter/contracts";
+import type { JobMutationResponse } from "@jobctl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";

@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import pytest
 
-from jobhunter.domain.contact.source_policy import (
+from jobctl.domain.contact.source_policy import (
     ContactResearchSourcePolicy,
     ResearchSourceCategory,
     ResearchSourceDecision,
     looks_protected,
 )
-from jobhunter.domain.discovery.source_registry import (
+from jobctl.domain.discovery.source_registry import (
     SourceAuthenticationMode,
     SourcePolicy,
     SourcePolicyMethod,

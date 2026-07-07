@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobhunter.discovery.title_filter import title_matches_query
+from jobctl.discovery.title_filter import title_matches_query
 
 
 def test_title_filter_matches_leadership_aliases() -> None:
