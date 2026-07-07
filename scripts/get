@@ -42,7 +42,13 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     -y|--yes) ASSUME_YES=1 ;;
     -h|--help) usage; exit 0 ;;
-    --) shift; INSTALL_ARGS+=("$@"); break ;;
+    --)
+      shift
+      if [[ "$#" -gt 0 ]]; then
+        INSTALL_ARGS+=("$@")
+      fi
+      break
+      ;;
     *) fail "unknown option '$1' (see --help)" ;;
   esac
   shift
@@ -71,18 +77,21 @@ if [[ "$ASSUME_YES" -eq 1 ]]; then
   INSTALL_ARGS+=(--yes)
 fi
 
+# macOS ships bash 3.2, where "${arr[@]}" on an empty array (and empty "$@")
+# is an unbound-variable error under `set -u`; expand via the ${arr[@]+...}
+# guard everywhere the array can be empty.
 if [[ -t 0 ]]; then
-  exec "$TARGET_DIR/scripts/install" "${INSTALL_ARGS[@]}"
+  exec "$TARGET_DIR/scripts/install" ${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}
 fi
 
 # `curl | bash` leaves stdin on the pipe; reattach the terminal so the
 # installer can prompt. `-r /dev/tty` is not enough — probe that it opens.
 if [[ "$ASSUME_YES" -eq 0 ]] && (exec </dev/tty) 2>/dev/null; then
-  exec "$TARGET_DIR/scripts/install" "${INSTALL_ARGS[@]}" </dev/tty
+  exec "$TARGET_DIR/scripts/install" ${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"} </dev/tty
 fi
 
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   printf 'get: no interactive terminal; running installer with defaults (--yes).\n'
   INSTALL_ARGS+=(--yes)
 fi
-exec "$TARGET_DIR/scripts/install" "${INSTALL_ARGS[@]}"
+exec "$TARGET_DIR/scripts/install" ${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}

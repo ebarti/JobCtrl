@@ -116,7 +116,7 @@ The formula's canonical copy lives in-repo at
 `packaging/homebrew/Formula/jobctrl.rb` (head-only spec until the first
 tag). The tap repository `ebarti/homebrew-tap` already exists (it ships
 `claude-notifier` and `skills`), and `Formula/jobctrl.rb` is committed in the
-owner's local tap clone (`~/Github/homebrew-tap`, commit `e8bfea9`) —
+owner's local tap clone (`~/Github/homebrew-tap`, commit `d76b052`) —
 **unpushed**, so nothing is published yet. At release:
 
 - **Action.** Push the tap commit (`git -C ~/Github/homebrew-tap push`); at

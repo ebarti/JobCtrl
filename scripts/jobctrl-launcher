@@ -2,8 +2,17 @@
 # Global `jobctrl` launcher installed by the Homebrew formula.
 # Resolves the JobCtrl checkout and proxies commands into it, so
 # `jobctrl doctor` / `jobctrl dev` work from anywhere.
+#
+# Portability note: this must run on macOS's stock bash 3.2, where empty
+# "$@" / "${arr[@]}" expansions are unbound-variable errors under `set -u`
+# — hence the ${1+"$@"} guards below.
 
 set -euo pipefail
+
+# Absolute path to the bundled bootstrap script, baked in by the Homebrew
+# formula at install time (bin/jobctrl is a prefix symlink, so relative
+# resolution is unreliable there). Stays a placeholder for in-repo use.
+JOBCTRL_LIBEXEC_GET="@JOBCTRL_LIBEXEC_GET@"
 
 fail() {
   printf 'jobctrl: %s\n' "$1" >&2
@@ -26,13 +35,20 @@ resolve_repo() {
 }
 
 bootstrap() {
-  local libexec_get
-  libexec_get="$(cd "$(dirname "${BASH_SOURCE[0]}")/../libexec" 2>/dev/null && pwd || true)"
-  if [[ -n "$libexec_get" && -x "$libexec_get/get" ]]; then
-    exec "$libexec_get/get" "$@"
+  if [[ -x "$JOBCTRL_LIBEXEC_GET" ]]; then
+    exec "$JOBCTRL_LIBEXEC_GET" ${1+"$@"}
+  fi
+  # Direct keg / in-repo execution: try relative to this script's real dir.
+  local self_dir
+  self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$self_dir/../libexec/get" ]]; then
+    exec "$self_dir/../libexec/get" ${1+"$@"}
+  fi
+  if [[ -x "$self_dir/get" ]]; then
+    exec "$self_dir/get" ${1+"$@"}
   fi
   if [[ -x "$REPO/scripts/get" ]]; then
-    exec "$REPO/scripts/get" "$@"
+    exec "$REPO/scripts/get" ${1+"$@"}
   fi
   fail "bootstrap script not found; run: curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash"
 }
@@ -43,19 +59,19 @@ CMD="${1:-}"
 case "$CMD" in
   bootstrap|install)
     shift
-    bootstrap "$@"
+    bootstrap ${1+"$@"}
     ;;
   update)
     [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
     shift
     git -C "$REPO" pull --ff-only
-    exec "$REPO/scripts/install" --yes --skip-doctor "$@"
+    exec "$REPO/scripts/install" --yes --skip-doctor ${1+"$@"}
     ;;
   dev)
     [[ -d "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
     shift
     cd "$REPO"
-    exec corepack pnpm dev "$@"
+    exec corepack pnpm dev ${1+"$@"}
     ;;
   ""|-h|--help)
     cat <<EOF

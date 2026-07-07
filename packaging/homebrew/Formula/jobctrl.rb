@@ -26,6 +26,9 @@ class Jobctrl < Formula
 
   def install
     libexec.install "scripts/get" => "get"
+    # bin/jobctrl ends up as a prefix symlink, so bake the absolute libexec
+    # path into the launcher instead of resolving it relative to $0.
+    inreplace "scripts/jobctrl-launcher", "@JOBCTRL_LIBEXEC_GET@", (libexec/"get").to_s
     bin.install "scripts/jobctrl-launcher" => "jobctrl"
   end
 
@@ -46,5 +49,9 @@ class Jobctrl < Formula
 
   test do
     assert_match "JobCtrl launcher", shell_output("#{bin}/jobctrl --help")
+    # bootstrap must resolve the baked libexec bootstrap script through the
+    # bin symlink (regression: unresolved $0 pointed at an unlinked libexec).
+    assert_match "Clones JobCtrl to $JOBCTRL_HOME",
+                 shell_output("#{bin}/jobctrl bootstrap --help")
   end
 end

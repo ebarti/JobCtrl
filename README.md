@@ -119,7 +119,7 @@ The short version of [the full, source-cited comparison](docs/comparison.md):
 | **Scoring** | A match % you can't inspect | Deterministic 1–10 policy with a per-requirement evidence ledger |
 | **Materials** | Generated text you have to fact-check | Every bullet traces to your profile; fabrication gates fail closed |
 | **Submission** | Auto-submit you can't stop, or copy-paste you must repeat | Dry-run default; explicit approval bound to reviewed materials; at-most-once submission |
-| **Third parties** | Bot-control cat-and-mouse | Honest User-Agent, robots.txt honored, no CAPTCHA/paywall/login bypass |
+| **Third parties** | Workarounds that fight site protections | Honest User-Agent, robots.txt honored, no CAPTCHA/paywall/login bypass |
 | **Reliability** | A crash loses the run | Crash-resumable Temporal workflows with full run history |
 | **Cost** | Surprise API bills | Daily spend ceiling with preflight checks and visible usage |
 
