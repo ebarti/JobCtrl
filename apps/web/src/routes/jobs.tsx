@@ -11,7 +11,7 @@ export const Route = createFileRoute("/jobs")({
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) => {
     const input = jobsListInput(deps.search);
-    return context.queryClient.ensureQueryData({
+    return context.queryClient.prefetchQuery({
       queryKey: jobsKeys.list(context.tenantId, input),
       queryFn: () => fetchJobsList(context.ports.api, input),
     });

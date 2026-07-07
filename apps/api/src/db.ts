@@ -72,30 +72,92 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
 
 const legacyProductToken = "job" + "hunter";
 
+type JobLifecycleTableSpec = {
+  suffix: "deleted_jobs" | "hidden_jobs";
+  currentTable: string;
+  createSql: string;
+  additiveColumns: Array<{ name: string; definition: string }>;
+};
+
+const jobLifecycleTableSpecs: JobLifecycleTableSpec[] = [
+  {
+    suffix: "deleted_jobs",
+    currentTable: "jobctl_deleted_jobs",
+    createSql: `CREATE TABLE IF NOT EXISTS jobctl_deleted_jobs (
+      job_url TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      reason TEXT,
+      restored_at TEXT
+    )`,
+    additiveColumns: [
+      { name: "deleted_at", definition: "TEXT NOT NULL DEFAULT ''" },
+      { name: "reason", definition: "TEXT" },
+      { name: "restored_at", definition: "TEXT" },
+    ],
+  },
+  {
+    suffix: "hidden_jobs",
+    currentTable: "jobctl_hidden_jobs",
+    createSql: `CREATE TABLE IF NOT EXISTS jobctl_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT
+    )`,
+    additiveColumns: [
+      { name: "hidden_at", definition: "TEXT NOT NULL DEFAULT ''" },
+      { name: "reason", definition: "TEXT" },
+      { name: "unhidden_at", definition: "TEXT" },
+    ],
+  },
+];
+
 export function migrateLegacyJobTables(db: SqliteDatabase): string[] {
   const migrated: string[] = [];
-  for (const suffix of ["deleted_jobs", "hidden_jobs"]) {
+  for (const spec of jobLifecycleTableSpecs) {
+    const suffix = spec.suffix;
     const legacyTable = `${legacyProductToken}_${suffix}`;
-    const currentTable = `jobctl_${suffix}`;
-    if (!tableExists(db, legacyTable)) continue;
+    const currentTable = spec.currentTable;
+    const legacyExists = tableExists(db, legacyTable);
+    const currentExists = tableExists(db, currentTable);
+    if (!legacyExists && !currentExists) continue;
 
-    if (!tableExists(db, currentTable)) {
-      db.prepare(`ALTER TABLE ${legacyTable} RENAME TO ${currentTable}`).run();
-      migrated.push(currentTable);
+    const legacyColumns = legacyExists ? tableColumns(db, legacyTable) : [];
+    if (legacyExists) {
+      const knownColumns = new Set(["job_url", ...spec.additiveColumns.map((column) => column.name)]);
+      const commonColumns = legacyColumns.filter((column) => knownColumns.has(column));
+      if (commonColumns.length === 0) {
+        throw new Error(`Cannot migrate legacy table ${legacyTable}: no shared columns with ${currentTable}`);
+      }
+    }
+
+    ensureJobLifecycleTableSchema(db, spec);
+    if (!legacyExists) {
       continue;
     }
 
     const currentColumns = tableColumns(db, currentTable);
-    const commonColumns = tableColumns(db, legacyTable).filter((column) => currentColumns.includes(column));
-    if (commonColumns.length === 0) {
-      throw new Error(`Cannot migrate legacy table ${legacyTable}: no shared columns with ${currentTable}`);
-    }
+    const commonColumns = legacyColumns.filter((column) => currentColumns.includes(column));
     const columns = commonColumns.map(quoteIdentifier).join(", ");
-    db.prepare(`INSERT OR IGNORE INTO ${currentTable} (${columns}) SELECT ${columns} FROM ${legacyTable}`).run();
-    db.prepare(`DROP TABLE ${legacyTable}`).run();
+    db.prepare(
+      `INSERT OR IGNORE INTO ${quoteIdentifier(currentTable)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(legacyTable)}`,
+    ).run();
+    db.prepare(`DROP TABLE ${quoteIdentifier(legacyTable)}`).run();
     migrated.push(currentTable);
   }
   return migrated;
+}
+
+function ensureJobLifecycleTableSchema(db: SqliteDatabase, spec: JobLifecycleTableSpec): void {
+  db.prepare(spec.createSql).run();
+  const existingColumns = new Set(tableColumns(db, spec.currentTable));
+  for (const column of spec.additiveColumns) {
+    if (existingColumns.has(column.name)) continue;
+    db.prepare(
+      `ALTER TABLE ${quoteIdentifier(spec.currentTable)} ADD COLUMN ${quoteIdentifier(column.name)} ${column.definition}`,
+    ).run();
+    existingColumns.add(column.name);
+  }
 }
 
 function tableColumns(db: SqliteDatabase, tableName: string): string[] {

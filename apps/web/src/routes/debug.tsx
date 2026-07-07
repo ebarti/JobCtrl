@@ -22,7 +22,7 @@ export const Route = createFileRoute("/debug")({
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) => {
     const input = activityInput(deps.search);
-    return context.queryClient.ensureQueryData({
+    return context.queryClient.prefetchQuery({
       queryKey: activityKeys.list(context.tenantId, input),
       queryFn: () => context.ports.api.activity(input),
     });

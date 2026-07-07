@@ -7,7 +7,7 @@ import { evidenceMapSearchSchema } from "./-evidence-map.search.js";
 export const Route = createFileRoute("/evidence-map")({
   validateSearch: (search) => evidenceMapSearchSchema.parse(search),
   loader: ({ context }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.prefetchQuery({
       queryKey: evidenceMapKeys.list(context.tenantId),
       queryFn: () => context.ports.api.evidenceMap(),
     }),

@@ -13,6 +13,7 @@ import type {
   JobSummary,
   Stage,
 } from "@jobctl/contracts";
+import { LOCAL_TENANT } from "@jobctl/domain-types";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -29,6 +30,7 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
+import { routeTree } from "../../routeTree.gen.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
   JOBS_TABLE_ID,
@@ -111,6 +113,34 @@ function rowForTitle(title: string): HTMLElement {
   }
   return row;
 }
+
+describe("<JobsRoute> loader reliability", () => {
+  it("renders the jobs surface instead of the route error boundary when prefetch fails", async () => {
+    const ports = buildTestPorts({
+      api: {
+        jobs: vi.fn(async () => {
+          throw new Error("api offline");
+        }),
+      },
+    });
+    const harness = buildProviderHarness({ ports, withEventStream: true });
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: [`/jobs${SEARCH}`] }),
+      context: {
+        ports,
+        queryClient: harness.queryClient,
+        tenantId: LOCAL_TENANT,
+      },
+    });
+
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    expect(await screen.findByText("api offline")).toBeInTheDocument();
+    expect(screen.getByText("Jobs table")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong!")).not.toBeInTheDocument();
+  });
+});
 
 describe("<JobsView> compensation source-conflict visibility", () => {
   it("shows salary min/max, market, and warning scan columns with every data column sortable", async () => {

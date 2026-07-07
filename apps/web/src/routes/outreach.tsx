@@ -20,7 +20,7 @@ export const Route = createFileRoute("/outreach")({
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) => {
     const input = contactsListInput(deps.search);
-    return context.queryClient.ensureQueryData({
+    return context.queryClient.prefetchQuery({
       queryKey: outreachKeys.contactList(context.tenantId, input),
       queryFn: () => context.ports.api.listContacts(input),
     });

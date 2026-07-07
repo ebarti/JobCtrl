@@ -17,7 +17,7 @@ export const Route = createFileRoute("/runs")({
   loaderDeps: ({ search }) => ({ search }),
   loader: ({ deps, context }) => {
     const input = workflowRunsInput(deps.search);
-    return context.queryClient.ensureQueryData({
+    return context.queryClient.prefetchQuery({
       queryKey: workflowRunsKeys.list(context.tenantId, input),
       queryFn: () => context.ports.api.workflowRuns(input),
     });

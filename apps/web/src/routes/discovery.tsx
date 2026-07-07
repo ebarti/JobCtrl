@@ -5,7 +5,7 @@ import { DiscoveryView } from "../views/discovery/DiscoveryView.js";
 
 export const Route = createFileRoute("/discovery")({
   loader: ({ context }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.prefetchQuery({
       queryKey: profileKeys.profile(context.tenantId),
       queryFn: () => context.ports.api.profile(),
     }),
