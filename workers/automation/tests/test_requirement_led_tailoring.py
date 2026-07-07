@@ -47,6 +47,7 @@ from jobctl.domain.materials.requirement_coverage import (
     validate_pinned_content_preserved,
     validate_prohibited_claims,
 )
+from jobctl.domain.materials.use_cases import _claim_mapping_validation_errors
 from jobctl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -429,6 +430,119 @@ def test_seed_coverage_graph_builds_direct_and_transferable_edges() -> None:
     assert graph.coverage_edges[0].required_claim_policy == "evidence_reframing"
     assert graph.uncovered_requirements[0].requirement_id == "req_salesforce"
     assert graph.to_safe_metadata()["coverage_edge_count"] == 1
+
+
+def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> None:
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[
+            Requirement(
+                id="req_degree",
+                text="Bachelor's degree in Computer Science.",
+                tier="nice_to_have",
+                weight=0.3,
+                evidence_span="Bachelor's degree in Computer Science.",
+            )
+        ],
+        keywords=[],
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/senior-backend"),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash("degree"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+    report = RequirementFitReport(
+        job_id="https://example.com/senior-backend",
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(8),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_degree",
+                requirement_text="Bachelor's degree in Computer Science.",
+                tier="nice_to_have",
+                weight=0.3,
+                job_evidence_span="Bachelor's degree in Computer Science.",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("education:edu_state",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=0.375,
+                    awarded_points=0.375,
+                    weighted_impact=0.375,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.3,
+                    allowed_evidence_ids=("education:edu_state",),
+                ),
+            ),
+        ),
+    )
+
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=report,
+    )
+
+    graph = plan.coverage_graph
+    assert graph is not None
+    assert "education:edu_state" in graph.achievement_ids
+    assert validate_coverage_graph(graph, controls=plan.requirement_led_controls) == ()
+    assert validate_generated_claim_mappings(
+        (
+            GeneratedClaimMapping(
+                claim_id="degree_claim",
+                location="executive_profile",
+                text="Bachelor's degree in Computer Science.",
+                claim_label="verified",
+                coverage_edge_ids=("edge_req_degree_education_edu_state_direct",),
+                requirement_ids=("req_degree",),
+                evidence_ids=("education:edu_state",),
+            ),
+        ),
+        graph,
+        controls=plan.requirement_led_controls,
+    ) == ()
+    assert (
+        _claim_mapping_validation_errors(
+            payload={
+                "generated_claim_mappings": [
+                    {
+                        "claim_id": "degree_claim",
+                        "location": "education_updates[0]",
+                        "text": "BSc CS",
+                        "claim_label": "verified",
+                        "coverage_edge_ids": ("edge_req_degree_education_edu_state_direct",),
+                        "requirement_ids": ("req_degree",),
+                        "evidence_ids": ("education:edu_state",),
+                        "non_requirement_reason": "",
+                        "review_required": False,
+                    }
+                ]
+            },
+            tailoring_plan=plan,
+        )
+        == ()
+    )
 
 
 def test_build_coverage_planner_prompt_constrains_ids_and_output() -> None:

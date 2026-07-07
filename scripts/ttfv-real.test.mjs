@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { discoveryProvenance, gateableRecordRejectionReasons } from "./ttfv-real.mjs";
+import { discoveryProvenance, gateableRecordRejectionReasons, summarizeMeasurementRecords } from "./ttfv-real.mjs";
 
 const WORK_COMMAND = "uv --project workers/automation run jobhunter run discover score tailor --limit 1 --workers 1";
 const JOB_HASH = "jobhash00000001";
@@ -28,6 +28,16 @@ function validRecord(overrides = {}) {
       syntheticDataAllowed: false,
       ciAllowed: false,
     },
+    urls: {
+      apiBaseUrl: overrides.apiBaseUrl ?? "http://127.0.0.1:8766",
+      webBaseUrl: overrides.webBaseUrl ?? "http://127.0.0.1:5173",
+    },
+    thresholds: {
+      ttfv1Ms: overrides.thresholdTtfv1Ms ?? 600_000,
+      ttfv2Ms: overrides.thresholdTtfv2Ms ?? 1_800_000,
+      worstRunCeilingMultiplier: overrides.worstMultiplier ?? 1.5,
+      requiredRuns: overrides.requiredRuns ?? 3,
+    },
     t0: {
       command: "corepack pnpm install:interactive",
       startedAt: "2026-07-06T00:00:00.000Z",
@@ -45,7 +55,7 @@ function validRecord(overrides = {}) {
     probes: {
       ttfv1: {
         status: "passed",
-        durationMs: 60_000,
+        durationMs: overrides.ttfv1DurationMs ?? 60_000,
         api: {
           selectedJobHash: jobHash,
           selectedFitScore: 8,
@@ -64,7 +74,7 @@ function validRecord(overrides = {}) {
       },
       ttfv2: {
         status: "passed",
-        durationMs: 120_000,
+        durationMs: overrides.ttfv2DurationMs ?? 120_000,
         api: {
           selectedJobHash: overrides.ttfv2JobHash ?? jobHash,
           selectedArtifactHash: "artifacthash0001",
@@ -89,6 +99,48 @@ function reasons(record) {
 
 test("accepts a complete discovery-inclusive real-path record", () => {
   assert.deepEqual(reasons(validRecord()), []);
+});
+
+test("rejects records measured against non-default probe URLs", () => {
+  assert.match(
+    reasons(validRecord({ apiBaseUrl: "http://127.0.0.1:9876" })).join("\n"),
+    /non-default API probe URL/,
+  );
+  assert.match(
+    reasons(validRecord({ webBaseUrl: "http://127.0.0.1:9999" })).join("\n"),
+    /non-default web probe URL/,
+  );
+});
+
+test("rejects records whose owner thresholds were overridden", () => {
+  assert.match(
+    reasons(validRecord({ thresholdTtfv1Ms: 999_999_999 })).join("\n"),
+    /owner TTFV thresholds missing or overridden/,
+  );
+});
+
+test("summaries ignore and fail unsupported threshold overrides", () => {
+  const records = ["one", "two", "three"].map((file) => ({
+    file,
+    record: validRecord({
+      ttfv1DurationMs: 700_000,
+      ttfv2DurationMs: 1_900_000,
+    }),
+  }));
+
+  const summary = summarizeMeasurementRecords(records, {
+    thresholdTtfv1Ms: 999_999_999,
+    thresholdTtfv2Ms: 999_999_999,
+    worstMultiplier: 99,
+  });
+
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.thresholds.ttfv1Ms, 600_000);
+  assert.equal(summary.thresholds.ttfv2Ms, 1_800_000);
+  assert.equal(summary.thresholds.worstRunCeilingMultiplier, 1.5);
+  assert.match(summary.configurationErrors.join("\n"), /owner thresholds are fixed/);
+  assert.equal(summary.ttfv1.passed, false);
+  assert.equal(summary.ttfv2.passed, false);
 });
 
 test("rejects records whose measured job is already in the all-state baseline", () => {

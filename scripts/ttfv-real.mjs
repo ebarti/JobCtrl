@@ -120,7 +120,14 @@ async function runMeasurement(options) {
   const workCommand = resolveWorkCommand(options);
 
   const record = baseRecord("run", options, { apiBaseUrl, webBaseUrl });
-  applyRunGateMetadata(record, options, { installCommand, initCommand, stackCommand, workCommand });
+  applyRunGateMetadata(record, options, {
+    installCommand,
+    initCommand,
+    stackCommand,
+    workCommand,
+    apiBaseUrl,
+    webBaseUrl,
+  });
   record.t0 = {
     command: options.skipInstall ? "skipped install phase" : recordCommandLabel("install", installCommand, DEFAULT_INSTALL_COMMAND),
     startedAt: nowIso(),
@@ -219,10 +226,25 @@ function summarizeRecords(options) {
   if (!files.length) {
     throw new Error("summarize requires at least one measurement record path.");
   }
-  const thresholdTtfv1Ms = numberOption(options.thresholdTtfv1Ms, DEFAULT_TTFV_1_THRESHOLD_MS);
-  const thresholdTtfv2Ms = numberOption(options.thresholdTtfv2Ms, DEFAULT_TTFV_2_THRESHOLD_MS);
-  const worstMultiplier = numberOption(options.worstMultiplier, DEFAULT_WORST_MULTIPLIER);
   const records = files.map((file) => ({ file, record: JSON.parse(fs.readFileSync(file, "utf8")) }));
+  const summary = summarizeMeasurementRecords(records, options);
+  const payload = `${JSON.stringify(summary, null, 2)}\n`;
+  if (options.output) {
+    writeText(String(options.output), payload);
+    console.log(`summary record: ${options.output}`);
+  } else {
+    process.stdout.write(payload);
+  }
+  if (summary.status !== "passed") {
+    process.exitCode = 1;
+  }
+}
+
+export function summarizeMeasurementRecords(records, options = {}) {
+  const thresholdTtfv1Ms = DEFAULT_TTFV_1_THRESHOLD_MS;
+  const thresholdTtfv2Ms = DEFAULT_TTFV_2_THRESHOLD_MS;
+  const worstMultiplier = DEFAULT_WORST_MULTIPLIER;
+  const configurationErrors = summaryConfigurationErrors(options);
   const evaluations = records.map(({ file, record }) => ({
     file: path.basename(file),
     reasons: gateableRecordRejectionReasons(record),
@@ -238,9 +260,10 @@ function summarizeRecords(options) {
     schemaVersion: SCHEMA_VERSION,
     kind: "jobhunter.realPathTtfvMeasurementSummary",
     generatedAt: nowIso(),
-    inputRecords: files.length,
+    inputRecords: records.length,
     acceptedRecords: accepted.length,
     rejectedRecords: rejected,
+    configurationErrors,
     requiredRuns: 3,
     thresholds: {
       ttfv1Ms: thresholdTtfv1Ms,
@@ -251,17 +274,14 @@ function summarizeRecords(options) {
     ttfv2: summarizeMetric(ttfv2Durations, thresholdTtfv2Ms, worstMultiplier),
   };
   summary.status =
-    accepted.length >= 3 && rejected.length === 0 && summary.ttfv1.passed && summary.ttfv2.passed ? "passed" : "failed";
-  const payload = `${JSON.stringify(summary, null, 2)}\n`;
-  if (options.output) {
-    writeText(String(options.output), payload);
-    console.log(`summary record: ${options.output}`);
-  } else {
-    process.stdout.write(payload);
-  }
-  if (summary.status !== "passed") {
-    process.exitCode = 1;
-  }
+    accepted.length >= 3 &&
+    rejected.length === 0 &&
+    configurationErrors.length === 0 &&
+    summary.ttfv1.passed &&
+    summary.ttfv2.passed
+      ? "passed"
+      : "failed";
+  return summary;
 }
 
 function summarizeMetric(values, thresholdMs, worstMultiplier) {
@@ -283,6 +303,16 @@ function summarizeMetric(values, thresholdMs, worstMultiplier) {
   };
 }
 
+function summaryConfigurationErrors(options) {
+  const rejectedOptions = [];
+  if (options.thresholdTtfv1Ms !== undefined) rejectedOptions.push("--threshold-ttfv1-ms");
+  if (options.thresholdTtfv2Ms !== undefined) rejectedOptions.push("--threshold-ttfv2-ms");
+  if (options.worstMultiplier !== undefined) rejectedOptions.push("--worst-multiplier");
+  return rejectedOptions.length
+    ? [`owner thresholds are fixed; unsupported summary override(s): ${rejectedOptions.join(", ")}`]
+    : [];
+}
+
 export function gateableRecordRejectionReasons(record) {
   const reasons = [];
   if (!record || typeof record !== "object") return ["record is not an object"];
@@ -294,6 +324,9 @@ export function gateableRecordRejectionReasons(record) {
   if (record.policy?.realPathOnly !== true) reasons.push("real-path policy missing");
   if (record.policy?.syntheticDataAllowed !== false) reasons.push("synthetic-data policy missing");
   if (record.policy?.ciAllowed !== false) reasons.push("CI policy missing");
+  if (record.urls?.apiBaseUrl !== DEFAULT_API_BASE_URL) reasons.push("non-default API probe URL");
+  if (record.urls?.webBaseUrl !== DEFAULT_WEB_BASE_URL) reasons.push("non-default web probe URL");
+  if (!recordUsesOwnerThresholds(record)) reasons.push("owner TTFV thresholds missing or overridden");
   const measurementJobHash = measuredJobHash(record);
   if (!measurementJobHash) reasons.push("measurement job hash missing");
   if (!record.baseline?.capturedAt) reasons.push("pre-work discovery baseline missing");
@@ -355,6 +388,15 @@ function phaseSucceeded(record, name, commandLabel) {
 function phaseHealthy(record, name, commandLabel) {
   const phase = (record.phases ?? []).find((entry) => entry?.name === name);
   return phase?.command === commandLabel && phase.status === "healthy";
+}
+
+function recordUsesOwnerThresholds(record) {
+  return (
+    record.thresholds?.ttfv1Ms === DEFAULT_TTFV_1_THRESHOLD_MS &&
+    record.thresholds?.ttfv2Ms === DEFAULT_TTFV_2_THRESHOLD_MS &&
+    record.thresholds?.worstRunCeilingMultiplier === DEFAULT_WORST_MULTIPLIER &&
+    record.thresholds?.requiredRuns === 3
+  );
 }
 
 function measuredJobHash(record) {
@@ -807,7 +849,7 @@ function resolveWorkCommand(options) {
   };
 }
 
-function applyRunGateMetadata(record, options, { installCommand, initCommand, stackCommand, workCommand }) {
+function applyRunGateMetadata(record, options, { installCommand, initCommand, stackCommand, workCommand, apiBaseUrl, webBaseUrl }) {
   const expectedJobKey = stringOption(options.expectedJobKey, workCommand.expectedJobKey ?? "");
   record.expected = expectedJobKey ? { jobHash: stableHash(expectedJobKey) } : null;
   const blockers = [];
@@ -819,6 +861,8 @@ function applyRunGateMetadata(record, options, { installCommand, initCommand, st
   if (initCommand !== DEFAULT_INIT_COMMAND) blockers.push("custom init command");
   if (stackCommand !== DEFAULT_STACK_COMMAND) blockers.push("custom stack command");
   if (!workCommand.gateable) blockers.push("non-default real job command");
+  if (apiBaseUrl !== DEFAULT_API_BASE_URL) blockers.push("non-default API probe URL");
+  if (webBaseUrl !== DEFAULT_WEB_BASE_URL) blockers.push("non-default web probe URL");
   record.gateable = blockers.length === 0;
   record.gateableReason = blockers.length ? blockers.join("; ") : null;
 }
@@ -847,9 +891,9 @@ function baseRecord(mode, options, urls) {
     },
     status: "running",
     thresholds: {
-      ttfv1Ms: numberOption(options.thresholdTtfv1Ms, DEFAULT_TTFV_1_THRESHOLD_MS),
-      ttfv2Ms: numberOption(options.thresholdTtfv2Ms, DEFAULT_TTFV_2_THRESHOLD_MS),
-      worstRunCeilingMultiplier: numberOption(options.worstMultiplier, DEFAULT_WORST_MULTIPLIER),
+      ttfv1Ms: DEFAULT_TTFV_1_THRESHOLD_MS,
+      ttfv2Ms: DEFAULT_TTFV_2_THRESHOLD_MS,
+      worstRunCeilingMultiplier: DEFAULT_WORST_MULTIPLIER,
       requiredRuns: 3,
       referenceClass: "owner Apple-silicon macOS machine",
       cadence: "pre-release owner-run only",

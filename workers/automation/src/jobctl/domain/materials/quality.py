@@ -27,6 +27,7 @@ from jobctl.domain.materials.value_objects import ValidationResult
 from jobctl.resume_profile import (
     get_achievement_evidence,
     get_custom_tailoring_prompt,
+    get_education_entries,
     get_experience_entries,
     get_required_bullets_by_experience_id,
     get_required_experience_entry_ids,
@@ -493,7 +494,10 @@ def build_tailoring_plan(
         required_skills_by_category_id=get_required_skills_by_category_id(profile),
         additional_guidance=get_custom_tailoring_prompt(profile),
     )
-    evidence_items = tuple(_evidence_item(item) for item in get_achievement_evidence(profile))
+    evidence_items = (
+        *tuple(_evidence_item(item) for item in get_achievement_evidence(profile)),
+        *_education_evidence_items(profile),
+    )
     matched_requirement_fit_report = (
         requirement_fit_report
         if _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis)
@@ -738,6 +742,7 @@ def evaluate_tailoring_quality(
     payload_text = _payload_text(tailored_payload)
     text_lower = _normalize_space(tailored_text).lower()
     generated_lower = _normalize_space(payload_text).lower()
+    evidence_lower = _normalize_space(f"{payload_text}\n{tailored_text}").lower()
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -749,9 +754,7 @@ def evaluate_tailoring_quality(
     if missing_sections:
         errors.append("Missing standard resume sections: " + ", ".join(missing_sections))
 
-    represented_evidence_ids, missing_evidence_ids = _check_required_evidence(
-        generated_lower, plan
-    )
+    represented_evidence_ids, missing_evidence_ids = _check_required_evidence(evidence_lower, plan)
     if missing_evidence_ids:
         errors.append(
             "Missing required evidence support: " + ", ".join(missing_evidence_ids)
@@ -849,6 +852,41 @@ def _evidence_item(item: dict) -> EvidencePlanItem:
         user_confirmed=bool(item.get("user_confirmed", False)),
         tags=tuple(_text_list(item.get("tags"))),
     )
+
+
+def _education_evidence_items(profile: dict) -> tuple[EvidencePlanItem, ...]:
+    items: list[EvidencePlanItem] = []
+    for entry in get_education_entries(profile):
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "").strip()
+        if not entry_id:
+            continue
+        source_text = " | ".join(
+            part
+            for part in (
+                str(entry.get("degree") or "").strip(),
+                str(entry.get("institution") or "").strip(),
+                str(entry.get("location") or "").strip(),
+                str(entry.get("date") or "").strip(),
+            )
+            if part
+        )
+        if not source_text:
+            continue
+        items.append(
+            EvidencePlanItem(
+                evidence_id=f"education:{entry_id}",
+                experience_entry_id=f"education:{entry_id}",
+                source_text=source_text,
+                scope="education",
+                action="completed credential",
+                evidence_strength="verified",
+                user_confirmed=True,
+                tags=("education",),
+            )
+        )
+    return tuple(items)
 
 
 def _select_required_evidence_ids(

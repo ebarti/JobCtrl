@@ -278,7 +278,10 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "coverage_edge_ids": {"type": "array", "items": {"type": "string"}},
                     "requirement_ids": {"type": "array", "items": {"type": "string"}},
                     "evidence_ids": {"type": "array", "items": {"type": "string"}},
-                    "non_requirement_reason": {"type": "string"},
+                    "non_requirement_reason": {
+                        "type": "string",
+                        "enum": ["", "pinned", "positioning", "structure"],
+                    },
                     "review_required": {"type": "boolean"},
                 },
             },
@@ -517,8 +520,9 @@ def _claim_mapping_binding_errors(
     *,
     payload: dict,
     mappings: Iterable[GeneratedClaimMapping],
+    tailoring_plan: TailoringPlan | None = None,
 ) -> tuple[str, ...]:
-    surfaces = _generated_claim_surfaces(payload)
+    surfaces = _generated_claim_surfaces(payload, tailoring_plan=tailoring_plan)
     errors: list[str] = []
     for mapping in mappings:
         location = _canonical_claim_location(mapping.location)
@@ -537,19 +541,31 @@ def _claim_mapping_binding_errors(
     return tuple(errors)
 
 
-def _generated_claim_surfaces(payload: dict) -> dict[str, str]:
+def _generated_claim_surfaces(
+    payload: dict,
+    *,
+    tailoring_plan: TailoringPlan | None = None,
+) -> dict[str, str]:
     surfaces: dict[str, str] = {}
     executive_profile = str(payload.get("executive_profile") or "").strip()
     if executive_profile:
         for location in ("executive_profile", "summary", "resume.executive_profile"):
             surfaces[location] = executive_profile
     updates = payload.get("experience_updates")
-    for update in updates if isinstance(updates, list) else ():
+    for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
         if not isinstance(update, dict):
             continue
         entry_id = str(update.get("id") or "").strip()
         if not entry_id:
             continue
+        title = str(update.get("title") or "").strip()
+        if title:
+            for location in (
+                f"experience.{entry_id}.title",
+                f"experience_updates.{entry_id}.title",
+                f"experience_updates[{update_index}].title",
+            ):
+                surfaces[location] = title
         bullets = update.get("bullets")
         if not isinstance(bullets, list):
             continue
@@ -560,10 +576,11 @@ def _generated_claim_surfaces(payload: dict) -> dict[str, str]:
             for location in (
                 f"experience.{entry_id}.bullets[{index}]",
                 f"experience_updates.{entry_id}.bullets[{index}]",
+                f"experience_updates[{update_index}].bullets[{index}]",
             ):
                 surfaces[location] = text
     skill_updates = payload.get("skill_category_updates")
-    for update in skill_updates if isinstance(skill_updates, list) else ():
+    for update_index, update in enumerate(skill_updates if isinstance(skill_updates, list) else ()):
         if not isinstance(update, dict):
             continue
         category_id = str(update.get("id") or "").strip()
@@ -577,6 +594,7 @@ def _generated_claim_surfaces(payload: dict) -> dict[str, str]:
             f"skills.{category_id}",
             f"skill_categories.{category_id}",
             f"skill_category_updates.{category_id}",
+            f"skill_category_updates[{update_index}]",
         ):
             surfaces[location] = joined
         for index, item in enumerate(items):
@@ -584,8 +602,27 @@ def _generated_claim_surfaces(payload: dict) -> dict[str, str]:
                 f"skills.{category_id}.items[{index}]",
                 f"skill_categories.{category_id}.items[{index}]",
                 f"skill_category_updates.{category_id}.items[{index}]",
+                f"skill_category_updates[{update_index}].items[{index}]",
             ):
                 surfaces[location] = item
+    if tailoring_plan is not None:
+        education_items = [
+            item
+            for item in tailoring_plan.evidence_items
+            if str(item.evidence_id).startswith("education:")
+        ]
+        for index, item in enumerate(education_items):
+            entry_id = item.evidence_id.split(":", 1)[1]
+            text = str(item.source_text or "").strip()
+            if not entry_id or not text:
+                continue
+            for location in (
+                f"education.{entry_id}",
+                f"education:{entry_id}",
+                f"education[{index}]",
+                f"education_updates[{index}]",
+            ):
+                surfaces[location] = text
     return surfaces
 
 
@@ -613,7 +650,13 @@ def _claim_mapping_validation_errors(
     mappings, parse_errors = _claim_mappings_from_payload(payload)
     errors = list(parse_errors)
     if not parse_errors:
-        errors.extend(_claim_mapping_binding_errors(payload=payload, mappings=mappings))
+        errors.extend(
+            _claim_mapping_binding_errors(
+                payload=payload,
+                mappings=mappings,
+                tailoring_plan=tailoring_plan,
+            )
+        )
     graph = tailoring_plan.coverage_graph
     if graph is not None:
         errors.extend(
@@ -641,7 +684,11 @@ def _post_generation_fit_gate(
     if target_profile is None:
         return None, (), ()
     mappings, parse_errors = _claim_mappings_from_payload(payload)
-    if parse_errors or _claim_mapping_binding_errors(payload=payload, mappings=mappings):
+    if parse_errors or _claim_mapping_binding_errors(
+        payload=payload,
+        mappings=mappings,
+        tailoring_plan=tailoring_plan,
+    ):
         return None, (), ()
     # Ground every coverage-bearing claim against the lines the resume actually
     # ships (the assembler-mirroring provenance rows), so must-have coverage is
@@ -709,7 +756,7 @@ def _bullet_limit_overflow_metadata(
     updates = payload.get("experience_updates")
     if not isinstance(updates, list):
         return ()
-    for update in updates:
+    for update_index, update in enumerate(updates):
         if not isinstance(update, dict):
             continue
         entry_id = str(update.get("id") or "").strip()
@@ -719,7 +766,11 @@ def _bullet_limit_overflow_metadata(
         matching_mappings = tuple(
             mapping
             for mapping in mappings
-            if f".{entry_id}." in mapping.location or f"experience.{entry_id}" in mapping.location
+            if _mapping_targets_experience_update(
+                mapping.location,
+                entry_id=entry_id,
+                update_index=update_index,
+            )
         )
         covered_evidence_ids = tuple(
             dict.fromkeys(
@@ -750,6 +801,19 @@ def _bullet_limit_overflow_metadata(
             )
         )
     return tuple(records)
+
+
+def _mapping_targets_experience_update(
+    location: str,
+    *,
+    entry_id: str,
+    update_index: int,
+) -> bool:
+    return (
+        f".{entry_id}." in location
+        or f"experience.{entry_id}" in location
+        or location.startswith(f"experience_updates[{update_index}].")
+    )
 
 
 def _audit_prompt_messages(messages: list[LlmMessage]) -> tuple[dict[str, str], ...]:
