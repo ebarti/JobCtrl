@@ -33,6 +33,7 @@ from jobctrl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
+    PublicUrlDecision,
     RunBudgetCounter,
 )
 from jobctrl.infrastructure.network.politeness import UA_CONTACT_ENV, UA_PRODUCT_ENV
@@ -156,6 +157,21 @@ def _owner_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(UA_CONTACT_ENV, OWNER_CONTACT)
 
 
+def _allow_fetcher_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.enrichment.playwright_fetcher.validate_public_http_url",
+        lambda _url: PublicUrlDecision(True),
+    )
+
+
+def _allow_detail_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(detail, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
+
+
+def _allow_smartextract_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(smartextract, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
+
+
 def _spy_gateway(robots: _UASpyRobots) -> PolitenessGateway:
     # Constructed after the env override so its UA reflects the owner value.
     return PolitenessGateway(robots=robots, rate_limiter=no_sleep_limiter())
@@ -170,6 +186,7 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _owner_override(monkeypatch)
+    _allow_fetcher_url_safety(monkeypatch)
     robots = _UASpyRobots()
     gateway = _spy_gateway(robots)
     session = PolitenessSession(
@@ -199,6 +216,7 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
 
 def test_smartextract_page_uses_owner_overridden_ua(monkeypatch: pytest.MonkeyPatch) -> None:
     _owner_override(monkeypatch)
+    _allow_smartextract_url_safety(monkeypatch)
     robots = _UASpyRobots()
     gateway = _spy_gateway(robots)
     session = PolitenessSession(
@@ -228,6 +246,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _owner_override(monkeypatch)
+    _allow_detail_url_safety(monkeypatch)
     monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
     # Tier-1 (JSON-LD) success so navigation proceeds without touching the LLM.
     monkeypatch.setattr(detail, "get_llm_adapter", lambda: _OfflineLlm())

@@ -28,6 +28,7 @@ from jobctrl.enrichment.detail import scrape_detail_page, scrape_site_batch
 from jobctrl.infrastructure.network import (
     HostRateLimiter,
     PolitenessGateway,
+    PublicUrlDecision,
     RunBudgetCounter,
 )
 
@@ -41,6 +42,10 @@ from .politeness_helpers import (
 )
 
 LONG_DESC = "Build reliable distributed systems with Python and TypeScript. " * 8
+
+
+def _allow_test_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(detail, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
 
 def _seed_pending(conn: sqlite3.Connection, url: str, site: str = "RemoteOK") -> None:
@@ -163,6 +168,7 @@ class _OfflineLlm:
 @pytest.fixture
 def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the detail cascade succeed at Tier 1 (JSON-LD) over the fake page."""
+    _allow_test_url_safety(monkeypatch)
     monkeypatch.setattr(detail, "get_llm_adapter", lambda: _OfflineLlm())
     monkeypatch.setattr(
         detail,
@@ -349,7 +355,8 @@ def test_run_budget_decrements_per_navigation_and_stops_batch(
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_detail_page_blocked_skips_goto() -> None:
+def test_scrape_detail_page_blocked_skips_goto(monkeypatch: pytest.MonkeyPatch) -> None:
+    _allow_test_url_safety(monkeypatch)
     calls: list[str] = []
     page = _SpyPage(calls)
     session = offline_session(robots=DenyAllRobots())

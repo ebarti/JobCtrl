@@ -92,11 +92,16 @@ from jobctrl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
+    PublicHttpUrlRouteGuard,
+    PublicUrlDecision,
     RunBudgetCounter,
     get_shared_rate_limiter,
+    validate_public_http_url,
 )
 
 log = logging.getLogger(__name__)
+
+_SECURITY_OUTCOME_UNSAFE_URL = "unsafe_url"
 
 
 class _OwnerAuthenticatedRobots:
@@ -118,6 +123,21 @@ class _OwnerAuthenticatedRobots:
 def _new_enrichment_budget() -> RunBudgetCounter:
     """A fresh per-run outbound-navigation budget for the enrichment crawl."""
     return RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run)
+
+
+def _mark_unsafe_url_block(
+    result: dict,
+    decision: PublicUrlDecision,
+    *,
+    blocked_url: str,
+    t0: float,
+) -> dict:
+    result["status"] = "blocked"
+    result["security_outcome"] = _SECURITY_OUTCOME_UNSAFE_URL
+    result["blocked_url"] = blocked_url
+    result["error"] = decision.reason or "URL is not a public HTTP(S) destination"
+    result["elapsed"] = time.time() - t0
+    return result
 
 
 def _enrichment_session(
@@ -400,11 +420,10 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
     ``application_url``, ``error``, ``elapsed``) so existing callers
     don't change.
 
-    R10: every ``page.goto`` runs inside a politeness-gateway verdict. A
-    robots-deny or budget-exhaustion yields ``status="blocked"`` (plus the
-    ``politeness_outcome``) and performs **zero** navigation — it never navigates
-    and relabels. ``session`` is supplied by the batch caller (bound to the run
-    budget); a one-off caller lets it self-provision.
+    Every target must first pass the public-destination guard. R10 still wraps
+    every allowed ``page.goto`` in a politeness-gateway verdict. A
+    robots-deny, budget-exhaustion, or unsafe destination yields
+    ``status="blocked"`` and performs **zero** extractor work.
     """
     result: dict = {
         "full_description": None,
@@ -415,8 +434,14 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
         "active_state": None,
         "verification_method": None,
         "http_status": None,
+        "security_outcome": None,
+        "blocked_url": None,
     }
     t0 = time.time()
+
+    initial_safety = validate_public_http_url(url)
+    if not initial_safety.allowed:
+        return _mark_unsafe_url_block(result, initial_safety, blocked_url=url, t0=t0)
 
     if session is None:
         session = _default_enrichment_session()
@@ -432,31 +457,70 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
 
 def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
     """Navigate + run the three-tier cascade inside the held politeness slot."""
+    route_guard = PublicHttpUrlRouteGuard(page).install()
     status_code: int | None = None
     try:
-        resp = page.goto(url, timeout=45000)
-        if resp is not None:
-            status_code = resp.status
-            if status_code in _PERMANENT_FAILURES:
-                active_state = ActiveState.REMOVED
-                result["error"] = f"HTTP {status_code}"
-                result["active_state"] = active_state.value
-                result["verification_method"] = "http_status"
-                result["http_status"] = status_code
-                result["elapsed"] = time.time() - t0
-                return result
-        page.wait_for_load_state("domcontentloaded", timeout=15000)
         try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-    except Exception as exc:
-        err_str = str(exc)
-        result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
-        result["elapsed"] = time.time() - t0
-        return result
+            resp = page.goto(url, timeout=45000)
+            if resp is not None:
+                status_code = resp.status
+                if status_code in _PERMANENT_FAILURES:
+                    active_state = ActiveState.REMOVED
+                    result["error"] = f"HTTP {status_code}"
+                    result["active_state"] = active_state.value
+                    result["verification_method"] = "http_status"
+                    result["http_status"] = status_code
+                    result["elapsed"] = time.time() - t0
+                    return result
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+        except Exception as exc:
+            if route_guard.blocked:
+                decision = PublicUrlDecision(False, route_guard.blocked_reason)
+                return _mark_unsafe_url_block(
+                    result,
+                    decision,
+                    blocked_url=route_guard.blocked_url or url,
+                    t0=t0,
+                )
+            err_str = str(exc)
+            result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
+            result["elapsed"] = time.time() - t0
+            return result
 
-    detail_page = _page_to_detail_page(page, url, status=status_code)
+        if route_guard.blocked:
+            decision = PublicUrlDecision(False, route_guard.blocked_reason)
+            return _mark_unsafe_url_block(
+                result,
+                decision,
+                blocked_url=route_guard.blocked_url or url,
+                t0=t0,
+            )
+
+        final_safety = validate_public_http_url(str(getattr(page, "url", "") or ""))
+        if not final_safety.allowed:
+            return _mark_unsafe_url_block(
+                result,
+                final_safety,
+                blocked_url=str(getattr(page, "url", "") or url),
+                t0=t0,
+            )
+
+        detail_page = _page_to_detail_page(page, url, status=status_code)
+        if route_guard.blocked:
+            decision = PublicUrlDecision(False, route_guard.blocked_reason)
+            return _mark_unsafe_url_block(
+                result,
+                decision,
+                blocked_url=route_guard.blocked_url or url,
+                t0=t0,
+            )
+    finally:
+        route_guard.close()
+
     active_state, verification_method = ActiveStateVerifier().verify(detail_page)
     result["active_state"] = active_state.value
     result["verification_method"] = verification_method
@@ -508,6 +572,8 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     Extraction failures stay retryable: extractor rules, page markup, and
     timing can all change independently of the posting's active state.
     """
+    if cascade_result.get("security_outcome") == _SECURITY_OUTCOME_UNSAFE_URL:
+        return False
     status = cascade_result.get("http_status")
     if isinstance(status, int):
         if status in _RETRYABLE_STATUSES:
@@ -1119,7 +1185,10 @@ def scrape_site_batch(
                     cascade_result = _apply_discovery_description_fallback(
                         conn, url, scrape_detail_page(page, url, session=session)
                     )
-                    if cascade_result.get("status") == "blocked":
+                    if (
+                        cascade_result.get("status") == "blocked"
+                        and cascade_result.get("security_outcome") != _SECURITY_OUTCOME_UNSAFE_URL
+                    ):
                         # Rare parallel race: budget drained between peek + guard.
                         _record_enrich_politeness_deferral(
                             conn, repo, aggregate, url, started_at, cascade_result
@@ -1312,8 +1381,13 @@ def scrape_site_batch(
                     else:
                         stats["error"] += 1
                         retryable = _detail_failure_retryable(cascade_result)
+                        error_code = (
+                            "DETAIL_UNSAFE_URL"
+                            if cascade_result.get("security_outcome") == _SECURITY_OUTCOME_UNSAFE_URL
+                            else "DETAIL_ERROR"
+                        )
                         err = EnrichmentError(
-                            code="DETAIL_ERROR",
+                            code=error_code,
                             message=str(cascade_result.get("error") or "unknown")[:500],
                             retryable=retryable,
                         )
@@ -1329,7 +1403,7 @@ def scrape_site_batch(
                             attempt_count=failed.attempt_count,
                             started_at=started_at,
                             finished_at=finished_at,
-                            error_code="DETAIL_ERROR",
+                            error_code=error_code,
                             error_message=err.message,
                             retryable=retryable,
                             next_action=f"jobctrl retry enrich {url}" if retryable else None,
@@ -1342,9 +1416,11 @@ def scrape_site_batch(
                             level="error",
                             message=err.message,
                             payload={
-                                "errorCode": "DETAIL_ERROR",
+                                "errorCode": error_code,
                                 "errorMessage": err.message,
                                 "retryable": retryable,
+                                "securityOutcome": cascade_result.get("security_outcome"),
+                                "blockedUrl": cascade_result.get("blocked_url"),
                                 "attemptNumber": failed.attempt_count,
                                 "status": status,
                                 "tier": tier,

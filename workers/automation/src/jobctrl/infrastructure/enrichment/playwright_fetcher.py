@@ -31,7 +31,9 @@ from jobctrl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
+    PublicHttpUrlRouteGuard,
     RunBudgetCounter,
+    validate_public_http_url,
 )
 from jobctrl.infrastructure.network.proxy import ProxyConfig
 
@@ -91,6 +93,18 @@ class PlaywrightDetailPageFetcher:
 
     def fetch(self, url: str) -> DetailPage:
         fetched_at = datetime.now(timezone.utc).isoformat()
+        initial_safety = validate_public_http_url(url)
+        if not initial_safety.allowed:
+            log.warning("PlaywrightDetailPageFetcher: unsafe navigation skipped %s: %s", url, initial_safety.reason)
+            return DetailPage(
+                url=url,
+                final_url=url,
+                page_title="",
+                html="",
+                json_ld=(),
+                status=None,
+                fetched_at=fetched_at,
+            )
         # R10 pre-navigation gate: a robots-deny / budget-exhaustion performs
         # zero navigation and returns an empty page rather than fetching.
         with self._politeness_session().guard(url) as decision:
@@ -127,51 +141,118 @@ class PlaywrightDetailPageFetcher:
             try:
                 context = browser.new_context(user_agent=user_agent)
                 page = context.new_page()
+                route_guard = PublicHttpUrlRouteGuard(page).install()
                 status: int | None = None
                 resp = None
                 try:
-                    resp = page.goto(url, timeout=_NAV_TIMEOUT_MS)
-                    if resp is not None:
-                        status = resp.status
-                    page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
                     try:
-                        page.wait_for_load_state("networkidle", timeout=_IDLE_TIMEOUT_MS)
+                        resp = page.goto(url, timeout=_NAV_TIMEOUT_MS)
+                        if resp is not None:
+                            status = resp.status
+                        page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=_IDLE_TIMEOUT_MS)
+                        except Exception:
+                            # networkidle is best-effort; many pages keep
+                            # a long-poll connection open and that's fine
+                            # for our purposes.
+                            pass
+                    except Exception as exc:
+                        if route_guard.blocked:
+                            log.warning(
+                                "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
+                                route_guard.blocked_url or url,
+                                route_guard.blocked_reason,
+                            )
+                            return DetailPage(
+                                url=url,
+                                final_url=route_guard.blocked_url or url,
+                                page_title="",
+                                html="",
+                                json_ld=(),
+                                status=status,
+                                fetched_at=fetched_at,
+                            )
+                        log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
+                        return DetailPage(
+                            url=url,
+                            final_url=url,
+                            page_title="",
+                            html="",
+                            json_ld=(),
+                            status=status,
+                            fetched_at=fetched_at,
+                        )
+
+                    if route_guard.blocked:
+                        log.warning(
+                            "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
+                            route_guard.blocked_url or url,
+                            route_guard.blocked_reason,
+                        )
+                        return DetailPage(
+                            url=url,
+                            final_url=route_guard.blocked_url or url,
+                            page_title="",
+                            html="",
+                            json_ld=(),
+                            status=status,
+                            fetched_at=fetched_at,
+                        )
+
+                    final_url = page.url
+                    final_safety = validate_public_http_url(final_url)
+                    if not final_safety.allowed:
+                        log.warning(
+                            "PlaywrightDetailPageFetcher: unsafe final URL skipped %s: %s",
+                            final_url,
+                            final_safety.reason,
+                        )
+                        return DetailPage(
+                            url=url,
+                            final_url=final_url,
+                            page_title="",
+                            html="",
+                            json_ld=(),
+                            status=status,
+                            fetched_at=fetched_at,
+                        )
+                    page_title = ""
+                    try:
+                        page_title = page.title() or ""
                     except Exception:
-                        # networkidle is best-effort; many pages keep
-                        # a long-poll connection open and that's fine
-                        # for our purposes.
                         pass
-                except Exception as exc:
-                    log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
+
+                    json_ld_payloads = _collect_json_ld(page)
+                    html = _collect_main_content(page)
+
+                    if route_guard.blocked:
+                        log.warning(
+                            "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
+                            route_guard.blocked_url or url,
+                            route_guard.blocked_reason,
+                        )
+                        return DetailPage(
+                            url=url,
+                            final_url=route_guard.blocked_url or final_url,
+                            page_title="",
+                            html="",
+                            json_ld=(),
+                            status=status,
+                            fetched_at=fetched_at,
+                        )
+
                     return DetailPage(
                         url=url,
-                        final_url=url,
-                        page_title="",
-                        html="",
-                        json_ld=(),
+                        final_url=final_url,
+                        page_title=page_title,
+                        html=html,
+                        json_ld=tuple(json_ld_payloads),
                         status=status,
                         fetched_at=fetched_at,
                     )
-
-                final_url = page.url
-                page_title = ""
-                try:
-                    page_title = page.title() or ""
-                except Exception:
-                    pass
-
-                json_ld_payloads = _collect_json_ld(page)
-                html = _collect_main_content(page)
-
-                return DetailPage(
-                    url=url,
-                    final_url=final_url,
-                    page_title=page_title,
-                    html=html,
-                    json_ld=tuple(json_ld_payloads),
-                    status=status,
-                    fetched_at=fetched_at,
-                )
+                finally:
+                    route_guard.close()
             finally:
                 browser.close()
 

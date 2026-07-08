@@ -12,6 +12,7 @@ from jobctrl.enrichment.detail import (
     _record_posting_snapshot_from_cascade,
     scrape_detail_page,
 )
+from jobctrl.infrastructure.network import PublicUrlDecision
 
 from .politeness_helpers import offline_gateway, offline_session
 
@@ -88,6 +89,7 @@ class _OfflineLlmPort:
 def offline_llm_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     """Swap the LlmPort the detail cascade resolves so Tier-3 construction stays
     offline-deterministic (no keys, no network)."""
+    monkeypatch.setattr(detail, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
     monkeypatch.setattr(detail, "get_llm_adapter", lambda: _OfflineLlmPort())
 
 

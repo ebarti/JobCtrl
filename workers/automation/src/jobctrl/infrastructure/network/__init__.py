@@ -34,6 +34,11 @@ from jobctrl.infrastructure.network.rate_limiter import (
     get_shared_rate_limiter,
 )
 from jobctrl.infrastructure.network.robots import RobotsCache
+from jobctrl.infrastructure.network.url_safety import (
+    PublicHttpUrlRouteGuard,
+    PublicUrlDecision,
+    validate_public_http_url,
+)
 
 __all__ = [
     "ProxyConfig",
@@ -52,4 +57,7 @@ __all__ = [
     "GatewayHttpClient",
     "build_opener",
     "parse_retry_after",
+    "PublicHttpUrlRouteGuard",
+    "PublicUrlDecision",
+    "validate_public_http_url",
 ]

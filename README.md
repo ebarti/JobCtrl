@@ -302,8 +302,11 @@ bounds each run's request budget, and sends an honest `User-Agent`
 or override that identity before crawling real sites via
 `JOBCTRL_CRAWL_UA_PRODUCT` / `JOBCTRL_CRAWL_UA_CONTACT`
 ([Configuration → Crawl Politeness](docs/user/configuration.md#crawl-politeness));
-`jobctrl doctor` prints the effective value. JobCtrl never bypasses login,
-paywall, CAPTCHA, rate-limit, or bot-control gates.
+`jobctrl doctor` prints the effective value. Direct targets, redirects, and
+Playwright subrequests must also be public HTTP(S) destinations; loopback,
+private, link-local, metadata-service, and file URLs are blocked before content
+extraction or LLM enrichment. JobCtrl never bypasses login, paywall, CAPTCHA,
+rate-limit, or bot-control gates.
 
 ### Back Up And Restore
 
