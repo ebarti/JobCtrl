@@ -393,31 +393,101 @@ class _FakeResolver:
 def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
 ) -> None:
-    with _disallow_all_robots() as server:
-        db_path = tmp_path / "jobs.db"
-        conn = init_db(db_path)
-        url = f"{server.base_url}/jobs/linkedin-1"
-        try:
-            _seed_pending(conn, url, "linkedin")
-            sink: list[str] = []
-            monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
-            monkeypatch.setattr(
-                detail, "LinkedInApplyUrlResolver", lambda **kw: _FakeResolver(sink, **kw)
-            )
-            # sync_playwright is only used for the anonymous fallback; the fake
-            # resolver supplies the page here.
-            monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright())
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/1"
+    try:
+        _seed_pending(conn, url, "linkedin")
+        sink: list[str] = []
+        monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
+        monkeypatch.setattr(
+            detail, "LinkedInApplyUrlResolver", lambda **kw: _FakeResolver(sink, **kw)
+        )
+        # sync_playwright is only used for the anonymous fallback; the fake
+        # resolver supplies the page here.
+        monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright())
 
-            stats = scrape_site_batch(conn, "linkedin", [(url, "Role")], gateway=offline_gateway())
+        stats = scrape_site_batch(
+            conn,
+            "linkedin",
+            [(url, "Role")],
+            gateway=offline_gateway(robots=DenyAllRobots()),
+        )
 
-            # Robots disallows the host, yet the owner's authenticated session
-            # navigates (D1/D3 carve-out) — it is NOT folded as robots-blocked.
-            assert sink == [url]
-            assert stats["blocked"] == 0
-            assert _blocked_metric(conn, url) is None
-            assert _enrich_stage(conn, url)["state"] == "succeeded"
-        finally:
-            close_connection(db_path)
+        # Robots disallows the host, yet the owner's authenticated LinkedIn
+        # session navigates (D1/D3 carve-out) — it is NOT folded as robots-blocked.
+        assert sink == [url]
+        assert stats["blocked"] == 0
+        assert _blocked_metric(conn, url) is None
+        assert _enrich_stage(conn, url)["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+def test_non_linkedin_url_with_linkedin_substring_uses_anonymous_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://mail.google.com/mail/u/0/#inbox/linkedin.com/jobs/123"
+    try:
+        _seed_pending(conn, url, "linkedin")
+        authenticated_constructed: list[object] = []
+        anonymous_playwright = _SpyPlaywright()
+
+        def _resolver_factory(**kwargs: object) -> _FakeResolver:
+            authenticated_constructed.append(kwargs)
+            return _FakeResolver([], **kwargs)
+
+        monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
+        monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", _resolver_factory)
+        monkeypatch.setattr(detail, "sync_playwright", lambda: anonymous_playwright)
+
+        stats = scrape_site_batch(conn, "linkedin", [(url, "Role")], gateway=offline_gateway())
+
+        assert authenticated_constructed == []
+        assert anonymous_playwright.goto_calls == [url]
+        assert stats["ok"] == 1
+        assert _enrich_stage(conn, url)["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+def test_mixed_linkedin_batch_does_not_reuse_authenticated_page_for_other_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    linkedin_url = "https://www.linkedin.com/jobs/view/1"
+    non_linkedin_url = "https://mail.google.com/mail/u/0/#inbox/linkedin.com/jobs/123"
+    try:
+        _seed_pending(conn, linkedin_url, "linkedin")
+        _seed_pending(conn, non_linkedin_url, "linkedin")
+        authenticated_gotos: list[str] = []
+        anonymous_playwright = _SpyPlaywright()
+
+        monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
+        monkeypatch.setattr(
+            detail,
+            "LinkedInApplyUrlResolver",
+            lambda **kw: _FakeResolver(authenticated_gotos, **kw),
+        )
+        monkeypatch.setattr(detail, "sync_playwright", lambda: anonymous_playwright)
+
+        stats = scrape_site_batch(
+            conn,
+            "linkedin",
+            [(linkedin_url, "LinkedIn role"), (non_linkedin_url, "Spoofed role")],
+            gateway=offline_gateway(),
+        )
+
+        assert authenticated_gotos == [linkedin_url]
+        assert anonymous_playwright.goto_calls == [non_linkedin_url]
+        assert stats["ok"] == 2
+        assert _enrich_stage(conn, linkedin_url)["state"] == "succeeded"
+        assert _enrich_stage(conn, non_linkedin_url)["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
 
 
 def test_owner_authenticated_robots_allows_but_budget_still_applies() -> None:
