@@ -294,42 +294,6 @@ export function StructuredProfileEditor({
     });
   };
 
-  const addAchievementEvidence = (entryIndex: number, entryId: string) => {
-    updateProfileDraft((draft) => {
-      const path = `resume.experience_entries.${entryIndex}.achievement_evidence`;
-      const items = recordArrayAt(draft, path);
-      const defaultId = entryId ? `ev_${entryId}_${items.length + 1}` : "";
-      setPathValue(draft, path, [
-        ...items,
-        {
-          id: defaultId,
-          source_text: "",
-          scope: "",
-          action: "",
-          tools: [],
-          metrics: [],
-          outcome: "",
-          seniority_signal: "",
-          evidence_strength: "supported",
-          claim_confidence: 0,
-          user_confirmed: false,
-          tags: [],
-        },
-      ]);
-    });
-  };
-
-  const removeAchievementEvidence = (entryIndex: number, evidenceIndex: number) => {
-    updateProfileDraft((draft) => {
-      const path = `resume.experience_entries.${entryIndex}.achievement_evidence`;
-      setPathValue(
-        draft,
-        path,
-        recordArrayAt(draft, path).filter((_, index) => index !== evidenceIndex),
-      );
-    });
-  };
-
   const removeRepeatItem = (path: string, index: number) => {
     updateProfileDraft((draft) => {
       const items = recordArrayAt(draft, path);
@@ -1166,10 +1130,6 @@ export function StructuredProfileEditor({
           {experienceEntries.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
             const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
-            const evidenceItems = recordArrayAt(
-              profile,
-              `resume.experience_entries.${index}.achievement_evidence`,
-            );
             const requiredBullets = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
@@ -1253,96 +1213,6 @@ export function StructuredProfileEditor({
                     add bullet
                   </button>
                 </div>
-                <fieldset className="achievement-evidence-list">
-                  <legend>Achievement evidence</legend>
-                  {evidenceItems.map((_, evidenceIndex) => (
-                    <div
-                      className="achievement-evidence-card"
-                      key={`${entryId || "experience"}-evidence-${evidenceIndex}`}
-                    >
-                      <div className="repeat-hd">
-                        <b>Evidence {evidenceIndex + 1}</b>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          aria-label={`Remove achievement evidence ${evidenceIndex + 1}`}
-                          title="Remove achievement evidence"
-                          onClick={() => removeAchievementEvidence(index, evidenceIndex)}
-                        >
-                          <IconTrash size={14} aria-hidden="true" />
-                        </button>
-                      </div>
-                      <div className="field-grid">
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.id`,
-                          "Evidence ID",
-                        )}
-                        {selectField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.evidence_strength`,
-                          "Evidence strength",
-                          [
-                            ["verified", "Verified"],
-                            ["supported", "Supported"],
-                            ["inferred", "Inferred"],
-                            ["draft", "Draft"],
-                          ],
-                        )}
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.scope`,
-                          "Scope",
-                        )}
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.action`,
-                          "Action",
-                        )}
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.outcome`,
-                          "Outcome",
-                        )}
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.seniority_signal`,
-                          "Seniority signal",
-                        )}
-                        {textField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.claim_confidence`,
-                          "Claim confidence",
-                          "number",
-                          { min: 0, max: 1, step: 0.05 },
-                        )}
-                        {checkboxField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.user_confirmed`,
-                          "User confirmed",
-                        )}
-                      </div>
-                      <div className="field-grid one">
-                        {textareaField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.source_text`,
-                          "Source text",
-                        )}
-                        {listField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.tools`,
-                          "Tools",
-                        )}
-                        {listField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.metrics`,
-                          "Metrics",
-                        )}
-                        {listField(
-                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.tags`,
-                          "Tags",
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <button
-                    className="tab add-bullet"
-                    type="button"
-                    onClick={() => addAchievementEvidence(index, entryId)}
-                  >
-                    <IconPlus size={14} aria-hidden="true" />
-                    add evidence
-                  </button>
-                </fieldset>
               </div>
             );
           })}

@@ -31,6 +31,7 @@ from jobctrl.infrastructure.materials.resume_style import (
     DEFAULT_RESUME_TEMPLATE_TEXT,
     normalize_resume_style,
 )
+from jobctrl.resume_profile import get_achievement_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +334,7 @@ class SqliteProfileRepository:
             self._insert_children(str(tenant_id), profile_id, profile)
 
     def _insert_children(self, tenant_id: str, profile_id: str, profile: Profile) -> None:
+        achievement_evidence_by_entry = _achievement_evidence_by_entry(profile)
         for index, entry in enumerate(profile.experience_entries):
             self._conn.execute(
                 """
@@ -352,7 +354,7 @@ class SqliteProfileRepository:
                     """,
                     (tenant_id, profile_id, entry.id, bullet_index, bullet),
                 )
-            for evidence_index, evidence in enumerate(entry.achievement_evidence):
+            for evidence_index, evidence in enumerate(achievement_evidence_by_entry.get(entry.id, ())):
                 self._conn.execute(
                     """
                     INSERT INTO candidate_profile_achievement_evidence (
@@ -367,18 +369,18 @@ class SqliteProfileRepository:
                         profile_id,
                         entry.id,
                         evidence_index,
-                        evidence.id,
-                        evidence.source_text,
-                        evidence.scope,
-                        evidence.action,
-                        _json_array(evidence.tools),
-                        _json_array(evidence.metrics),
-                        evidence.outcome,
-                        evidence.seniority_signal,
-                        evidence.evidence_strength,
-                        evidence.claim_confidence,
-                        1 if evidence.user_confirmed else 0,
-                        _json_array(evidence.tags),
+                        str(evidence.get("id", "")),
+                        str(evidence.get("source_text", "")),
+                        str(evidence.get("scope", "")),
+                        str(evidence.get("action", "")),
+                        _json_array(_json_str_list(evidence.get("tools"))),
+                        _json_array(_json_str_list(evidence.get("metrics"))),
+                        str(evidence.get("outcome", "")),
+                        str(evidence.get("seniority_signal", "")),
+                        str(evidence.get("evidence_strength", "supported")),
+                        _bounded_float(evidence.get("claim_confidence"), 0.0, 0.0, 1.0),
+                        1 if bool(evidence.get("user_confirmed", False)) else 0,
+                        _json_array(_json_str_list(evidence.get("tags"))),
                     ),
                 )
 
@@ -919,6 +921,16 @@ def _style_from_row(row: sqlite3.Row) -> dict[str, Any]:
             "body_alignment": row["resume_style_body_alignment"],
         }
     )
+
+
+def _achievement_evidence_by_entry(profile: Profile) -> dict[str, list[dict[str, Any]]]:
+    by_entry: dict[str, list[dict[str, Any]]] = {}
+    for item in get_achievement_evidence(profile.to_dict()):
+        entry_id = str(item.get("experience_entry_id", "")).strip()
+        if not entry_id:
+            continue
+        by_entry.setdefault(entry_id, []).append(item)
+    return by_entry
 
 
 def _record(value: Any) -> dict[str, Any]:

@@ -118,6 +118,7 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_experience_entries").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_experience_bullets").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_skill_items").fetchone()[0] == 2
     root = conn.execute(
         "SELECT writing_tone, max_experience_bullets FROM candidate_profiles"
@@ -127,7 +128,17 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
 
     loaded = repo.load(LOCAL_TENANT)
     assert loaded is not None
-    assert loaded.to_dict() == Profile.from_dict(LOCAL_TENANT, _valid_profile()).to_dict()
+    loaded_entry = loaded.to_dict()["resume"]["experience_entries"][0]
+    assert loaded_entry["bullets"] == ["Built APIs.", "Reduced incidents 40%."]
+    assert [item["id"] for item in loaded_entry["achievement_evidence"]] == [
+        "role_1_bullet_1",
+        "role_1_bullet_2",
+    ]
+    assert [item["source_text"] for item in loaded_entry["achievement_evidence"]] == [
+        "Built APIs.",
+        "Reduced incidents 40%.",
+    ]
+    assert loaded_entry["achievement_evidence"][1]["metrics"] == ["40%"]
     assert [event.event_type for event in events] == ["ProfileUpdated"]
 
 

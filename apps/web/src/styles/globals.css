@@ -1824,17 +1824,17 @@ input[type="radio"] {
 
 .resume-format-toolbar {
   display: flex;
+  position: relative;
   flex: 1 1 520px;
   min-width: 360px;
   align-items: center;
   gap: 8px;
 }
 
-.resume-link-control {
+.resume-link-popover-anchor {
   display: inline-flex;
   position: relative;
   align-items: center;
-  gap: 6px;
 }
 
 .resume-format-button-group {
@@ -1862,7 +1862,8 @@ input[type="radio"] {
 }
 
 .resume-format-button:hover:not(:disabled),
-.resume-format-button:focus-visible {
+.resume-format-button:focus-visible,
+.resume-format-button.active {
   background: rgb(255 255 255 / 13%);
 }
 
@@ -1905,16 +1906,34 @@ input[type="radio"] {
   inline-size: 64px;
 }
 
-.resume-link-control .resume-format-select input {
-  inline-size: min(24vw, 180px);
-  min-inline-size: 116px;
+.resume-link-popover {
+  display: grid;
+  position: absolute;
+  z-index: 5;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-start: 0;
+  grid-template-columns: minmax(190px, min(46vw, 260px)) auto;
+  align-items: end;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+  background: #242424;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 35%);
+}
+
+.resume-link-popover .resume-format-select {
+  display: grid;
+  gap: 4px;
+}
+
+.resume-link-popover .resume-format-select input {
+  inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .resume-link-error {
-  position: absolute;
-  inset-block-start: calc(100% + 4px);
-  inset-inline-start: 0;
-  z-index: 2;
+  grid-column: 1 / -1;
   max-inline-size: 280px;
   border: 1px solid rgb(248 113 113 / 50%);
   border-radius: 5px;

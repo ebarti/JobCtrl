@@ -49,6 +49,27 @@ const DEFAULT_STYLE = {
 };
 
 const DEFAULT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
+const LEGACY_BULLET_METRIC_PATTERN =
+  /(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))/gi;
+const LEGACY_BULLET_SENIORITY_TERMS = [
+  "own",
+  "owned",
+  "ownership",
+  "scope",
+  "influence",
+  "influenced",
+  "cross-team",
+  "stakeholder",
+  "stakeholders",
+  "led",
+  "lead",
+  "mentor",
+  "mentored",
+  "architect",
+  "architected",
+  "strategy",
+  "technical leadership",
+] as const;
 
 const SUPPORTED_PROFILE_TOP_LEVEL_KEYS = new Set([
   "personal",
@@ -389,6 +410,8 @@ function ensureCandidateProfileColumns(db: SqliteDatabase): void {
       db.exec(`ALTER TABLE candidate_profiles ADD COLUMN ${column} ${definition}`);
     }
   }
+
+  backfillAchievementEvidenceFromBullets(db);
 }
 
 export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
@@ -534,7 +557,7 @@ function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
     asTextArray(entry.bullets).forEach((bullet, bulletIndex) => {
       insertBullet.run(TENANT_ID, PROFILE_ID, entryId, bulletIndex, bullet);
     });
-    asRecordArray(entry.achievement_evidence).forEach((evidence, evidenceIndex) => {
+    achievementEvidenceForEntry(entry, entryId).forEach((evidence, evidenceIndex) => {
       insertEvidence.run(
         TENANT_ID,
         PROFILE_ID,
@@ -623,6 +646,106 @@ function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
   asTextArray(record(profile.resume_constraints).real_metrics).forEach((metric, index) => {
     insertMetric.run(TENANT_ID, PROFILE_ID, index, metric);
   });
+}
+
+function achievementEvidenceForEntry(entry: Record<string, unknown>, entryId: string): Array<Record<string, unknown>> {
+  const explicitEvidence = asRecordArray(entry.achievement_evidence);
+  if (explicitEvidence.length > 0 || !entryId) {
+    return explicitEvidence;
+  }
+  const scope = [text(entry.title), text(entry.company)].filter(Boolean).join(" ");
+  return asTextArray(entry.bullets).map((bullet, index) => {
+    const sourceText = bullet.trim();
+    const normalized = [text(entry.title), text(entry.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
+    return {
+      id: legacyBulletEvidenceId(entryId, index + 1),
+      source_text: sourceText,
+      scope,
+      action: sourceText,
+      tools: [],
+      metrics: extractedLegacyBulletMetrics(sourceText),
+      outcome: sourceText,
+      seniority_signal: LEGACY_BULLET_SENIORITY_TERMS.some((term) => normalized.includes(term))
+        ? "resume bullet contains seniority signal"
+        : "",
+      evidence_strength: "supported",
+      claim_confidence: 0.8,
+      user_confirmed: true,
+      tags: [],
+    };
+  });
+}
+
+function backfillAchievementEvidenceFromBullets(db: SqliteDatabase): void {
+  const rows = db.prepare(`
+    SELECT entries.tenant_id, entries.profile_id, entries.entry_id, entries.title, entries.company,
+           bullets.bullet_index, bullets.bullet_text
+    FROM candidate_profile_experience_entries AS entries
+    JOIN candidate_profile_experience_bullets AS bullets
+      ON bullets.tenant_id = entries.tenant_id
+     AND bullets.profile_id = entries.profile_id
+     AND bullets.entry_id = entries.entry_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM candidate_profile_achievement_evidence AS evidence
+      WHERE evidence.tenant_id = entries.tenant_id
+        AND evidence.profile_id = entries.profile_id
+        AND evidence.entry_id = entries.entry_id
+    )
+    ORDER BY entries.tenant_id, entries.profile_id, entries.position_index, bullets.bullet_index
+  `).all() as Array<Record<string, unknown>>;
+  if (rows.length === 0) {
+    return;
+  }
+  const insertEvidence = db.prepare(`
+    INSERT INTO candidate_profile_achievement_evidence (
+      tenant_id, profile_id, entry_id, evidence_index,
+      evidence_id, source_text, scope, action, tools_json,
+      metrics_json, outcome, seniority_signal, evidence_strength,
+      claim_confidence, user_confirmed, tags_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const transaction = db.transaction(() => {
+    for (const row of rows) {
+      const entryId = text(row.entry_id);
+      const sourceText = text(row.bullet_text).trim();
+      const scope = [text(row.title), text(row.company)].filter(Boolean).join(" ");
+      const normalized = [text(row.title), text(row.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
+      const bulletIndex = Number(row.bullet_index ?? 0);
+      insertEvidence.run(
+        text(row.tenant_id, TENANT_ID),
+        text(row.profile_id, PROFILE_ID),
+        entryId,
+        bulletIndex,
+        legacyBulletEvidenceId(entryId, bulletIndex + 1),
+        sourceText,
+        scope,
+        sourceText,
+        "[]",
+        JSON.stringify(extractedLegacyBulletMetrics(sourceText)),
+        sourceText,
+        LEGACY_BULLET_SENIORITY_TERMS.some((term) => normalized.includes(term))
+          ? "resume bullet contains seniority signal"
+          : "",
+        "supported",
+        0.8,
+        1,
+        "[]",
+      );
+    }
+  });
+  transaction();
+}
+
+function legacyBulletEvidenceId(entryId: string, bulletIndex: number): string {
+  const safeEntryId = entryId.replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "experience";
+  return `${safeEntryId}_bullet_${Math.max(1, Math.trunc(bulletIndex))}`;
+}
+
+function extractedLegacyBulletMetrics(sourceText: string): string[] {
+  return Array.from(sourceText.matchAll(LEGACY_BULLET_METRIC_PATTERN), (match) =>
+    match[0].trim().replace(/\s+/g, " "),
+  );
 }
 
 function insertRequiredIds(db: SqliteDatabase, table: string, column: string, values: string[]): void {

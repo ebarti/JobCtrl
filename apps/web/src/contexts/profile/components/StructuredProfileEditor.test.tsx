@@ -215,29 +215,42 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeChecked();
   });
 
-  it("adds, edits, and removes achievement evidence", async () => {
-    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
-    render(<StatefulEditor onLatestProfile={(value) => { latestProfile = value; }} />);
+  it("preserves extracted achievement evidence without exposing it as profile input", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.experience_entries[0].achievement_evidence = [
+      {
+        id: "exp-1_bullet_1",
+        source_text: "Scaled the platform 10x.",
+        scope: "Director of Platform Initech",
+        action: "Scaled the platform 10x.",
+        tools: [],
+        metrics: ["10x"],
+        outcome: "Scaled the platform 10x.",
+        seniority_signal: "",
+        evidence_strength: "supported",
+        claim_confidence: 0.8,
+        user_confirmed: true,
+        tags: [],
+      },
+    ];
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
 
-    fireEvent.click(screen.getByRole("button", { name: "add evidence" }));
-    expect(
-      JSON.parse(latestProfile).resume.experience_entries[0].achievement_evidence[0],
-    ).toMatchObject({
-      id: "ev_exp-1_1",
-      evidence_strength: "supported",
-      user_confirmed: false,
-    });
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
 
-    fireEvent.change(await screen.findByLabelText("Source text"), {
-      target: { value: "Reduced incident response time 35%." },
-    });
-    expect(
-      JSON.parse(latestProfile).resume.experience_entries[0].achievement_evidence[0]
-        .source_text,
-    ).toBe("Reduced incident response time 35%.");
+    expect(screen.queryByRole("group", { name: "Achievement evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Proof points for generated claims" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add evidence/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add proof point/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Evidence ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Source text")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove achievement evidence 1" }));
-    expect(JSON.parse(latestProfile).resume.experience_entries[0].achievement_evidence).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Director of Reliability" } });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.experience_entries[0].title).toBe("Director of Reliability");
+    expect(profile.resume.experience_entries[0].achievement_evidence).toEqual(
+      initialProfile.resume.experience_entries[0].achievement_evidence,
+    );
   });
 
   it("hides state/province for non-US profiles", () => {

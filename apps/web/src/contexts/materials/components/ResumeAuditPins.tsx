@@ -16,10 +16,12 @@ import {
   IconAlignLeft,
   IconAlignRight,
   IconBold,
+  IconCheck,
   IconItalic,
   IconLink,
   IconUnlink,
   IconUnderline,
+  IconX,
 } from "@tabler/icons-react";
 import type { Descendant, TElement, Value } from "platejs";
 import {
@@ -45,6 +47,7 @@ import {
   type Dispatch,
   type FormEvent,
   type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type SetStateAction,
 } from "react";
@@ -2020,6 +2023,12 @@ function keepEditorSelection(event: MouseEvent<HTMLButtonElement>): void {
   event.preventDefault();
 }
 
+function elementContainsNode(element: Element, node: Node | null | undefined): boolean {
+  if (!node) return false;
+  if (node instanceof Element) return element.contains(node);
+  return node.parentElement ? element.contains(node.parentElement) : false;
+}
+
 function ResumeEditorToolbarControls({
   disabled,
   onAlign,
@@ -2041,13 +2050,66 @@ function ResumeEditorToolbarControls({
   readonly onToggleItalic: () => void;
   readonly onToggleUnderline: () => void;
 }): JSX.Element {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const linkInputRef = useRef<HTMLInputElement | null>(null);
   const fontFamilyId = useId();
   const fontSizeId = useId();
   const linkInputId = useId();
   const linkErrorId = useId();
+  const linkPopoverId = useId();
   const [fontSizeScale, setFontSizeScale] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+  const openLinkPopover = useCallback(() => {
+    if (disabled) return;
+    setLinkError(null);
+    setLinkPopoverOpen(true);
+  }, [disabled]);
+  const closeLinkPopover = useCallback(() => {
+    setLinkError(null);
+    setLinkPopoverOpen(false);
+  }, []);
+  useEffect(() => {
+    if (!linkPopoverOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      linkInputRef.current?.focus();
+      linkInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [linkPopoverOpen]);
+  useEffect(() => {
+    if (!linkPopoverOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const toolbar = toolbarRef.current;
+      if (!toolbar || !(event.target instanceof Node) || toolbar.contains(event.target)) return;
+      closeLinkPopover();
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [closeLinkPopover, linkPopoverOpen]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (disabled || event.defaultPrevented || event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) {
+        return;
+      }
+      const toolbar = toolbarRef.current;
+      const editor = toolbar?.closest(".resume-plate-editor");
+      if (!toolbar || !editor) return;
+      const activeElement = document.activeElement;
+      const selection = document.getSelection();
+      const activeWithinEditor = activeElement instanceof Element && editor.contains(activeElement);
+      const selectionWithinEditor =
+        Boolean(selection?.rangeCount) &&
+        (elementContainsNode(editor, selection?.anchorNode) || elementContainsNode(editor, selection?.focusNode));
+      const selectedLineWithinEditor = Boolean(editor.querySelector(".jobctrl-selected-line"));
+      if (!activeWithinEditor && !selectionWithinEditor && !selectedLineWithinEditor) return;
+      event.preventDefault();
+      openLinkPopover();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [disabled, openLinkPopover]);
   const applyFontSizeScale = useCallback(
     (rawValue: string) => {
       const value = Number(rawValue);
@@ -2086,11 +2148,26 @@ function ResumeEditorToolbarControls({
       setLinkError(null);
       setLinkUrl(href);
       onSetLink(href);
+      setLinkPopoverOpen(false);
     },
     [linkUrl, onSetLink],
   );
+  const handleLinkPopoverKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLFormElement>) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeLinkPopover();
+    },
+    [closeLinkPopover],
+  );
   return (
-    <div className="resume-format-toolbar" aria-label="Resume formatting controls" data-resume-editor-chrome="true">
+    <div
+      ref={toolbarRef}
+      className="resume-format-toolbar"
+      aria-label="Resume formatting controls"
+      data-resume-editor-chrome="true"
+    >
       <div className="resume-format-button-group" aria-label="Text style">
         <button
           aria-label="Bold"
@@ -2126,33 +2203,22 @@ function ResumeEditorToolbarControls({
           <IconUnderline aria-hidden="true" size={16} stroke={2.2} />
         </button>
       </div>
-      <form className="resume-link-control" aria-label="Hyperlink" onSubmit={applyLink}>
-        <label className="resume-format-select" htmlFor={linkInputId}>
-          <span>Link</span>
-          <input
-            aria-describedby={linkError ? linkErrorId : undefined}
-            aria-invalid={linkError ? "true" : undefined}
-            aria-label="Link URL"
-            disabled={disabled}
-            id={linkInputId}
-            inputMode="url"
-            placeholder="example.com"
-            type="text"
-            value={linkUrl}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => {
-              setLinkUrl(event.currentTarget.value);
-              setLinkError(null);
-            }}
-          />
-        </label>
+      <div className="resume-link-popover-anchor">
         <div className="resume-format-button-group" aria-label="Hyperlink actions">
           <button
-            aria-label="Apply link"
-            className="resume-format-button"
-            disabled={disabled || !linkUrl.trim()}
-            title="Apply link to selected text or selected resume line"
-            type="submit"
-            onMouseDown={keepEditorSelection}
+            aria-controls={linkPopoverOpen ? linkPopoverId : undefined}
+            aria-expanded={linkPopoverOpen}
+            aria-keyshortcuts="Meta+K Control+K"
+            aria-label="Insert link"
+            className={`resume-format-button${linkPopoverOpen ? " active" : ""}`}
+            disabled={disabled}
+            title="Insert link (⌘K)"
+            type="button"
+            onClick={openLinkPopover}
+            onMouseDown={(event) => {
+              keepEditorSelection(event);
+              openLinkPopover();
+            }}
           >
             <IconLink aria-hidden="true" size={16} stroke={2.2} />
           </button>
@@ -2163,7 +2229,7 @@ function ResumeEditorToolbarControls({
             title="Remove link from selected text or selected resume line"
             type="button"
             onClick={() => {
-              setLinkError(null);
+              closeLinkPopover();
               onClearLink();
             }}
             onMouseDown={keepEditorSelection}
@@ -2171,12 +2237,65 @@ function ResumeEditorToolbarControls({
             <IconUnlink aria-hidden="true" size={16} stroke={2.2} />
           </button>
         </div>
-        {linkError ? (
-          <span className="resume-link-error" id={linkErrorId} role="status">
-            {linkError}
-          </span>
+        {linkPopoverOpen ? (
+          <form
+            id={linkPopoverId}
+            className="resume-link-popover"
+            aria-label="Insert link"
+            role="dialog"
+            onKeyDown={handleLinkPopoverKeyDown}
+            onSubmit={applyLink}
+          >
+            <label className="resume-format-select" htmlFor={linkInputId}>
+              <span>URL</span>
+              <input
+                ref={linkInputRef}
+                aria-describedby={linkError ? linkErrorId : undefined}
+                aria-invalid={linkError ? "true" : undefined}
+                aria-label="Link URL"
+                disabled={disabled}
+                id={linkInputId}
+                inputMode="url"
+                placeholder="example.com"
+                type="text"
+                value={linkUrl}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                  setLinkUrl(event.currentTarget.value);
+                  setLinkError(null);
+                }}
+              />
+            </label>
+            <div className="resume-format-button-group" aria-label="Link popover actions">
+              <button
+                aria-label="Apply link"
+                className="resume-format-button"
+                disabled={disabled || !linkUrl.trim()}
+                title="Apply link"
+                type="submit"
+                onMouseDown={keepEditorSelection}
+              >
+                <IconCheck aria-hidden="true" size={16} stroke={2.2} />
+              </button>
+              <button
+                aria-label="Cancel link"
+                className="resume-format-button"
+                disabled={disabled}
+                title="Cancel"
+                type="button"
+                onClick={closeLinkPopover}
+                onMouseDown={keepEditorSelection}
+              >
+                <IconX aria-hidden="true" size={16} stroke={2.2} />
+              </button>
+            </div>
+            {linkError ? (
+              <span className="resume-link-error" id={linkErrorId} role="status">
+                {linkError}
+              </span>
+            ) : null}
+          </form>
         ) : null}
-      </form>
+      </div>
       <label className="resume-format-select" htmlFor={fontFamilyId}>
         <span>Font</span>
         <select
