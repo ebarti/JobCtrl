@@ -8,7 +8,7 @@ Three use cases live under ``jobctrl.domain.materials.use_cases``:
 
 These tests exercise every code path with fakes for the ``LlmPort``,
 ``MaterialsRepository`` and ``PdfRendererPort`` so they run fast and
-never touch sqlite or pdflatex.
+never touch sqlite or browser PDF rendering.
 """
 
 from __future__ import annotations

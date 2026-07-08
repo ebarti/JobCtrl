@@ -7,7 +7,6 @@ See ddd-target.md §5.5. This package wires the domain ports defined in
     to ``job_materials`` + ``job_materials_artifacts``.
   * :class:`HtmlResumePdfAdapter` — wraps Playwright headless Chromium for
     default HTML/CSS resume rendering.
-  * :class:`LatexPdfAdapter` — wraps ``pdflatex`` for legacy resume rendering.
   * :class:`PlaywrightHtmlPdfAdapter` — wraps Playwright headless Chromium
     for cover-letter rendering.
 """
@@ -21,7 +20,6 @@ from jobctrl.infrastructure.materials.employer_analysis_repository import (
     SqliteEmployerAnalysisRepository,
 )
 from jobctrl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter
-from jobctrl.infrastructure.materials.latex_pdf import LatexPdfAdapter
 from jobctrl.infrastructure.materials.playwright_html_pdf import (
     PlaywrightHtmlPdfAdapter,
 )
@@ -34,7 +32,6 @@ from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
 __all__ = [
     "HtmlResumePdfAdapter",
-    "LatexPdfAdapter",
     "MaterialsGenerationConflict",
     "PlaywrightHtmlPdfAdapter",
     "SqliteBulletProvenanceRepository",

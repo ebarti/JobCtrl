@@ -11,7 +11,7 @@ Invariants:
                          (or ``rejected``); approved entries become
                          ``superseded`` when a newer generation lands.
   ``RenderFormat``     — closed enumeration of how an artifact's bytes
-                         were produced (LaTeX→PDF, HTML→PDF, plain text).
+                         were produced (historical PDF, HTML→PDF, plain text).
   ``ValidationResult`` — passed/failed plus error/warning lists from the
                          pure :class:`ContentValidator` domain service.
                          ``passed`` is recomputed from ``errors`` so the
@@ -74,7 +74,7 @@ class ArtifactStatus(str, Enum):
 class RenderFormat(str, Enum):
     """How an artifact's bytes were produced.
 
-    ``LATEX_PDF`` — moderncv LaTeX template compiled with pdflatex.
+    ``LATEX_PDF`` — historical resume PDF rows produced by the retired renderer.
     ``HTML_PDF``  — Playwright headless Chromium prints HTML to PDF.
     ``TEXT``      — plain UTF-8 text, no rendering pass.
     """

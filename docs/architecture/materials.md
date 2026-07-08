@@ -239,7 +239,7 @@ truthfulness pipeline.
 
 An explicit voice pass runs **after** the selected candidate is chosen and
 **before** the final audit, so the audited text — provenance and keyword coverage
-— equals the rendered/PDF text both renderers consume. Grounding is the floor:
+— equals the rendered/PDF text the HTML renderer consumes. Grounding is the floor:
 the voice pass rewords, it never invents, and the deterministic gates are re-run
 against the voiced text.
 
@@ -290,8 +290,8 @@ against the voiced text.
 - **Final canonical text** is the single voiced payload: `TailorResumeUseCase`
   assembles the plain-text resume from it, the provenance rows anchor to it, and
   the active resume PDF renderer consumes `TailorOutcome.final_payload`. The
-  default renderer is `HtmlResumePdfAdapter` (HTML/CSS + Playwright);
-  `LatexPdfAdapter` remains available only through explicit local configuration.
+  renderer is `HtmlResumePdfAdapter` (HTML/CSS + Playwright). Historical
+  `latex_pdf` rows are compatibility/migration metadata only.
   A round-trip fixture asserts the audited bullet text equals the rendered text.
 - **Persistence + read path**: the generation-time coverage and the voice-pass
   audit ride on the `BulletProvenanceSet` (denormalised onto the

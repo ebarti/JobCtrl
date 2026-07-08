@@ -26,29 +26,7 @@ interface QaJobSeed {
 
 const QA_NOW = "2026-05-04T12:00:00+00:00";
 const QA_PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
-const QA_RESUME_TEMPLATE = String.raw`\documentclass[11pt,a4paper,sans]{moderncv}
-
-\moderncvstyle{banking}
-\moderncvcolor{black}
-
-\usepackage[utf8]{inputenc}
-\usepackage[english]{babel}
-\usepackage[scale=0.85]{geometry}
-\usepackage{enumitem}
-
-\setlength{\hintscolumnwidth}{3cm}
-
-{{ personal_data }}
-
-\begin{document}
-
-\makecvtitle
-\vspace*{-1.5em}
-
-{{ resume_body }}
-
-\end{document}
-`;
+const QA_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 
 const QA_PROFILE = {
   schema_version: 2,

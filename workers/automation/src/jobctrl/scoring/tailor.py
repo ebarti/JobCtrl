@@ -56,7 +56,6 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.infrastructure.materials import (
     HtmlResumePdfAdapter,
-    LatexPdfAdapter,
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
@@ -218,14 +217,6 @@ def _build_use_case(
 
 
 def _build_pdf_renderer() -> PdfRendererPort:
-    renderer = os.environ.get("JOBCTRL_RESUME_RENDERER", "html_pdf").strip().lower()
-    if renderer in {"latex", "latex_pdf", "pdflatex"}:
-        return LatexPdfAdapter()
-    if renderer and renderer not in {"html", "html_pdf", "playwright", "playwright_html"}:
-        log.warning(
-            "Unsupported JOBCTRL_RESUME_RENDERER=%r; using html_pdf resume renderer",
-            renderer,
-        )
     return HtmlResumePdfAdapter()
 
 
