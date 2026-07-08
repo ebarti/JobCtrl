@@ -60,3 +60,25 @@ export const ValueOnly: Story = {
     className: "w-[240px]",
   },
 };
+
+export const ValueTone: Story = {
+  args: {
+    label: "Failures",
+    value: "3",
+    valueTone: "down",
+    delta: "needs retry",
+    className: "w-[240px]",
+  },
+};
+
+export const AsLink: Story = {
+  args: {
+    asChild: true,
+    label: "Ready",
+    value: "12",
+    valueTone: "up",
+    delta: "ready queue",
+    className: "w-[240px]",
+    children: <a href="#ready" />,
+  },
+};

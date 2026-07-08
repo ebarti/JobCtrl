@@ -35,4 +35,29 @@ describe("<StatCard>", () => {
     expect(screen.queryByText(/vs/)).not.toBeInTheDocument();
     expect(container.querySelector(".text-success")).toBeNull();
   });
+
+  it("renders the delta muted when no delta tone is set", () => {
+    render(<StatCard label="Ready" value="4" delta="ready queue" />);
+
+    expect(screen.getByText("ready queue")).toHaveClass("text-muted-foreground");
+  });
+
+  it("applies the value tone class", () => {
+    render(<StatCard label="Failures" value="3" valueTone="down" />);
+
+    expect(screen.getByText("3")).toHaveClass("text-destructive");
+  });
+
+  it("renders as the slotted element when asChild is set", () => {
+    render(
+      <StatCard asChild label="Jobs" value="42" delta="+2 today">
+        <a href="/jobs" />
+      </StatCard>,
+    );
+
+    const link = screen.getByRole("link", { name: /^Jobs/i });
+    expect(link).toHaveAttribute("href", "/jobs");
+    expect(link).toHaveTextContent("42");
+    expect(link).toHaveTextContent("+2 today");
+  });
 });

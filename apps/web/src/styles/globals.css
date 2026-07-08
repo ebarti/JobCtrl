@@ -435,60 +435,19 @@ input[type="radio"] {
   margin-bottom: 18px;
 }
 
-.kpi {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-  box-shadow: var(--shadow-panel);
-  color: inherit;
-  cursor: pointer;
-  padding: 16px;
-  text-align: left;
-  text-decoration: none;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.kpi:hover {
-  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
-}
-
-.kpi-lbl {
-  color: var(--muted-foreground);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.kpi-val {
-  font-size: 28px;
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
-
-.kpi-delta,
 .meta,
 .muted {
   color: var(--muted-foreground);
 }
 
-.tone-alert .kpi-val,
 .danger {
   color: var(--destructive);
 }
 
-.tone-warn .kpi-val,
 .warn {
   color: var(--warning);
 }
 
-.tone-ok .kpi-val,
 .ok {
   color: var(--success);
 }

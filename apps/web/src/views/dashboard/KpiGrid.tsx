@@ -2,9 +2,19 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
+import { StatCard, type StatTone } from "../../shared/ui/stat-card.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready" | "applied";
 type KpiTone = "alert" | "warn" | "ok";
+
+const VALUE_TONE: Record<KpiTone, StatTone> = {
+  alert: "down",
+  warn: "warn",
+  ok: "up",
+};
+
+const KPI_HOVER =
+  "transition-colors hover:border-[color-mix(in_oklch,var(--primary)_45%,var(--border))]";
 
 const KPI_BASE: JobsSearch = {
   q: "",
@@ -111,29 +121,33 @@ export function KpiGrid({ summary }: KpiGridProps) {
       {ITEMS.map(({ label, key, caption, target, tone }) => {
         const search = kpiSearchFor(target);
         return (
-          <a
+          <StatCard
             key={label}
-            className={`kpi ${tone ? `tone-${tone}` : ""}`}
-            href={kpiHrefFor(target)}
-            onClick={(event) => {
-              if (
-                event.defaultPrevented
-                || event.button !== 0
-                || event.metaKey
-                || event.altKey
-                || event.ctrlKey
-                || event.shiftKey
-              ) {
-                return;
-              }
-              event.preventDefault();
-              void navigate({ to: "/jobs", search });
-            }}
+            asChild
+            className={KPI_HOVER}
+            label={label}
+            value={summary.totals[key]}
+            valueTone={tone ? VALUE_TONE[tone] : undefined}
+            delta={caption(summary)}
           >
-            <span className="kpi-lbl">{label}</span>
-            <span className="kpi-val">{summary.totals[key]}</span>
-            <span className="kpi-delta">{caption(summary)}</span>
-          </a>
+            <a
+              href={kpiHrefFor(target)}
+              onClick={(event) => {
+                if (
+                  event.defaultPrevented
+                  || event.button !== 0
+                  || event.metaKey
+                  || event.altKey
+                  || event.ctrlKey
+                  || event.shiftKey
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                void navigate({ to: "/jobs", search });
+              }}
+            />
+          </StatCard>
         );
       })}
     </section>
@@ -144,11 +158,7 @@ export function KpiSkeleton() {
   return (
     <section className="kpis">
       {ITEMS.map(({ label }) => (
-        <div className="kpi" key={label}>
-          <span className="kpi-lbl">{label}</span>
-          <span className="kpi-val">-</span>
-          <span className="kpi-delta">waiting for API</span>
-        </div>
+        <StatCard key={label} label={label} value="-" delta="waiting for API" />
       ))}
     </section>
   );
