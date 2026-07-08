@@ -352,6 +352,11 @@ test("shell chrome collapses navigation into a sheet on the mobile viewport", as
   await expect(navSheet).toBeVisible();
   await expect(navSheet.getByRole("link", { name: "Jobs" })).toBeVisible();
   await expect(navSheet.getByRole("link", { name: "Apply review" })).toBeVisible();
+  // The mobile sheet must render the full grouped, labelled nav — not the
+  // icon-only collapse the <=1180px rail uses. Assert the visible label and
+  // group-header text (not just the aria-label) survives the media query.
+  await expect(navSheet.locator(".side-rail__label", { hasText: "Jobs" })).toBeVisible();
+  await expect(navSheet.locator(".side-rail__group-label", { hasText: "Pipeline" })).toBeVisible();
   await navSheet.getByRole("link", { name: "Dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboard\b/);
 });
