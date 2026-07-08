@@ -324,6 +324,7 @@ class TestCodexAdapter:
         assert run_kwargs["effort"] == "high"
         assert run_kwargs["output_schema"]["type"] == "object"
         assert fake.thread_start_calls[0]["config"] == {"model_reasoning_effort": "high"}
+        assert "sandbox" not in fake.thread_start_calls[0]
 
     async def test_raises_on_failed_turn(self) -> None:
         adapter = CodexAnalysisAdapter(

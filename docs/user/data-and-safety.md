@@ -39,7 +39,7 @@ Common files and directories:
 | `logs/` | Local worker and apply logs. |
 | `chrome-workers/` | Browser profiles and state for local browser tasks. |
 | `apply-workers/` | Apply-run worker state. |
-| `codex_home/` | Isolated SDK state used by local agent integrations when configured. |
+| `codex_home/` | JobCtrl-owned Codex home used by local analysis integrations; it keeps app-server state out of the user's normal Codex app and gives sandboxed analysis commands read access only to `codex_home/workspace/` plus minimal runtime paths. |
 | `backups/` | Timestamped SQLite snapshots written by `jobctrl backup`; restore steps are in the README. |
 | `resume.txt`, `resume.pdf`, legacy `resume_style.json`, legacy `resume_template.tex` | Baseline resume inputs and older local style/template files that may remain from prior installs. |
 | `gmail/` | Gmail OAuth client and token (`oauth-client.json`, `token.json`). |

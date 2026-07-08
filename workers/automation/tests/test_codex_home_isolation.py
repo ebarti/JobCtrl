@@ -1,164 +1,205 @@
-"""Codex SDK ``CODEX_HOME`` isolation — pure-helper regression.
+"""Codex SDK CODEX_HOME isolation + permissions-profile regression tests.
 
-These tests pin the invariant that the Codex analysis leg writes its session
-rollouts (and a copied auth token) into an isolated home under the JobCtrl
-runtime root instead of the user's real ``~/.codex`` chat history. They exercise
-ONLY the pure helpers — no ``openai_codex`` import, no app-server, no network —
-by pointing both ``jobctrl.config.APP_DIR`` and ``Path.home()`` at tmp dirs.
+These tests pin both invariants for the Codex analysis leg:
+
+* JobCtrl uses its own ``<APP_DIR>/codex_home`` so app-server session state does
+  not clutter the user's normal Codex app history;
+* prompt-driven commands can read only ``CODEX_HOME/workspace`` plus Codex's
+  minimal runtime paths, not ``CODEX_HOME/auth.json``.
 """
 
 from __future__ import annotations
 
-import os
 import stat
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 import jobctrl.config
 from jobctrl.infrastructure.analysis import codex_analysis_adapter as adapter
 
 
-def _isolate_homes(monkeypatch, tmp_path: Path) -> tuple[Path, Path]:
-    """Redirect ``APP_DIR`` and ``Path.home()`` under ``tmp_path``.
+def _isolate_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
+    """Redirect ``APP_DIR`` and source ``CODEX_HOME`` under ``tmp_path``."""
 
-    ``APP_DIR`` is read lazily via ``from jobctrl.config import APP_DIR`` inside
-    the helper, so patching ``jobctrl.config.APP_DIR`` is what takes effect.
-    Returns ``(app_dir, user_home)``.
-    """
     app_dir = tmp_path / "jobctrl"
-    user_home = tmp_path / "home"
-    user_home.mkdir(parents=True, exist_ok=True)
+    source_codex_home = tmp_path / "source-codex"
+    source_codex_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
-    return app_dir, user_home
+    monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
+    return app_dir, source_codex_home
 
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def test_isolated_codex_home_is_under_app_dir(monkeypatch, tmp_path: Path) -> None:
-    app_dir, _ = _isolate_homes(monkeypatch, tmp_path)
-    home = adapter._isolated_codex_home()
-    assert home == app_dir / "codex_home"
-    # Patch actually took effect: the path is under our tmp app dir.
-    assert tmp_path in home.parents
+def test_config_overrides_select_workspace_only_permission_profile() -> None:
+    profile = adapter._CODEX_PERMISSION_PROFILE
+    overrides = adapter._CODEX_CONFIG_OVERRIDES
+
+    assert "features.plugins=false" in overrides
+    assert "features.apps=false" in overrides
+    assert f'default_permissions="{profile}"' in overrides
+
+    profile_override = next(value for value in overrides if value.startswith(f"permissions.{profile}="))
+    assert '":root"="deny"' in profile_override
+    assert '":minimal"="read"' in profile_override
+    assert '":workspace_roots"={"."="read"}' in profile_override
+    assert "network={enabled=false}" in profile_override
 
 
-def test_prepare_creates_home_0700_and_copies_auth_0600(monkeypatch, tmp_path: Path) -> None:
-    app_dir, user_home = _isolate_homes(monkeypatch, tmp_path)
-    source_auth = user_home / ".codex" / "auth.json"
-    source_auth.parent.mkdir(parents=True, exist_ok=True)
+def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
     payload = b'{"OPENAI_API_KEY":"sk-isolation-token"}'
-    source_auth.write_bytes(payload)
+    (source_codex_home / "auth.json").write_bytes(payload)
 
-    home = adapter._prepare_isolated_codex_home()
+    dirs = adapter._prepare_isolated_codex_home()
 
-    assert home == app_dir / "codex_home"
-    assert home.is_dir()
-    assert _mode(home) == 0o700
-    target_auth = home / "auth.json"
-    assert target_auth.is_file()
-    assert target_auth.read_bytes() == payload  # identical bytes
-    assert _mode(target_auth) == 0o600
+    assert dirs.codex_home == app_dir / "codex_home"
+    assert dirs.workdir == dirs.codex_home / "workspace"
+    assert dirs.process_home == dirs.codex_home / "home"
+    assert _mode(dirs.codex_home) == 0o700
+    assert _mode(dirs.workdir) == 0o700
+    assert _mode(dirs.process_home) == 0o700
 
-
-def test_prepare_without_source_auth_still_creates_home(monkeypatch, tmp_path: Path) -> None:
-    app_dir, user_home = _isolate_homes(monkeypatch, tmp_path)
-    # No ~/.codex/auth.json on disk.
-    assert not (user_home / ".codex" / "auth.json").exists()
-
-    home = adapter._prepare_isolated_codex_home()  # must not raise
-
-    assert home == app_dir / "codex_home"
-    assert home.is_dir()
-    assert _mode(home) == 0o700
-    assert not (home / "auth.json").exists()
+    copied_auth = dirs.codex_home / "auth.json"
+    assert copied_auth.is_file()
+    assert copied_auth.read_bytes() == payload
+    assert _mode(copied_auth) == 0o600
+    assert not (dirs.workdir / "auth.json").exists()
 
 
-def test_isolated_codex_env_is_minimal(monkeypatch, tmp_path: Path) -> None:
-    _, _ = _isolate_homes(monkeypatch, tmp_path)
-    home = tmp_path / "codex_home"
-    env = adapter._isolated_codex_env(home)
-    # Minimal — the SDK merges this over os.environ, so only CODEX_HOME is set.
-    assert env == {"CODEX_HOME": str(home)}
+def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex_home"
+    process_home = codex_home / "home"
+
+    env = adapter._isolated_codex_env(codex_home, process_home)
+
+    assert env == {"CODEX_HOME": str(codex_home), "HOME": str(process_home)}
 
 
-def test_copy_newer_file_copies_when_target_missing(tmp_path: Path) -> None:
-    source = tmp_path / "src.json"
-    target = tmp_path / "dst" / "auth.json"
-    source.write_bytes(b"first")
+@pytest.mark.asyncio
+async def test_live_factory_uses_jobctrl_codex_home_without_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-factory"}')
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
 
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
+    class FakeAsyncCodex:
+        instances: list["FakeAsyncCodex"] = []
 
-    assert copied is True
-    assert target.read_bytes() == b"first"
-    assert _mode(target) == 0o600
-    # Parent dir is locked down to 0700.
-    assert _mode(target.parent) == 0o700
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+            self.exited = False
+            FakeAsyncCodex.instances.append(self)
 
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            codex_home = Path(self.config.env["CODEX_HOME"])
+            assert codex_home == app_dir / "codex_home"
+            assert Path(self.config.cwd) == codex_home / "workspace"
+            assert Path(self.config.env["HOME"]) == codex_home / "home"
+            assert (codex_home / "auth.json").is_file()
+            assert not (Path(self.config.cwd) / "auth.json").exists()
+            assert self.config.config_overrides == adapter._CODEX_CONFIG_OVERRIDES
+            return self
 
-def test_copy_newer_file_skips_when_target_is_newer(tmp_path: Path) -> None:
-    source = tmp_path / "src.json"
-    target = tmp_path / "dst.json"
-    source.write_bytes(b"source")
-    target.write_bytes(b"existing-newer")
-    # Make the target strictly newer than the source.
-    os.utime(source, (1_000, 1_000))
-    os.utime(target, (2_000, 2_000))
+        async def __aexit__(self, *exc: Any) -> None:
+            self.exited = True
 
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
+    import openai_codex
 
-    assert copied is False
-    assert target.read_bytes() == b"existing-newer"  # not overwritten
-    assert _mode(target) == 0o600  # still re-chmod'd
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
 
+    factory = adapter._load_async_codex_factory()
+    async with factory() as codex:
+        config = codex.config
+        codex_home = Path(config.env["CODEX_HOME"])
+        assert Path(config.cwd) == codex_home / "workspace"
+        assert (source_codex_home / "auth.json").is_file()
 
-def test_copy_newer_file_skips_when_mtimes_equal(tmp_path: Path) -> None:
-    source = tmp_path / "src.json"
-    target = tmp_path / "dst.json"
-    source.write_bytes(b"source")
-    target.write_bytes(b"existing-equal")
-    os.utime(source, (1_500, 1_500))
-    os.utime(target, (1_500, 1_500))  # equal mtime -> skip (>=)
-
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
-
-    assert copied is False
-    assert target.read_bytes() == b"existing-equal"
-
-
-def test_copy_newer_file_overwrites_when_source_is_newer(tmp_path: Path) -> None:
-    source = tmp_path / "src.json"
-    target = tmp_path / "dst.json"
-    target.write_bytes(b"stale")
-    source.write_bytes(b"fresh")
-    os.utime(target, (1_000, 1_000))
-    os.utime(source, (2_000, 2_000))  # source newer -> copy
-
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
-
-    assert copied is True
-    assert target.read_bytes() == b"fresh"
-    assert _mode(target) == 0o600
+    assert FakeAsyncCodex.instances[0].exited is True
+    assert codex_home.exists()
+    assert (source_codex_home / "auth.json").is_file()
 
 
-def test_copy_newer_file_rechmods_when_source_missing_but_target_exists(tmp_path: Path) -> None:
-    source = tmp_path / "missing.json"  # does not exist
-    target = tmp_path / "dst.json"
-    target.write_bytes(b"existing")
-    target.chmod(0o644)
+@pytest.mark.asyncio
+async def test_live_factory_uses_same_jobctrl_codex_home_when_contexts_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-concurrent"}')
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
 
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
+    class FakeAsyncCodex:
+        instances: list["FakeAsyncCodex"] = []
 
-    assert copied is False
-    assert _mode(target) == 0o600  # re-chmod'd despite missing source
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+            FakeAsyncCodex.instances.append(self)
+
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            assert (Path(self.config.env["CODEX_HOME"]) / "auth.json").is_file()
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    import openai_codex
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+
+    factory = adapter._load_async_codex_factory()
+    first_context = factory()
+    second_context = factory()
+
+    first_home = Path(FakeAsyncCodex.instances[0].config.env["CODEX_HOME"])
+    second_home = Path(FakeAsyncCodex.instances[1].config.env["CODEX_HOME"])
+    assert first_home == second_home == app_dir / "codex_home"
+
+    async with first_context as first_codex:
+        async with second_context as second_codex:
+            assert Path(first_codex.config.cwd) == first_home / "workspace"
+            assert Path(second_codex.config.cwd) == first_home / "workspace"
+            assert (first_home / "auth.json").is_file()
 
 
-def test_copy_newer_file_missing_source_and_target_is_noop(tmp_path: Path) -> None:
-    source = tmp_path / "missing-src.json"
-    target = tmp_path / "missing-dst.json"
+@pytest.mark.asyncio
+async def test_pinned_app_server_permission_profile_denies_jobctrl_codex_home_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-runtime"}')
 
-    copied = adapter._copy_newer_file(source, target, mode=0o600)
+    from openai_codex.generated.v2_all import CommandExecResponse
 
-    assert copied is False
-    assert not target.exists()
+    factory = adapter._load_async_codex_factory()
+    async with factory() as codex:
+        config = codex._client._sync.config
+        codex_home = Path(config.env["CODEX_HOME"])
+        assert Path(config.cwd) == codex_home / "workspace"
+        assert (codex_home / "auth.json").is_file()
+
+        response = await codex._client.request(
+            "command/exec",
+            {
+                "command": [
+                    "/bin/sh",
+                    "-c",
+                    'if cat "$CODEX_HOME/auth.json" >/dev/null 2>&1; then printf READABLE; else printf DENIED; fi',
+                ],
+                "cwd": config.cwd,
+                "permissionProfile": adapter._CODEX_PERMISSION_PROFILE,
+                "timeoutMs": 5000,
+            },
+            response_model=CommandExecResponse,
+        )
+
+    assert response.exit_code == 0
+    assert "sk-fake-runtime" not in response.stdout
+    assert response.stdout == "DENIED"
+    assert codex_home.exists()

@@ -280,7 +280,9 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
 - `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
-- `codex_home/` — isolated Codex SDK home when apply/review agents need it.
+- `codex_home/` — JobCtrl-owned Codex home for local analysis. The adapter
+  copies Codex auth here from the user's regular Codex home and runs
+  prompt-driven commands from `codex_home/workspace/` only.
 - `backups/` — timestamped database snapshots written by `jobctrl backup`.
 
 The daily digest is local-only: `jobctrl digest` and the Dashboard panel read
