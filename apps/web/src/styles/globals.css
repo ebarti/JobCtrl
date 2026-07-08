@@ -3639,7 +3639,7 @@ input[type="radio"] {
   border-bottom: 1px solid var(--border);
   padding: 8px 10px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
