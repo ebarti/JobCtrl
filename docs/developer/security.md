@@ -17,27 +17,83 @@ machine.
 The user-facing companion is the [user Security page](../user/security.md); the
 local data inventory is in [Data & Safety](../user/data-and-safety.md).
 
-## Trust Boundary And Threat Model
+## Repository Threat Model
 
-The threat model is "a local process reading and writing local data on a
-single-user machine." The adversaries JobCtrl defends against are other
-processes on the same host reaching the API, a browser page reaching the API via
-DNS rebinding or CSRF, an untrusted job posting steering the apply agent, and
-private data accidentally leaving the machine (committed to git or exported to
-telemetry). It does **not** defend against a compromised OS account or an
-attacker with local disk access — local data is stored unencrypted, so those are
-out of scope by design.
+### Overview
 
-For ordinary local callers, locality is enforced structurally:
+JobCtrl is a local-first job-search automation system. A React/Vite UI talks to
+a loopback Fastify API, the API reads SQLite projections and starts work through
+JSON-RPC/Temporal, and a Python worker performs discovery, enrichment, scoring,
+resume and cover-letter generation, PDF rendering, Gmail-assisted verification,
+and guarded apply automation. A Chromium extension can capture the active page
+and run deterministic autofill against the local API.
+
+Primary assets are the candidate profile and resume baseline, generated resumes
+and cover letters, application history, SQLite event/projection data, local
+settings, LLM/API/CAPTCHA keys, Gmail OAuth tokens, browser profiles and
+cookies, apply-worker state, prompt/completion traces, and the user's
+reputation with employers.
+
+The supported deployment is a single-user workstation with data under
+`~/.jobctrl/`. JobCtrl is not designed as an internet-facing or multi-user
+service. Security severity is therefore calibrated around remote job-board or
+employer content, malicious pages visited by Playwright/Chrome, malicious
+emails/PDFs/HTML captures imported by the user, local browser pages attempting
+to reach loopback services, and accidental export of private local data.
+
+### Threat Model, Trust Boundaries, And Assumptions
+
+The core trust boundary is "a local process reading and writing local data on a
+single-user machine." The adversaries JobCtrl defends against are other local
+processes reaching the API without going through product gates, browser pages
+reaching the API through DNS rebinding or CSRF, untrusted job postings steering
+LLM or browser automation, malicious or malformed user-imported documents, and
+private data accidentally leaving the machine through git, telemetry, LLM
+providers, or agent/tool output.
+
+JobCtrl does **not** defend against a compromised OS account, an attacker with
+local disk access, or an operator who intentionally writes malicious values into
+the local database, config, or workspace. Local data is not encrypted at rest,
+so those are out of scope for the local-only product unless the issue crosses a
+new boundary such as remote code execution, secret exfiltration, or real
+application submission without informed approval.
+
+Inputs fall into three groups:
+
+- **Attacker-controlled inputs:** public job-board and ATS pages, page
+  JavaScript, redirects, JSON-LD/API responses, discovered job titles,
+  descriptions, URLs, apply URLs, extension-captured page text, employer emails
+  scanned for verification or outcomes, user-imported PDFs and saved HTML, and
+  all LLM/model outputs. These values are stored in SQLite, rendered in the UI,
+  used in prompts, and sometimes become browser navigation targets.
+- **Operator-controlled inputs:** local UI/API/CLI requests, profile/settings
+  values, source registry entries, `~/.jobctrl/.env`, provider endpoints and
+  model choices, resume template/style values, extension pairing tokens, and
+  Apply Review decisions. If an attacker can modify these directly, they have
+  substantial local control already.
+- **Developer-controlled inputs:** docs, tests, fixtures, release scripts,
+  build scripts, and packaged defaults. Findings limited to these are normally
+  low risk unless the data is reachable from production runtime or the release
+  path can publish private artifacts or secrets.
+
+External services are separate trust boundaries: LLM providers, Gmail, Google
+Maps, CAPTCHA providers, Langfuse/OpenTelemetry endpoints, public job boards and
+ATS APIs, Temporal, the system `claude` or SDK-bundled Claude runtime, Chrome,
+and any configured network proxy. Tenant IDs are currently the constant
+`local`; cross-tenant isolation is roadmap/hosted-mode posture, not a current
+local-mode boundary.
+
+Locality is enforced structurally for ordinary local callers:
 
 | Control | Mechanism | Where |
 | --- | --- | --- |
-| Loopback bind | The API binds `127.0.0.1` by default and refuses to start on a non-loopback host unless `JOBCTRL_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
-| Host-header allowlist | Every request whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` is rejected `403 forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
-| Origin/Referer check | Mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) with a non-loopback `Origin` or `Referer` are rejected `403 cross_site_request`. | `apps/api/src/server.ts` |
-| Extension capability token | Authenticated `/v1/extension/*` routes require `Authorization: Bearer <token>` from the token file under `~/.jobctrl/`, accept trusted `chrome-extension://` CORS only for those routes, and still require the loopback Host gate. Capture uses `POST /v1/extension/captures`; deterministic autofill uses the sanitized `GET /v1/extension/autofill/profile`; the extension has no submit/apply route. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts`, `apps/api/src/profile-store.ts`, `apps/extension/` |
+| Loopback bind | The API binds `127.0.0.1` by default and refuses a non-loopback host unless `JOBCTRL_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
+| Host-header allowlist | Requests whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` are rejected as `forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
+| Origin/Referer check | Unsafe mutation requests with a non-loopback `Origin` or `Referer` are rejected as `cross_site_request`; headerless local clients remain allowed. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
+| Fetch metadata check | Unsafe browser mutations must carry trusted `Sec-Fetch-Site` metadata unless the request is a trusted extension request. | `apps/api/src/server.ts` |
+| Extension capability token | Authenticated `/v1/extension/*` routes require a bearer token stored under `~/.jobctrl/`, accept trusted `chrome-extension://` CORS only for those routes, and still require the loopback Host gate. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts` |
 | Worker public-page egress guard | Contact-research public-page fetches reject loopback, private-network, link-local, reserved, unspecified, multicast, and metadata targets before fetching, disable automatic redirects, and re-run the source policy plus DNS/public-address check for each redirect target. | `workers/automation/src/jobctrl/domain/contact/source_policy.py`, `workers/automation/src/jobctrl/infrastructure/contact/research_fetcher.py` |
-| Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists, so actions cannot dispatch into a missing or mismatched runtime. | `apps/api/src/server.ts`, `GET /v1/health` |
+| Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists. | `apps/api/src/server.ts`, `GET /v1/health` |
 
 ::: warning The loopback assumption is load-bearing
 Be honest about the limits. This posture is safe only while the API stays on
@@ -48,6 +104,120 @@ roadmap items, not current guarantees — see [SECURITY.md](../../SECURITY.md) a
 the SaaS section of the [backlog](../backlog.md). Local data at rest is not
 encrypted.
 :::
+
+### Attack Surface, Mitigations, And Attacker Stories
+
+**Local API, web UI, and SSE.** The Fastify API exposes powerful local routes:
+profile edits, settings and credential writes, workflow starts, resume imports,
+manual captures, artifact rendering/opening, Apply Review decisions, apply
+controls, and the `GET /v1/events/stream` event stream. Important controls are
+Zod/shared-contract validation, prepared SQLite statements, bounded DTO fields,
+the loopback/Host/Origin/Referer/Sec-Fetch gates above, and the worker-readiness
+gate for worker-backed actions. Because there is no local auth layer, a bypass
+of locality checks or an accidental remote bind is a full local-API compromise.
+React escaping, the small `MarkdownDocument` renderer, safe-link filtering in
+resume audit parsing, and HTML preview CSPs reduce UI injection risk; security
+reviews should still treat any externally supplied `href`, artifact path, or
+HTML preview path as sensitive.
+
+**Browser extension.** The extension is a local companion, not a hosted auth
+surface. It can POST active-page captures and GET a whitelisted autofill profile
+DTO only after pairing with the local capability token. It has no apply/submit
+route, and deterministic autofill excludes password and resume content. Main
+risks are token disclosure to a local process or malicious extension, an
+overbroad autofill field whitelist, or content-script bugs that fill the wrong
+field. Those risks should not be confused with remote-account authorization.
+
+**Discovery, enrichment, and crawling.** Discovery and enrichment process public
+job sources, ATS APIs, broad-board crawls, page HTML, captured API responses,
+and discovered posting/apply URLs. The shared politeness gateway honors
+`robots.txt` for rendered detail crawls, uses an honest User-Agent, paces
+requests per host, and enforces run budgets; `python-jobspy` remains a
+documented residual because its internal per-board requests cannot be
+robots-gated. Contact-research public-page fetches have a private-network and
+redirect egress guard; broader discovery/enrichment/browser fetches still need
+review for SSRF-style navigation to loopback, RFC1918, or cloud metadata
+addresses when a remotely controlled page, redirect, or discovered URL can
+influence a fetch and cause captured data to be stored, rendered, sent to an
+LLM, or exported to telemetry.
+
+**LLM scoring, materials, and outreach.** Scoring, employer analysis,
+interview prep, contact research, outreach drafts, resume tailoring, and
+cover-letter generation combine untrusted job/contact text with sensitive
+profile facts. Main impacts are privacy leakage to configured providers and
+integrity attacks on scores, recommendations, generated materials, or
+applicant-side outreach drafts. Controls include structured schemas,
+deterministic requirement/evidence grounding, provenance rows, rendered-text
+keyword coverage, never-fabricate detectors, structured judge review,
+adversarial review for high-fit jobs, and fail-closed preservation of the last
+accepted artifact. Prompt injection that only changes a reviewable score or
+draft is usually lower severity than injection that bypasses these gates or
+ships false claims to an employer.
+
+**Apply automation.** Apply is the highest-risk path because it drives a real
+browser and can submit a real application. The current apply agent runs as a
+local Claude subprocess with `--no-session-persistence`, explicit
+`--allowedTools`, explicit `--disallowedTools`, a filtered environment, and an
+owned MCP config. The allowlist covers the safe Playwright apply subset,
+read-only Gmail verification-code lookup, and owned tools such as
+`type_credential`, `upload_artifact`, and optional `solve_captcha`; it does not
+expose shell/file tools, raw Gmail send tools, broad mailbox access, raw
+page-script evaluation, or broad permission bypass. Job-site passwords and
+CAPTCHA provider keys are not placed in the model prompt: owned local tools read
+them locally and fail closed. Gmail email applications are sent by JobCtrl's
+owned sender only after Apply Review approval, not by an agent mailbox tool.
+The detailed containment rules are below in
+[Apply-Path Containment](#apply-path-containment).
+
+**Secrets, files, and observability.** LLM provider keys use the macOS Keychain
+credential store or explicit environment variables; the CapSolver key is an env
+var scoped to the owned solver tool; Gmail token files are local; job-site
+passwords, if saved, remain local profile data consumed by `type_credential`.
+SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
+worker directories are sensitive. Langfuse/OTel export is opt-in and warns that
+LLM prompts and completions leave the machine; enrichment spans intentionally
+avoid raw posting text, resumes, cover letters, and credentials. Security
+reviews should watch for secret material in logs, traces, release artifacts,
+HTML previews, generated PDFs, worker stdout, and exception payloads.
+
+**Untrusted files and generated previews.** Profile import parses user-supplied
+PDFs, manual capture accepts page text/HTML, and resume review/template flows
+render generated HTML/PDF previews. These paths should preserve size limits,
+timeouts, path confinement under `~/.jobctrl/`, HTML escaping, CSPs, and
+executable-markup checks. Bugs here are usually local DoS or file disclosure
+unless attacker-controlled content can cross into code execution, API control,
+or secret exfiltration.
+
+### Severity Calibration
+
+**Critical:** untrusted job/web content causes Claude, Playwright, or a worker
+subprocess to execute arbitrary local commands; read or exfiltrate
+`~/.jobctrl/`, browser cookies, Gmail content, API keys, or environment secrets;
+submit real applications without a fresh bound approval; or bypass locality so a
+remote attacker controls the local API. Playwright/HTTP SSRF that reads local or
+cloud metadata and sends it to a DB, LLM, or telemetry provider is also
+critical.
+
+**High:** persistent XSS or unsafe URL rendering in the local UI enables API
+calls, PII theft, or phishing inside the trusted local app; prompt injection
+bypasses apply safeguards without shell access but materially changes submitted
+answers/materials; Gmail connector flaws read broad mailbox content or send
+without the owned approval path; SQL injection or artifact/path traversal
+reachable from job-board content reads or writes sensitive local files.
+
+**Medium:** prompt injection poisons scoring, ranking, employer analysis,
+interview prep, outreach drafts, or resume candidates that remain reviewable;
+untrusted PDF/HTML import causes local CPU/memory/storage exhaustion; an
+operator-configured source or LLM endpoint performs SSRF; overbroad extension
+autofill exposes more profile fields than intended; telemetry/logging exposes
+PII after explicit opt-in but without clear warning or redaction.
+
+**Low:** UI spoofing, malformed display data, broken links, non-sensitive local
+DoS, or issues requiring the operator/developer to edit local config, fixtures,
+database rows, or files they already control. Cross-tenant authorization
+findings are low/out of scope in current local mode because there is no hosted
+multi-tenant boundary, but they become high or critical once hosted auth and
+tenant isolation exist.
 
 ## Apply-Path Containment
 

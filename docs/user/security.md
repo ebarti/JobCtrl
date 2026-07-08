@@ -13,9 +13,11 @@ unless a step you run explicitly sends something to an external service. This
 page describes what those steps are, the approval gates that guard risky actions,
 and the honest limits of running everything locally.
 
-This page owns JobCtrl's threat model and safety gates. For the full inventory
-of what is stored locally and how to share bug reports safely, see
-[Data, Privacy & Safety](data-and-safety.md).
+This page owns JobCtrl's user-facing security model and safety gates. For the
+repo-scoped developer threat model, see
+[developer Security](../developer/security.md#repository-threat-model). For the
+full inventory of what is stored locally and how to share bug reports safely,
+see [Data, Privacy & Safety](data-and-safety.md).
 
 ## Privacy Quick Answer
 
