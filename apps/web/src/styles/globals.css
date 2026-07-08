@@ -1266,10 +1266,11 @@ input[type="radio"] {
 
 .analytics-summary-strip > div {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  align-content: start;
   min-width: 0;
   border-right: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 14px 16px 16px;
 }
 
 .analytics-summary-strip > div:last-child {
@@ -1278,11 +1279,17 @@ input[type="radio"] {
 
 .analytics-summary-strip span {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .analytics-summary-strip b {
-  font-size: 18px;
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 .analytics-caption {
