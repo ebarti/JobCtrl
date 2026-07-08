@@ -239,7 +239,6 @@ def _default_mcp_config(
     )
     apply_tools_env = {
         "JOBHUNTER_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
-        "JOBHUNTER_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
         "JOBHUNTER_APPLY_UPLOAD_DIR": upload_root,
     }
     captcha_key = os.environ.get("CAPSOLVER_API_KEY", "").strip()

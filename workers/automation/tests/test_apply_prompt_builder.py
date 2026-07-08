@@ -156,7 +156,8 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     assert "search_emails" not in rendered
     assert "read_email" not in rendered
     assert "Do not open Gmail in the browser" in rendered
-    assert 'type_credential(kind="job_site_password")' in rendered
+    assert 'type_credential(kind="job_site_password")' not in rendered
+    assert "do NOT type or retrieve any stored password" in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
 
 
@@ -268,7 +269,7 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert apply_tools["args"] == ["-m", "jobhunter.infrastructure.apply_tools.mcp_server"]
     assert apply_tools["env"]["JOBHUNTER_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
     assert apply_tools["env"]["JOBHUNTER_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
-    assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert "JOBHUNTER_APPLY_PROFILE_DB_PATH" not in apply_tools["env"]
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])

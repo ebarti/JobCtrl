@@ -132,11 +132,8 @@ These boundaries are the operator's responsibility:
   Review approves that exact binding; without Gmail `gmail.send` or a matching
   approval, the path fails closed.
 - **Credential typing:** browser automation can type non-secret profile fields.
-  For regular job-site password fields, the apply agent can call a local
-  credential tool that reads the stored profile password and types it into the
-  focused field without returning the value to the model. If the tool is
-  unavailable or the focused field is not a password field, login fails closed
-  for operator handling.
+  It does not retrieve or type stored profile passwords into job-site login
+  forms; password prompts fail closed for operator handling.
 - **CAPTCHA solving:** supported CAPTCHA widgets are handled only through the
   owned local solver tool when configured. The apply agent does not solve
   image/audio challenges manually, switch to stealth browsers, or receive a

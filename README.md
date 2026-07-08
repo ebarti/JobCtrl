@@ -72,11 +72,9 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   sends only through its owned Gmail connector after a dry-run records the
   recipient and attachment candidate and Apply Review approves that exact
   binding; the path requires Gmail `gmail.send` and otherwise fails closed.
-- Browser automation can type non-secret profile fields. For regular job-site
-  password fields, the apply agent can call a local credential tool that reads
-  the stored profile password and types it into the focused field without
-  returning the value to the model; if the tool is unavailable, login fails
-  closed for operator handling.
+- Browser automation can type non-secret profile fields. It does not retrieve
+  or type stored profile passwords into job-site login forms; password prompts
+  fail closed for operator handling.
 - CAPTCHA solving is available only through the owned local solver tool for
   supported widgets. Image/audio, unsupported, or unconfigured challenges fail
   closed. Do not solve challenges manually, switch to stealth browsers, or
@@ -263,8 +261,8 @@ opt-in and configuration-gated:
   material text).
 - **The apply agent's model** — the apply prompt during apply or dry-run (your
   profile summary and the tailored materials). The prompt does not include
-  profile passwords or CAPTCHA-provider keys; password typing uses a local
-  credential tool that never returns the secret to the model.
+  profile passwords or CAPTCHA-provider keys, and apply automation does not
+  retrieve or type stored profile passwords into job-site login forms.
 - **Job boards, ATS APIs, and posting pages** — discovery and enrichment
   fetches.
 - **Gmail** — verification-code and application-outcome lookups, plus approved

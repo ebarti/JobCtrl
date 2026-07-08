@@ -218,12 +218,9 @@ Different secrets live in different places, and it is worth knowing which:
   owned solver tool reads it locally and never returns provider keys or solver
   tokens to the model.
 - **Account passwords for login autofill** are profile data if you store them,
-  but the apply agent does not receive profile passwords in its prompt. For a
-  regular job-site password field, it can call a local credential tool that
-  reads the password from the local profile database and types it into the
-  focused field without returning the value to the model. If the credential is
-  missing or the field is not a password field, login fails closed for operator
-  handling.
+  but the apply agent does not receive profile passwords in its prompt and does
+  not retrieve or type stored profile passwords into job-site login forms.
+  Password prompts fail closed for operator handling.
 
 JobHunter never commits any of these; the release gate scans for accidental
 secret commits (see the [developer Security page](../developer/security.md)).

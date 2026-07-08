@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-
 from jobhunter.infrastructure.apply_tools.mcp_server import (
     ApplyToolsMcpServer,
     CaptchaChallenge,
     CaptchaSolveResult,
     _captcha_api_key,
-    _profile_credential,
 )
 
 
@@ -76,77 +73,24 @@ def test_upload_artifact_refuses_missing_run_artifact(tmp_path):
     assert "no reviewed resume artifact" in response["error"]["message"]
 
 
-def test_type_credential_types_resolved_password_without_returning_secret(tmp_path):
-    typed: list[tuple[str, str]] = []
+def test_type_credential_is_not_advertised_or_callable(tmp_path):
     server = ApplyToolsMcpServer(
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
-        credential_resolver=lambda kind: "SyntheticPasswordNeverReturned" if kind == "job_site_password" else "",
-        credential_typer=lambda endpoint, credential: typed.append((endpoint, credential)),
+        captcha_key_resolver=lambda: "",
     )
+
+    tools_response = server.handle_json(
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    )
+    assert "type_credential" not in {
+        tool["name"] for tool in tools_response["result"]["tools"]
+    }
 
     response = _call(server, "type_credential", {"kind": "job_site_password"})
 
-    assert typed == [("http://localhost:9222", "SyntheticPasswordNeverReturned")]
-    text = response["result"]["content"][0]["text"]
-    assert "SyntheticPasswordNeverReturned" not in text
-    assert json.loads(text) == {
-        "ok": True,
-        "kind": "job_site_password",
-        "typed": True,
-    }
-
-
-def test_type_credential_resolves_password_from_profile_db(monkeypatch, tmp_path):
-    db_path = tmp_path / "profile.db"
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            """
-            CREATE TABLE candidate_profiles (
-              tenant_id TEXT NOT NULL,
-              profile_id TEXT NOT NULL,
-              personal_password TEXT NOT NULL DEFAULT '',
-              PRIMARY KEY (tenant_id, profile_id)
-            )
-            """
-        )
-        conn.execute(
-            "INSERT INTO candidate_profiles (tenant_id, profile_id, personal_password) VALUES ('local', 'default', ?)",
-            ("SyntheticProfilePassword",),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    monkeypatch.setenv("JOBHUNTER_APPLY_PROFILE_DB_PATH", str(db_path))
-
-    assert _profile_credential("job_site_password") == "SyntheticProfilePassword"
-
-
-def test_type_credential_refuses_missing_profile_db(monkeypatch, tmp_path):
-    monkeypatch.setenv("JOBHUNTER_APPLY_PROFILE_DB_PATH", str(tmp_path / "missing.db"))
-
-    response = _call(
-        ApplyToolsMcpServer(cdp_endpoint="http://localhost:9222"),
-        "type_credential",
-        {"kind": "job_site_password"},
-    )
-
     assert response["error"]["code"] == -32000
-    assert "job-site password credential is not configured" in response["error"]["message"]
-
-
-def test_type_credential_refuses_unknown_kind(tmp_path):
-    server = ApplyToolsMcpServer(
-        upload_dir=tmp_path,
-        cdp_endpoint="http://localhost:9222",
-        credential_typer=lambda _endpoint, _credential: None,
-    )
-
-    response = _call(server, "type_credential", {"kind": "api_key"})
-
-    assert response["error"]["code"] == -32000
-    assert "kind must be job_site_password" in response["error"]["message"]
+    assert "Unknown apply tool: type_credential" in response["error"]["message"]
 
 
 def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
@@ -238,7 +182,6 @@ def test_apply_tools_mcp_omits_captcha_tool_when_key_absent(tmp_path):
     )
 
     assert {tool["name"] for tool in response["result"]["tools"]} == {
-        "type_credential",
         "upload_artifact",
     }
 
@@ -255,6 +198,6 @@ def test_apply_tools_mcp_lists_captcha_tool_when_key_present(tmp_path):
     )
 
     tools = {tool["name"]: tool for tool in response["result"]["tools"]}
-    assert set(tools) == {"solve_captcha", "type_credential", "upload_artifact"}
+    assert set(tools) == {"solve_captcha", "upload_artifact"}
     solve_schema = tools["solve_captcha"]["inputSchema"]
     assert solve_schema["required"] == ["kind", "sitekey", "page_url"]
