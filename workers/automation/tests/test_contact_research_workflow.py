@@ -10,6 +10,8 @@ and the LLM spend preflight is the existing shared one (§5.4 — no second syst
 from __future__ import annotations
 
 import sqlite3
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -65,6 +67,18 @@ class _FakeLlm(LlmPort):
     def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:  # noqa: ARG002
         self.calls += 1
         return {"candidates": self._candidates}
+
+
+class _RecordingLlm(LlmPort):
+    def __init__(self) -> None:
+        self.calls: list[list[LlmMessage]] = []
+
+    def chat(self, messages, **kwargs) -> str:  # noqa: ANN001, ARG002 - port completeness
+        return "{}"
+
+    def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:  # noqa: ARG002
+        self.calls.append(messages)
+        return {"candidates": []}
 
 
 def _counter():
@@ -282,6 +296,98 @@ class _BlockedSession:
         return None
 
 
+class _AllowedSession:
+    """Fake PolitenessSession yielding allowed decisions while recording targets."""
+
+    def __init__(self) -> None:
+        self.guarded: list[str] = []
+
+    @property
+    def user_agent(self) -> str:
+        return "JobCtrl/test"
+
+    def guard(self, url: str):
+        from contextlib import contextmanager
+
+        from jobctrl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
+
+        self.guarded.append(url)
+
+        @contextmanager
+        def _cm():
+            yield PolitenessDecision(
+                allowed=True,
+                outcome=PolitenessOutcome.ALLOWED,
+                user_agent="JobCtrl/test",
+            )
+
+        return _cm()
+
+    def note_retry_after(self, url: str, seconds: float) -> None:  # noqa: ARG002
+        return None
+
+    def record_server_rate_limit(self, url: str, seconds=None) -> None:  # noqa: ARG002
+        return None
+
+
+class _StaticResponse:
+    def __init__(self, url: str, body: bytes, status: int = 200) -> None:
+        self._url = url
+        self._body = body
+        self.status = status
+
+    def __enter__(self) -> "_StaticResponse":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def geturl(self) -> str:
+        return self._url
+
+    def read(self) -> bytes:
+        return self._body
+
+
+class _RedirectThenSecretOpener:
+    def __init__(self, redirect_target: str) -> None:
+        self.redirect_target = redirect_target
+        self.requests: list[str] = []
+
+    def open(self, request, timeout):  # noqa: ANN001, ARG002
+        self.requests.append(request.full_url)
+        if len(self.requests) == 1:
+            headers = Message()
+            headers["Location"] = self.redirect_target
+            raise urllib.error.HTTPError(request.full_url, 302, "Found", headers, fp=None)
+        return _StaticResponse(
+            request.full_url,
+            b"<html><body>local profile data: SSRF_LOCAL_SECRET</body></html>",
+        )
+
+
+class _RedirectThenPageOpener:
+    def __init__(self, redirect_target: str) -> None:
+        self.redirect_target = redirect_target
+        self.requests: list[str] = []
+
+    def open(self, request, timeout):  # noqa: ANN001, ARG002
+        self.requests.append(request.full_url)
+        if len(self.requests) == 1:
+            headers = Message()
+            headers["Location"] = self.redirect_target
+            raise urllib.error.HTTPError(request.full_url, 302, "Found", headers, fp=None)
+        return _StaticResponse(
+            request.full_url,
+            b"<html><body><h1>Team</h1><p>Dana Recruiter</p></body></html>",
+        )
+
+
+class _UnexpectedOpener:
+    def open(self, request, timeout):  # noqa: ANN001, ARG002
+        raise AssertionError(f"unexpected fetch: {request.full_url}")
+
+
 def test_gateway_fetcher_returns_block_outcome_without_fetching() -> None:
     policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
     fetcher = GatewayContactResearchFetcher(
@@ -290,3 +396,94 @@ def test_gateway_fetcher_returns_block_outcome_without_fetching() -> None:
     result = fetcher.fetch(_TEAM_URL)
     assert result.outcome == ResearchSourceOutcome.ROBOTS_DISALLOWED.value
     assert result.text == ""
+
+
+def test_gateway_fetcher_rejects_public_host_resolving_to_private_address() -> None:
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    session = _AllowedSession()
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy,
+        session=session,
+        opener=_UnexpectedOpener(),
+        target_resolver=lambda host, port: ("10.0.0.5",),  # noqa: ARG005
+    )
+
+    result = fetcher.fetch(_TEAM_URL)
+
+    assert result.outcome == ResearchSourceOutcome.REJECTED.value
+    assert result.final_url == _TEAM_URL
+    assert result.text == ""
+    assert session.guarded == [_TEAM_URL]
+
+
+def test_gateway_fetcher_rejects_private_redirect_target_without_fetching_it() -> None:
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    session = _AllowedSession()
+    opener = _RedirectThenSecretOpener("http://127.0.0.1:8766/v1/profile")
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy,
+        session=session,
+        opener=opener,
+        target_resolver=lambda host, port: ("93.184.216.34",),  # noqa: ARG005
+    )
+
+    result = fetcher.fetch(_TEAM_URL)
+
+    assert result.outcome == ResearchSourceOutcome.REJECTED.value
+    assert result.final_url == "http://127.0.0.1:8766/v1/profile"
+    assert result.text == ""
+    assert opener.requests == [_TEAM_URL]
+    assert session.guarded == [_TEAM_URL]
+
+
+def test_gateway_fetcher_allows_public_same_host_redirect() -> None:
+    redirected_url = f"https://{_HOST}/people"
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    session = _AllowedSession()
+    opener = _RedirectThenPageOpener(redirected_url)
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy,
+        session=session,
+        opener=opener,
+        target_resolver=lambda host, port: ("93.184.216.34",),  # noqa: ARG005
+    )
+
+    result = fetcher.fetch(_TEAM_URL)
+
+    assert result.outcome == ResearchSourceOutcome.ALLOWED.value
+    assert result.final_url == redirected_url
+    assert "Dana Recruiter" in result.text
+    assert opener.requests == [_TEAM_URL, redirected_url]
+    assert session.guarded == [_TEAM_URL, redirected_url]
+
+
+def test_private_redirect_body_never_reaches_llm_prompt(tmp_path: Path) -> None:
+    _conn, research_repo, _contact_repo = _setup(tmp_path)
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy,
+        session=_AllowedSession(),
+        opener=_RedirectThenSecretOpener("http://127.0.0.1:8766/v1/profile"),
+        target_resolver=lambda host, port: ("93.184.216.34",),  # noqa: ARG005
+    )
+    llm = _RecordingLlm()
+    use_case = RunContactResearchUseCase(
+        repository=research_repo,
+        service=ContactResearchService(policy=policy),
+        fetcher=fetcher,
+        llm=llm,
+        new_id=_counter(),
+    )
+
+    task = use_case.execute(
+        LOCAL_TENANT,
+        task_id="task-1",
+        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
+    )
+
+    assert task.candidates == ()
+    assert [attempt.outcome for attempt in task.source_attempts] == [
+        ResearchSourceOutcome.REJECTED.value
+    ]
+    assert llm.calls == []

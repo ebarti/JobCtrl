@@ -101,6 +101,30 @@ def test_public_source_must_use_http_or_https() -> None:
         )
 
 
+def test_public_source_rejects_local_private_and_metadata_targets() -> None:
+    policy = ContactResearchSourcePolicy(
+        domain_allowlist=(
+            "localhost",
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+        )
+    )
+    for url in (
+        "http://localhost:8766/v1/profile",
+        "http://service.localhost/team",
+        "http://127.0.0.1:8766/v1/profile",
+        "http://10.0.0.1/team",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ):
+        assert (
+            policy.authorize(category=ResearchSourceCategory.PUBLIC_WEB_PAGE.value, url=url)
+            is ResearchSourceDecision.REJECTED
+        )
+
+
 def test_protected_url_routes_to_manual_capture_not_auto_fetch() -> None:
     policy = ContactResearchSourcePolicy(domain_allowlist=(_ALLOWED_HOST,))
     for path in ("/login", "/sso/start", "/members?paywall=1"):
