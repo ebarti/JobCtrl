@@ -1,7 +1,7 @@
 """Final keyword-coverage audit against rendered text (GROUND-06, Phase 3).
 
 Coverage is computed at generation time against the ACTUAL rendered resume text
-both renderers consume — never inferred from the job description (Anti-Pattern 2)
+the HTML renderer consumes — never inferred from the job description (Anti-Pattern 2)
 — and a keyword counts as covered ONLY when it appears in a bullet backed by real
 profile EVIDENCE (success criterion 4 / Pitfall 10): an unsourced skills-dump line
 or a substring false positive does NOT count.

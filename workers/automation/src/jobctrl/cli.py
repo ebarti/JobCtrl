@@ -2401,10 +2401,11 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
 @app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
+    import os
     import shutil
     from jobctrl.config import (
         load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        RESUME_TEMPLATE_PATH, get_chrome_path, load_search_config,
+        get_chrome_path, load_search_config,
         gmail_mcp_auth_status,
     )
     from jobctrl.domain.tenant import LOCAL_TENANT
@@ -2466,39 +2467,20 @@ def doctor() -> None:
     else:
         results.append(("resume.txt", fail_mark, "Run 'jobctrl init' to add your resume"))
 
-    import os
+    try:
+        from playwright.sync_api import sync_playwright
 
-    resume_renderer = os.environ.get("JOBCTRL_RESUME_RENDERER", "html_pdf").strip().lower()
-    if resume_renderer in {"latex", "latex_pdf", "pdflatex"}:
-        try:
-            from jobctrl.infrastructure.materials.latex_pdf import _find_pdflatex
+        with sync_playwright() as playwright:
+            chromium_path = str(playwright.chromium.executable_path)
+        if Path(chromium_path).exists():
+            results.append(("resume PDF renderer", ok_mark, f"HTML/CSS via Playwright Chromium at {chromium_path}"))
+        else:
+            results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
+    except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
+        results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
 
-            results.append(("resume PDF renderer", ok_mark, f"pdflatex at {_find_pdflatex()}"))
-        except FileNotFoundError:
-            results.append(
-                (
-                    "resume PDF renderer",
-                    fail_mark,
-                    "Install TeX Live/MacTeX, set PDFLATEX_PATH, or unset JOBCTRL_RESUME_RENDERER",
-                )
-            )
-    else:
-        try:
-            from playwright.sync_api import sync_playwright
-
-            with sync_playwright() as playwright:
-                chromium_path = str(playwright.chromium.executable_path)
-            if Path(chromium_path).exists():
-                results.append(("resume PDF renderer", ok_mark, f"HTML/CSS via Playwright Chromium at {chromium_path}"))
-            else:
-                results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
-        except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
-            results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
-
-    # Playwright Chromium is required for discovery scraping *and* HTML/CSS PDF
-    # rendering, so validate it regardless of the chosen resume renderer — a
-    # LaTeX renderer does not remove the browser dependency from scraping. This
-    # is the same check the worker runs at startup to fail fast.
+    # Playwright Chromium is required for discovery scraping and HTML/CSS PDF
+    # rendering. This is the same check the worker runs at startup to fail fast.
     from jobctrl.infrastructure.preflight import check_playwright_chromium
 
     chromium_ok, chromium_note = check_playwright_chromium()
@@ -2507,17 +2489,6 @@ def doctor() -> None:
         ok_mark if chromium_ok else fail_mark,
         chromium_note,
     ))
-
-    if RESUME_TEMPLATE_PATH.exists():
-        results.append(("legacy resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
-    else:
-        results.append(
-            (
-                "legacy resume_template.tex",
-                "[dim]optional[/dim]",
-                "Only needed with JOBCTRL_RESUME_RENDERER=latex_pdf",
-            )
-        )
 
     try:
         search_cfg = load_search_config()

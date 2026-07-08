@@ -112,11 +112,9 @@ Part of the [Domain Model](index.md) reference.
    *Needs product input.*
 
 3. **Resume rendering rollout.** The engine decision is HTML/CSS + Playwright,
-   and `HtmlResumePdfAdapter` is the default renderer. Layout-map persistence
-   and Apply Review layout-box consumption are in place for new artifacts; the
-   remaining compatibility policy is how long to retain explicit
-   `JOBCTRL_RESUME_RENDERER=latex_pdf` support for custom
-   templates.
+   and `HtmlResumePdfAdapter` is the renderer. Layout-map persistence and Apply
+   Review layout-box consumption are in place for new artifacts; historical
+   `latex_pdf` rows remain migration/inspection data only.
 
 4. **Event streaming to the frontend.** The backlog calls for "event streaming or
    targeted row patching so lists do not reload wholesale." Should this be SSE,

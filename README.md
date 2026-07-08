@@ -443,8 +443,6 @@ full reference: [docs/user/configuration.md](docs/user/configuration.md).
 - `LLM_MODEL` — default model for the configured provider.
 - `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
 - `CHROME_PATH` — override Chrome/Chromium detection.
-- `JOBCTRL_RESUME_RENDERER=latex_pdf` — opt into the LaTeX compatibility
-  renderer (default is HTML/CSS printed by Playwright).
 - `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
   when running `playwright install` from this checkout.
 - `JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` — skip the worker's startup Chromium

@@ -99,8 +99,8 @@ artifacts. HTML/CSS-rendered resume PDFs also expose
 `GET /v1/artifacts/:artifactId/preview.html`, which streams the generated
 sibling HTML file used by the Plate-backed Apply Review editor. That route is
 limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects
-LaTeX-rendered rows with `415`; operators can create HTML siblings for approved
-LaTeX resume PDFs with
+historical `latex_pdf` rows with `415`; operators can create HTML siblings for
+approved legacy resume PDFs with
 `uv --project workers/automation run jobctrl migrate-resume-html` after
 checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
 with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
@@ -535,7 +535,7 @@ HTML used by the Profile page Plate editor. The renderer is the same HTML/CSS
 resume renderer used for generated materials. `GET /v1/profile/preview.pdf`
 remains a compatibility endpoint for callers that need a baseline PDF, but the
 Profile web route no longer uses a PDF iframe and no longer has a Profile-level
-LaTeX render override.
+alternate render override.
 
 ## Apply review and outcomes
 

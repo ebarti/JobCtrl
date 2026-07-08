@@ -7,8 +7,7 @@ See ddd-target.md §5.5. Two ports here:
                              job, generation)`` triple).
   ``PdfRendererPort``      — render text artifacts to PDF; the resume HTML
                              adapter and cover-letter adapter wrap Playwright
-                             headless Chromium, with LaTeX kept as an
-                             opt-in compatibility adapter.
+                             headless Chromium.
 
 Both protocols are tenant-scoped: local adapters accept ``tenant_id`` and
 ignore it (single-tenant); hosted adapters use it for row isolation.
@@ -358,9 +357,6 @@ class PdfRendererPort(Protocol):
       * ``PlaywrightHtmlPdfAdapter`` wraps a plain-text cover letter into
         a minimal HTML document and prints it to PDF via headless
         Chromium. Used for cover letters only.
-
-    ``LatexPdfAdapter`` remains available for legacy resume rendering when
-    explicitly selected by local wiring.
 
     Both methods return a fully populated :class:`Artifact` value object
     (status ``CANDIDATE``) — the use case is responsible for promoting

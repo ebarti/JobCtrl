@@ -17,6 +17,7 @@ let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const INERT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -94,7 +95,7 @@ beforeEach(() => {
   seedDatabase(options.dbPath);
   fs.writeFileSync(strayProfileExportPath, JSON.stringify(validProfileFixture("Jordan Candidate")));
   fs.writeFileSync(strayStyleExportPath, JSON.stringify({ font_family: "sans" }));
-  fs.writeFileSync(strayTemplateExportPath, "\\documentclass{article}");
+  fs.writeFileSync(strayTemplateExportPath, INERT_RESUME_TEMPLATE);
   fs.writeFileSync(
     options.settingsPath,
     JSON.stringify({
@@ -7316,7 +7317,7 @@ describe("local TypeScript API", () => {
       payload: {
         profile: validProfile,
         style: { moderncv_style: "classic" },
-        templateText: "\\documentclass{moderncv}",
+        templateText: INERT_RESUME_TEMPLATE,
       },
     });
 
@@ -7325,7 +7326,7 @@ describe("local TypeScript API", () => {
       ok: true,
       profile: { personal: { full_name: "Taylor Updated" } },
       style: { moderncv_style: "classic" },
-      templateText: "\\documentclass{moderncv}",
+      templateText: INERT_RESUME_TEMPLATE,
     });
     expect(fs.readFileSync(strayProfileExportPath, "utf8")).toBe(originalStrayProfile);
     const db = new Database(options.dbPath);
@@ -7337,7 +7338,7 @@ describe("local TypeScript API", () => {
       ).toMatchObject({
         personal_full_name: "Taylor Updated",
         resume_style_moderncv_style: "classic",
-        resume_template_text: "\\documentclass{moderncv}",
+        resume_template_text: INERT_RESUME_TEMPLATE,
       });
       expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_experience_bullets").get()).toMatchObject({
         count: 1,
@@ -7787,7 +7788,7 @@ describe("local TypeScript API", () => {
     const importer = vi.fn(async (input) => ({
       profile: { personal: { full_name: "Imported Candidate" } },
       style: { font_family: "imported" },
-      templateText: "\\documentclass{article}",
+      templateText: INERT_RESUME_TEMPLATE,
       source: { filename: input.filename, bytes: input.pdfBytes.length },
     }));
     const app = buildApp({ ...options, profileImporter: importer });
@@ -7841,7 +7842,6 @@ describe("local TypeScript API", () => {
   it("uses the HTML/CSS resume renderer for default profile PDF previews", () => {
     expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobctrl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
     expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobctrl.infrastructure.materials.latex_pdf");
-    expect(PROFILE_PREVIEW_SCRIPT).not.toContain("JOBCTRL_RESUME_RENDERER");
     expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
   });
 
@@ -7856,7 +7856,7 @@ describe("local TypeScript API", () => {
       url: "/v1/profile",
       payload: {
         profile: validProfileFixture("Jordan Candidate"),
-        templateText: "\\documentclass{article}",
+        templateText: INERT_RESUME_TEMPLATE,
       },
     });
     expect(seed.statusCode, seed.body).toBe(200);
@@ -7869,7 +7869,7 @@ describe("local TypeScript API", () => {
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
-        templateText: "\\documentclass{article}",
+        templateText: INERT_RESUME_TEMPLATE,
       },
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
@@ -7888,7 +7888,7 @@ describe("local TypeScript API", () => {
       url: "/v1/profile",
       payload: {
         profile: validProfileFixture("Jordan Candidate"),
-        templateText: "\\documentclass{article}",
+        templateText: INERT_RESUME_TEMPLATE,
       },
     });
     expect(seed.statusCode, seed.body).toBe(200);
@@ -7902,7 +7902,7 @@ describe("local TypeScript API", () => {
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
-        templateText: "\\documentclass{article}",
+        templateText: INERT_RESUME_TEMPLATE,
       },
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );

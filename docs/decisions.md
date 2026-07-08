@@ -961,9 +961,9 @@ Cites: PRs #180, #181, #182, #183, #184, #185, #187.
 
 Status: accepted
 
-Decision: the default resume renderer is HTML/CSS printed to PDF through
-Playwright (`html_pdf`); LaTeX (`latex_pdf`, `pdflatex`) is retained only as an
-explicitly selected compatibility renderer via `JOBCTRL_RESUME_RENDERER`.
+Decision: the resume renderer is HTML/CSS printed to PDF through Playwright
+(`html_pdf`). The older TeX-based renderer is retired; `latex_pdf` remains only
+as a historical render-format value for existing artifact rows and migration.
 
 Rationale:
 
@@ -977,8 +977,8 @@ Rationale:
 Consequences:
 
 - Playwright Chromium is a runtime requirement for resume PDF rendering
-- LaTeX support remains for custom templates behind the explicit `latex_pdf`
-  mode; `PDFLATEX_PATH` overrides the binary location
+- historical `latex_pdf` artifacts can be inspected or migrated to HTML/CSS
+  siblings, but new renders do not invoke a TeX engine
 - tailoring fails closed if the resume PDF render fails, rather than shipping a
   degraded artifact
 

@@ -11,7 +11,7 @@ from statistics import median
 from typing import Any
 
 from jobctrl.resume_profile import DEFAULT_WRITING_STYLE, get_tailoring_policy
-from jobctrl.infrastructure.materials.latex_pdf import normalize_resume_style
+from jobctrl.infrastructure.materials.resume_style import normalize_resume_style
 
 MAX_IMPORT_BYTES = 12 * 1024 * 1024
 

@@ -40,7 +40,7 @@ export const e2eStubProfileImporter: ProfileImporter = async (input) => {
       },
     },
     style: {},
-    templateText: "\\documentclass{article}",
+    templateText: "{{ personal_data }}\n\n{{ resume_body }}\n",
     source: {
       filename: input.filename,
       bytes: input.pdfBytes.length,
